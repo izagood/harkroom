@@ -51,6 +51,26 @@
     "reason": "mention",
     "authorKind": "human",
     "metaKind": null,
+    "failureCode": "inject_unconfirmed",
+    "mineThread": false
+   },
+   "kind": "mention"
+  },
+  {
+   "input": {
+    "reason": "mention",
+    "authorKind": "human",
+    "metaKind": null,
+    "failureCode": "inject_unconfirmed",
+    "mineThread": true
+   },
+   "kind": "mention"
+  },
+  {
+   "input": {
+    "reason": "mention",
+    "authorKind": "human",
+    "metaKind": null,
     "failureCode": "x",
     "mineThread": false
    },
@@ -102,6 +122,26 @@
     "authorKind": "human",
     "metaKind": "ask",
     "failureCode": "account_gate",
+    "mineThread": true
+   },
+   "kind": "ask"
+  },
+  {
+   "input": {
+    "reason": "mention",
+    "authorKind": "human",
+    "metaKind": "ask",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": false
+   },
+   "kind": "ask"
+  },
+  {
+   "input": {
+    "reason": "mention",
+    "authorKind": "human",
+    "metaKind": "ask",
+    "failureCode": "inject_unconfirmed",
     "mineThread": true
    },
    "kind": "ask"
@@ -171,6 +211,26 @@
     "reason": "mention",
     "authorKind": "human",
     "metaKind": "failure",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": false
+   },
+   "kind": "check"
+  },
+  {
+   "input": {
+    "reason": "mention",
+    "authorKind": "human",
+    "metaKind": "failure",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": true
+   },
+   "kind": "check"
+  },
+  {
+   "input": {
+    "reason": "mention",
+    "authorKind": "human",
+    "metaKind": "failure",
     "failureCode": "x",
     "mineThread": false
    },
@@ -231,6 +291,26 @@
     "reason": "mention",
     "authorKind": "human",
     "metaKind": "report",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": false
+   },
+   "kind": "mention"
+  },
+  {
+   "input": {
+    "reason": "mention",
+    "authorKind": "human",
+    "metaKind": "report",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": true
+   },
+   "kind": "mention"
+  },
+  {
+   "input": {
+    "reason": "mention",
+    "authorKind": "human",
+    "metaKind": "report",
     "failureCode": "x",
     "mineThread": false
    },
@@ -291,6 +371,26 @@
     "reason": "mention",
     "authorKind": "human",
     "metaKind": "other",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": false
+   },
+   "kind": "mention"
+  },
+  {
+   "input": {
+    "reason": "mention",
+    "authorKind": "human",
+    "metaKind": "other",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": true
+   },
+   "kind": "mention"
+  },
+  {
+   "input": {
+    "reason": "mention",
+    "authorKind": "human",
+    "metaKind": "other",
     "failureCode": "x",
     "mineThread": false
    },
@@ -351,6 +451,26 @@
     "reason": "mention",
     "authorKind": "agent",
     "metaKind": null,
+    "failureCode": "inject_unconfirmed",
+    "mineThread": false
+   },
+   "kind": "mention"
+  },
+  {
+   "input": {
+    "reason": "mention",
+    "authorKind": "agent",
+    "metaKind": null,
+    "failureCode": "inject_unconfirmed",
+    "mineThread": true
+   },
+   "kind": "agent_reply"
+  },
+  {
+   "input": {
+    "reason": "mention",
+    "authorKind": "agent",
+    "metaKind": null,
     "failureCode": "x",
     "mineThread": false
    },
@@ -402,6 +522,26 @@
     "authorKind": "agent",
     "metaKind": "ask",
     "failureCode": "account_gate",
+    "mineThread": true
+   },
+   "kind": "ask"
+  },
+  {
+   "input": {
+    "reason": "mention",
+    "authorKind": "agent",
+    "metaKind": "ask",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": false
+   },
+   "kind": "ask"
+  },
+  {
+   "input": {
+    "reason": "mention",
+    "authorKind": "agent",
+    "metaKind": "ask",
+    "failureCode": "inject_unconfirmed",
     "mineThread": true
    },
    "kind": "ask"
@@ -471,6 +611,26 @@
     "reason": "mention",
     "authorKind": "agent",
     "metaKind": "failure",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": false
+   },
+   "kind": "check"
+  },
+  {
+   "input": {
+    "reason": "mention",
+    "authorKind": "agent",
+    "metaKind": "failure",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": true
+   },
+   "kind": "check"
+  },
+  {
+   "input": {
+    "reason": "mention",
+    "authorKind": "agent",
+    "metaKind": "failure",
     "failureCode": "x",
     "mineThread": false
    },
@@ -522,6 +682,26 @@
     "authorKind": "agent",
     "metaKind": "report",
     "failureCode": "account_gate",
+    "mineThread": true
+   },
+   "kind": "done"
+  },
+  {
+   "input": {
+    "reason": "mention",
+    "authorKind": "agent",
+    "metaKind": "report",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": false
+   },
+   "kind": "done"
+  },
+  {
+   "input": {
+    "reason": "mention",
+    "authorKind": "agent",
+    "metaKind": "report",
+    "failureCode": "inject_unconfirmed",
     "mineThread": true
    },
    "kind": "done"
@@ -591,6 +771,26 @@
     "reason": "mention",
     "authorKind": "agent",
     "metaKind": "other",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": false
+   },
+   "kind": "mention"
+  },
+  {
+   "input": {
+    "reason": "mention",
+    "authorKind": "agent",
+    "metaKind": "other",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": true
+   },
+   "kind": "agent_reply"
+  },
+  {
+   "input": {
+    "reason": "mention",
+    "authorKind": "agent",
+    "metaKind": "other",
     "failureCode": "x",
     "mineThread": false
    },
@@ -651,6 +851,26 @@
     "reason": "thread_reply",
     "authorKind": "human",
     "metaKind": null,
+    "failureCode": "inject_unconfirmed",
+    "mineThread": false
+   },
+   "kind": "thread_reply"
+  },
+  {
+   "input": {
+    "reason": "thread_reply",
+    "authorKind": "human",
+    "metaKind": null,
+    "failureCode": "inject_unconfirmed",
+    "mineThread": true
+   },
+   "kind": "thread_reply"
+  },
+  {
+   "input": {
+    "reason": "thread_reply",
+    "authorKind": "human",
+    "metaKind": null,
     "failureCode": "x",
     "mineThread": false
    },
@@ -711,6 +931,26 @@
     "reason": "thread_reply",
     "authorKind": "human",
     "metaKind": "ask",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": false
+   },
+   "kind": "ask"
+  },
+  {
+   "input": {
+    "reason": "thread_reply",
+    "authorKind": "human",
+    "metaKind": "ask",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": true
+   },
+   "kind": "ask"
+  },
+  {
+   "input": {
+    "reason": "thread_reply",
+    "authorKind": "human",
+    "metaKind": "ask",
     "failureCode": "x",
     "mineThread": false
    },
@@ -771,6 +1011,26 @@
     "reason": "thread_reply",
     "authorKind": "human",
     "metaKind": "failure",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": false
+   },
+   "kind": "check"
+  },
+  {
+   "input": {
+    "reason": "thread_reply",
+    "authorKind": "human",
+    "metaKind": "failure",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": true
+   },
+   "kind": "check"
+  },
+  {
+   "input": {
+    "reason": "thread_reply",
+    "authorKind": "human",
+    "metaKind": "failure",
     "failureCode": "x",
     "mineThread": false
    },
@@ -831,6 +1091,26 @@
     "reason": "thread_reply",
     "authorKind": "human",
     "metaKind": "report",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": false
+   },
+   "kind": "thread_reply"
+  },
+  {
+   "input": {
+    "reason": "thread_reply",
+    "authorKind": "human",
+    "metaKind": "report",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": true
+   },
+   "kind": "thread_reply"
+  },
+  {
+   "input": {
+    "reason": "thread_reply",
+    "authorKind": "human",
+    "metaKind": "report",
     "failureCode": "x",
     "mineThread": false
    },
@@ -882,6 +1162,26 @@
     "authorKind": "human",
     "metaKind": "other",
     "failureCode": "account_gate",
+    "mineThread": true
+   },
+   "kind": "thread_reply"
+  },
+  {
+   "input": {
+    "reason": "thread_reply",
+    "authorKind": "human",
+    "metaKind": "other",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": false
+   },
+   "kind": "thread_reply"
+  },
+  {
+   "input": {
+    "reason": "thread_reply",
+    "authorKind": "human",
+    "metaKind": "other",
+    "failureCode": "inject_unconfirmed",
     "mineThread": true
    },
    "kind": "thread_reply"
@@ -951,6 +1251,26 @@
     "reason": "thread_reply",
     "authorKind": "agent",
     "metaKind": null,
+    "failureCode": "inject_unconfirmed",
+    "mineThread": false
+   },
+   "kind": "thread_reply"
+  },
+  {
+   "input": {
+    "reason": "thread_reply",
+    "authorKind": "agent",
+    "metaKind": null,
+    "failureCode": "inject_unconfirmed",
+    "mineThread": true
+   },
+   "kind": "agent_reply"
+  },
+  {
+   "input": {
+    "reason": "thread_reply",
+    "authorKind": "agent",
+    "metaKind": null,
     "failureCode": "x",
     "mineThread": false
    },
@@ -1011,6 +1331,26 @@
     "reason": "thread_reply",
     "authorKind": "agent",
     "metaKind": "ask",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": false
+   },
+   "kind": "ask"
+  },
+  {
+   "input": {
+    "reason": "thread_reply",
+    "authorKind": "agent",
+    "metaKind": "ask",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": true
+   },
+   "kind": "ask"
+  },
+  {
+   "input": {
+    "reason": "thread_reply",
+    "authorKind": "agent",
+    "metaKind": "ask",
     "failureCode": "x",
     "mineThread": false
    },
@@ -1071,6 +1411,26 @@
     "reason": "thread_reply",
     "authorKind": "agent",
     "metaKind": "failure",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": false
+   },
+   "kind": "check"
+  },
+  {
+   "input": {
+    "reason": "thread_reply",
+    "authorKind": "agent",
+    "metaKind": "failure",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": true
+   },
+   "kind": "check"
+  },
+  {
+   "input": {
+    "reason": "thread_reply",
+    "authorKind": "agent",
+    "metaKind": "failure",
     "failureCode": "x",
     "mineThread": false
    },
@@ -1122,6 +1482,26 @@
     "authorKind": "agent",
     "metaKind": "report",
     "failureCode": "account_gate",
+    "mineThread": true
+   },
+   "kind": "done"
+  },
+  {
+   "input": {
+    "reason": "thread_reply",
+    "authorKind": "agent",
+    "metaKind": "report",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": false
+   },
+   "kind": "done"
+  },
+  {
+   "input": {
+    "reason": "thread_reply",
+    "authorKind": "agent",
+    "metaKind": "report",
+    "failureCode": "inject_unconfirmed",
     "mineThread": true
    },
    "kind": "done"
@@ -1191,6 +1571,26 @@
     "reason": "thread_reply",
     "authorKind": "agent",
     "metaKind": "other",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": false
+   },
+   "kind": "thread_reply"
+  },
+  {
+   "input": {
+    "reason": "thread_reply",
+    "authorKind": "agent",
+    "metaKind": "other",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": true
+   },
+   "kind": "agent_reply"
+  },
+  {
+   "input": {
+    "reason": "thread_reply",
+    "authorKind": "agent",
+    "metaKind": "other",
     "failureCode": "x",
     "mineThread": false
    },
@@ -1251,6 +1651,26 @@
     "reason": "dm",
     "authorKind": "human",
     "metaKind": null,
+    "failureCode": "inject_unconfirmed",
+    "mineThread": false
+   },
+   "kind": "dm"
+  },
+  {
+   "input": {
+    "reason": "dm",
+    "authorKind": "human",
+    "metaKind": null,
+    "failureCode": "inject_unconfirmed",
+    "mineThread": true
+   },
+   "kind": "dm"
+  },
+  {
+   "input": {
+    "reason": "dm",
+    "authorKind": "human",
+    "metaKind": null,
     "failureCode": "x",
     "mineThread": false
    },
@@ -1302,6 +1722,26 @@
     "authorKind": "human",
     "metaKind": "ask",
     "failureCode": "account_gate",
+    "mineThread": true
+   },
+   "kind": "ask"
+  },
+  {
+   "input": {
+    "reason": "dm",
+    "authorKind": "human",
+    "metaKind": "ask",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": false
+   },
+   "kind": "ask"
+  },
+  {
+   "input": {
+    "reason": "dm",
+    "authorKind": "human",
+    "metaKind": "ask",
+    "failureCode": "inject_unconfirmed",
     "mineThread": true
    },
    "kind": "ask"
@@ -1371,6 +1811,26 @@
     "reason": "dm",
     "authorKind": "human",
     "metaKind": "failure",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": false
+   },
+   "kind": "check"
+  },
+  {
+   "input": {
+    "reason": "dm",
+    "authorKind": "human",
+    "metaKind": "failure",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": true
+   },
+   "kind": "check"
+  },
+  {
+   "input": {
+    "reason": "dm",
+    "authorKind": "human",
+    "metaKind": "failure",
     "failureCode": "x",
     "mineThread": false
    },
@@ -1431,6 +1891,26 @@
     "reason": "dm",
     "authorKind": "human",
     "metaKind": "report",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": false
+   },
+   "kind": "dm"
+  },
+  {
+   "input": {
+    "reason": "dm",
+    "authorKind": "human",
+    "metaKind": "report",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": true
+   },
+   "kind": "dm"
+  },
+  {
+   "input": {
+    "reason": "dm",
+    "authorKind": "human",
+    "metaKind": "report",
     "failureCode": "x",
     "mineThread": false
    },
@@ -1491,6 +1971,26 @@
     "reason": "dm",
     "authorKind": "human",
     "metaKind": "other",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": false
+   },
+   "kind": "dm"
+  },
+  {
+   "input": {
+    "reason": "dm",
+    "authorKind": "human",
+    "metaKind": "other",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": true
+   },
+   "kind": "dm"
+  },
+  {
+   "input": {
+    "reason": "dm",
+    "authorKind": "human",
+    "metaKind": "other",
     "failureCode": "x",
     "mineThread": false
    },
@@ -1551,6 +2051,26 @@
     "reason": "dm",
     "authorKind": "agent",
     "metaKind": null,
+    "failureCode": "inject_unconfirmed",
+    "mineThread": false
+   },
+   "kind": "dm"
+  },
+  {
+   "input": {
+    "reason": "dm",
+    "authorKind": "agent",
+    "metaKind": null,
+    "failureCode": "inject_unconfirmed",
+    "mineThread": true
+   },
+   "kind": "dm"
+  },
+  {
+   "input": {
+    "reason": "dm",
+    "authorKind": "agent",
+    "metaKind": null,
     "failureCode": "x",
     "mineThread": false
    },
@@ -1602,6 +2122,26 @@
     "authorKind": "agent",
     "metaKind": "ask",
     "failureCode": "account_gate",
+    "mineThread": true
+   },
+   "kind": "ask"
+  },
+  {
+   "input": {
+    "reason": "dm",
+    "authorKind": "agent",
+    "metaKind": "ask",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": false
+   },
+   "kind": "ask"
+  },
+  {
+   "input": {
+    "reason": "dm",
+    "authorKind": "agent",
+    "metaKind": "ask",
+    "failureCode": "inject_unconfirmed",
     "mineThread": true
    },
    "kind": "ask"
@@ -1671,6 +2211,26 @@
     "reason": "dm",
     "authorKind": "agent",
     "metaKind": "failure",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": false
+   },
+   "kind": "check"
+  },
+  {
+   "input": {
+    "reason": "dm",
+    "authorKind": "agent",
+    "metaKind": "failure",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": true
+   },
+   "kind": "check"
+  },
+  {
+   "input": {
+    "reason": "dm",
+    "authorKind": "agent",
+    "metaKind": "failure",
     "failureCode": "x",
     "mineThread": false
    },
@@ -1731,6 +2291,26 @@
     "reason": "dm",
     "authorKind": "agent",
     "metaKind": "report",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": false
+   },
+   "kind": "dm"
+  },
+  {
+   "input": {
+    "reason": "dm",
+    "authorKind": "agent",
+    "metaKind": "report",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": true
+   },
+   "kind": "dm"
+  },
+  {
+   "input": {
+    "reason": "dm",
+    "authorKind": "agent",
+    "metaKind": "report",
     "failureCode": "x",
     "mineThread": false
    },
@@ -1791,6 +2371,26 @@
     "reason": "dm",
     "authorKind": "agent",
     "metaKind": "other",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": false
+   },
+   "kind": "dm"
+  },
+  {
+   "input": {
+    "reason": "dm",
+    "authorKind": "agent",
+    "metaKind": "other",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": true
+   },
+   "kind": "dm"
+  },
+  {
+   "input": {
+    "reason": "dm",
+    "authorKind": "agent",
+    "metaKind": "other",
     "failureCode": "x",
     "mineThread": false
    },
@@ -1851,6 +2451,26 @@
     "reason": "ask",
     "authorKind": "human",
     "metaKind": null,
+    "failureCode": "inject_unconfirmed",
+    "mineThread": false
+   },
+   "kind": "ask"
+  },
+  {
+   "input": {
+    "reason": "ask",
+    "authorKind": "human",
+    "metaKind": null,
+    "failureCode": "inject_unconfirmed",
+    "mineThread": true
+   },
+   "kind": "ask"
+  },
+  {
+   "input": {
+    "reason": "ask",
+    "authorKind": "human",
+    "metaKind": null,
     "failureCode": "x",
     "mineThread": false
    },
@@ -1911,6 +2531,26 @@
     "reason": "ask",
     "authorKind": "human",
     "metaKind": "ask",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": false
+   },
+   "kind": "ask"
+  },
+  {
+   "input": {
+    "reason": "ask",
+    "authorKind": "human",
+    "metaKind": "ask",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": true
+   },
+   "kind": "ask"
+  },
+  {
+   "input": {
+    "reason": "ask",
+    "authorKind": "human",
+    "metaKind": "ask",
     "failureCode": "x",
     "mineThread": false
    },
@@ -1971,6 +2611,26 @@
     "reason": "ask",
     "authorKind": "human",
     "metaKind": "failure",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": false
+   },
+   "kind": "ask"
+  },
+  {
+   "input": {
+    "reason": "ask",
+    "authorKind": "human",
+    "metaKind": "failure",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": true
+   },
+   "kind": "ask"
+  },
+  {
+   "input": {
+    "reason": "ask",
+    "authorKind": "human",
+    "metaKind": "failure",
     "failureCode": "x",
     "mineThread": false
    },
@@ -2031,6 +2691,26 @@
     "reason": "ask",
     "authorKind": "human",
     "metaKind": "report",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": false
+   },
+   "kind": "ask"
+  },
+  {
+   "input": {
+    "reason": "ask",
+    "authorKind": "human",
+    "metaKind": "report",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": true
+   },
+   "kind": "ask"
+  },
+  {
+   "input": {
+    "reason": "ask",
+    "authorKind": "human",
+    "metaKind": "report",
     "failureCode": "x",
     "mineThread": false
    },
@@ -2082,6 +2762,26 @@
     "authorKind": "human",
     "metaKind": "other",
     "failureCode": "account_gate",
+    "mineThread": true
+   },
+   "kind": "ask"
+  },
+  {
+   "input": {
+    "reason": "ask",
+    "authorKind": "human",
+    "metaKind": "other",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": false
+   },
+   "kind": "ask"
+  },
+  {
+   "input": {
+    "reason": "ask",
+    "authorKind": "human",
+    "metaKind": "other",
+    "failureCode": "inject_unconfirmed",
     "mineThread": true
    },
    "kind": "ask"
@@ -2151,6 +2851,26 @@
     "reason": "ask",
     "authorKind": "agent",
     "metaKind": null,
+    "failureCode": "inject_unconfirmed",
+    "mineThread": false
+   },
+   "kind": "ask"
+  },
+  {
+   "input": {
+    "reason": "ask",
+    "authorKind": "agent",
+    "metaKind": null,
+    "failureCode": "inject_unconfirmed",
+    "mineThread": true
+   },
+   "kind": "ask"
+  },
+  {
+   "input": {
+    "reason": "ask",
+    "authorKind": "agent",
+    "metaKind": null,
     "failureCode": "x",
     "mineThread": false
    },
@@ -2211,6 +2931,26 @@
     "reason": "ask",
     "authorKind": "agent",
     "metaKind": "ask",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": false
+   },
+   "kind": "ask"
+  },
+  {
+   "input": {
+    "reason": "ask",
+    "authorKind": "agent",
+    "metaKind": "ask",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": true
+   },
+   "kind": "ask"
+  },
+  {
+   "input": {
+    "reason": "ask",
+    "authorKind": "agent",
+    "metaKind": "ask",
     "failureCode": "x",
     "mineThread": false
    },
@@ -2271,6 +3011,26 @@
     "reason": "ask",
     "authorKind": "agent",
     "metaKind": "failure",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": false
+   },
+   "kind": "ask"
+  },
+  {
+   "input": {
+    "reason": "ask",
+    "authorKind": "agent",
+    "metaKind": "failure",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": true
+   },
+   "kind": "ask"
+  },
+  {
+   "input": {
+    "reason": "ask",
+    "authorKind": "agent",
+    "metaKind": "failure",
     "failureCode": "x",
     "mineThread": false
    },
@@ -2331,6 +3091,26 @@
     "reason": "ask",
     "authorKind": "agent",
     "metaKind": "report",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": false
+   },
+   "kind": "ask"
+  },
+  {
+   "input": {
+    "reason": "ask",
+    "authorKind": "agent",
+    "metaKind": "report",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": true
+   },
+   "kind": "ask"
+  },
+  {
+   "input": {
+    "reason": "ask",
+    "authorKind": "agent",
+    "metaKind": "report",
     "failureCode": "x",
     "mineThread": false
    },
@@ -2382,6 +3162,26 @@
     "authorKind": "agent",
     "metaKind": "other",
     "failureCode": "account_gate",
+    "mineThread": true
+   },
+   "kind": "ask"
+  },
+  {
+   "input": {
+    "reason": "ask",
+    "authorKind": "agent",
+    "metaKind": "other",
+    "failureCode": "inject_unconfirmed",
+    "mineThread": false
+   },
+   "kind": "ask"
+  },
+  {
+   "input": {
+    "reason": "ask",
+    "authorKind": "agent",
+    "metaKind": "other",
+    "failureCode": "inject_unconfirmed",
     "mineThread": true
    },
    "kind": "ask"
@@ -4487,7 +5287,7 @@
   },
   {
    "input": {
-    "kind": "done",
+    "kind": "check",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -4504,7 +5304,7 @@
     "aps": {
      "alert": {
       "title": "#general",
-      "subtitle-loc-key": "PUSH_SUB_DONE",
+      "subtitle-loc-key": "PUSH_SUB_CHECK",
       "subtitle-loc-args": [
        "forge"
       ],
@@ -4526,7 +5326,7 @@
   },
   {
    "input": {
-    "kind": "done",
+    "kind": "check",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -4543,11 +5343,11 @@
     "aps": {
      "alert": {
       "title": "#general",
-      "subtitle-loc-key": "PUSH_SUB_DONE",
+      "subtitle-loc-key": "PUSH_SUB_CHECK",
       "subtitle-loc-args": [
        "forge"
       ],
-      "loc-key": "PUSH_REASON_DONE"
+      "loc-key": "PUSH_REASON_CHECK"
      },
      "badge": 55,
      "interruption-level": "passive",
@@ -4564,7 +5364,7 @@
   },
   {
    "input": {
-    "kind": "done",
+    "kind": "check",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -4581,11 +5381,11 @@
     "aps": {
      "alert": {
       "title": "#general",
-      "subtitle-loc-key": "PUSH_SUB_DONE",
+      "subtitle-loc-key": "PUSH_SUB_CHECK",
       "subtitle-loc-args": [
        "Harkroom"
       ],
-      "loc-key": "PUSH_REASON_DONE"
+      "loc-key": "PUSH_REASON_CHECK"
      },
      "sound": "default",
      "interruption-level": "active",
@@ -4602,7 +5402,7 @@
   },
   {
    "input": {
-    "kind": "done",
+    "kind": "check",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -4619,11 +5419,11 @@
     "aps": {
      "alert": {
       "title": "#general",
-      "subtitle-loc-key": "PUSH_SUB_DONE",
+      "subtitle-loc-key": "PUSH_SUB_CHECK",
       "subtitle-loc-args": [
        "Harkroom"
       ],
-      "loc-key": "PUSH_REASON_DONE"
+      "loc-key": "PUSH_REASON_CHECK"
      },
      "badge": 57,
      "interruption-level": "passive",
@@ -4640,7 +5440,7 @@
   },
   {
    "input": {
-    "kind": "done",
+    "kind": "check",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -4657,7 +5457,7 @@
     "aps": {
      "alert": {
       "title": "#general",
-      "subtitle-loc-key": "PUSH_SUB_DONE",
+      "subtitle-loc-key": "PUSH_SUB_CHECK",
       "subtitle-loc-args": [
        ""
       ],
@@ -4679,7 +5479,7 @@
   },
   {
    "input": {
-    "kind": "done",
+    "kind": "check",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -4696,7 +5496,7 @@
     "aps": {
      "alert": {
       "title": "#general",
-      "subtitle-loc-key": "PUSH_SUB_DONE",
+      "subtitle-loc-key": "PUSH_SUB_CHECK",
       "subtitle-loc-args": [
        ""
       ],
@@ -4717,7 +5517,7 @@
   },
   {
    "input": {
-    "kind": "done",
+    "kind": "check",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -4734,7 +5534,7 @@
     "aps": {
      "alert": {
       "title": "@forge",
-      "subtitle-loc-key": "PUSH_SUB_DONE",
+      "subtitle-loc-key": "PUSH_SUB_CHECK",
       "subtitle-loc-args": [
        "forge"
       ],
@@ -4755,7 +5555,7 @@
   },
   {
    "input": {
-    "kind": "done",
+    "kind": "check",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -4772,7 +5572,7 @@
     "aps": {
      "alert": {
       "title": "@forge",
-      "subtitle-loc-key": "PUSH_SUB_DONE",
+      "subtitle-loc-key": "PUSH_SUB_CHECK",
       "subtitle-loc-args": [
        "forge"
       ],
@@ -4793,7 +5593,7 @@
   },
   {
    "input": {
-    "kind": "done",
+    "kind": "check",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -4810,7 +5610,7 @@
     "aps": {
      "alert": {
       "title": "Harkroom",
-      "subtitle-loc-key": "PUSH_SUB_DONE",
+      "subtitle-loc-key": "PUSH_SUB_CHECK",
       "subtitle-loc-args": [
        "Harkroom"
       ],
@@ -4832,7 +5632,7 @@
   },
   {
    "input": {
-    "kind": "done",
+    "kind": "check",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -4849,7 +5649,7 @@
     "aps": {
      "alert": {
       "title": "Harkroom",
-      "subtitle-loc-key": "PUSH_SUB_DONE",
+      "subtitle-loc-key": "PUSH_SUB_CHECK",
       "subtitle-loc-args": [
        "Harkroom"
       ],
@@ -4870,7 +5670,7 @@
   },
   {
    "input": {
-    "kind": "done",
+    "kind": "check",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -4887,7 +5687,7 @@
     "aps": {
      "alert": {
       "title": "Harkroom",
-      "subtitle-loc-key": "PUSH_SUB_DONE",
+      "subtitle-loc-key": "PUSH_SUB_CHECK",
       "subtitle-loc-args": [
        ""
       ],
@@ -4908,7 +5708,7 @@
   },
   {
    "input": {
-    "kind": "done",
+    "kind": "check",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -4925,7 +5725,7 @@
     "aps": {
      "alert": {
       "title": "Harkroom",
-      "subtitle-loc-key": "PUSH_SUB_DONE",
+      "subtitle-loc-key": "PUSH_SUB_CHECK",
       "subtitle-loc-args": [
        ""
       ],
@@ -4946,7 +5746,7 @@
   },
   {
    "input": {
-    "kind": "done",
+    "kind": "check",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -4963,11 +5763,11 @@
     "aps": {
      "alert": {
       "title": "@forge",
-      "subtitle-loc-key": "PUSH_SUB_DONE",
+      "subtitle-loc-key": "PUSH_SUB_CHECK",
       "subtitle-loc-args": [
        "forge"
       ],
-      "loc-key": "PUSH_REASON_DONE"
+      "loc-key": "PUSH_REASON_CHECK"
      },
      "badge": 66,
      "sound": "default",
@@ -4985,7 +5785,7 @@
   },
   {
    "input": {
-    "kind": "done",
+    "kind": "check",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -5002,11 +5802,11 @@
     "aps": {
      "alert": {
       "title": "@forge",
-      "subtitle-loc-key": "PUSH_SUB_DONE",
+      "subtitle-loc-key": "PUSH_SUB_CHECK",
       "subtitle-loc-args": [
        "forge"
       ],
-      "loc-key": "PUSH_REASON_DONE"
+      "loc-key": "PUSH_REASON_CHECK"
      },
      "badge": 67,
      "interruption-level": "passive",
@@ -5023,7 +5823,7 @@
   },
   {
    "input": {
-    "kind": "done",
+    "kind": "check",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -5040,11 +5840,11 @@
     "aps": {
      "alert": {
       "title": "Harkroom",
-      "subtitle-loc-key": "PUSH_SUB_DONE",
+      "subtitle-loc-key": "PUSH_SUB_CHECK",
       "subtitle-loc-args": [
        "Harkroom"
       ],
-      "loc-key": "PUSH_REASON_DONE"
+      "loc-key": "PUSH_REASON_CHECK"
      },
      "sound": "default",
      "interruption-level": "active",
@@ -5061,7 +5861,7 @@
   },
   {
    "input": {
-    "kind": "done",
+    "kind": "check",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -5078,7 +5878,7 @@
     "aps": {
      "alert": {
       "title": "Harkroom",
-      "subtitle-loc-key": "PUSH_SUB_DONE",
+      "subtitle-loc-key": "PUSH_SUB_CHECK",
       "subtitle-loc-args": [
        "Harkroom"
       ],
@@ -5099,7 +5899,7 @@
   },
   {
    "input": {
-    "kind": "done",
+    "kind": "check",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -5116,7 +5916,7 @@
     "aps": {
      "alert": {
       "title": "Harkroom",
-      "subtitle-loc-key": "PUSH_SUB_DONE",
+      "subtitle-loc-key": "PUSH_SUB_CHECK",
       "subtitle-loc-args": [
        ""
       ],
@@ -5138,7 +5938,7 @@
   },
   {
    "input": {
-    "kind": "done",
+    "kind": "check",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -5155,7 +5955,7 @@
     "aps": {
      "alert": {
       "title": "Harkroom",
-      "subtitle-loc-key": "PUSH_SUB_DONE",
+      "subtitle-loc-key": "PUSH_SUB_CHECK",
       "subtitle-loc-args": [
        ""
       ],
@@ -5176,7 +5976,7 @@
   },
   {
    "input": {
-    "kind": "agent_reply",
+    "kind": "done",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -5193,9 +5993,8 @@
     "aps": {
      "alert": {
       "title": "#general",
-      "subtitle-loc-key": "PUSH_SUB_REPLIES",
+      "subtitle-loc-key": "PUSH_SUB_DONE",
       "subtitle-loc-args": [
-       "1",
        "forge"
       ],
       "body": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
@@ -5215,7 +6014,7 @@
   },
   {
    "input": {
-    "kind": "agent_reply",
+    "kind": "done",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -5232,9 +6031,8 @@
     "aps": {
      "alert": {
       "title": "#general",
-      "subtitle-loc-key": "PUSH_SUB_REPLIES",
+      "subtitle-loc-key": "PUSH_SUB_DONE",
       "subtitle-loc-args": [
-       "2",
        "forge"
       ],
       "body": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
@@ -5254,7 +6052,7 @@
   },
   {
    "input": {
-    "kind": "agent_reply",
+    "kind": "done",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -5271,9 +6069,8 @@
     "aps": {
      "alert": {
       "title": "#general",
-      "subtitle-loc-key": "PUSH_SUB_REPLIES",
+      "subtitle-loc-key": "PUSH_SUB_DONE",
       "subtitle-loc-args": [
-       "3",
        "Harkroom"
       ],
       "body": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy…"
@@ -5294,7 +6091,7 @@
   },
   {
    "input": {
-    "kind": "agent_reply",
+    "kind": "done",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -5311,9 +6108,8 @@
     "aps": {
      "alert": {
       "title": "#general",
-      "subtitle-loc-key": "PUSH_SUB_REPLIES",
+      "subtitle-loc-key": "PUSH_SUB_DONE",
       "subtitle-loc-args": [
-       "1",
        "Harkroom"
       ],
       "body": "가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가…"
@@ -5333,7 +6129,7 @@
   },
   {
    "input": {
-    "kind": "agent_reply",
+    "kind": "done",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -5350,9 +6146,8 @@
     "aps": {
      "alert": {
       "title": "#general",
-      "subtitle-loc-key": "PUSH_SUB_REPLIES",
+      "subtitle-loc-key": "PUSH_SUB_DONE",
       "subtitle-loc-args": [
-       "1",
        ""
       ],
       "body": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀…"
@@ -5372,7 +6167,7 @@
   },
   {
    "input": {
-    "kind": "agent_reply",
+    "kind": "done",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -5389,15 +6184,11 @@
     "aps": {
      "alert": {
       "title": "#general",
-      "subtitle-loc-key": "PUSH_SUB_REPLIES",
+      "subtitle-loc-key": "PUSH_SUB_DONE",
       "subtitle-loc-args": [
-       "1",
        ""
       ],
-      "loc-key": "PUSH_REASON_REPLIES",
-      "loc-args": [
-       "1"
-      ]
+      "loc-key": "PUSH_REASON_DONE"
      },
      "badge": 77,
      "interruption-level": "passive",
@@ -5414,7 +6205,7 @@
   },
   {
    "input": {
-    "kind": "agent_reply",
+    "kind": "done",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -5431,15 +6222,11 @@
     "aps": {
      "alert": {
       "title": "@forge",
-      "subtitle-loc-key": "PUSH_SUB_REPLIES",
+      "subtitle-loc-key": "PUSH_SUB_DONE",
       "subtitle-loc-args": [
-       "2",
        "forge"
       ],
-      "loc-key": "PUSH_REASON_REPLIES",
-      "loc-args": [
-       "2"
-      ]
+      "loc-key": "PUSH_REASON_DONE"
      },
      "badge": 78,
      "sound": "default",
@@ -5457,7 +6244,7 @@
   },
   {
    "input": {
-    "kind": "agent_reply",
+    "kind": "done",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -5474,15 +6261,11 @@
     "aps": {
      "alert": {
       "title": "@forge",
-      "subtitle-loc-key": "PUSH_SUB_REPLIES",
+      "subtitle-loc-key": "PUSH_SUB_DONE",
       "subtitle-loc-args": [
-       "3",
        "forge"
       ],
-      "loc-key": "PUSH_REASON_REPLIES",
-      "loc-args": [
-       "3"
-      ]
+      "loc-key": "PUSH_REASON_DONE"
      },
      "badge": 79,
      "interruption-level": "passive",
@@ -5499,7 +6282,7 @@
   },
   {
    "input": {
-    "kind": "agent_reply",
+    "kind": "done",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -5516,9 +6299,8 @@
     "aps": {
      "alert": {
       "title": "Harkroom",
-      "subtitle-loc-key": "PUSH_SUB_REPLIES",
+      "subtitle-loc-key": "PUSH_SUB_DONE",
       "subtitle-loc-args": [
-       "1",
        "Harkroom"
       ],
       "body": "hello"
@@ -5538,7 +6320,7 @@
   },
   {
    "input": {
-    "kind": "agent_reply",
+    "kind": "done",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -5555,9 +6337,8 @@
     "aps": {
      "alert": {
       "title": "Harkroom",
-      "subtitle-loc-key": "PUSH_SUB_REPLIES",
+      "subtitle-loc-key": "PUSH_SUB_DONE",
       "subtitle-loc-args": [
-       "1",
        "Harkroom"
       ],
       "body": "@forge 일 끝 @devteam @ops @알 수 없음"
@@ -5577,7 +6358,7 @@
   },
   {
    "input": {
-    "kind": "agent_reply",
+    "kind": "done",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -5594,9 +6375,8 @@
     "aps": {
      "alert": {
       "title": "Harkroom",
-      "subtitle-loc-key": "PUSH_SUB_REPLIES",
+      "subtitle-loc-key": "PUSH_SUB_DONE",
       "subtitle-loc-args": [
-       "1",
        ""
       ],
       "body": "a b c de"
@@ -5617,7 +6397,7 @@
   },
   {
    "input": {
-    "kind": "agent_reply",
+    "kind": "done",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -5634,9 +6414,8 @@
     "aps": {
      "alert": {
       "title": "Harkroom",
-      "subtitle-loc-key": "PUSH_SUB_REPLIES",
+      "subtitle-loc-key": "PUSH_SUB_DONE",
       "subtitle-loc-args": [
-       "2",
        ""
       ],
       "body": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
@@ -5656,7 +6435,7 @@
   },
   {
    "input": {
-    "kind": "agent_reply",
+    "kind": "done",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -5673,9 +6452,8 @@
     "aps": {
      "alert": {
       "title": "@forge",
-      "subtitle-loc-key": "PUSH_SUB_REPLIES",
+      "subtitle-loc-key": "PUSH_SUB_DONE",
       "subtitle-loc-args": [
-       "3",
        "forge"
       ],
       "body": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
@@ -5695,7 +6473,7 @@
   },
   {
    "input": {
-    "kind": "agent_reply",
+    "kind": "done",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -5712,9 +6490,8 @@
     "aps": {
      "alert": {
       "title": "@forge",
-      "subtitle-loc-key": "PUSH_SUB_REPLIES",
+      "subtitle-loc-key": "PUSH_SUB_DONE",
       "subtitle-loc-args": [
-       "1",
        "forge"
       ],
       "body": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy…"
@@ -5734,7 +6511,7 @@
   },
   {
    "input": {
-    "kind": "agent_reply",
+    "kind": "done",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -5751,9 +6528,8 @@
     "aps": {
      "alert": {
       "title": "Harkroom",
-      "subtitle-loc-key": "PUSH_SUB_REPLIES",
+      "subtitle-loc-key": "PUSH_SUB_DONE",
       "subtitle-loc-args": [
-       "1",
        "Harkroom"
       ],
       "body": "가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가…"
@@ -5774,7 +6550,7 @@
   },
   {
    "input": {
-    "kind": "agent_reply",
+    "kind": "done",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -5791,9 +6567,8 @@
     "aps": {
      "alert": {
       "title": "Harkroom",
-      "subtitle-loc-key": "PUSH_SUB_REPLIES",
+      "subtitle-loc-key": "PUSH_SUB_DONE",
       "subtitle-loc-args": [
-       "1",
        "Harkroom"
       ],
       "body": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀…"
@@ -5813,7 +6588,7 @@
   },
   {
    "input": {
-    "kind": "agent_reply",
+    "kind": "done",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -5830,18 +6605,52 @@
     "aps": {
      "alert": {
       "title": "Harkroom",
-      "subtitle-loc-key": "PUSH_SUB_REPLIES",
+      "subtitle-loc-key": "PUSH_SUB_DONE",
       "subtitle-loc-args": [
-       "2",
        ""
       ],
-      "loc-key": "PUSH_REASON_REPLIES",
-      "loc-args": [
-       "2"
-      ]
+      "loc-key": "PUSH_REASON_DONE"
      },
      "sound": "default",
      "interruption-level": "active",
+     "thread-id": "99999999-9999-4999-8999-999999999999"
+    },
+    "hk": {
+     "v": 1,
+     "accountId": "11111111-1111-4111-8111-111111111111",
+     "messageId": "88888888-8888-4888-8888-888888888888",
+     "channelId": "77777777-7777-4777-8777-777777777777",
+     "threadRootId": "99999999-9999-4999-8999-999999999999"
+    }
+   }
+  },
+  {
+   "input": {
+    "kind": "done",
+    "accountId": "11111111-1111-4111-8111-111111111111",
+    "messageId": "88888888-8888-4888-8888-888888888888",
+    "channelId": "77777777-7777-4777-8777-777777777777",
+    "threadRootId": "99999999-9999-4999-8999-999999999999",
+    "authorHandle": "",
+    "channelName": "",
+    "badge": 89,
+    "previewBody": "",
+    "replyCount": 3,
+    "optionCount": 2,
+    "sound": false
+   },
+   "out": {
+    "aps": {
+     "alert": {
+      "title": "Harkroom",
+      "subtitle-loc-key": "PUSH_SUB_DONE",
+      "subtitle-loc-args": [
+       ""
+      ],
+      "loc-key": "PUSH_REASON_DONE"
+     },
+     "badge": 89,
+     "interruption-level": "passive",
      "thread-id": "99999999-9999-4999-8999-999999999999"
     },
     "hk": {
@@ -5859,48 +6668,6 @@
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
-    "threadRootId": "99999999-9999-4999-8999-999999999999",
-    "authorHandle": "",
-    "channelName": "",
-    "badge": 89,
-    "previewBody": "",
-    "replyCount": 3,
-    "optionCount": 2,
-    "sound": false
-   },
-   "out": {
-    "aps": {
-     "alert": {
-      "title": "Harkroom",
-      "subtitle-loc-key": "PUSH_SUB_REPLIES",
-      "subtitle-loc-args": [
-       "3",
-       ""
-      ],
-      "loc-key": "PUSH_REASON_REPLIES",
-      "loc-args": [
-       "3"
-      ]
-     },
-     "badge": 89,
-     "interruption-level": "passive",
-     "thread-id": "99999999-9999-4999-8999-999999999999"
-    },
-    "hk": {
-     "v": 1,
-     "accountId": "11111111-1111-4111-8111-111111111111",
-     "messageId": "88888888-8888-4888-8888-888888888888",
-     "channelId": "77777777-7777-4777-8777-777777777777",
-     "threadRootId": "99999999-9999-4999-8999-999999999999"
-    }
-   }
-  },
-  {
-   "input": {
-    "kind": "mention",
-    "accountId": "11111111-1111-4111-8111-111111111111",
-    "messageId": "88888888-8888-4888-8888-888888888888",
-    "channelId": "77777777-7777-4777-8777-777777777777",
     "threadRootId": null,
     "authorHandle": "forge",
     "channelName": "general",
@@ -5914,11 +6681,15 @@
     "aps": {
      "alert": {
       "title": "#general",
-      "subtitle-loc-key": "PUSH_SUB_MENTION",
+      "subtitle-loc-key": "PUSH_SUB_REPLIES",
       "subtitle-loc-args": [
+       "1",
        "forge"
       ],
-      "loc-key": "PUSH_REASON_MENTION"
+      "loc-key": "PUSH_REASON_REPLIES",
+      "loc-args": [
+       "1"
+      ]
      },
      "badge": 90,
      "sound": "default",
@@ -5936,7 +6707,7 @@
   },
   {
    "input": {
-    "kind": "mention",
+    "kind": "agent_reply",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -5953,8 +6724,9 @@
     "aps": {
      "alert": {
       "title": "#general",
-      "subtitle-loc-key": "PUSH_SUB_MENTION",
+      "subtitle-loc-key": "PUSH_SUB_REPLIES",
       "subtitle-loc-args": [
+       "1",
        "forge"
       ],
       "body": "hello"
@@ -5974,7 +6746,7 @@
   },
   {
    "input": {
-    "kind": "mention",
+    "kind": "agent_reply",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -5991,8 +6763,9 @@
     "aps": {
      "alert": {
       "title": "#general",
-      "subtitle-loc-key": "PUSH_SUB_MENTION",
+      "subtitle-loc-key": "PUSH_SUB_REPLIES",
       "subtitle-loc-args": [
+       "1",
        "Harkroom"
       ],
       "body": "@forge 일 끝 @devteam @ops @알 수 없음"
@@ -6012,7 +6785,7 @@
   },
   {
    "input": {
-    "kind": "mention",
+    "kind": "agent_reply",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -6029,8 +6802,9 @@
     "aps": {
      "alert": {
       "title": "#general",
-      "subtitle-loc-key": "PUSH_SUB_MENTION",
+      "subtitle-loc-key": "PUSH_SUB_REPLIES",
       "subtitle-loc-args": [
+       "2",
        "Harkroom"
       ],
       "body": "a b c de"
@@ -6050,7 +6824,7 @@
   },
   {
    "input": {
-    "kind": "mention",
+    "kind": "agent_reply",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -6067,8 +6841,9 @@
     "aps": {
      "alert": {
       "title": "#general",
-      "subtitle-loc-key": "PUSH_SUB_MENTION",
+      "subtitle-loc-key": "PUSH_SUB_REPLIES",
       "subtitle-loc-args": [
+       "3",
        ""
       ],
       "body": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
@@ -6089,7 +6864,7 @@
   },
   {
    "input": {
-    "kind": "mention",
+    "kind": "agent_reply",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -6106,8 +6881,9 @@
     "aps": {
      "alert": {
       "title": "#general",
-      "subtitle-loc-key": "PUSH_SUB_MENTION",
+      "subtitle-loc-key": "PUSH_SUB_REPLIES",
       "subtitle-loc-args": [
+       "1",
        ""
       ],
       "body": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
@@ -6127,7 +6903,7 @@
   },
   {
    "input": {
-    "kind": "mention",
+    "kind": "agent_reply",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -6144,8 +6920,9 @@
     "aps": {
      "alert": {
       "title": "@forge",
-      "subtitle-loc-key": "PUSH_SUB_MENTION",
+      "subtitle-loc-key": "PUSH_SUB_REPLIES",
       "subtitle-loc-args": [
+       "1",
        "forge"
       ],
       "body": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy…"
@@ -6165,7 +6942,7 @@
   },
   {
    "input": {
-    "kind": "mention",
+    "kind": "agent_reply",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -6182,8 +6959,9 @@
     "aps": {
      "alert": {
       "title": "@forge",
-      "subtitle-loc-key": "PUSH_SUB_MENTION",
+      "subtitle-loc-key": "PUSH_SUB_REPLIES",
       "subtitle-loc-args": [
+       "1",
        "forge"
       ],
       "body": "가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가…"
@@ -6203,7 +6981,7 @@
   },
   {
    "input": {
-    "kind": "mention",
+    "kind": "agent_reply",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -6220,8 +6998,9 @@
     "aps": {
      "alert": {
       "title": "Harkroom",
-      "subtitle-loc-key": "PUSH_SUB_MENTION",
+      "subtitle-loc-key": "PUSH_SUB_REPLIES",
       "subtitle-loc-args": [
+       "2",
        "Harkroom"
       ],
       "body": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀…"
@@ -6242,7 +7021,7 @@
   },
   {
    "input": {
-    "kind": "mention",
+    "kind": "agent_reply",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -6259,11 +7038,15 @@
     "aps": {
      "alert": {
       "title": "Harkroom",
-      "subtitle-loc-key": "PUSH_SUB_MENTION",
+      "subtitle-loc-key": "PUSH_SUB_REPLIES",
       "subtitle-loc-args": [
+       "3",
        "Harkroom"
       ],
-      "loc-key": "PUSH_REASON_MENTION"
+      "loc-key": "PUSH_REASON_REPLIES",
+      "loc-args": [
+       "3"
+      ]
      },
      "badge": 99,
      "interruption-level": "passive",
@@ -6280,7 +7063,7 @@
   },
   {
    "input": {
-    "kind": "mention",
+    "kind": "agent_reply",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -6297,11 +7080,15 @@
     "aps": {
      "alert": {
       "title": "Harkroom",
-      "subtitle-loc-key": "PUSH_SUB_MENTION",
+      "subtitle-loc-key": "PUSH_SUB_REPLIES",
       "subtitle-loc-args": [
+       "1",
        ""
       ],
-      "loc-key": "PUSH_REASON_MENTION"
+      "loc-key": "PUSH_REASON_REPLIES",
+      "loc-args": [
+       "1"
+      ]
      },
      "sound": "default",
      "interruption-level": "active",
@@ -6318,7 +7105,7 @@
   },
   {
    "input": {
-    "kind": "mention",
+    "kind": "agent_reply",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -6335,11 +7122,15 @@
     "aps": {
      "alert": {
       "title": "Harkroom",
-      "subtitle-loc-key": "PUSH_SUB_MENTION",
+      "subtitle-loc-key": "PUSH_SUB_REPLIES",
       "subtitle-loc-args": [
+       "1",
        ""
       ],
-      "loc-key": "PUSH_REASON_MENTION"
+      "loc-key": "PUSH_REASON_REPLIES",
+      "loc-args": [
+       "1"
+      ]
      },
      "badge": 101,
      "interruption-level": "passive",
@@ -6356,7 +7147,7 @@
   },
   {
    "input": {
-    "kind": "mention",
+    "kind": "agent_reply",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -6373,8 +7164,9 @@
     "aps": {
      "alert": {
       "title": "@forge",
-      "subtitle-loc-key": "PUSH_SUB_MENTION",
+      "subtitle-loc-key": "PUSH_SUB_REPLIES",
       "subtitle-loc-args": [
+       "1",
        "forge"
       ],
       "body": "hello"
@@ -6395,7 +7187,7 @@
   },
   {
    "input": {
-    "kind": "mention",
+    "kind": "agent_reply",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -6412,8 +7204,9 @@
     "aps": {
      "alert": {
       "title": "@forge",
-      "subtitle-loc-key": "PUSH_SUB_MENTION",
+      "subtitle-loc-key": "PUSH_SUB_REPLIES",
       "subtitle-loc-args": [
+       "2",
        "forge"
       ],
       "body": "@forge 일 끝 @devteam @ops @알 수 없음"
@@ -6433,7 +7226,7 @@
   },
   {
    "input": {
-    "kind": "mention",
+    "kind": "agent_reply",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -6450,8 +7243,9 @@
     "aps": {
      "alert": {
       "title": "Harkroom",
-      "subtitle-loc-key": "PUSH_SUB_MENTION",
+      "subtitle-loc-key": "PUSH_SUB_REPLIES",
       "subtitle-loc-args": [
+       "3",
        "Harkroom"
       ],
       "body": "a b c de"
@@ -6471,7 +7265,7 @@
   },
   {
    "input": {
-    "kind": "mention",
+    "kind": "agent_reply",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -6488,8 +7282,9 @@
     "aps": {
      "alert": {
       "title": "Harkroom",
-      "subtitle-loc-key": "PUSH_SUB_MENTION",
+      "subtitle-loc-key": "PUSH_SUB_REPLIES",
       "subtitle-loc-args": [
+       "1",
        "Harkroom"
       ],
       "body": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
@@ -6509,7 +7304,7 @@
   },
   {
    "input": {
-    "kind": "mention",
+    "kind": "agent_reply",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -6526,8 +7321,9 @@
     "aps": {
      "alert": {
       "title": "Harkroom",
-      "subtitle-loc-key": "PUSH_SUB_MENTION",
+      "subtitle-loc-key": "PUSH_SUB_REPLIES",
       "subtitle-loc-args": [
+       "1",
        ""
       ],
       "body": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
@@ -6548,7 +7344,7 @@
   },
   {
    "input": {
-    "kind": "mention",
+    "kind": "agent_reply",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -6565,8 +7361,9 @@
     "aps": {
      "alert": {
       "title": "Harkroom",
-      "subtitle-loc-key": "PUSH_SUB_MENTION",
+      "subtitle-loc-key": "PUSH_SUB_REPLIES",
       "subtitle-loc-args": [
+       "1",
        ""
       ],
       "body": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy…"
@@ -6586,7 +7383,7 @@
   },
   {
    "input": {
-    "kind": "thread_reply",
+    "kind": "mention",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -6603,7 +7400,7 @@
     "aps": {
      "alert": {
       "title": "#general",
-      "subtitle-loc-key": "PUSH_SUB_THREAD_REPLY",
+      "subtitle-loc-key": "PUSH_SUB_MENTION",
       "subtitle-loc-args": [
        "forge"
       ],
@@ -6624,7 +7421,7 @@
   },
   {
    "input": {
-    "kind": "thread_reply",
+    "kind": "mention",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -6641,7 +7438,7 @@
     "aps": {
      "alert": {
       "title": "#general",
-      "subtitle-loc-key": "PUSH_SUB_THREAD_REPLY",
+      "subtitle-loc-key": "PUSH_SUB_MENTION",
       "subtitle-loc-args": [
        "forge"
       ],
@@ -6662,7 +7459,7 @@
   },
   {
    "input": {
-    "kind": "thread_reply",
+    "kind": "mention",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -6679,11 +7476,11 @@
     "aps": {
      "alert": {
       "title": "#general",
-      "subtitle-loc-key": "PUSH_SUB_THREAD_REPLY",
+      "subtitle-loc-key": "PUSH_SUB_MENTION",
       "subtitle-loc-args": [
        "Harkroom"
       ],
-      "loc-key": "PUSH_REASON_THREAD_REPLY"
+      "loc-key": "PUSH_REASON_MENTION"
      },
      "badge": 110,
      "sound": "default",
@@ -6701,7 +7498,7 @@
   },
   {
    "input": {
-    "kind": "thread_reply",
+    "kind": "mention",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -6718,11 +7515,11 @@
     "aps": {
      "alert": {
       "title": "#general",
-      "subtitle-loc-key": "PUSH_SUB_THREAD_REPLY",
+      "subtitle-loc-key": "PUSH_SUB_MENTION",
       "subtitle-loc-args": [
        "Harkroom"
       ],
-      "loc-key": "PUSH_REASON_THREAD_REPLY"
+      "loc-key": "PUSH_REASON_MENTION"
      },
      "badge": 111,
      "interruption-level": "passive",
@@ -6739,7 +7536,7 @@
   },
   {
    "input": {
-    "kind": "thread_reply",
+    "kind": "mention",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -6756,11 +7553,11 @@
     "aps": {
      "alert": {
       "title": "#general",
-      "subtitle-loc-key": "PUSH_SUB_THREAD_REPLY",
+      "subtitle-loc-key": "PUSH_SUB_MENTION",
       "subtitle-loc-args": [
        ""
       ],
-      "loc-key": "PUSH_REASON_THREAD_REPLY"
+      "loc-key": "PUSH_REASON_MENTION"
      },
      "sound": "default",
      "interruption-level": "active",
@@ -6777,7 +7574,7 @@
   },
   {
    "input": {
-    "kind": "thread_reply",
+    "kind": "mention",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -6794,7 +7591,7 @@
     "aps": {
      "alert": {
       "title": "#general",
-      "subtitle-loc-key": "PUSH_SUB_THREAD_REPLY",
+      "subtitle-loc-key": "PUSH_SUB_MENTION",
       "subtitle-loc-args": [
        ""
       ],
@@ -6815,7 +7612,7 @@
   },
   {
    "input": {
-    "kind": "thread_reply",
+    "kind": "mention",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -6832,7 +7629,7 @@
     "aps": {
      "alert": {
       "title": "@forge",
-      "subtitle-loc-key": "PUSH_SUB_THREAD_REPLY",
+      "subtitle-loc-key": "PUSH_SUB_MENTION",
       "subtitle-loc-args": [
        "forge"
       ],
@@ -6854,7 +7651,7 @@
   },
   {
    "input": {
-    "kind": "thread_reply",
+    "kind": "mention",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -6871,7 +7668,7 @@
     "aps": {
      "alert": {
       "title": "@forge",
-      "subtitle-loc-key": "PUSH_SUB_THREAD_REPLY",
+      "subtitle-loc-key": "PUSH_SUB_MENTION",
       "subtitle-loc-args": [
        "forge"
       ],
@@ -6892,7 +7689,7 @@
   },
   {
    "input": {
-    "kind": "thread_reply",
+    "kind": "mention",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -6909,7 +7706,7 @@
     "aps": {
      "alert": {
       "title": "Harkroom",
-      "subtitle-loc-key": "PUSH_SUB_THREAD_REPLY",
+      "subtitle-loc-key": "PUSH_SUB_MENTION",
       "subtitle-loc-args": [
        "Harkroom"
       ],
@@ -6930,7 +7727,7 @@
   },
   {
    "input": {
-    "kind": "thread_reply",
+    "kind": "mention",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -6947,7 +7744,7 @@
     "aps": {
      "alert": {
       "title": "Harkroom",
-      "subtitle-loc-key": "PUSH_SUB_THREAD_REPLY",
+      "subtitle-loc-key": "PUSH_SUB_MENTION",
       "subtitle-loc-args": [
        "Harkroom"
       ],
@@ -6968,7 +7765,7 @@
   },
   {
    "input": {
-    "kind": "thread_reply",
+    "kind": "mention",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -6985,7 +7782,7 @@
     "aps": {
      "alert": {
       "title": "Harkroom",
-      "subtitle-loc-key": "PUSH_SUB_THREAD_REPLY",
+      "subtitle-loc-key": "PUSH_SUB_MENTION",
       "subtitle-loc-args": [
        ""
       ],
@@ -7007,7 +7804,7 @@
   },
   {
    "input": {
-    "kind": "thread_reply",
+    "kind": "mention",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -7024,7 +7821,7 @@
     "aps": {
      "alert": {
       "title": "Harkroom",
-      "subtitle-loc-key": "PUSH_SUB_THREAD_REPLY",
+      "subtitle-loc-key": "PUSH_SUB_MENTION",
       "subtitle-loc-args": [
        ""
       ],
@@ -7045,7 +7842,7 @@
   },
   {
    "input": {
-    "kind": "thread_reply",
+    "kind": "mention",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -7062,7 +7859,7 @@
     "aps": {
      "alert": {
       "title": "@forge",
-      "subtitle-loc-key": "PUSH_SUB_THREAD_REPLY",
+      "subtitle-loc-key": "PUSH_SUB_MENTION",
       "subtitle-loc-args": [
        "forge"
       ],
@@ -7083,7 +7880,7 @@
   },
   {
    "input": {
-    "kind": "thread_reply",
+    "kind": "mention",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -7100,11 +7897,11 @@
     "aps": {
      "alert": {
       "title": "@forge",
-      "subtitle-loc-key": "PUSH_SUB_THREAD_REPLY",
+      "subtitle-loc-key": "PUSH_SUB_MENTION",
       "subtitle-loc-args": [
        "forge"
       ],
-      "loc-key": "PUSH_REASON_THREAD_REPLY"
+      "loc-key": "PUSH_REASON_MENTION"
      },
      "badge": 121,
      "interruption-level": "passive",
@@ -7121,7 +7918,7 @@
   },
   {
    "input": {
-    "kind": "thread_reply",
+    "kind": "mention",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -7138,11 +7935,11 @@
     "aps": {
      "alert": {
       "title": "Harkroom",
-      "subtitle-loc-key": "PUSH_SUB_THREAD_REPLY",
+      "subtitle-loc-key": "PUSH_SUB_MENTION",
       "subtitle-loc-args": [
        "Harkroom"
       ],
-      "loc-key": "PUSH_REASON_THREAD_REPLY"
+      "loc-key": "PUSH_REASON_MENTION"
      },
      "badge": 122,
      "sound": "default",
@@ -7160,7 +7957,7 @@
   },
   {
    "input": {
-    "kind": "thread_reply",
+    "kind": "mention",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -7177,11 +7974,11 @@
     "aps": {
      "alert": {
       "title": "Harkroom",
-      "subtitle-loc-key": "PUSH_SUB_THREAD_REPLY",
+      "subtitle-loc-key": "PUSH_SUB_MENTION",
       "subtitle-loc-args": [
        "Harkroom"
       ],
-      "loc-key": "PUSH_REASON_THREAD_REPLY"
+      "loc-key": "PUSH_REASON_MENTION"
      },
      "badge": 123,
      "interruption-level": "passive",
@@ -7198,7 +7995,7 @@
   },
   {
    "input": {
-    "kind": "thread_reply",
+    "kind": "mention",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -7215,7 +8012,7 @@
     "aps": {
      "alert": {
       "title": "Harkroom",
-      "subtitle-loc-key": "PUSH_SUB_THREAD_REPLY",
+      "subtitle-loc-key": "PUSH_SUB_MENTION",
       "subtitle-loc-args": [
        ""
       ],
@@ -7236,7 +8033,7 @@
   },
   {
    "input": {
-    "kind": "thread_reply",
+    "kind": "mention",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -7253,7 +8050,7 @@
     "aps": {
      "alert": {
       "title": "Harkroom",
-      "subtitle-loc-key": "PUSH_SUB_THREAD_REPLY",
+      "subtitle-loc-key": "PUSH_SUB_MENTION",
       "subtitle-loc-args": [
        ""
       ],
@@ -7274,7 +8071,7 @@
   },
   {
    "input": {
-    "kind": "dm",
+    "kind": "thread_reply",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -7291,6 +8088,10 @@
     "aps": {
      "alert": {
       "title": "#general",
+      "subtitle-loc-key": "PUSH_SUB_THREAD_REPLY",
+      "subtitle-loc-args": [
+       "forge"
+      ],
       "body": "a b c de"
      },
      "badge": 126,
@@ -7309,7 +8110,7 @@
   },
   {
    "input": {
-    "kind": "dm",
+    "kind": "thread_reply",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -7326,6 +8127,10 @@
     "aps": {
      "alert": {
       "title": "#general",
+      "subtitle-loc-key": "PUSH_SUB_THREAD_REPLY",
+      "subtitle-loc-args": [
+       "forge"
+      ],
       "body": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
      },
      "badge": 127,
@@ -7343,7 +8148,7 @@
   },
   {
    "input": {
-    "kind": "dm",
+    "kind": "thread_reply",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -7360,6 +8165,10 @@
     "aps": {
      "alert": {
       "title": "#general",
+      "subtitle-loc-key": "PUSH_SUB_THREAD_REPLY",
+      "subtitle-loc-args": [
+       "Harkroom"
+      ],
       "body": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
      },
      "sound": "default",
@@ -7377,7 +8186,7 @@
   },
   {
    "input": {
-    "kind": "dm",
+    "kind": "thread_reply",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -7394,6 +8203,10 @@
     "aps": {
      "alert": {
       "title": "#general",
+      "subtitle-loc-key": "PUSH_SUB_THREAD_REPLY",
+      "subtitle-loc-args": [
+       "Harkroom"
+      ],
       "body": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy…"
      },
      "badge": 129,
@@ -7411,7 +8224,7 @@
   },
   {
    "input": {
-    "kind": "dm",
+    "kind": "thread_reply",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -7428,6 +8241,10 @@
     "aps": {
      "alert": {
       "title": "#general",
+      "subtitle-loc-key": "PUSH_SUB_THREAD_REPLY",
+      "subtitle-loc-args": [
+       ""
+      ],
       "body": "가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가…"
      },
      "badge": 130,
@@ -7446,7 +8263,7 @@
   },
   {
    "input": {
-    "kind": "dm",
+    "kind": "thread_reply",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -7463,6 +8280,10 @@
     "aps": {
      "alert": {
       "title": "#general",
+      "subtitle-loc-key": "PUSH_SUB_THREAD_REPLY",
+      "subtitle-loc-args": [
+       ""
+      ],
       "body": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀…"
      },
      "badge": 131,
@@ -7480,7 +8301,7 @@
   },
   {
    "input": {
-    "kind": "dm",
+    "kind": "thread_reply",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -7497,7 +8318,11 @@
     "aps": {
      "alert": {
       "title": "@forge",
-      "loc-key": "PUSH_REASON_DM"
+      "subtitle-loc-key": "PUSH_SUB_THREAD_REPLY",
+      "subtitle-loc-args": [
+       "forge"
+      ],
+      "loc-key": "PUSH_REASON_THREAD_REPLY"
      },
      "sound": "default",
      "interruption-level": "active",
@@ -7514,7 +8339,7 @@
   },
   {
    "input": {
-    "kind": "dm",
+    "kind": "thread_reply",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -7531,7 +8356,11 @@
     "aps": {
      "alert": {
       "title": "@forge",
-      "loc-key": "PUSH_REASON_DM"
+      "subtitle-loc-key": "PUSH_SUB_THREAD_REPLY",
+      "subtitle-loc-args": [
+       "forge"
+      ],
+      "loc-key": "PUSH_REASON_THREAD_REPLY"
      },
      "badge": 133,
      "interruption-level": "passive",
@@ -7548,7 +8377,7 @@
   },
   {
    "input": {
-    "kind": "dm",
+    "kind": "thread_reply",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -7565,7 +8394,11 @@
     "aps": {
      "alert": {
       "title": "Harkroom",
-      "loc-key": "PUSH_REASON_DM"
+      "subtitle-loc-key": "PUSH_SUB_THREAD_REPLY",
+      "subtitle-loc-args": [
+       "Harkroom"
+      ],
+      "loc-key": "PUSH_REASON_THREAD_REPLY"
      },
      "badge": 134,
      "sound": "default",
@@ -7583,7 +8416,7 @@
   },
   {
    "input": {
-    "kind": "dm",
+    "kind": "thread_reply",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -7600,6 +8433,10 @@
     "aps": {
      "alert": {
       "title": "Harkroom",
+      "subtitle-loc-key": "PUSH_SUB_THREAD_REPLY",
+      "subtitle-loc-args": [
+       "Harkroom"
+      ],
       "body": "hello"
      },
      "badge": 135,
@@ -7617,7 +8454,7 @@
   },
   {
    "input": {
-    "kind": "dm",
+    "kind": "thread_reply",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -7634,6 +8471,10 @@
     "aps": {
      "alert": {
       "title": "Harkroom",
+      "subtitle-loc-key": "PUSH_SUB_THREAD_REPLY",
+      "subtitle-loc-args": [
+       ""
+      ],
       "body": "@forge 일 끝 @devteam @ops @알 수 없음"
      },
      "sound": "default",
@@ -7651,7 +8492,7 @@
   },
   {
    "input": {
-    "kind": "dm",
+    "kind": "thread_reply",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -7668,6 +8509,10 @@
     "aps": {
      "alert": {
       "title": "Harkroom",
+      "subtitle-loc-key": "PUSH_SUB_THREAD_REPLY",
+      "subtitle-loc-args": [
+       ""
+      ],
       "body": "a b c de"
      },
      "badge": 137,
@@ -7685,7 +8530,7 @@
   },
   {
    "input": {
-    "kind": "dm",
+    "kind": "thread_reply",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -7702,6 +8547,10 @@
     "aps": {
      "alert": {
       "title": "@forge",
+      "subtitle-loc-key": "PUSH_SUB_THREAD_REPLY",
+      "subtitle-loc-args": [
+       "forge"
+      ],
       "body": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
      },
      "badge": 138,
@@ -7720,7 +8569,7 @@
   },
   {
    "input": {
-    "kind": "dm",
+    "kind": "thread_reply",
     "accountId": "11111111-1111-4111-8111-111111111111",
     "messageId": "88888888-8888-4888-8888-888888888888",
     "channelId": "77777777-7777-4777-8777-777777777777",
@@ -7737,9 +8586,645 @@
     "aps": {
      "alert": {
       "title": "@forge",
+      "subtitle-loc-key": "PUSH_SUB_THREAD_REPLY",
+      "subtitle-loc-args": [
+       "forge"
+      ],
       "body": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
      },
      "badge": 139,
+     "interruption-level": "passive",
+     "thread-id": "99999999-9999-4999-8999-999999999999"
+    },
+    "hk": {
+     "v": 1,
+     "accountId": "11111111-1111-4111-8111-111111111111",
+     "messageId": "88888888-8888-4888-8888-888888888888",
+     "channelId": "77777777-7777-4777-8777-777777777777",
+     "threadRootId": "99999999-9999-4999-8999-999999999999"
+    }
+   }
+  },
+  {
+   "input": {
+    "kind": "thread_reply",
+    "accountId": "11111111-1111-4111-8111-111111111111",
+    "messageId": "88888888-8888-4888-8888-888888888888",
+    "channelId": "77777777-7777-4777-8777-777777777777",
+    "threadRootId": "99999999-9999-4999-8999-999999999999",
+    "authorHandle": null,
+    "channelName": "",
+    "badge": null,
+    "previewBody": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+    "replyCount": -1,
+    "optionCount": 2,
+    "sound": true
+   },
+   "out": {
+    "aps": {
+     "alert": {
+      "title": "Harkroom",
+      "subtitle-loc-key": "PUSH_SUB_THREAD_REPLY",
+      "subtitle-loc-args": [
+       "Harkroom"
+      ],
+      "body": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy…"
+     },
+     "sound": "default",
+     "interruption-level": "active",
+     "thread-id": "99999999-9999-4999-8999-999999999999"
+    },
+    "hk": {
+     "v": 1,
+     "accountId": "11111111-1111-4111-8111-111111111111",
+     "messageId": "88888888-8888-4888-8888-888888888888",
+     "channelId": "77777777-7777-4777-8777-777777777777",
+     "threadRootId": "99999999-9999-4999-8999-999999999999"
+    }
+   }
+  },
+  {
+   "input": {
+    "kind": "thread_reply",
+    "accountId": "11111111-1111-4111-8111-111111111111",
+    "messageId": "88888888-8888-4888-8888-888888888888",
+    "channelId": "77777777-7777-4777-8777-777777777777",
+    "threadRootId": null,
+    "authorHandle": null,
+    "channelName": "",
+    "badge": 141,
+    "previewBody": "가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가",
+    "replyCount": 0,
+    "optionCount": 0,
+    "sound": false
+   },
+   "out": {
+    "aps": {
+     "alert": {
+      "title": "Harkroom",
+      "subtitle-loc-key": "PUSH_SUB_THREAD_REPLY",
+      "subtitle-loc-args": [
+       "Harkroom"
+      ],
+      "body": "가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가…"
+     },
+     "badge": 141,
+     "interruption-level": "passive",
+     "thread-id": "88888888-8888-4888-8888-888888888888"
+    },
+    "hk": {
+     "v": 1,
+     "accountId": "11111111-1111-4111-8111-111111111111",
+     "messageId": "88888888-8888-4888-8888-888888888888",
+     "channelId": "77777777-7777-4777-8777-777777777777",
+     "threadRootId": null
+    }
+   }
+  },
+  {
+   "input": {
+    "kind": "thread_reply",
+    "accountId": "11111111-1111-4111-8111-111111111111",
+    "messageId": "88888888-8888-4888-8888-888888888888",
+    "channelId": "77777777-7777-4777-8777-777777777777",
+    "threadRootId": "99999999-9999-4999-8999-999999999999",
+    "authorHandle": "",
+    "channelName": "",
+    "badge": 142,
+    "previewBody": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+    "replyCount": 1,
+    "optionCount": 1,
+    "sound": true
+   },
+   "out": {
+    "aps": {
+     "alert": {
+      "title": "Harkroom",
+      "subtitle-loc-key": "PUSH_SUB_THREAD_REPLY",
+      "subtitle-loc-args": [
+       ""
+      ],
+      "body": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀…"
+     },
+     "badge": 142,
+     "sound": "default",
+     "interruption-level": "active",
+     "thread-id": "99999999-9999-4999-8999-999999999999"
+    },
+    "hk": {
+     "v": 1,
+     "accountId": "11111111-1111-4111-8111-111111111111",
+     "messageId": "88888888-8888-4888-8888-888888888888",
+     "channelId": "77777777-7777-4777-8777-777777777777",
+     "threadRootId": "99999999-9999-4999-8999-999999999999"
+    }
+   }
+  },
+  {
+   "input": {
+    "kind": "thread_reply",
+    "accountId": "11111111-1111-4111-8111-111111111111",
+    "messageId": "88888888-8888-4888-8888-888888888888",
+    "channelId": "77777777-7777-4777-8777-777777777777",
+    "threadRootId": "99999999-9999-4999-8999-999999999999",
+    "authorHandle": "",
+    "channelName": "",
+    "badge": 143,
+    "previewBody": null,
+    "replyCount": 2,
+    "optionCount": 2,
+    "sound": false
+   },
+   "out": {
+    "aps": {
+     "alert": {
+      "title": "Harkroom",
+      "subtitle-loc-key": "PUSH_SUB_THREAD_REPLY",
+      "subtitle-loc-args": [
+       ""
+      ],
+      "loc-key": "PUSH_REASON_THREAD_REPLY"
+     },
+     "badge": 143,
+     "interruption-level": "passive",
+     "thread-id": "99999999-9999-4999-8999-999999999999"
+    },
+    "hk": {
+     "v": 1,
+     "accountId": "11111111-1111-4111-8111-111111111111",
+     "messageId": "88888888-8888-4888-8888-888888888888",
+     "channelId": "77777777-7777-4777-8777-777777777777",
+     "threadRootId": "99999999-9999-4999-8999-999999999999"
+    }
+   }
+  },
+  {
+   "input": {
+    "kind": "dm",
+    "accountId": "11111111-1111-4111-8111-111111111111",
+    "messageId": "88888888-8888-4888-8888-888888888888",
+    "channelId": "77777777-7777-4777-8777-777777777777",
+    "threadRootId": null,
+    "authorHandle": "forge",
+    "channelName": "general",
+    "badge": null,
+    "previewBody": "",
+    "replyCount": 3,
+    "optionCount": 0,
+    "sound": true
+   },
+   "out": {
+    "aps": {
+     "alert": {
+      "title": "#general",
+      "loc-key": "PUSH_REASON_DM"
+     },
+     "sound": "default",
+     "interruption-level": "active",
+     "thread-id": "88888888-8888-4888-8888-888888888888"
+    },
+    "hk": {
+     "v": 1,
+     "accountId": "11111111-1111-4111-8111-111111111111",
+     "messageId": "88888888-8888-4888-8888-888888888888",
+     "channelId": "77777777-7777-4777-8777-777777777777",
+     "threadRootId": null
+    }
+   }
+  },
+  {
+   "input": {
+    "kind": "dm",
+    "accountId": "11111111-1111-4111-8111-111111111111",
+    "messageId": "88888888-8888-4888-8888-888888888888",
+    "channelId": "77777777-7777-4777-8777-777777777777",
+    "threadRootId": "99999999-9999-4999-8999-999999999999",
+    "authorHandle": "forge",
+    "channelName": "general",
+    "badge": 145,
+    "previewBody": "   ",
+    "replyCount": -1,
+    "optionCount": 1,
+    "sound": false
+   },
+   "out": {
+    "aps": {
+     "alert": {
+      "title": "#general",
+      "loc-key": "PUSH_REASON_DM"
+     },
+     "badge": 145,
+     "interruption-level": "passive",
+     "thread-id": "99999999-9999-4999-8999-999999999999"
+    },
+    "hk": {
+     "v": 1,
+     "accountId": "11111111-1111-4111-8111-111111111111",
+     "messageId": "88888888-8888-4888-8888-888888888888",
+     "channelId": "77777777-7777-4777-8777-777777777777",
+     "threadRootId": "99999999-9999-4999-8999-999999999999"
+    }
+   }
+  },
+  {
+   "input": {
+    "kind": "dm",
+    "accountId": "11111111-1111-4111-8111-111111111111",
+    "messageId": "88888888-8888-4888-8888-888888888888",
+    "channelId": "77777777-7777-4777-8777-777777777777",
+    "threadRootId": "99999999-9999-4999-8999-999999999999",
+    "authorHandle": null,
+    "channelName": "general",
+    "badge": 146,
+    "previewBody": "hello",
+    "replyCount": 0,
+    "optionCount": 2,
+    "sound": true
+   },
+   "out": {
+    "aps": {
+     "alert": {
+      "title": "#general",
+      "body": "hello"
+     },
+     "badge": 146,
+     "sound": "default",
+     "interruption-level": "active",
+     "thread-id": "99999999-9999-4999-8999-999999999999"
+    },
+    "hk": {
+     "v": 1,
+     "accountId": "11111111-1111-4111-8111-111111111111",
+     "messageId": "88888888-8888-4888-8888-888888888888",
+     "channelId": "77777777-7777-4777-8777-777777777777",
+     "threadRootId": "99999999-9999-4999-8999-999999999999"
+    }
+   }
+  },
+  {
+   "input": {
+    "kind": "dm",
+    "accountId": "11111111-1111-4111-8111-111111111111",
+    "messageId": "88888888-8888-4888-8888-888888888888",
+    "channelId": "77777777-7777-4777-8777-777777777777",
+    "threadRootId": null,
+    "authorHandle": null,
+    "channelName": "general",
+    "badge": 147,
+    "previewBody": "<@22222222-2222-4222-8222-222222222222> 일 끝 <@team:55555555-5555-4555-8555-555555555555> <@group:44444444-4444-4444-8444-444444444444> <@66666666-6666-4666-8666-666666666666>",
+    "replyCount": 1,
+    "optionCount": 0,
+    "sound": false
+   },
+   "out": {
+    "aps": {
+     "alert": {
+      "title": "#general",
+      "body": "@forge 일 끝 @devteam @ops @알 수 없음"
+     },
+     "badge": 147,
+     "interruption-level": "passive",
+     "thread-id": "88888888-8888-4888-8888-888888888888"
+    },
+    "hk": {
+     "v": 1,
+     "accountId": "11111111-1111-4111-8111-111111111111",
+     "messageId": "88888888-8888-4888-8888-888888888888",
+     "channelId": "77777777-7777-4777-8777-777777777777",
+     "threadRootId": null
+    }
+   }
+  },
+  {
+   "input": {
+    "kind": "dm",
+    "accountId": "11111111-1111-4111-8111-111111111111",
+    "messageId": "88888888-8888-4888-8888-888888888888",
+    "channelId": "77777777-7777-4777-8777-777777777777",
+    "threadRootId": "99999999-9999-4999-8999-999999999999",
+    "authorHandle": "",
+    "channelName": "general",
+    "badge": null,
+    "previewBody": "a\n\n b\t　c﻿ de",
+    "replyCount": 2,
+    "optionCount": 1,
+    "sound": true
+   },
+   "out": {
+    "aps": {
+     "alert": {
+      "title": "#general",
+      "body": "a b c de"
+     },
+     "sound": "default",
+     "interruption-level": "active",
+     "thread-id": "99999999-9999-4999-8999-999999999999"
+    },
+    "hk": {
+     "v": 1,
+     "accountId": "11111111-1111-4111-8111-111111111111",
+     "messageId": "88888888-8888-4888-8888-888888888888",
+     "channelId": "77777777-7777-4777-8777-777777777777",
+     "threadRootId": "99999999-9999-4999-8999-999999999999"
+    }
+   }
+  },
+  {
+   "input": {
+    "kind": "dm",
+    "accountId": "11111111-1111-4111-8111-111111111111",
+    "messageId": "88888888-8888-4888-8888-888888888888",
+    "channelId": "77777777-7777-4777-8777-777777777777",
+    "threadRootId": "99999999-9999-4999-8999-999999999999",
+    "authorHandle": "",
+    "channelName": "general",
+    "badge": 149,
+    "previewBody": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "replyCount": 3,
+    "optionCount": 2,
+    "sound": false
+   },
+   "out": {
+    "aps": {
+     "alert": {
+      "title": "#general",
+      "body": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+     },
+     "badge": 149,
+     "interruption-level": "passive",
+     "thread-id": "99999999-9999-4999-8999-999999999999"
+    },
+    "hk": {
+     "v": 1,
+     "accountId": "11111111-1111-4111-8111-111111111111",
+     "messageId": "88888888-8888-4888-8888-888888888888",
+     "channelId": "77777777-7777-4777-8777-777777777777",
+     "threadRootId": "99999999-9999-4999-8999-999999999999"
+    }
+   }
+  },
+  {
+   "input": {
+    "kind": "dm",
+    "accountId": "11111111-1111-4111-8111-111111111111",
+    "messageId": "88888888-8888-4888-8888-888888888888",
+    "channelId": "77777777-7777-4777-8777-777777777777",
+    "threadRootId": null,
+    "authorHandle": "forge",
+    "channelName": null,
+    "badge": 150,
+    "previewBody": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "replyCount": -1,
+    "optionCount": 0,
+    "sound": true
+   },
+   "out": {
+    "aps": {
+     "alert": {
+      "title": "@forge",
+      "body": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+     },
+     "badge": 150,
+     "sound": "default",
+     "interruption-level": "active",
+     "thread-id": "77777777-7777-4777-8777-777777777777"
+    },
+    "hk": {
+     "v": 1,
+     "accountId": "11111111-1111-4111-8111-111111111111",
+     "messageId": "88888888-8888-4888-8888-888888888888",
+     "channelId": "77777777-7777-4777-8777-777777777777",
+     "threadRootId": null
+    }
+   }
+  },
+  {
+   "input": {
+    "kind": "dm",
+    "accountId": "11111111-1111-4111-8111-111111111111",
+    "messageId": "88888888-8888-4888-8888-888888888888",
+    "channelId": "77777777-7777-4777-8777-777777777777",
+    "threadRootId": "99999999-9999-4999-8999-999999999999",
+    "authorHandle": "forge",
+    "channelName": null,
+    "badge": 151,
+    "previewBody": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+    "replyCount": 0,
+    "optionCount": 1,
+    "sound": false
+   },
+   "out": {
+    "aps": {
+     "alert": {
+      "title": "@forge",
+      "body": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy…"
+     },
+     "badge": 151,
+     "interruption-level": "passive",
+     "thread-id": "77777777-7777-4777-8777-777777777777"
+    },
+    "hk": {
+     "v": 1,
+     "accountId": "11111111-1111-4111-8111-111111111111",
+     "messageId": "88888888-8888-4888-8888-888888888888",
+     "channelId": "77777777-7777-4777-8777-777777777777",
+     "threadRootId": "99999999-9999-4999-8999-999999999999"
+    }
+   }
+  },
+  {
+   "input": {
+    "kind": "dm",
+    "accountId": "11111111-1111-4111-8111-111111111111",
+    "messageId": "88888888-8888-4888-8888-888888888888",
+    "channelId": "77777777-7777-4777-8777-777777777777",
+    "threadRootId": "99999999-9999-4999-8999-999999999999",
+    "authorHandle": null,
+    "channelName": null,
+    "badge": null,
+    "previewBody": "가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가",
+    "replyCount": 1,
+    "optionCount": 2,
+    "sound": true
+   },
+   "out": {
+    "aps": {
+     "alert": {
+      "title": "Harkroom",
+      "body": "가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가…"
+     },
+     "sound": "default",
+     "interruption-level": "active",
+     "thread-id": "77777777-7777-4777-8777-777777777777"
+    },
+    "hk": {
+     "v": 1,
+     "accountId": "11111111-1111-4111-8111-111111111111",
+     "messageId": "88888888-8888-4888-8888-888888888888",
+     "channelId": "77777777-7777-4777-8777-777777777777",
+     "threadRootId": "99999999-9999-4999-8999-999999999999"
+    }
+   }
+  },
+  {
+   "input": {
+    "kind": "dm",
+    "accountId": "11111111-1111-4111-8111-111111111111",
+    "messageId": "88888888-8888-4888-8888-888888888888",
+    "channelId": "77777777-7777-4777-8777-777777777777",
+    "threadRootId": null,
+    "authorHandle": null,
+    "channelName": null,
+    "badge": 153,
+    "previewBody": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+    "replyCount": 2,
+    "optionCount": 0,
+    "sound": false
+   },
+   "out": {
+    "aps": {
+     "alert": {
+      "title": "Harkroom",
+      "body": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀…"
+     },
+     "badge": 153,
+     "interruption-level": "passive",
+     "thread-id": "77777777-7777-4777-8777-777777777777"
+    },
+    "hk": {
+     "v": 1,
+     "accountId": "11111111-1111-4111-8111-111111111111",
+     "messageId": "88888888-8888-4888-8888-888888888888",
+     "channelId": "77777777-7777-4777-8777-777777777777",
+     "threadRootId": null
+    }
+   }
+  },
+  {
+   "input": {
+    "kind": "dm",
+    "accountId": "11111111-1111-4111-8111-111111111111",
+    "messageId": "88888888-8888-4888-8888-888888888888",
+    "channelId": "77777777-7777-4777-8777-777777777777",
+    "threadRootId": "99999999-9999-4999-8999-999999999999",
+    "authorHandle": "",
+    "channelName": null,
+    "badge": 154,
+    "previewBody": null,
+    "replyCount": 3,
+    "optionCount": 1,
+    "sound": true
+   },
+   "out": {
+    "aps": {
+     "alert": {
+      "title": "Harkroom",
+      "loc-key": "PUSH_REASON_DM"
+     },
+     "badge": 154,
+     "sound": "default",
+     "interruption-level": "active",
+     "thread-id": "77777777-7777-4777-8777-777777777777"
+    },
+    "hk": {
+     "v": 1,
+     "accountId": "11111111-1111-4111-8111-111111111111",
+     "messageId": "88888888-8888-4888-8888-888888888888",
+     "channelId": "77777777-7777-4777-8777-777777777777",
+     "threadRootId": "99999999-9999-4999-8999-999999999999"
+    }
+   }
+  },
+  {
+   "input": {
+    "kind": "dm",
+    "accountId": "11111111-1111-4111-8111-111111111111",
+    "messageId": "88888888-8888-4888-8888-888888888888",
+    "channelId": "77777777-7777-4777-8777-777777777777",
+    "threadRootId": "99999999-9999-4999-8999-999999999999",
+    "authorHandle": "",
+    "channelName": null,
+    "badge": 155,
+    "previewBody": "",
+    "replyCount": -1,
+    "optionCount": 2,
+    "sound": false
+   },
+   "out": {
+    "aps": {
+     "alert": {
+      "title": "Harkroom",
+      "loc-key": "PUSH_REASON_DM"
+     },
+     "badge": 155,
+     "interruption-level": "passive",
+     "thread-id": "77777777-7777-4777-8777-777777777777"
+    },
+    "hk": {
+     "v": 1,
+     "accountId": "11111111-1111-4111-8111-111111111111",
+     "messageId": "88888888-8888-4888-8888-888888888888",
+     "channelId": "77777777-7777-4777-8777-777777777777",
+     "threadRootId": "99999999-9999-4999-8999-999999999999"
+    }
+   }
+  },
+  {
+   "input": {
+    "kind": "dm",
+    "accountId": "11111111-1111-4111-8111-111111111111",
+    "messageId": "88888888-8888-4888-8888-888888888888",
+    "channelId": "77777777-7777-4777-8777-777777777777",
+    "threadRootId": null,
+    "authorHandle": "forge",
+    "channelName": "",
+    "badge": null,
+    "previewBody": "   ",
+    "replyCount": 0,
+    "optionCount": 0,
+    "sound": true
+   },
+   "out": {
+    "aps": {
+     "alert": {
+      "title": "@forge",
+      "loc-key": "PUSH_REASON_DM"
+     },
+     "sound": "default",
+     "interruption-level": "active",
+     "thread-id": "88888888-8888-4888-8888-888888888888"
+    },
+    "hk": {
+     "v": 1,
+     "accountId": "11111111-1111-4111-8111-111111111111",
+     "messageId": "88888888-8888-4888-8888-888888888888",
+     "channelId": "77777777-7777-4777-8777-777777777777",
+     "threadRootId": null
+    }
+   }
+  },
+  {
+   "input": {
+    "kind": "dm",
+    "accountId": "11111111-1111-4111-8111-111111111111",
+    "messageId": "88888888-8888-4888-8888-888888888888",
+    "channelId": "77777777-7777-4777-8777-777777777777",
+    "threadRootId": "99999999-9999-4999-8999-999999999999",
+    "authorHandle": "forge",
+    "channelName": "",
+    "badge": 157,
+    "previewBody": "hello",
+    "replyCount": 1,
+    "optionCount": 1,
+    "sound": false
+   },
+   "out": {
+    "aps": {
+     "alert": {
+      "title": "@forge",
+      "body": "hello"
+     },
+     "badge": 157,
      "interruption-level": "passive",
      "thread-id": "99999999-9999-4999-8999-999999999999"
     },
@@ -7761,9 +9246,9 @@
     "threadRootId": "99999999-9999-4999-8999-999999999999",
     "authorHandle": null,
     "channelName": "",
-    "badge": null,
-    "previewBody": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
-    "replyCount": -1,
+    "badge": 158,
+    "previewBody": "<@22222222-2222-4222-8222-222222222222> 일 끝 <@team:55555555-5555-4555-8555-555555555555> <@group:44444444-4444-4444-8444-444444444444> <@66666666-6666-4666-8666-666666666666>",
+    "replyCount": 2,
     "optionCount": 2,
     "sound": true
    },
@@ -7771,8 +9256,9 @@
     "aps": {
      "alert": {
       "title": "Harkroom",
-      "body": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy…"
+      "body": "@forge 일 끝 @devteam @ops @알 수 없음"
      },
+     "badge": 158,
      "sound": "default",
      "interruption-level": "active",
      "thread-id": "99999999-9999-4999-8999-999999999999"
@@ -7795,9 +9281,9 @@
     "threadRootId": null,
     "authorHandle": null,
     "channelName": "",
-    "badge": 141,
-    "previewBody": "가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가",
-    "replyCount": 0,
+    "badge": 159,
+    "previewBody": "a\n\n b\t　c﻿ de",
+    "replyCount": 3,
     "optionCount": 0,
     "sound": false
    },
@@ -7805,9 +9291,9 @@
     "aps": {
      "alert": {
       "title": "Harkroom",
-      "body": "가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가…"
+      "body": "a b c de"
      },
-     "badge": 141,
+     "badge": 159,
      "interruption-level": "passive",
      "thread-id": "88888888-8888-4888-8888-888888888888"
     },
@@ -7829,9 +9315,9 @@
     "threadRootId": "99999999-9999-4999-8999-999999999999",
     "authorHandle": "",
     "channelName": "",
-    "badge": 142,
-    "previewBody": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
-    "replyCount": 1,
+    "badge": null,
+    "previewBody": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "replyCount": -1,
     "optionCount": 1,
     "sound": true
    },
@@ -7839,9 +9325,8 @@
     "aps": {
      "alert": {
       "title": "Harkroom",
-      "body": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀…"
+      "body": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
      },
-     "badge": 142,
      "sound": "default",
      "interruption-level": "active",
      "thread-id": "99999999-9999-4999-8999-999999999999"
@@ -7864,9 +9349,9 @@
     "threadRootId": "99999999-9999-4999-8999-999999999999",
     "authorHandle": "",
     "channelName": "",
-    "badge": 143,
-    "previewBody": null,
-    "replyCount": 2,
+    "badge": 161,
+    "previewBody": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "replyCount": 0,
     "optionCount": 2,
     "sound": false
    },
@@ -7874,9 +9359,9 @@
     "aps": {
      "alert": {
       "title": "Harkroom",
-      "loc-key": "PUSH_REASON_DM"
+      "body": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
      },
-     "badge": 143,
+     "badge": 161,
      "interruption-level": "passive",
      "thread-id": "99999999-9999-4999-8999-999999999999"
     },
@@ -7908,6 +9393,12 @@
    "threadKey": "99999999-9999-4999-8999-999999999999",
    "messageId": "88888888-8888-4888-8888-888888888888",
    "out": "gate:88888888-8888-4888-8888-888888888888"
+  },
+  {
+   "kind": "check",
+   "threadKey": "99999999-9999-4999-8999-999999999999",
+   "messageId": "88888888-8888-4888-8888-888888888888",
+   "out": "88888888-8888-4888-8888-888888888888"
   },
   {
    "kind": "done",

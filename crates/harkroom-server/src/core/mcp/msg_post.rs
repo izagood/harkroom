@@ -1325,6 +1325,7 @@ mod tests {
             // 표지·차례 주인 재료는 TS 로(fail-closed).
             json!({ "channelId": C, "body": "x", "retryable": true, "code": "account_gate" }),
             json!({ "channelId": C, "body": "x", "retryable": true, "code": "thread_model_rejected" }),
+            json!({ "channelId": C, "body": "x", "retryable": true, "code": "inject_unconfirmed" }),
             json!({ "channelId": C, "body": "x", "retryable": true, "laneCode": "unknown" }),
             json!({ "channelId": C, "body": "x", "retryable": true, "mentionId": R }),
             json!({ "channelId": C, "body": "x", "retryable": true, "claudePoolRank": 1 }),

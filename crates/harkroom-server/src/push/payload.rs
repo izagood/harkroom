@@ -43,6 +43,7 @@ pub enum PushKind {
     Ask,
     Fail,
     Gate,
+    Check,
     Done,
     AgentReply,
     Mention,
@@ -56,6 +57,7 @@ impl PushKind {
             Self::Ask => "ask",
             Self::Fail => "fail",
             Self::Gate => "gate",
+            Self::Check => "check",
             Self::Done => "done",
             Self::AgentReply => "agent_reply",
             Self::Mention => "mention",
@@ -71,6 +73,7 @@ impl PushKind {
             Self::Ask => "PUSH_REASON_ASK",
             Self::Fail => "PUSH_REASON_FAIL",
             Self::Gate => "PUSH_REASON_GATE",
+            Self::Check => "PUSH_REASON_CHECK",
             Self::Done => "PUSH_REASON_DONE",
             Self::AgentReply => "PUSH_REASON_REPLIES",
         }
@@ -82,6 +85,7 @@ impl PushKind {
             Self::Ask => "PUSH_SUB_ASK",
             Self::Fail => "PUSH_SUB_FAIL",
             Self::Gate => "PUSH_SUB_GATE",
+            Self::Check => "PUSH_SUB_CHECK",
             Self::Done => "PUSH_SUB_DONE",
             Self::AgentReply => "PUSH_SUB_REPLIES",
             Self::Dm => return None,
@@ -109,10 +113,11 @@ pub fn classify_push(i: &ClassifyInput<'_>) -> PushKind {
         return PushKind::Ask;
     }
     if i.meta_kind == Some("failure") {
-        return if i.failure_code == Some("account_gate") {
-            PushKind::Gate
-        } else {
-            PushKind::Fail
+        // 주입 미확인(`inject_unconfirmed`)은 답할 질문이 없는 "터미널 확인" 이라 긴급이 아닌 `check` 다.
+        return match i.failure_code {
+            Some("account_gate") => PushKind::Gate,
+            Some("inject_unconfirmed") => PushKind::Check,
+            _ => PushKind::Fail,
         };
     }
     if i.reason == PushReason::Dm {

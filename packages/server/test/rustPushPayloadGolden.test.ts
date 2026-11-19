@@ -25,12 +25,12 @@ const META: (string | null)[] = [null, 'ask', 'failure', 'report', 'other'];
 
 const classify = [] as { input: Parameters<typeof classifyPush>[0]; kind: PushKind }[];
 for (const reason of REASONS) for (const authorKind of ['human', 'agent'] as const) for (const metaKind of META)
-  for (const failureCode of [null, 'account_gate', 'x']) for (const mineThread of [false, true]) {
+  for (const failureCode of [null, 'account_gate', 'inject_unconfirmed', 'x']) for (const mineThread of [false, true]) {
     const input = { reason, authorKind, metaKind, failureCode, mineThread };
     classify.push({ input, kind: classifyPush(input) });
   }
 
-const KINDS: PushKind[] = ['ask', 'fail', 'gate', 'done', 'agent_reply', 'mention', 'thread_reply', 'dm'];
+const KINDS: PushKind[] = ['ask', 'fail', 'gate', 'check', 'done', 'agent_reply', 'mention', 'thread_reply', 'dm'];
 const BODIES: (string | null)[] = [
   null, '', '   ', 'hello', `<@${AGENT}> 일 끝 <@${TEAM}> <@${GROUP}> <@${GONE}>`,
   'a\n\n b\t　c﻿ d\u0085e', 'x'.repeat(119), 'x'.repeat(120), 'y'.repeat(121), '가'.repeat(130), '😀'.repeat(125),

@@ -347,6 +347,14 @@ describe('종류별 규칙 (P1 — harkroom://message/5afd59e0-9e38-4273-8e9a-2a
     expect(aps(0)['interruption-level']).toBe('time-sensitive');
   });
 
+  it('주입 미확인 실패는 "터미널 확인" — 긴급이 아니다(time-sensitive 아님)', async () => {
+    const root = await myThread();
+    await reply(root, '@admin 확인', { kind: 'failure', failure: { retryable: true, code: 'inject_unconfirmed' } });
+    await due(); await sweeper().sweep();
+    expect(aps(0).alert).toMatchObject({ 'subtitle-loc-key': 'PUSH_SUB_CHECK', 'loc-key': 'PUSH_REASON_CHECK' });
+    expect(aps(0)).toMatchObject({ sound: 'default', 'interruption-level': 'active' });
+  });
+
   it('완료 보고는 "완료" — 소리 있는 active, 답과 같은 한 장을 갈아쓴다', async () => {
     const root = await myThread();
     await reply(root, '@admin 끝났다', { kind: 'report', report: { checks: ['ok'] } });

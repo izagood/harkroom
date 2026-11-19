@@ -818,6 +818,20 @@ describe('message.fail — 실패의 계약', () => {
       // 차례 주인을 못 정했으니 admin 에게 더 가지 않는다(머리 주인 other 는 평소대로 답글 알림을 받는다).
       expect((await inboxOf(adminAccountId)).length).toBe(before + 1);
 
+      // 주입 미확인은 관문이 아니다 — 표지만 남고 차례 주인·순번은 붙지 않는다.
+      const unconfirmed = text(await client.callTool({
+        name: 'message.fail',
+        arguments: {
+          channelId, threadRootId: root, body: 'x', retryable: true,
+          code: 'inject_unconfirmed', mentionId: mention, claudePoolRank: 1, claudeAccountRank: 2,
+        },
+      })) as { message: { meta: Record<string, unknown> } };
+      const unconfirmedMeta = readFailureMeta(unconfirmed.message.meta);
+      expect(unconfirmedMeta?.code).toBe('inject_unconfirmed');
+      expect(unconfirmedMeta?.awaitingAccountId).toBeUndefined();
+      expect(unconfirmedMeta?.claudePoolRank).toBeUndefined();
+      expect(unconfirmedMeta?.claudeAccountRank).toBeUndefined();
+
       // 순번 밖(0·100·소수)은 거절한다 — 계정 사실은 순번뿐이다(칩 ②).
       for (const bad of [0, 100, 1.5]) {
         const res = await client.callTool({

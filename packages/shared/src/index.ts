@@ -1646,6 +1646,9 @@ export interface FailureMeta {
      *   권한 확인에는 붙지 않는다(러너가 'startup' 일 때만 싣는다).
      * - `provider_lane`: API 키 연결(provider lane, `providerLane.ts`) 에이전트가 그 턴의 주소·키를 받지 못해 턴을 띄우지
      *   않았다. 다시 시도하지 않는다 — 고칠 곳은 데스크톱의 에이전트 설정이다. 까닭은 `laneCode` 에만 있다.
+     * - `inject_unconfirmed`: 러너가 프롬프트를 붙여 넣었지만 하네스에 들어갔다는 증거를 찾지 못했고 화면은
+     *   여전히 입력 칸이다. **답할 질문이 없다** — 그 터미널을 한 번 들여다보면 된다. `account_gate` 가
+     *   아니므로 🙋 턴이 아니다(`awaitingAccountId`·순번을 싣지 않는다). 푸시도 긴급이 아닌 `check` 로 간다.
      */
     code?: FailureCode;
     /** `provider_lane` 때만: 허용 목록의 까닭 코드(`PROVIDER_LANE_FAILURE_CODES`). 주소·비밀 이름·경로는 싣지 않는다. */
@@ -1668,7 +1671,7 @@ export interface FailureMeta {
 }
 
 /** `FailureMeta.failure.code` 의 값들. 서버 `message.fail` 입력이 이 목록으로 받는다. */
-export const FAILURE_CODES = ['thread_model_rejected', 'account_gate', 'provider_lane'] as const;
+export const FAILURE_CODES = ['thread_model_rejected', 'account_gate', 'provider_lane', 'inject_unconfirmed'] as const;
 export type FailureCode = (typeof FAILURE_CODES)[number];
 
 

@@ -20,7 +20,7 @@ export type PushReason = 'mention' | 'thread_reply' | 'dm' | 'ask';
  * 함께 보고 worker 가 정한다(`classifyPush`).
  */
 export type PushKind =
-  | 'ask' | 'fail' | 'gate' | 'done' | 'agent_reply'
+  | 'ask' | 'fail' | 'gate' | 'check' | 'done' | 'agent_reply'
   | 'mention' | 'thread_reply' | 'dm';
 
 export const PUSH_PREVIEW_MAX = 120;
@@ -48,7 +48,12 @@ export interface PushClassifyInput {
 
 export function classifyPush(i: PushClassifyInput): PushKind {
   if (i.reason === 'ask' || i.metaKind === 'ask') return 'ask';
-  if (i.metaKind === 'failure') return i.failureCode === 'account_gate' ? 'gate' : 'fail';
+  if (i.metaKind === 'failure') {
+    if (i.failureCode === 'account_gate') return 'gate';
+    // 주입 미확인 — 답할 질문이 없는 "터미널 확인" 이라 긴급(`URGENT`)에 넣지 않는다.
+    if (i.failureCode === 'inject_unconfirmed') return 'check';
+    return 'fail';
+  }
   if (i.reason === 'dm') return 'dm';
   if (i.authorKind === 'agent') {
     if (i.metaKind === 'report') return 'done';
@@ -70,6 +75,7 @@ export const PUSH_LOC_KEYS: Record<PushKind, string> = {
   ask: 'PUSH_REASON_ASK',
   fail: 'PUSH_REASON_FAIL',
   gate: 'PUSH_REASON_GATE',
+  check: 'PUSH_REASON_CHECK',
   done: 'PUSH_REASON_DONE',
   agent_reply: 'PUSH_REASON_REPLIES',
 };
@@ -81,6 +87,7 @@ export const PUSH_SUBTITLE_KEYS: Record<Exclude<PushKind, 'dm'>, string> = {
   ask: 'PUSH_SUB_ASK',
   fail: 'PUSH_SUB_FAIL',
   gate: 'PUSH_SUB_GATE',
+  check: 'PUSH_SUB_CHECK',
   done: 'PUSH_SUB_DONE',
   agent_reply: 'PUSH_SUB_REPLIES',
 };

@@ -17,6 +17,7 @@ fn kind(s: &str) -> PushKind {
         PushKind::Ask,
         PushKind::Fail,
         PushKind::Gate,
+        PushKind::Check,
         PushKind::Done,
         PushKind::AgentReply,
         PushKind::Mention,
@@ -32,7 +33,7 @@ fn kind(s: &str) -> PushKind {
 fn classify_matches_ts() {
     let g = golden();
     let rows = g["classify"].as_array().unwrap();
-    assert_eq!(rows.len(), 240);
+    assert_eq!(rows.len(), 320);
     for r in rows {
         let i = &r["input"];
         let got = classify_push(&ClassifyInput {
@@ -46,6 +47,43 @@ fn classify_matches_ts() {
     }
 }
 
+/// 주입 미확인 실패는 `check` — 긴급이 아니라 집중 모드를 뚫지 않고, 글마다 따로 남는다.
+#[test]
+fn inject_unconfirmed_is_non_urgent_check() {
+    for reason in [PushReason::Mention, PushReason::ThreadReply, PushReason::Dm] {
+        let got = classify_push(&ClassifyInput {
+            reason,
+            author_is_agent: true,
+            meta_kind: Some("failure"),
+            failure_code: Some("inject_unconfirmed"),
+            mine_thread: true,
+        });
+        assert_eq!(got, PushKind::Check);
+    }
+    assert!(!is_urgent(PushKind::Check));
+    assert!(is_urgent(PushKind::Gate));
+    assert_eq!(push_collapse_id(PushKind::Check, "t", "m"), "m");
+    let handles = HashMap::new();
+    let out = build_push_payload(&PayloadInput {
+        kind: PushKind::Check,
+        account_id: "a",
+        message_id: "m",
+        channel_id: "c",
+        thread_root_id: None,
+        author_handle: Some("forge"),
+        channel_name: Some("general"),
+        badge: None,
+        preview_body: None,
+        id_to_handle: &handles,
+        reply_count: 0,
+        option_count: 0,
+        sound: true,
+    });
+    assert_eq!(out["aps"]["interruption-level"], "active");
+    assert_eq!(out["aps"]["alert"]["subtitle-loc-key"], "PUSH_SUB_CHECK");
+    assert_eq!(out["aps"]["alert"]["loc-key"], "PUSH_REASON_CHECK");
+}
+
 #[test]
 fn payloads_match_ts() {
     let g = golden();
@@ -56,7 +94,7 @@ fn payloads_match_ts() {
         .map(|(k, v)| (k.clone(), v.as_str().unwrap().to_string()))
         .collect();
     let rows = g["payloads"].as_array().unwrap();
-    assert_eq!(rows.len(), 144);
+    assert_eq!(rows.len(), 162);
     for r in rows {
         let i = &r["input"];
         let got = build_push_payload(&PayloadInput {
