@@ -11338,6 +11338,44 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
               expect(a(2).body).toMatchObject({ message: { id: '<uuid>' }, plan: { ok: false, error: { code: 'no_plan' } } });
               expect(a(2).planRow).toBeNull();
             }
+            // P6-4b — `message.ask` 의 대신하기(supersedes). 옛 카드를 닫고, 옛 카드를 담은 묶음이 있으면 새 카드를 그 묶음의 줄로 더한다(TS carryBundleItem).
+            // 두 쪽에서 돌려 답·새 카드 meta·옛 카드 meta(닫힌 까닭)·묶음 줄을 견주고, Rust 가 실제로 답했는지도 본다.
+            {
+              const AS: [string, boolean][] = [
+                ['ask supersedes 묶음 없음 → 옛 카드 닫기', false],
+                ['ask supersedes 옛 카드가 묶음에 → 새 카드를 묶음 줄로', true],
+              ];
+              const OPTS = [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }];
+              const runS = async (base: string) => {
+                const out: Record<string, unknown>[] = [];
+                for (const [name, bundled] of AS) {
+                  const ch = await freshCh();
+                  const root = await ins({ ch, author: member.accountId, body: '고를 스레드' });
+                  const old = await ins({ ch, root, author: bot3.accountId, body: '옛 고르기', meta: { kind: 'ask', ask: { prompt: '옛 고르기', options: OPTS } } });
+                  const bundle = bundled
+                    ? await ins({ ch, author: member.accountId, body: '묶음', meta: { kind: 'askBundle', askBundle: { items: [{ rootId: old, askerId: null, channelId: ch, threadRootId: root, prompt: '옛 고르기', options: OPTS }] } } })
+                    : null;
+                  const r = await mcpCall(base, viaPat.token, 'message.ask', {
+                    channelId: ch, threadRootId: root, body: '새 고르기', options: OPTS, supersedes: [old] }, 7, {});
+                  const body = sse(r.text) as { message?: { id?: string } } | null;
+                  const metaOf = async (id: string | null | undefined) => id ? (await db.pool.query(`select meta from message where id = $1`, [id])).rows[0]?.meta ?? null : null;
+                  out.push({ name, status: r.status, rust: base === tsUrl ? true : r.core === 'mcp', body: shape(body),
+                    meta: shape(await metaOf(body?.message?.id)), old: shape(await metaOf(old)), bundle: shape(await metaOf(bundle)) });
+                }
+                return out;
+              };
+              const tsS = await runS(tsUrl);
+              const rsS = await runS(v2Url);
+              for (let i = 0; i < tsS.length; i++) expect(rsS[i], `장면 ${String(tsS[i]!.name)}`).toEqual(tsS[i]);
+              type SO = { body: Record<string, unknown>; old: { ask: Record<string, unknown> }; bundle: { askBundle: { items: { prompt?: string }[] } } | null };
+              const s = (i: number) => tsS[i] as unknown as SO;
+              expect(s(0).body).toMatchObject({ message: { id: '<uuid>' } });
+              expect(s(0).old.ask).toMatchObject({ closedReason: 'superseded', supersededBy: '<uuid>' });
+              expect(s(0).bundle).toBeNull();
+              expect(s(1).old.ask).toMatchObject({ closedReason: 'superseded' });
+              expect(s(1).bundle!.askBundle.items).toHaveLength(2);
+              expect(s(1).bundle!.askBundle.items[1]).toMatchObject({ rootId: '<uuid>' });
+            }
             // S5.4-15c — 팀장이 사람인 팀의 위임(MEM 이 이끄는 팀 → DEL4). 사람이라 호출 게이트 대신 팀 명단으로 지나고, 글은 사람 글이다.
             // 두 쪽이 같은 팀 행으로 같은 장면을 돌려 답·위임 행·부름·글 행을 견주고, Rust 가 실제로 답했는지(core === 'mcp')도 본다.
             // 팀장 FK(046)가 (팀, 팀장)을 명단에서 찾으므로 MEM 도 명단에 넣는다.
