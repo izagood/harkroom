@@ -27,6 +27,17 @@ pub fn reason_ko(r: Refusal) -> &'static str {
         "askCard" => {
             "선택 카드는 번호(「1번」)·선택지 이름·「추천대로」로 답한다. 카드에서 골라도 된다."
         }
+        "askMany" => {
+            "기다리는 선택 카드가 여럿이라 어느 것인지 모른다. 카드 링크 하나를 붙여 다시 쓴다."
+        }
+        "askNoMatch" => "맞는 선택지가 없다. 번호(「1번」)나 선택지 이름으로 다시 쓴다.",
+        "askNoRecommended" => {
+            "이 카드에는 추천 선택지가 하나로 정해져 있지 않다. 번호나 선택지 이름으로 다시 쓴다."
+        }
+        "askIrreversible" => {
+            "되돌릴 수 없는 일을 묻는 카드라 「추천대로」나 링크 없는 번호로는 고르지 않는다. 선택지 이름 그대로나 카드 링크와 번호로 다시 쓴다."
+        }
+        "askAnswered" => "이미 답한 카드다.",
         "hidden" => "볼 수 없는 채널의 카드다.",
         "headChanged" => "카드가 선 뒤 PR head 가 바뀌었다. 카드를 다시 확인하고 정한다.",
         "ciWord" => "CI 실패를 무시하는 카드는 글에 「CI 무시」(ignore CI)가 있어야 승인한다.",
@@ -55,7 +66,8 @@ pub fn refuse_line(msg_id: &str, why: Refusal) -> (String, Map<String, Value>) {
     let key = why.key();
     let head = match key {
         "denyNeedsLink" | "denyNotFinal" => "거절 안 됨",
-        "askCard" => "답 안 됨",
+        "askCard" | "askMany" | "askNoMatch" | "askNoRecommended" | "askIrreversible"
+        | "askAnswered" => "답 안 됨",
         _ => "승인 안 됨",
     };
     let mut meta = Map::new();
@@ -248,6 +260,11 @@ mod tests {
             Refusal::TooMany,
             Refusal::NoCard,
             Refusal::AskCard,
+            Refusal::AskMany,
+            Refusal::AskNoMatch,
+            Refusal::AskNoRecommended,
+            Refusal::AskIrreversible,
+            Refusal::AskAnswered,
             Refusal::Hidden,
             Refusal::HeadChanged,
             Refusal::CiWord,

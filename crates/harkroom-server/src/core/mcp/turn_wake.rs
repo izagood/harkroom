@@ -390,6 +390,8 @@ pub async fn answer(
     let audience = audience_for(&st.read, &a.channel).await.ok()?.to_json();
     let origin = Origin {
         defer_inbox_events: false,
+        chat_ask_rust: false,
+        close_asks_after_commit: false,
         cause: None,
         chain_cause,
         turn_id: turn.filter(|_| operator),

@@ -709,6 +709,8 @@ pub(super) async fn post_card(
     let audience = audience_for(&st.read, &a.channel).await.ok()?.to_json();
     let origin = Origin {
         defer_inbox_events: false,
+        chat_ask_rust: false,
+        close_asks_after_commit: false,
         cause,
         chain_cause: cause.filter(|_| operator),
         turn_id: turn.filter(|_| operator),
@@ -948,6 +950,8 @@ async fn post_with(
     let audience = audience_for(&st.read, &a.channel).await.ok()?.to_json();
     let origin = Origin {
         defer_inbox_events: false,
+        chat_ask_rust: false,
+        close_asks_after_commit: false,
         cause,
         chain_cause: cause.filter(|_| operator),
         turn_id: turn.filter(|_| operator),

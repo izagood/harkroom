@@ -375,6 +375,12 @@ pub(crate) struct Origin<'a> {
     /// P3b-2 — 받은 사람의 `inbox.updated` 를 커밋 tx 에서 내지 않는다. 호출자가 글 승인 판정 **뒤에** 낸다
     /// (TS 라우트는 `applyChatApproval` 뒤에 낸다 — security n2: 같은 스레드의 `thread_reply` 턴이 뜰 때 grant 가 이미 있게).
     pub(crate) defer_inbox_events: bool,
+    /// P3c — 사람 세션 REST 글이고 글 승인 입구가 켜졌다: 선택 카드 글 답(TS `answerAskFromMessage`)을 Rust 가 커밋 뒤에 한다.
+    /// [`TS_THREAD_SQL`] 의 ask 갈래를 끈다(TS `parseAskPick` 과 같은 판정을 Rust 가 하므로 넓게 넘길 까닭이 없다).
+    pub(crate) chat_ask_rust: bool,
+    /// P3c — 이 글이 카드 답이 될 수 있다(`parseAskPick` 이 Some). tx 안 [`ask_reply_close::close_by_reply`] 를 건너뛴다 —
+    /// 부르는 쪽이 커밋 뒤 TS 라우트 순서(카드 답 → `inbox.updated` → `closeAsksByReply`)로 닫는다. 먼저 닫으면 카드가 `replied` 가 돼 답이 안 된다.
+    pub(crate) close_asks_after_commit: bool,
 }
 
 /// TS `beforeCommit` 의 거절 — `{ status, code, message }`.
@@ -914,7 +920,9 @@ pub(crate) async fn post_tx(
             .bind(r)
             .bind(author)
             // 시스템 줄은 카드 답이 되지 않는다(TS `closeAsksByReply` 는 라우트 몫) — ask 갈래를 끈다.
-            .bind(origin.system || origin.service_call || question_only(body))
+            .bind(
+                origin.system || origin.service_call || origin.chat_ask_rust || question_only(body),
+            )
             .bind(v2.is_some())
             .fetch_one(&mut *tx)
             .await?;
@@ -1331,9 +1339,13 @@ pub(crate) async fn post_tx(
     }
     // TS 라우트는 `inbox.updated` 뒤에 `closeAsksByReply` 를 부른다(사람 글만) — 이 답보다 앞선 열린 카드를 `replied` 로 닫는다.
     // 시스템 줄은 라우트를 거치지 않는다(서버가 바로 `postMessage` 를 부른다) — 카드를 닫지 않는다.
-    if let (false, false, false, Some(r)) =
-        (author_is_agent, origin.system, origin.service_call, root)
-    {
+    if let (false, false, false, false, Some(r)) = (
+        author_is_agent,
+        origin.system,
+        origin.service_call,
+        origin.close_asks_after_commit,
+        root,
+    ) {
         let seq = row_value
             .get("seq")
             .and_then(Value::as_i64)
@@ -1602,11 +1614,13 @@ pub async fn post(
         return to_ts(st.up.clone(), peer, parts, bytes).await;
     }
     // 글 승인 판정은 사람 세션 글만(TS 라우트). 선택 카드를 링크한 글은 TS P5(`answerAskFromMessage`) 몫 — 쓰기 전에 넘긴다.
-    let chat_apply =
-        chat_on && human_session && super::chat_approval_apply::wants_chat_approval(&input.body);
-    if chat_apply && super::chat_approval_apply::links_ask_card(&st.read, &input.body).await {
-        return to_ts(st.up.clone(), peer, parts, bytes).await;
-    }
+    // P3c — 선택 카드 글 답(TS P5 `answerAskFromMessage`)도 Rust 가 커밋 뒤에 한다(`chat_ask`). 카드 닫기는 그 뒤로 미룬다.
+    let chat_ask =
+        chat_on && human_session && super::chat_approval_apply::wants_ask_pick(&input.body);
+    let chat_apply = chat_ask
+        || (chat_on
+            && human_session
+            && super::chat_approval_apply::wants_chat_approval(&input.body));
     let preview_urls = extract_preview_urls(&input.body, 3);
     // TS `channelPostGate` — 없는 채널은 'ok'(insert 가 FK 로 실패해 500, TS 와 같다).
     let gate: Option<(bool, bool)> = match sqlx::query_as(sql().gate.as_str())
@@ -1685,6 +1699,8 @@ pub async fn post(
         &Origin {
             before_commit: hook.as_ref().map(|h| h as &dyn BeforeCommit),
             defer_inbox_events: chat_apply,
+            chat_ask_rust: chat_on && human_session,
+            close_asks_after_commit: chat_ask,
             ..Origin::default()
         },
     )
@@ -1739,6 +1755,10 @@ pub async fn post(
                 }
                 if let Err(e) = emit_inbox_updated(&st.write, &notified).await {
                     eprintln!("front: deferred inbox.updated failed ({e})");
+                }
+                // TS 라우트: `inbox.updated` 뒤 `closeAsksByReply` — 답한 카드는 이미 답이 있어 닫히지 않는다.
+                if chat_ask {
+                    super::chat_approval_apply::close_after(st, &row, &me.id).await;
                 }
             }
             // TS 는 지정의 시스템 줄을 `message.created` 앞에 낸다 — Rust 는 커밋 뒤라 그 뒤다(지정 행 자체는 같은 tx 에 들어갔다).

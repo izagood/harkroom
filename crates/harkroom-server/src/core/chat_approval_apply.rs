@@ -3,8 +3,8 @@
 //! 고르기([`super::chat_approval_pick::select`]) → 정하기([`super::chat_approval_decide::decide_one`]) → 줄
 //! ([`super::chat_approval_notice`]). 글은 이미 커밋됐다 — 실패해도 던지지 않고 로그만 남긴다(TS 와 같다).
 //!
-//! 선택 카드 글 답(TS `answerAskFromMessage`, P5)은 여기 오지 않는다: 같은 스레드에 열린 카드가 있으면 글째 TS 로 가고
-//! (`msg_post::TS_THREAD_SQL`), 카드 링크가 선택 카드를 가리키면 쓰기 전에 [`links_ask_card`] 가 TS 로 넘긴다.
+//! 선택 카드 글 답(TS `answerAskFromMessage`, P5)을 먼저 본다([`super::chat_approval_ask`]) — 다뤘으면 권한 판정은 하지 않는다.
+//! 카드 `replied` 닫기는 부르는 쪽이 이 판정 뒤에 [`close_after`] 로 한다.
 
 use super::ask::AskState;
 use super::chat_approval_decide::decide_one;
@@ -13,31 +13,36 @@ use super::chat_approval_notice::{
 };
 use super::chat_approval_parse::{parse_ask_pick, parse_chat_approval};
 use super::chat_approval_pick::{PostedMsg, Selection, select};
-use super::decide_core::{DecisionRef, resolve_decision};
 use super::msg_post::PostState;
 use serde_json::Value;
-use sqlx::PgPool;
 
-/// 쓰기 **전**: 이 글이 선택 카드 답(TS P5)이 될 수 있는 카드 링크를 품는가 — 그러면 글째 TS 로 넘긴다(커밋 뒤에는 넘길 수 없다).
-/// 읽기 실패·이상한 거울은 넘기는 쪽(true)으로.
-pub async fn links_ask_card(read: &PgPool, body: &str) -> bool {
-    let Some(p) = parse_ask_pick(body) else {
-        return false;
+/// 이 글이 선택 카드 답(TS `parseAskPick`)이 될 수 있는가(쓰기 전, 순수) — 되면 카드 닫기를 커밋 뒤 답 다음으로 미룬다.
+pub fn wants_ask_pick(body: &str) -> bool {
+    parse_ask_pick(body).is_some()
+}
+
+/// 커밋 뒤 TS `closeAsksByReply`(사람 글) — 카드 답을 먼저 적은 뒤에 부른다. 던지지 않는다.
+pub async fn close_after(post: &PostState, row: &str, actor: &str) {
+    let Some(msg) = posted_from_row(row) else {
+        return;
     };
-    if p.card_ids.is_empty() {
-        return false;
+    let r: sqlx::Result<()> = async {
+        let mut tx = post.write.begin().await?;
+        super::ask_reply_close::close_by_reply(
+            &mut tx,
+            msg.thread_root(),
+            &msg.channel_id,
+            msg.seq,
+            actor,
+            &msg.id,
+        )
+        .await?;
+        tx.commit().await
     }
-    let Ok(mut conn) = read.acquire().await else {
-        return true;
-    };
-    for id in &p.card_ids {
-        match resolve_decision(&mut conn, id).await {
-            Ok(Some(DecisionRef::Ask { .. })) => return true,
-            Ok(_) => {}
-            Err(_) => return true,
-        }
+    .await;
+    if let Err(e) = r {
+        eprintln!("[ask_replied] closing asks by reply failed (the reply is posted): {e}");
     }
-    false
 }
 
 /// 이 글을 글 승인 판정이 볼 것인가(쓰기 전, 순수) — 보면 `inbox.updated` 를 판정 뒤로 미룬다(TS security n2).
@@ -64,12 +69,28 @@ pub fn posted_from_row(row: &str) -> Option<PostedMsg> {
     })
 }
 
-/// TS `applyChatApproval`(권한 쪽). 부르는 쪽이 사람 세션 글임을 확인했다.
+/// TS `applyChatApproval`. 부르는 쪽이 사람 세션 글임을 확인했다.
 pub async fn apply(ask: &AskState, post: &PostState, msg: &PostedMsg, body: &str, actor: &str) {
-    let Some(parsed) = parse_chat_approval(body) else {
-        return;
-    };
+    let parsed = parse_chat_approval(body);
+    let pick = parse_ask_pick(body);
     let r: sqlx::Result<()> = async {
+        // 선택 카드 답(P5)을 먼저 본다 — 가리킨 선택 카드가 없으면 권한 승인 판정으로 넘어간다.
+        if let Some(p) = &pick
+            && super::chat_approval_ask::answer_from_message(
+                ask,
+                post,
+                msg,
+                actor,
+                p,
+                parsed.as_ref(),
+            )
+            .await?
+        {
+            return Ok(());
+        }
+        let Some(parsed) = parsed else {
+            return Ok(());
+        };
         let sel = {
             let mut conn = ask.read.acquire().await?;
             select(&mut conn, msg, body, actor, &parsed).await?

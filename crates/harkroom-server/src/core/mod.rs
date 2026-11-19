@@ -73,6 +73,7 @@ pub mod channel_read_write;
 pub mod channel_team_add;
 pub mod channels;
 pub mod chat_approval_apply;
+pub mod chat_approval_ask;
 pub mod chat_approval_decide;
 pub mod chat_approval_notice;
 pub mod chat_approval_parse;
