@@ -62,6 +62,7 @@ pub mod avatar_write;
 pub mod cause_link;
 pub mod chain_backstop;
 pub mod chain_stall;
+pub mod chat_approval_parse;
 pub mod channel_auto_mention_doc;
 pub mod channel_create_update;
 pub mod channel_delete;
