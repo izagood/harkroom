@@ -10268,7 +10268,12 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                 }
               }),
               dl(() => ({ to: ['c3b2c4del'], agentModels: [] }), true, 'delegate agentModels 빈 목록'),
-              dl((_c, root) => ({ to: ['c3b2c4del'], planRootId: root, planGroupId: 'g1' }), false, 'delegate 계획판 → TS'),
+              // P6-5 — 계획판 칸의 짝·자기 연결 거절은 Rust(가시성 뒤·자기 위임 앞). zod 가 받지 않을 꼴은 TS 의 검증 오류다.
+              dl((_c, root) => ({ to: ['c3b2c4del'], planRootId: root, planGroupId: 'g1' }), true, 'delegate 계획판 자기 스레드 → self_link'),
+              dl((_c, root) => ({ to: ['c3b2c4del'], planRootId: root.toUpperCase(), planGroupId: 'g1' }), true, 'delegate 계획판 자기 스레드(대문자) → self_link'),
+              dl(() => ({ to: ['c3b2c4del'], planGroupId: 'g1' }), true, 'delegate 계획판 칸 하나만 → bad_request'),
+              dl(() => ({ to: ['C1C4CBOT'], planRootId: randomUUID() }), true, 'delegate 계획판 칸 하나만 · 자기 위임 → bad_request 가 먼저'),
+              dl(() => ({ to: ['c3b2c4del'], planRootId: randomUUID(), planGroupId: 'g0' }), false, 'delegate 계획판 틀린 그룹 꼴 → TS'),
             ];
           })(),
           ['ask 권한 거울 · tool(같은 카드)', mirrorAsk({ kind: 'tool', target: 'Bash(echo e:*)', reason: '빌드에 필요' }), true],
@@ -11191,7 +11196,15 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                 `insert into agent_presence (account_id, expires_at, updated_at) values ($1, now() + interval '30 seconds', now())
                  on conflict (account_id) do update set expires_at = excluded.expires_at, updated_at = now()`, [acc]);
             };
-            const DW: [string, (ch: string, root: string) => Promise<{ args: Record<string, unknown>; cause?: string }>][] = [
+            // P6-5 — 부모 계획(그룹 g1, 앞 단계 g2)을 같은 채널의 다른 머리에 깐다. `linked` 를 주면 g1 이 이미 그 스레드에 이어져 있다.
+            const parentPlan = async (ch: string, linked: string | null) => {
+              const p = await ins({ ch, author: member.accountId, body: '부모 계획' });
+              await db.pool.query(`insert into thread_plan (root_id, channel_id, doc, rev, updated_by, updated_at) values ($1, $2, $3::jsonb, 2, $4, now() - interval '1 minute')`,
+                [p, ch, JSON.stringify({ goal: '부모', groups: [{ id: 'g1', title: '맡길 묶음', ...(linked ? { linkedRootId: linked } : {}), dependsOn: [] }, { id: 'g2', title: '내 묶음', dependsOn: ['g1'] }],
+                  steps: [{ id: 's1', groupId: 'g2', title: '마무리', state: 'pending', links: [], dependsOn: [] }] }), member.accountId]);
+              return p;
+            };
+            const DW: [string, (ch: string, root: string) => Promise<{ args: Record<string, unknown>; cause?: string; plan?: boolean }>][] = [
               ['delegate 접속한 담당 → 글·의무·부름', async () => ({ args: { to: ['C3B2C4DEL'], body: '맡아 줘', deadlineSec: 900, model: 'claude-opus-5' } })],
               ['delegate 본문 멘션 → mention 부름을 위임 부름으로', async () => ({ args: { to: ['c3b2c4del'], body: '@c3b2c4del 맡아 줘' } })],
               ['delegate 접속 안 한 담당 섞임 → unreachable', async () => ({ args: { to: ['c3b2c4off', 'c3b2c4del'], body: '둘이 맡아 줘' } })],
@@ -11202,6 +11215,13 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                 await db.pool.query(`insert into team_delegation_item (delegation_id, delegate_account_id) values ($1, $2)`, [d, del4.accountId]);
                 return { args: { to: ['c3b2c4del'], body: '이어서 맡아 줘' } };
               }],
+              // P6-5 — 위임 글이 선 뒤 부모 계획의 그룹을 잇는다. 결과·거절은 답의 plan 칸에만 실리고 위임은 되돌리지 않는다.
+              ['delegate 계획판 잇기 → plan ok', async (ch) => ({ args: { to: ['c3b2c4del'], body: '맡아 줘', planRootId: await parentPlan(ch, null), planGroupId: 'g1' }, plan: true })],
+              ['delegate 계획판 없는 그룹 → plan unknown_item', async (ch) => ({ args: { to: ['c3b2c4del'], body: '맡아 줘', planRootId: await parentPlan(ch, null), planGroupId: 'g7' }, plan: true })],
+              ['delegate 계획판 다른 스레드에 이어진 그룹 → plan group_already_linked', async (ch) => ({
+                args: { to: ['c3b2c4del'], body: '맡아 줘', planRootId: await parentPlan(ch, await ins({ ch, author: member.accountId, body: '다른 일' })), planGroupId: 'g1' }, plan: true })],
+              ['delegate 계획판 없는 부모 → plan no_plan', async (ch) => ({
+                args: { to: ['c3b2c4del'], body: '맡아 줘', planRootId: await ins({ ch, author: member.accountId, body: '계획 없음' }), planGroupId: 'g1' }, plan: true })],
               ['delegate 사슬 상한 → chain_limit(아무것도 안 씀)', async (ch, root) => {
                 const call = await ins({ ch, root, author: bot2.accountId, body: `<@${bot3.accountId}> 넘겨 줘`, depth: 40 });
                 await wokeBy(call);
@@ -11227,8 +11247,13 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                 const inbox = body?.message?.id ? (await db.pool.query(
                   `select account_id::text as acc, reason, team_id from inbox where message_id = $1 order by account_id, reason`, [body.message.id])).rows : [];
                 const meta = body?.message?.id ? (await db.pool.query(`select meta from message where id = $1`, [body.message.id])).rows[0]?.meta : null;
+                // P6-5 — 부모 계획판(판·rev·이은 줄)도 견준다.
+                const planRow = st.plan ? shape((await db.pool.query(
+                  `select p.doc, p.rev, p.updated_by::text as by,
+                          coalesce((select json_agg(l.child_root::text order by l.child_root) from thread_plan_link l where l.parent_root = p.root_id), '[]') as links
+                     from thread_plan p where p.root_id = $1`, [st.args.planRootId])).rows[0] ?? null) : undefined;
                 out.push({ name, status: r.status, rust: base === tsUrl ? true : r.core === 'mcp', body: shape(body), row: await facts(body?.message?.id, st.cause),
-                  deleg: shape(deleg.map((x) => ({ ...x, span: x.span ? 'span' : null }))), inbox: shape(inbox), meta: shape(meta) });
+                  deleg: shape(deleg.map((x) => ({ ...x, span: x.span ? 'span' : null }))), inbox: shape(inbox), meta: shape(meta), planRow });
               }
               return out;
             };
@@ -11249,6 +11274,18 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             if (v1) expect(w('delegate 앞 의무(같은 담당) → v1 은 대체').deleg[0]).toMatchObject({ notified: true });
             expect(w('delegate 사슬 상한 → chain_limit(아무것도 안 씀)').body).toMatchObject({ error: { code: 'chain_limit' } });
             expect(w('delegate 사슬 상한 → chain_limit(아무것도 안 씀)').deleg).toEqual([]);
+            type PW = WO & { planRow: { doc: { groups: { id: string; linkedRootId?: string }[] }; rev: number; links: string[] } | null };
+            const pw = (n: string) => (tsW as PW[]).find((x) => x.name === n)!;
+            expect(pw('delegate 계획판 잇기 → plan ok').body).toMatchObject({ delegated: ['c3b2c4del'], plan: { ok: true, rev: 3 } });
+            expect(pw('delegate 계획판 잇기 → plan ok').planRow).toMatchObject({ rev: 3, links: ['<uuid>'], doc: { groups: [{ id: 'g1', linkedRootId: '<uuid>' }, { id: 'g2' }] } });
+            expect(pw('delegate 계획판 없는 그룹 → plan unknown_item').body).toMatchObject({ delegated: ['c3b2c4del'], plan: { ok: false, error: { code: 'unknown_item', id: 'g7' } } });
+            expect(pw('delegate 계획판 없는 그룹 → plan unknown_item').planRow).toMatchObject({ rev: 2 });
+            expect(pw('delegate 계획판 다른 스레드에 이어진 그룹 → plan group_already_linked').body).toMatchObject({ plan: { ok: false, error: { code: 'group_already_linked', id: 'g1' } } });
+            expect(pw('delegate 계획판 다른 스레드에 이어진 그룹 → plan group_already_linked').planRow).toMatchObject({ rev: 2 });
+            expect(pw('delegate 계획판 없는 부모 → plan no_plan').body).toMatchObject({ delegated: ['c3b2c4del'], plan: { ok: false, error: { code: 'no_plan' } } });
+            for (const n of ['delegate 계획판 잇기 → plan ok', 'delegate 계획판 없는 그룹 → plan unknown_item', 'delegate 계획판 다른 스레드에 이어진 그룹 → plan group_already_linked', 'delegate 계획판 없는 부모 → plan no_plan']) {
+              expect((rsW as { name: string; rust: boolean }[]).find((x) => x.name === n)!.rust, n).toBe(true);
+            }
             // 접속 확인 지연 — TS 는 메모리, Rust 는 DB 를 본다. TS 는 DB 를 10초에 한 번만 고쳐 쓰므로 DB 의 만료가 메모리보다 최대 10초 이르다.
             // 그 창(메모리는 살아 있고 DB 는 만료)을 만들어 두 쪽을 따로 잰다 — 같지 않은 것이 기대값이다(Rust 가 먼저 unreachable).
             if (v1) {
