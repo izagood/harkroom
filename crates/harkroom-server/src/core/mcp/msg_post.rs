@@ -955,7 +955,10 @@ async fn post_with(
     let origin = Origin {
         plan_auto_stamp: None,
         defer_inbox_events: false,
-        chat_ask_rust: false,
+        // 대신하기 카드(P6-4b) — 스레드에 옛 카드가 열려 있으니 [`msg_post::post_in_tx`] 의 카드 답 갈래(`TS_THREAD_SQL`)가 TS 로 넘긴다.
+        // 그러나 TS `closeAsksByReply` 는 REST 라우트의 사람 글에서만 불리고(MCP `message.ask` 는 닿지 않는다), 에이전트 글은 Rust 도
+        // 카드를 닫지 않는다 — 그래서 에이전트의 대신하기 카드만 그 갈래를 끈다(사람 작성자는 지금처럼 TS).
+        chat_ask_rust: !supersedes.is_empty() && me.kind == "agent",
         close_asks_after_commit: false,
         cause,
         chain_cause: cause.filter(|_| operator),
