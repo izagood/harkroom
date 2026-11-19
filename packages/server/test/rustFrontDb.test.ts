@@ -17,6 +17,7 @@ import { agentPat, bootstrapAdmin, createAgent, createMember, registerOperator }
 import { startTestDb } from './helpers/testDb.js';
 import { fanOutCalls, postMessage, resolveMentionCalls } from '../src/services/messages.js';
 import { addMandateLine } from '../src/services/mandateLines.js';
+import { openPermissionRequest } from '../src/services/permissionRequests.js';
 import { mkdtempSync, writeFileSync as writeCases } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join as joinPath } from 'node:path';
@@ -12618,7 +12619,10 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
               const dUnset = await deadFront('');
               for (const d of [dOff, dOn]) {
                 expect(d.log(), UNSET_LINE).not.toContain(UNSET_LINE);
-                for (const off of ['merge checks deny off', 'merge checks allow off', 'merge checks card off', 'merge checks mandate shadow off', 'merge checks mandate enforce off']) {
+                for (const off of ['merge checks deny off', 'merge checks allow off', 'merge checks card off', 'merge checks mandate shadow off', 'merge checks mandate enforce off',
+                  // 14) 장면의 다섯 코어 — 시험 GRANT(F4 와 같은 칸)만으로 다 켜져야 한다.
+                  'merge checks approval off', 'merge results gate off', 'merge results write off', 'merge closed core off', 'merge denial grant core off',
+                  'permission merge once core off']) {
                   expect(d.log(), off).not.toContain(off);
                 }
               }
@@ -12772,6 +12776,137 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                 expect(u.effects, '스위치 모름: queued — 아무것도 적지 않는다').toEqual({ lines: [], audit: [], watches: [] });
               } finally {
                 if (prevV2 === undefined) delete process.env.HARKROOM_DELEGATION_V2; else process.env.HARKROOM_DELEGATION_V2 = prevV2;
+              }
+              // 14) 남은 다섯 장면(스위치 꺼짐, 앞단은 닿지 않는 upstream) — ① 1회 승인 소모(`merge_approval.used_at`) ② merge-results 쓰기
+              // (merged·failed·CI 거절·시스템 줄 — queued 는 13b) ③ `/agent/merge-closed` ④ 카드 [7일 허락](권한 요청 카드 approve · 옛 거절 카드 REST)
+              // ⑤ 카드 [이번 한 번](approve-once). 장면마다 쪽별로 새 턴을 세우고 같은 순서로 부른 뒤 응답·감사·시스템 줄·표 상태를 견준다.
+              // 502(TS 로 넘김)가 섞이면 TS 와 답이 달라지므로, 같다는 것이 곧 「Rust 가 직접 답했다」는 증명이다.
+              delete process.env.HARKROOM_MANDATE_ENFORCE;
+              {
+                const MR = '/agent/merge-results';
+                const MCL = '/agent/merge-closed';
+                const NEW_SCOPES = ['izagood/s55mc-once1', 'izagood/s55mc-cl', 'izagood/s55mc-g7', 'izagood/s55mc-g7old'].map((r) => `repo:${r}`);
+                type Step = { step: string; status: number; json: unknown };
+                const where = async (x: McFx) => (await db.pool.query<{ ch: string; th: string }>(
+                  `select channel_id::text as ch, thread_root_id::text as th from secret_turn_lease where id = $1`,
+                  [(x.body as { leaseId: string }).leaseId])).rows[0]!;
+                const lb = (x: McFx) => {
+                  const b = x.body as { leaseId: string; token: string; repo: string; number: number; headSha: string };
+                  return { leaseId: b.leaseId, token: b.token, repo: b.repo, number: b.number, headSha: b.headSha };
+                };
+                const deny = (s: Step) => (s.json as { error?: { denialId?: string } }).error?.denialId;
+                const openCard = async (x: McFx, denialId: string) => {
+                  const w = await where(x);
+                  const o = await openPermissionRequest(db.pool, {
+                    agentId: mc.accountId, kind: 'merge', repo: lb(x).repo, reason: 's55mc 카드', channelId: w.ch, threadRootId: w.th,
+                    denial: { id: denialId, number: 7, headSha: SHA40, reason: 'not_granted' },
+                  });
+                  expect(o.ok && 'created' in o, JSON.stringify(o)).toBe(true);
+                  return o.ok && 'created' in o ? o.created.requestId : '';
+                };
+                const flow = async (base: string, label: string, script: (call: (name: string, path: string, body: unknown, headers: Record<string, string>) => Promise<Step>) => Promise<void>) => {
+                  const mark = (await db.pool.query<{ a: string; s: string }>(
+                    `select (select coalesce(max(id), 0)::text from audit_log) as a, (select coalesce(max(seq), 0)::text from message) as s`)).rows[0]!;
+                  const steps: Step[] = [];
+                  const call = async (name: string, path: string, body: unknown, headers: Record<string, string>) => {
+                    const r = await raw(base, path, body, headers);
+                    const s = { step: name, status: r.status, json: r.json };
+                    steps.push(s);
+                    return s;
+                  };
+                  await script(call);
+                  const audit = (await db.pool.query(
+                    `select action, actor_id, target, detail from audit_log where id > $1 and (actor_id = $2::uuid or target = $2::text) order by id`, [mark.a, mc.accountId])).rows;
+                  const msgs = (await db.pool.query(
+                    `select kind, author_id, body, meta, thread_root_id is not null as threaded from message
+                      where seq > $1 and channel_id = $2 and kind <> 'user' order by seq`, [mark.s, todayId])).rows;
+                  const denials = (await db.pool.query(
+                    `select reason, scope, pr_number, used_at is not null as used, used_by, obsoleted_at is not null as obsoleted
+                       from merge_denial where agent_id = $1 order by created_at, reason`, [mc.accountId])).rows;
+                  const approvals = (await db.pool.query(
+                    `select scope, pr_number, head_sha, gh_user, relax_checks, ci_override, approved_checks, approved_by, used_at is not null as used,
+                            used_lease_id is not null as used_by_lease, expires_at > now() as live
+                       from merge_approval where agent_id = $1 order by approved_at`, [mc.accountId])).rows;
+                  const requests = (await db.pool.query(
+                    `select kind, target, status, denial_id is not null as from_denial, decided_by from permission_request where agent_id = $1 order by created_at`,
+                    [mc.accountId])).rows;
+                  const grants = (await db.pool.query(
+                    `select scope, granted_by, allow_agent_cause, round(extract(epoch from expires_at - now()) / 86400) as days
+                       from account_grant where account_id = $1 and capability = 'repo.merge' and scope = any($2) order by scope`, [mc.accountId, NEW_SCOPES])).rows;
+                  // 쪽끼리 섞이지 않게 이 장면이 만든 것을 지운다(장면 끝마다 — 다음 쪽은 같은 저장소·PR 로 새로 시작한다).
+                  await db.pool.query(`delete from permission_request where agent_id = $1`, [mc.accountId]);
+                  await db.pool.query(`delete from merge_approval where agent_id = $1`, [mc.accountId]);
+                  await db.pool.query(`delete from merge_denial where agent_id = $1`, [mc.accountId]);
+                  await db.pool.query(`delete from account_grant where account_id = $1 and capability = 'repo.merge' and scope = any($2)`, [mc.accountId, NEW_SCOPES]);
+                  return { label, steps, effects: { audit, msgs, denials, approvals, requests, grants } };
+                };
+                const S = { authorization: `Bearer ${A}` };
+                const both = async (label: string, script: Parameters<typeof flow>[2]) => {
+                  const a = await flow(tsUrl, label, script);
+                  const b = await flow(dOff.url, label, script);
+                  expect(norm(b.steps), `${label} — 응답(Rust 가 직접 답한다)`).toEqual(norm(a.steps));
+                  expect(norm(b.effects), `${label} — 부작용`).toEqual(norm(a.effects));
+                  return a;
+                };
+                // ⑤ → ① → ②: 거절 카드 [이번 한 번] → 같은 임대로 다시 판정하면 승인을 쓴다 → 머지 보고(1회 승인 줄).
+                const once = await both('⑤ 이번 한 번 → ① 승인 소모 → ② merged', async (call) => {
+                  const x = await turn('izagood/s55mc-once1');
+                  const d = deny(await call('판정 → not_granted', MC, x.body, x.headers));
+                  const rid = await openCard(x, d!);
+                  await call('[이번 한 번]', `/agents/${mc.accountId}/permission-requests/${rid}/approve-once`, { number: 7, headSha: SHA40, ghUser: null }, S);
+                  await call('[이번 한 번] 다시 → 409', `/agents/${mc.accountId}/permission-requests/${rid}/approve-once`, { number: 7, headSha: SHA40, ghUser: null }, S);
+                  await call('다시 판정 → 1회 승인 소모', MC, x.body, x.headers);
+                  await call('merged 보고', MR, { ...lb(x), result: 'merged', mergeSha: 'd'.repeat(40), ghUserUsed: 'octo-bot' }, x.headers);
+                  await call('merged 다시 → 409', MR, { ...lb(x), result: 'merged', mergeSha: 'd'.repeat(40) }, x.headers);
+                });
+                expect(once.steps.map((s) => s.status)).toEqual([403, 200, 409, 200, 201, 409]);
+                expect(once.effects.approvals).toMatchObject([{ used: true, used_by_lease: true, gh_user: null }]);
+                expect(once.effects.msgs.length, '1회 승인 줄·머지 줄').toBeGreaterThanOrEqual(2);
+                // ② grant 있는 저장소의 보고 갈래 — merged(무시한 체크 꼬리)·failed·CI 거절(denialId)·판정 없는 보고.
+                const res = await both('② merge-results', async (call) => {
+                  const cases: Array<[string, Record<string, unknown>]> = [
+                    ['merged + 무시한 체크', { result: 'merged', mergeSha: 'e'.repeat(40), ignoredChecks: ['flaky-e2e'] }],
+                    ['failed', { result: 'failed', error: 'merge conflict' }],
+                    ['failed CI 거절', { result: 'failed', error: 'ci', ciRefusal: { code: 'ci_not_green', mergeState: 'BLOCKED', checks: ['build', 'lint'] } }],
+                  ];
+                  for (const [name, extra] of cases) {
+                    const x = await turn('izagood/s55mc-ok');
+                    await call(`${name} 판정`, MC, x.body, x.headers);
+                    await call(`${name} 보고`, MR, { ...lb(x), ...extra }, x.headers);
+                  }
+                  const y = await turn('izagood/s55mc-ok');
+                  await call('판정 없이 보고 → 409', MR, { ...lb(y), result: 'merged', mergeSha: 'f'.repeat(40) }, y.headers);
+                });
+                expect(res.steps.map((s) => s.status)).toEqual([200, 201, 200, 201, 200, 201, 409]);
+                expect((res.steps[5]!.json as { denialId?: string }).denialId, 'CI 거절은 카드용 denialId').toBeTruthy();
+                // ② queued 는 13b 가 v2=1·0·모름 세 앞단으로 견준다(감시 포함).
+                // ③ merge-closed — 기다리는 거절 카드를 닫고, 닫을 것이 없으면 409 no_card.
+                const cl = await both('③ merge-closed', async (call) => {
+                  const x = await turn('izagood/s55mc-cl');
+                  const d = deny(await call('판정 → not_granted', MC, x.body, x.headers));
+                  await openCard(x, d!);
+                  const { headSha: _h, ...c } = lb(x);
+                  await call('MERGED', MCL, { ...c, state: 'MERGED' }, x.headers);
+                  await call('다시 → 409 no_card', MCL, { ...c, state: 'CLOSED' }, x.headers);
+                  await call('저장소 틀림 → 400', MCL, { ...c, repo: 'noslash', state: 'CLOSED' }, x.headers);
+                });
+                expect(cl.steps.map((s) => s.status)).toEqual([403, 200, 409, 400]);
+                expect(cl.effects.requests).toMatchObject([{ status: 'obsolete' }]);
+                // ④ [7일 허락] — 권한 요청 카드 approve(새 카드)와 옛 거절 카드 REST(`merge-denials/:id/grant`).
+                const g7 = await both('④ 7일 허락', async (call) => {
+                  const x = await turn('izagood/s55mc-g7');
+                  const d = deny(await call('판정 → not_granted', MC, x.body, x.headers));
+                  const rid = await openCard(x, d!);
+                  await call('[7일 허락]', `/agents/${mc.accountId}/permission-requests/${rid}/approve`, {}, S);
+                  await call('[7일 허락] 다시 → 409', `/agents/${mc.accountId}/permission-requests/${rid}/approve`, {}, S);
+                  await call('다시 판정 → 허락', MC, x.body, x.headers);
+                  const y = await turn('izagood/s55mc-g7old');
+                  const e = deny(await call('옛 카드 판정 → not_granted', MC, y.body, y.headers));
+                  await call('옛 카드 [7일 주기]', `/agents/${mc.accountId}/merge-denials/${e}/grant`, {}, S);
+                  await call('옛 카드 다시 → 409', `/agents/${mc.accountId}/merge-denials/${e}/grant`, {}, S);
+                });
+                expect(g7.steps.map((s) => s.status)).toEqual([403, 200, 409, 200, 403, 200, 409]);
+                expect(g7.effects.grants).toMatchObject([{ scope: 'repo:izagood/s55mc-g7', days: '7' }, { scope: 'repo:izagood/s55mc-g7old', days: '7' }]);
               }
             } finally {
               for (const k of kids) k.kill('SIGTERM');
