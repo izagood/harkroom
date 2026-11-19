@@ -35,6 +35,11 @@ struct Sql {
     insert: String,
 }
 
+/// 위임장이 지금 유효한가(주인 id) — `$1` 위임장 id, `$2` 7일 쉼 경계. 무권한 롤 시험(`tests/automation_grant.rs`)이 같은 문장을 돌린다.
+pub fn valid_owner_sql() -> &'static str {
+    sql().valid_owner.as_str()
+}
+
 fn sql() -> &'static Sql {
     static S: std::sync::OnceLock<Sql> = std::sync::OnceLock::new();
     S.get_or_init(|| Sql {
@@ -74,6 +79,11 @@ pub enum LineKind {
     Turn,
     /// S5.3 C3 — command `approve_once`·`approve_hour`. cap `command`, 기한 1시간(명령 grant 와 같음), `once` 면 `uses: 1`.
     Command { once: bool },
+    /// S5.4 14d — merge 7일 승인(`approve`·`approve_mandate`) — cap `merge`, scope 는 TS `CAPABILITIES.merge.validateScope`,
+    /// `until` 은 같은 결정의 기한(grant 를 쓰지 않는 `approve_mandate` 도 그 기한, TS 와 같음).
+    MergeStanding,
+    /// S5.4 15d — 머지 거절 카드의 [이번 한 번] — cap `merge`, limits 는 [`LineArgs::merge_once`](TS `{ pr, head, uses: 1, ghUser, ciOverride }`).
+    MergeOnce,
 }
 
 impl LineKind {
@@ -81,6 +91,7 @@ impl LineKind {
     pub fn cap(self) -> &'static str {
         match self {
             LineKind::Command { .. } => "command",
+            LineKind::MergeStanding | LineKind::MergeOnce => "merge",
             LineKind::Standing | LineKind::Turn => "tool",
         }
     }
@@ -101,6 +112,8 @@ pub struct LineArgs<'a> {
     pub now: &'a str,
     /// Standing 일 때 grant 기한 ISO.
     pub until: Option<&'a str>,
+    /// MergeOnce 일 때 줄의 limits(TS `{ pr, head, uses: 1, ghUser, ciOverride }`).
+    pub merge_once: Option<&'a serde_json::Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -218,6 +231,12 @@ pub async fn add_line_from_request(
                 return Ok(failed(m, cap, "bad_scope", Some(code.to_string())));
             }
         },
+        LineKind::MergeStanding | LineKind::MergeOnce => {
+            match super::mandate_lines_read::merge_scope(a.target) {
+                Some(scope) => scope,
+                None => return Ok(failed(m, cap, "bad_scope", Some("bad_repo".to_string()))),
+            }
+        }
         LineKind::Standing | LineKind::Turn => match validate_tool_rule(a.target) {
             ToolRuleVerdict::Ok { rule, .. } => rule,
             ToolRuleVerdict::Refused(code) => {
@@ -244,13 +263,19 @@ pub async fn add_line_from_request(
         return Ok(failed(m, cap, "mandate_invalid", None));
     }
     let limits = match a.kind {
+        LineKind::MergeOnce => {
+            let Some(l) = a.merge_once else {
+                return Ok(failed(m, cap, "no_once", None));
+            };
+            l.clone()
+        }
         LineKind::Turn => {
             let Some(card) = a.card_message_id else {
                 return Ok(failed(m, cap, "no_turn", None));
             };
             json!({ "turnCause": card, "until": hour_iso })
         }
-        LineKind::Standing => {
+        LineKind::Standing | LineKind::MergeStanding => {
             let Some(until) = a.until else {
                 return Ok(failed(m, cap, "no_until", None));
             };

@@ -48,6 +48,22 @@ pub const SERVED: &[&str] = &[
     "thread.plan",
     // S5.4 A4b2 — 단계·그룹 하나 고치기(`auto` 칸 없는 것). [`McpWrites::plan_write`] 가 있을 때만, 자동 진행은 TS.
     "thread.plan.item",
+    // S5.4 MCP 2 — PR 감시 걸기. 감시 쓰기 풀(`pr_watch::PR_WATCH_PRIVILEGES`)이 있고 위임 스위치를 알 때만.
+    "pr.watch",
+    // S5.4 MCP 3 — 스킬 제안(행·시스템 글·이벤트). 제안 행 칸이 있는 글 쓰기 풀(`writes.skill`)일 때만.
+    "skill.propose",
+    // S5.4 MCP 4 — 자동화 제안(행 하나, 글·이벤트 없음). 제안 칸이 있는 쓰기 풀(`writes.automation`)일 때만.
+    "automation.propose",
+    // S5.4 MCP 5 — 에이전트의 「지금 한 번」(회차 INSERT 만). 회차 칸이 있는 쓰기 풀(`writes.automation_run`)일 때만.
+    "automation.run",
+    // S5.4 MCP 6 — API 권한 다시 주기의 거절 전부·같은 위임 다시 오기·원인 없는 새 위임(대기 줄; 원인이 확인된 새 위임은 TS). `writes.grant_delegate` 일 때만.
+    "grant.delegate",
+    // S5.4 — 권한 요청의 거절 앞머리(인자 짝·채널·규칙 모양·저장소 모양). 읽기만 한다 — 받아들여지는 요청(요청 줄·카드)은 TS.
+    "permission.request",
+    // 아티팩트 올리기의 거절 앞머리(채널 가시성·html/attachmentId 짝). 읽기만 한다 — 올리기는 TS.
+    "artifact.publish",
+    // 선택 카드의 거절 앞머리(계획 단계·채널 가시성·선택지 모양·머지 거절 대상). 읽기만 한다 — 카드 쓰기는 TS.
+    "message.ask",
 ];
 
 /// TS 가 조건부로 싣는 도구 — `/mcp/admit` 이 `registered: true` 라고 답했을 때만 Rust 가 답한다([`super::route::serve`]).
@@ -123,6 +139,22 @@ pub struct McpWrites {
     pub plan_read: bool,
     /// `thread.plan` 쓰기·`thread.plan.item`(S5.4 A4b2) — `plan_read` 에 더해 `plan_write::PLAN_WRITE_PRIVILEGES`.
     pub plan_write: Option<PgPool>,
+    /// MCP 계획 쓰기에서 관리자가 바뀌어 자동 진행을 끌 때의 알림 글 경로(S5.4 TP3 끄기 칸 권한 + 글 올리기). 없으면 그 갈래는 TS 로.
+    pub plan_auto_off: Option<std::sync::Arc<crate::core::msg_post::PostState>>,
+    /// `pr.watch`(S5.4 MCP 2) — `pr_watch::PR_WATCH_PRIVILEGES`.
+    pub pr_watch: Option<PgPool>,
+    /// `automation.propose`(S5.4 MCP 4) — `automation_propose::AUTOMATION_PROPOSE_PRIVILEGES`.
+    pub automation: Option<PgPool>,
+    /// `automation.run`(S5.4 MCP 5) — `automation_run::AUTOMATION_RUN_PRIVILEGES`.
+    pub automation_run: Option<PgPool>,
+    /// `inbox.poll` 의 `version` 기록 — `inbox_poll::RUNNER_VERSION_PRIVILEGES`. 없으면 `version` 이 온 폴은 TS.
+    pub runner_version: Option<PgPool>,
+    /// `inbox.poll` 의 `lease` 임대 — `inbox_poll::INBOX_LEASE_PRIVILEGES`. 없으면 `lease` 가 온 폴은 TS.
+    pub inbox_lease: Option<PgPool>,
+    /// `inbox.poll` 긴 폴의 깨움 — 코어 이벤트 허브(outbox LISTEN 이 채운다). 없으면 `timeoutMs > 0` 폴은 TS.
+    pub inbox_hub: Option<crate::core::events::Hub>,
+    /// `grant.delegate`(S5.4 MCP 6) — `grant_delegate::GRANT_DELEGATE_PRIVILEGES`.
+    pub grant_delegate: Option<PgPool>,
     /// 기억 쓰기(C4b B1a) — [`super::mem_writes::MEMORY_WRITE_PRIVILEGES`]. [`super::mem_writes::answer`] 가 본다.
     pub memory: Option<PgPool>,
     /// 기억 본문 쓰기(C4b B1b: set·merge·restore) — B1a 권한 + [`super::mem_body::MEMORY_BODY_PRIVILEGES`]. [`super::mem_body::answer`] 가 본다.
@@ -133,9 +165,20 @@ pub struct McpWrites {
     pub delegate: Option<std::sync::Arc<crate::core::msg_post::PostState>>,
     /// `turn.wake`(S5.4 A3) — `post` 에 더해 `turn_wake::TURN_WAKE_PRIVILEGES`. 없으면 TS 로(게시 전에).
     pub wake: Option<std::sync::Arc<crate::core::msg_post::PostState>>,
+    /// `artifact.publish` 새 안(v1) 게시 — `post` 에 더해 `artifact_write::ARTIFACT_PUBLISH_PRIVILEGES`·업로드 권한·첨부 저장소.
+    /// 없으면 거절 앞머리만 Rust, 게시는 TS.
+    pub artifact: Option<std::sync::Arc<super::artifact_publish::ArtifactWrite>>,
+    /// `skill.propose`(S5.4 MCP 3) — `post` 에 더해 `skill_propose::SKILL_PROPOSE_PRIVILEGES`.
+    pub skill: Option<std::sync::Arc<crate::core::msg_post::PostState>>,
+    /// `message.post` 의 비지 않은 `agentModels`(S5.4 lane c) — `post` 에 더해 `agent_model_picks::AGENT_MODEL_PICKS_PRIVILEGES`.
+    /// 없으면 거절 앞머리만 Rust, 고르기 쓰기는 TS.
+    pub agent_picks: Option<std::sync::Arc<crate::core::msg_post::PostState>>,
     /// AC5 안전판 — 릴레이가 Rust 오퍼레이터 코어와 함께 옮겨졌다. 그 동안 TS 의 릴레이 허브는 비어 있어 `turn.cancel` 이
     /// 아무 턴도 못 찾고 성공처럼 답하므로, Rust 가 `operator_core_moved` 로 거절한다([`super::route::TURN_CANCEL`]).
     pub relay_moved: bool,
+    /// `/mcp` 입장 확인의 비밀 값 검사(TS `/mcp/admit` 의 leakGuard) — 업로드 검사와 같은 판정·권한(`leak_guard::privileges`).
+    /// 없으면(권한·키 env 가 안 맞음) 그 검사는 TS `/mcp/admit` 이 한다.
+    pub leak: Option<std::sync::Arc<crate::core::leak_guard::LeakGuard>>,
     /// `turn.cancel` 을 Rust 허브로 답할 릴레이 코어. 릴레이 줄이 `McpWrites` 뒤에 서므로 그때 채운다. 비어 있으면
     /// (`relay_moved` 인데 아직 안 채워짐) 옛 안전판처럼 `operator_core_moved` 로 거절한다.
     pub relay:
@@ -172,6 +215,31 @@ pub async fn answer(
     runner: bool,
     cause: Option<&str>,
 ) -> Option<Option<String>> {
+    if tool == "inbox.poll" {
+        let versioned = args.get("version").is_some();
+        let waiting = args
+            .get("timeoutMs")
+            .is_some_and(|v| v.as_f64() != Some(0.0));
+        let leasing = args.get("lease").is_some();
+        if versioned || waiting || leasing {
+            let write = match (versioned, writes.runner_version.as_ref()) {
+                (false, _) => None,
+                (true, Some(w)) => Some(w),
+                (true, None) => return Some(None),
+            };
+            let hub = match (waiting, writes.inbox_hub.as_ref()) {
+                (false, _) => None,
+                (true, Some(h)) => Some(h),
+                (true, None) => return Some(None),
+            };
+            let lease = match (leasing, writes.inbox_lease.as_ref()) {
+                (false, _) => None,
+                (true, Some(w)) => Some(w),
+                (true, None) => return Some(None),
+            };
+            return Some(super::inbox_poll::answer_full(read, write, hub, lease, me, args).await);
+        }
+    }
     if !SERVED.contains(&tool) {
         return None;
     }
@@ -214,7 +282,10 @@ pub async fn answer(
             let Some(w) = writes.plan_write.as_ref() else {
                 return Some(None);
             };
-            return Some(super::plan_write::answer_set(read, w, me, args).await);
+            return Some(
+                super::plan_write::answer_set(read, w, writes.plan_auto_off.as_deref(), me, args)
+                    .await,
+            );
         }
         return Some(super::plan_read::answer(read, me, args).await);
     }
@@ -222,13 +293,55 @@ pub async fn answer(
         let Some(w) = writes.plan_write.as_ref().filter(|_| writes.plan_read) else {
             return Some(None);
         };
-        return Some(super::plan_write::answer_item(read, w, me, args).await);
+        return Some(
+            super::plan_write::answer_item(read, w, writes.plan_auto_off.as_deref(), me, args)
+                .await,
+        );
     }
     if tool == "workitem.remove" {
         let Some(write) = writes.work_item.as_ref() else {
             return Some(None);
         };
         return Some(super::workitem::remove(read, write, me, args).await);
+    }
+    if tool == "skill.propose" {
+        let Some(st) = writes.skill.as_ref() else {
+            return Some(None);
+        };
+        return Some(super::skill_propose::answer(st, me, args).await);
+    }
+    if tool == "message.ask" {
+        return Some(super::message_ask::answer(read, me, args).await);
+    }
+    if tool == "artifact.publish" {
+        return Some(super::artifact_publish::answer(read, me, args).await);
+    }
+    if tool == "permission.request" {
+        return Some(super::permission_request::answer(read, me, args).await);
+    }
+    if tool == "grant.delegate" {
+        let Some(write) = writes.grant_delegate.as_ref() else {
+            return Some(None);
+        };
+        return Some(super::grant_delegate::answer(read, write, me, args, cause).await);
+    }
+    if tool == "automation.run" {
+        let Some(write) = writes.automation_run.as_ref() else {
+            return Some(None);
+        };
+        return Some(super::automation_run::answer(read, write, me, args, cause).await);
+    }
+    if tool == "automation.propose" {
+        let Some(write) = writes.automation.as_ref() else {
+            return Some(None);
+        };
+        return Some(super::automation_propose::answer(read, write, me, args).await);
+    }
+    if tool == "pr.watch" {
+        let Some(write) = writes.pr_watch.as_ref() else {
+            return Some(None);
+        };
+        return Some(super::pr_watch::answer(write, me, args).await);
     }
     if tool == "workitem.upsert" {
         let Some(write) = writes.work_item_upsert.as_ref() else {

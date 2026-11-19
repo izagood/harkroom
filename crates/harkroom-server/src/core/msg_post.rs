@@ -62,6 +62,23 @@ use std::sync::{Arc, OnceLock};
 
 /// 이 줄이 쓰는 권한(표, 권한) — homelab GRANT 와 같아야 한다. 첨부는 잇는 칸만(칸 권한 — `for update` 도 이것으로 된다).
 pub const MESSAGE_POST_PRIVILEGES: &[(&str, &str)] = &[
+    // 링크 미리보기 가져오기(REST 글의 URL 후보 — [`super::link_preview_fetch::LINK_PREVIEW_WRITE_PRIVILEGES`] 와 같은 칸).
+    ("link_preview.url", "SELECT"),
+    ("link_preview.status", "SELECT"),
+    ("link_preview.fetched_at", "SELECT"),
+    ("link_preview.url", "INSERT"),
+    ("link_preview.title", "INSERT"),
+    ("link_preview.description", "INSERT"),
+    ("link_preview.image_url", "INSERT"),
+    ("link_preview.site_name", "INSERT"),
+    ("link_preview.status", "INSERT"),
+    ("link_preview.fetched_at", "INSERT"),
+    ("link_preview.title", "UPDATE"),
+    ("link_preview.description", "UPDATE"),
+    ("link_preview.image_url", "UPDATE"),
+    ("link_preview.site_name", "UPDATE"),
+    ("link_preview.status", "UPDATE"),
+    ("link_preview.fetched_at", "UPDATE"),
     ("message", "INSERT"),
     ("idempotency_key", "INSERT"),
     ("attachment.message_id", "UPDATE"),
@@ -186,7 +203,8 @@ fn question_only(body: &str) -> bool {
     let quoted = body
         .split(['\n', '\r', '\u{2028}', '\u{2029}'])
         .any(|l| l.trim_start_matches([' ', '\t']).starts_with('>'));
-    if body.contains('`') || quoted {
+    // TS 는 링크를 걷어 낸 뒤 본다 — URL(쿼리의 `?`)이 있으면 판정하지 않는다(TS 로 넓게).
+    if body.contains('`') || quoted || sql().url.is_match(body) {
         return false;
     }
     body.contains('?') || body.contains('？')
@@ -329,9 +347,13 @@ pub(crate) struct Origin<'a> {
     pub(crate) delegation: Option<delegate_write::Plan<'a>>,
     /// TS `kind: 'system'`(S5.4 CH4b-2) — 서버가 사실을 남기는 줄(멤버 넣기·빼기). 라우트 입력에서는 켜지 않는다. TS `postMessage` 와 같이
     /// `kind` 칸이 `system` 이고 `meta`(`i18n` 포함)를 그대로 싣는다. 결과로는 센다(`countsAsReply`). 위임 키(`stampHumanMandate` 는
-    /// `kind === 'user'` 만)와 암묵 위임(`kind !== 'system'`)은 하지 않는다. **최상위 글만 받는다** — 스레드 시스템 글의 머리·DM 갈래
+    /// `kind === 'user'` 만)와 암묵 위임(`kind !== 'system'`)은 하지 않는다. 스레드 안(머리 아래)에도 쓴다(S5.4 TM2) — 머리·DM 갈래
     /// (`isSystemLine`, S5.4 A1)는 머리 주인·DM 상대가 에이전트면 알리지 않고(그 턴을 깨우지 않는다) 사람 글이어도 선점·카드 닫기를 하지 않는다.
+    /// 카드 답 판정([`TS_THREAD_SQL`] 의 ask 갈래)도 하지 않는다 — TS `closeAsksByReply` 는 라우트 몫이라 시스템 줄은 닿지 않는다.
     pub(crate) system: bool,
+    /// TS `noMentions`(S5.4 TM2) — 부르지 않는 줄. 본문은 그대로 두고 부름 판정을 건너뛴다(TS `noMentionCalls`: 부름·`meta` 없음).
+    /// 머리 주인 `thread_reply`·DM 갈래는 그대로다(부름이 아니다). 라우트 입력에서는 켜지 않는다.
+    pub(crate) no_mentions: bool,
     /// TS `kind: 'progress'`(S5.4 A1, MCP `message.progress`) — 진행 한 줄. **결과가 아니다**(`countsAsReply` 거짓): 회신권 락·회신권
     /// 스레드·TS 몫 스레드 판정·회신권 닫기·암묵 위임·백스톱 카드·위임 닫기를 하지 않는다. 답글이 아니라 머리 주인(`thread_reply`)·
     /// DM 상대(`dm`)에게 알리지 않고 지워진 머리를 되돌리지 않는다. 부름(`mention`)은 그대로 닿는다. 위임 기한은 민다(살아 있다는 신호).
@@ -339,19 +361,46 @@ pub(crate) struct Origin<'a> {
     /// TS `kind: 'wake'`(S5.4 A3, MCP `turn.wake`) — 대기 줄. `progress` 와 같이 **결과가 아니다**(`countsAsReply` 거짓) — 그 밖의 갈래도
     /// `progress` 와 같고 `kind` 칸 글자만 다르다(TS `postMessage` 가 두 종류를 `countsAsReply` 하나로만 가른다).
     pub(crate) wake: bool,
+    /// TS `beforeCommit` — 글을 넣고 위임을 닫은 뒤, 커밋 **앞** 같은 tx 에서 부른다. 거절하면 롤백하고 [`Outcome::Rejected`].
+    /// 지나면 행을 다시 읽어 내보낸다(이 훅이 글에 딸린 행을 더 쓸 수 있다 — TS 의 `reread`). 없으면 아무것도 바뀌지 않는다.
+    pub(crate) before_commit: Option<&'a dyn BeforeCommit>,
+    /// 서버 안쪽에서 TS 서비스 `postMessage` 를 바로 부른 사람 글(S5.4 TP5c, `plan/start`) — 라우트를 거치지 않으니 TS 라우트 몫인
+    /// 카드 고르기(`applyChatApproval`)·카드 닫기(`closeAsksByReply`)가 없다. 그래서 카드 갈래 TS 몫 판정과 [`ask_reply_close`] 를 끈다.
+    /// 서비스 몫(부름·`thread_reply`·깨움 선점·위임 기한·위임 키)은 그대로다. 라우트 입력에서는 켜지 않는다.
+    pub(crate) service_call: bool,
+}
+
+/// TS `beforeCommit` 의 거절 — `{ status, code, message }`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Rejection {
+    pub(crate) status: u16,
+    pub(crate) code: String,
+    pub(crate) message: String,
+}
+
+/// 훅이 돌려주는 future.
+pub(crate) type BeforeCommitFuture<'a> = std::pin::Pin<
+    Box<dyn std::future::Future<Output = Result<Option<Rejection>, sqlx::Error>> + Send + 'a>,
+>;
+
+/// TS `postMessage` 의 `beforeCommit(client, { message, notified })` — 여기서는 tx 와 새 글 id 를 받는다.
+pub(crate) trait BeforeCommit: std::fmt::Debug + Sync {
+    fn run<'a>(
+        &'a self,
+        tx: &'a mut sqlx::Transaction<'static, sqlx::Postgres>,
+        message_id: &'a str,
+        notified: &'a HashSet<String>,
+    ) -> BeforeCommitFuture<'a>;
 }
 
 /// 읽은 JSON 이 TS 몫인가 — 키만 보고 정한다(값이 틀렸으면 TS 가 400 을 준다).
 fn ts_keys(v: &Value) -> bool {
     let Value::Object(o) = v else { return false };
-    // 머리 id 가 uuid 글자가 아니면(null 포함) zod 400 은 TS 가 낸다.
-    let odd_root = o
-        .get("threadRootId")
-        .is_some_and(|r| !r.as_str().is_some_and(is_uuid));
-    o.contains_key("agentModels") || odd_root
+    o.contains_key("agentModels")
 }
 
-/// zod 스키마 + refine. `threadRootId`·`agentModels` 는 [`ts_keys`] 가 먼저 TS 로 보낸다.
+/// zod 스키마 + refine. `agentModels` 는 [`ts_keys`] 가 먼저 TS 로 보낸다. `threadRootId` 는 uuid 글자만(null 포함 그 밖은 400 —
+/// TS `z.string().uuid().optional()`).
 fn parse_post(v: &Value) -> Option<PostBody> {
     let Value::Object(o) = v else { return None };
     let Some(Value::String(body)) = o.get("body") else {
@@ -379,10 +428,11 @@ fn parse_post(v: &Value) -> Option<PostBody> {
         Some(Value::Bool(b)) => *b,
         _ => return None,
     };
-    let thread_root = o
-        .get("threadRootId")
-        .and_then(Value::as_str)
-        .map(str::to_owned);
+    let thread_root = match o.get("threadRootId") {
+        None => None,
+        Some(Value::String(r)) if is_uuid(r) => Some(r.clone()),
+        Some(_) => return None,
+    };
     if body.trim_matches(js_ws).is_empty() && attachment_ids.is_empty() {
         return None;
     }
@@ -401,12 +451,56 @@ pub(crate) fn gate_sql() -> &'static str {
 
 /// 본문만 보고 TS 몫인가 — URL 후보(링크 미리보기)나 글 승인 넓은 체.
 pub(crate) fn ts_body(body: &str) -> bool {
+    sql().url.is_match(body) || ts_guard(body)
+}
+
+/// 글 승인 넓은 체만(REST 글 — URL 후보는 Rust 가 미리보기를 건다).
+fn ts_guard(body: &str) -> bool {
     let s = sql();
-    if s.url.is_match(body) {
-        return true;
-    }
     let low = body.to_lowercase();
     s.guard_words.iter().any(|w| low.contains(w.as_str()))
+}
+
+/// shared `trimTrailingPunctuation`.
+fn trim_trailing_punctuation(token: &str) -> &str {
+    let mut t = token;
+    while let Some(ch) = t.chars().last() {
+        if ".,;:!?'\"".contains(ch) {
+            t = &t[..t.len() - ch.len_utf8()];
+            continue;
+        }
+        if ch == ')' || ch == ']' {
+            let open = if ch == ')' { '(' } else { '[' };
+            if t.matches(open).count() <= t.matches(ch).count() {
+                t = &t[..t.len() - 1];
+                continue;
+            }
+        }
+        break;
+    }
+    t
+}
+
+/// shared `extractPreviewUrls` — 정규화된 URL, 겹침 없이 최대 `max` 개.
+pub(crate) fn extract_preview_urls(body: &str, max: usize) -> Vec<String> {
+    let mut out: Vec<String> = vec![];
+    for m in sql().url.find_iter(body) {
+        let token = trim_trailing_punctuation(m.as_str());
+        if token.is_empty() {
+            continue;
+        }
+        let Some(n) = super::link_preview_read::normalize_preview_url(token) else {
+            continue;
+        };
+        if out.contains(&n) {
+            continue;
+        }
+        out.push(n);
+        if out.len() >= max {
+            break;
+        }
+    }
+    out
 }
 
 fn bad() -> Response {
@@ -414,7 +508,7 @@ fn bad() -> Response {
     json_err(StatusCode::BAD_REQUEST, "invalid_request", "body: invalid")
 }
 
-async fn to_ts(
+pub(crate) async fn to_ts(
     up: Upstream,
     peer: SocketAddr,
     parts: axum::http::request::Parts,
@@ -437,6 +531,8 @@ pub(crate) enum Outcome {
     ToTs,
     /// 위임 글의 사슬이 상한에 닿았다(TS `beforeCommit` 의 `chain_limit`, 409) — 아무것도 쓰지 않았다. [`Origin::delegation`] 만.
     ChainLimit,
+    /// [`Origin::before_commit`] 이 거절했다 — 롤백됐고 글은 없다(TS `failure: 'rejected'`).
+    Rejected(Rejection),
     Posted {
         row: String,
         notified: Vec<String>,
@@ -488,6 +584,22 @@ async fn resolve_post(
         },
     )
     .await
+}
+
+/// TS `noMentionCalls` — 본문은 그대로, 부름·meta 는 없다.
+fn no_mention_calls(body: &str) -> mention_calls::Resolved {
+    mention_calls::Resolved {
+        normalized_body: body.to_owned(),
+        account_handles: HashSet::new(),
+        called_ids: Vec::new(),
+        capped_ids: HashSet::new(),
+        capped_order: Vec::new(),
+        denied_ids: HashSet::new(),
+        team_plans: Vec::new(),
+        target_call: Vec::new(),
+        channel_called: false,
+        call_meta: serde_json::Map::new(),
+    }
 }
 
 /// 이 글의 사슬 자리 — TS `mentionDepthFor`(원인 없는 판)의 앞 고리와 그 위에서 정한 이 글의 정체 홉·사슬 시작.
@@ -739,18 +851,22 @@ pub(crate) async fn post_tx(
         }
         _ => None,
     };
-    let calls = resolve_post(
-        &mut tx,
-        channel,
-        author,
-        author_is_agent,
-        body,
-        // TS `replyGrantThreadId: isResult ? threadRootId : null`.
-        root.filter(|_| is_result),
-        &link,
-        principal.as_ref().map(|(p, _)| p.as_str()),
-    )
-    .await?;
+    let calls = if origin.no_mentions {
+        no_mention_calls(body)
+    } else {
+        resolve_post(
+            &mut tx,
+            channel,
+            author,
+            author_is_agent,
+            body,
+            // TS `replyGrantThreadId: isResult ? threadRootId : null`.
+            root.filter(|_| is_result),
+            &link,
+            principal.as_ref().map(|(p, _)| p.as_str()),
+        )
+        .await?
+    };
     // 에이전트 글의 아직 TS 몫인 부수효과 — 상한에 막힌 부름(백스톱 카드). 암묵 위임(C1c-4d)은 모드를 알고 쓰기 칸이 있을 때만
     // 여기서 적는다(꺼짐이면 적을 것이 없다).
     let implicit = implicit_delegation::mode(
@@ -783,7 +899,8 @@ pub(crate) async fn post_tx(
         let ts: bool = sqlx::query_scalar(TS_THREAD_SQL)
             .bind(r)
             .bind(author)
-            .bind(question_only(body))
+            // 시스템 줄은 카드 답이 되지 않는다(TS `closeAsksByReply` 는 라우트 몫) — ask 갈래를 끈다.
+            .bind(origin.system || origin.service_call || question_only(body))
             .bind(v2.is_some())
             .fetch_one(&mut *tx)
             .await?;
@@ -899,7 +1016,7 @@ pub(crate) async fn post_tx(
             .execute(&mut *tx)
             .await?;
     }
-    let Some(row) = message_by_id(&mut *tx, &id).await? else {
+    let Some(mut row) = message_by_id(&mut *tx, &id).await? else {
         return Err(sqlx::Error::RowNotFound);
     };
     if let Some(key) = idempotency_key {
@@ -1116,7 +1233,10 @@ pub(crate) async fn post_tx(
     // 만들지만(그 사이 실패면 글만 남는다) 여기서는 같은 tx 다.
     let delegation_id = match (&origin.delegation, v2) {
         (Some(plan), Some(on)) => {
-            if delegate_write::chain_capped(&mut tx, &id, now_ms()).await? {
+            // TS 는 팀 명단 갈래(`team`)에서 사슬 상한을 보지 않는다(`!team && delegationChainCapped`).
+            if plan.team_id.is_none()
+                && delegate_write::chain_capped(&mut tx, &id, now_ms()).await?
+            {
                 tx.rollback().await?;
                 return Ok((Outcome::ChainLimit, None));
             }
@@ -1135,6 +1255,16 @@ pub(crate) async fn post_tx(
         }
         _ => None,
     };
+    // TS `beforeCommit` — 위임을 닫은 뒤, 커밋 앞. 거절이면 롤백, 지나면 같은 tx 에서 행을 다시 읽는다.
+    if let Some(hook) = origin.before_commit {
+        if let Some(rej) = hook.run(&mut tx, &id, &notified_set).await? {
+            tx.rollback().await?;
+            return Ok((Outcome::Rejected(rej), None));
+        }
+        if let Some(r) = message_by_id(&mut *tx, &id).await? {
+            row = r;
+        }
+    }
     let notified = notified_in_order(&mut tx, &id, &notified_set).await?;
     // TS 는 선점 신호를 `postMessage` 안(커밋 뒤)에서, `message.created` 는 라우트가 그 뒤에 낸다 — 같은 순서로 outbox 에.
     wake_preempt::announce(&mut tx, &preempted).await?;
@@ -1185,7 +1315,9 @@ pub(crate) async fn post_tx(
     }
     // TS 라우트는 `inbox.updated` 뒤에 `closeAsksByReply` 를 부른다(사람 글만) — 이 답보다 앞선 열린 카드를 `replied` 로 닫는다.
     // 시스템 줄은 라우트를 거치지 않는다(서버가 바로 `postMessage` 를 부른다) — 카드를 닫지 않는다.
-    if let (false, false, Some(r)) = (author_is_agent, origin.system, root) {
+    if let (false, false, false, Some(r)) =
+        (author_is_agent, origin.system, origin.service_call, root)
+    {
         let seq = row_value
             .get("seq")
             .and_then(Value::as_i64)
@@ -1379,9 +1511,10 @@ pub async fn post(
     let Some(input) = parsed.as_ref().and_then(parse_post) else {
         return bad();
     };
-    if ts_body(&input.body) {
+    if ts_guard(&input.body) {
         return to_ts(st.up.clone(), peer, parts, bytes).await;
     }
+    let preview_urls = extract_preview_urls(&input.body, 3);
     // TS `channelPostGate` — 없는 채널은 'ok'(insert 가 FK 로 실패해 500, TS 와 같다).
     let gate: Option<(bool, bool)> = match sqlx::query_as(sql().gate.as_str())
         .bind(&id)
@@ -1444,7 +1577,9 @@ pub async fn post(
         Err(e) => internal(e),
         // 세 사유를 400 하나로 합친다 — TS 와 같이, 남의 업로드 id 가 있는지 알리는 신호가 되지 않게.
         // 위임 상한은 MCP `message.delegate` 만 낸다 — REST 글에는 닿지 않는다.
-        Ok(Outcome::ToTs | Outcome::ChainLimit) => to_ts(st.up.clone(), peer, parts, bytes).await,
+        Ok(Outcome::ToTs | Outcome::ChainLimit | Outcome::Rejected(_)) => {
+            to_ts(st.up.clone(), peer, parts, bytes).await
+        }
         Ok(Outcome::BadThread) => json_err(
             StatusCode::BAD_REQUEST,
             "bad_thread",
@@ -1477,6 +1612,10 @@ pub async fn post(
                     },
                 )
                 .await;
+            }
+            // TS `queueLinkPreviewFetch` — 응답을 기다리게 하지 않는다(실패는 삼킨다).
+            for u in preview_urls {
+                tokio::spawn(super::link_preview_fetch::queue_fetch(st.write.clone(), u));
             }
             let mut res = json_response(StatusCode::CREATED, row);
             let h = res.headers_mut();
@@ -1528,6 +1667,50 @@ pub fn routes(
 
 #[cfg(test)]
 mod tests {
+
+    /// 훅이 없는 것이 기본이다 — 기존 호출자(`Origin::default()`·`..`)는 그대로 돈다. 훅은 `&dyn` 으로 실린다.
+    #[test]
+    fn before_commit_is_off_by_default_and_object_safe() {
+        #[derive(Debug)]
+        struct Reject;
+        impl BeforeCommit for Reject {
+            fn run<'a>(
+                &'a self,
+                _tx: &'a mut sqlx::Transaction<'static, sqlx::Postgres>,
+                _message_id: &'a str,
+                _notified: &'a HashSet<String>,
+            ) -> BeforeCommitFuture<'a> {
+                Box::pin(async {
+                    Ok(Some(Rejection {
+                        status: 400,
+                        code: "bad_request".into(),
+                        message: "no".into(),
+                    }))
+                })
+            }
+        }
+        assert!(Origin::default().before_commit.is_none());
+        let hook = Reject;
+        let o = Origin {
+            before_commit: Some(&hook),
+            ..Origin::default()
+        };
+        assert!(o.before_commit.is_some());
+    }
+
+    #[test]
+    fn no_mention_calls_keep_body_and_call_nobody() {
+        let c = no_mention_calls("@scout <@00000000-0000-4000-8000-00000000000a> hi");
+        assert_eq!(
+            c.normalized_body,
+            "@scout <@00000000-0000-4000-8000-00000000000a> hi"
+        );
+        assert!(c.called_ids.is_empty() && c.capped_order.is_empty() && c.team_plans.is_empty());
+        assert!(c.call_meta.is_empty() && !c.channel_called);
+        // 기본값은 부른다 — 이제까지의 호출자는 그대로다.
+        assert!(!Origin::default().no_mentions);
+    }
+
     use super::*;
 
     #[test]
@@ -1577,6 +1760,19 @@ mod tests {
     }
 
     #[test]
+    fn preview_urls_like_shared() {
+        assert_eq!(
+            extract_preview_urls(
+                "see https://A.com/x). and (https://b.com/(y)) https://a.com/x a:b mailto:z https://c.com https://d.com",
+                3
+            ),
+            vec!["https://a.com/x", "https://b.com/(y", "https://c.com/"]
+        );
+        assert_eq!(trim_trailing_punctuation("x.com/a?!'\""), "x.com/a");
+        assert!(!question_only("https://a.com/?q=1"));
+    }
+
+    #[test]
     fn ts_body_like_ts() {
         for b in [
             "see https://example.com",
@@ -1617,7 +1813,12 @@ mod tests {
         assert!(!ok(json!({ "body": "x", "alsoInChannel": "yes" })));
         assert!(!ok(json!({ "body": "a".repeat(8001) })));
         assert!(ok(json!({ "body": "a".repeat(8000), "extra": 1 })));
-        assert!(ts_keys(&json!({ "body": "x", "threadRootId": "bad" })));
+        assert!(!ts_keys(&json!({ "body": "x", "threadRootId": "bad" })));
+        assert!(!ok(json!({ "body": "x", "threadRootId": "bad" })));
+        assert!(!ok(json!({ "body": "x", "threadRootId": null })));
+        assert!(ok(
+            json!({ "body": "x", "threadRootId": "0b6f8d2e-3c1a-4f5e-9a7b-1c2d3e4f5a6b" })
+        ));
         assert!(ts_keys(&json!({ "body": "x", "agentModels": [] })));
     }
 }

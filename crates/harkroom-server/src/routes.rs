@@ -64,6 +64,16 @@ pub const MOVED: &[Moved] = &[
         route: || axum::routing::get(crate::directory::dms),
     },
     Moved {
+        key: "GET /leases",
+        path: "/leases",
+        route: || axum::routing::get(crate::directory::leases),
+    },
+    Moved {
+        key: "GET /projection/status",
+        path: "/projection/status",
+        route: || axum::routing::get(crate::directory::projection_status),
+    },
+    Moved {
         key: "GET /mcp-servers",
         path: "/mcp-servers",
         route: || axum::routing::get(crate::directory::mcp_servers),
@@ -250,6 +260,16 @@ pub const MOVED_WRITE: &[Moved] = &[
         path: "/skills/{slug}",
         route: || axum::routing::delete(crate::writes_settings::disable_skill),
     },
+    Moved {
+        key: "PUT /mcp-servers/{name}",
+        path: "/mcp-servers/{name}",
+        route: || axum::routing::put(crate::writes_settings::put_mcp_server),
+    },
+    Moved {
+        key: "DELETE /mcp-servers/{name}",
+        path: "/mcp-servers/{name}",
+        route: || axum::routing::delete(crate::writes_settings::delete_mcp_server),
+    },
     // P4b 팀·집합(`writes_teams.rs`·`writes_groups.rs`). 채널에 팀 넣기는 S5.3.
     Moved {
         key: "POST /teams",
@@ -321,7 +341,12 @@ pub const MOVED_WRITE: &[Moved] = &[
         path: "/handle-groups/{id}/members",
         route: || axum::routing::delete(crate::writes_groups::remove_members),
     },
-    // P4c 신고·차단(`writes_moderation.rs`). 신고 올리기(POST /messages/{id}/report)는 프로세스 메모리 상한 때문에 TS 에 남는다.
+    // P4c 신고·차단(`writes_moderation.rs`). 신고 올리기의 상한은 Rust 프로세스 리미터가 센다(이 줄은 Rust 만 받는다).
+    Moved {
+        key: "POST /messages/{id}/report",
+        path: "/messages/{id}/report",
+        route: || axum::routing::post(crate::writes_moderation::report_message),
+    },
     Moved {
         key: "POST /admin/reports/{id}/resolve",
         path: "/admin/reports/{id}/resolve",
@@ -337,7 +362,12 @@ pub const MOVED_WRITE: &[Moved] = &[
         path: "/accounts/me/blocks/{id}",
         route: || axum::routing::delete(crate::writes_moderation::delete_block),
     },
-    // P4c-2 작업 항목·스레드 임대·푸시 기기(`writes_misc.rs`). PUT /work-items 는 위임장 끝내기 때문에 TS 에 남는다.
+    // P4c-2 작업 항목·스레드 임대·푸시 기기(`writes_misc.rs`). PUT /work-items 는 MCP `workitem.upsert` 권한이 다 있을 때만 Rust(`WORK_ITEM_UPSERT_READY`), 아니면 TS.
+    Moved {
+        key: "PUT /work-items",
+        path: "/work-items",
+        route: || axum::routing::put(crate::writes_misc::put_item),
+    },
     Moved {
         key: "DELETE /work-items/{id}",
         path: "/work-items/{id}",

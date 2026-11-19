@@ -423,7 +423,7 @@ pub async fn resolve_decision(
 type MirrorRow = (Value, Option<String>, Option<String>, Option<String>);
 
 /// TS `isGenuinePermissionMirror`(security n2) — 서버가 받아 세운 거울인가. 거짓이면 TS 는 물음 길(`recordAskAnswer`)로 가서
-/// 거절된다. **그 물음 길은 Rust 가 맡지 않는다**(3b 입구가 TS 로 넘긴다 — 거울·원본이 권한 카드라 C3b-1 의 `hand_to_ts` 도 넘긴다).
+/// 거절된다. **그 물음 길은 Rust 가 맡지 않는다**(3b 입구가 TS 로 넘긴다 — 거울·원본이 권한 카드라 C3b-1 의 `hand_answer_to_ts` 도 넘긴다).
 pub async fn is_genuine_permission_mirror(
     conn: &mut PgConnection,
     mirror: &str,
@@ -551,10 +551,15 @@ pub struct Shape<'a> {
 /// - 승인은 `tool`→approve, `command`→approve_once·approve_hour 만. 소유자가 아닌 승인(asOwner=false)은 판정 뒤
 ///   [`after_verdict`] 가 TS 로 돌린다.
 pub fn rust_takes(s: Shape<'_>) -> Option<Decision> {
-    if s.has_once || s.via_chat || s.via_mirror {
+    if s.via_chat || s.via_mirror {
         return None;
     }
     let d = option_decision(s.option)?;
+    // S5.4 — `once` 는 머지 거절 카드의 [이번 한 번](거절 기록 있음, 15d 부터 위임장이 있어도)만 Rust. 그 밖의 `once` 는 TS.
+    if s.has_once {
+        let merge_once = d == Decision::ApproveOnce && s.kind == "merge" && s.has_denial;
+        return merge_once.then_some(d);
+    }
     let ok = match (d, s.kind) {
         (Decision::Deny, _) => !s.has_mandate,
         // S5.3 C1 — tool 7일 승인은 위임장이 있어도 Rust(grant + 있는 위임장에 줄). 위임장 없는 `approve_mandate` 는 TS 처럼 grant 만.
@@ -562,10 +567,23 @@ pub fn rust_takes(s: Shape<'_>) -> Option<Decision> {
         (Decision::Approve | Decision::ApproveMandate | Decision::ApproveNewMandate, "tool") => {
             !s.has_denial
         }
-        // C1 — [이번 턴만]은 위임장이 있는 tool 카드만(없으면 TS 409 `bad_decision`).
-        (Decision::ApproveTurn, "tool") => !s.has_denial && s.has_mandate,
+        // C1 — [이번 턴만]은 위임장이 있는 tool 카드만 승인이다(없으면 409 `bad_decision` — 11d 부터 그 답도 Rust, 아래).
         // C3 — command 는 위임장이 있어도 Rust(1시간 command_grant + 그 위임장에 command 줄).
         (Decision::ApproveOnce | Decision::ApproveHour, "command") => !s.has_denial,
+        // S5.4 12e — merge 카드의 7일 [승인](위임장 없음)은 Rust(`repo.merge` account_grant). 위임장 있는 merge 는 TS.
+        // 13d — 거절 기록이 붙은 카드도 Rust(TS: CI 거절이면 400 `ci_card_once_only`, 아니면 같은 7일 grant). 칸이 없으면 쓰기 전에 TS.
+        // 14d — 위임장이 있어도 Rust(grant + 그 위임장에 merge 줄). C1 칸이 없으면 쓰기 전에 TS.
+        (Decision::Approve, "merge") => true,
+        // 13d — 위임장 없는 merge 의 `approve_mandate` 는 TS 가 쓰기 없이 409 `mandate_unavailable`(D1) — Rust 가 같은 답을 한다.
+        // 14d — 위임장이 있으면 grant 없이 그 위임장의 merge 줄 하나(줄이 실패하면 409 `mandate_line_failed`, 커밋 없음).
+        (Decision::ApproveMandate, "merge") => true,
+        // S5.4 — tool 카드의 [이번 한 번](once 없음·거절 기록 없음)은 TS 가 쓰기 없이 409 `not_once` 로 돌려보낸다 — Rust 가 같은 답을 한다.
+        (Decision::ApproveOnce, "tool") => !s.has_denial,
+        // S5.4 11d — TS 가 쓰기 없이 409 `bad_decision` 으로 돌려보내는 꼴(위임장 없는 tool [이번 턴만], command 의 [이번 턴만]·
+        // 위임장 승인, tool 의 [1시간])도 Rust 가 같은 답을 한다(쓰기 없음).
+        (Decision::ApproveTurn, "tool" | "command")
+        | (Decision::ApproveMandate | Decision::ApproveNewMandate, "command")
+        | (Decision::ApproveHour, "tool") => !s.has_denial,
         _ => false,
     };
     ok.then_some(d)
@@ -706,10 +724,25 @@ pub struct AuditDetail<'a> {
     pub grant_mode: Option<(&'a str, &'a str)>,
     /// `via: { kind: 'bundle', bundleMessageId }` 이면 묶음, 없으면 `via: 'button'`(chat·mirror 는 처음부터 TS).
     pub bundle_message_id: Option<&'a str>,
+    /// S5.4 14d — 거울 카드에서 온 결정이면 `via: 'mirror', mirrorMessageId`(TS 와 같은 칸). 묶음과 함께 오지 않는다.
+    /// 아직 입구는 거울을 TS 로 넘긴다(`rust_takes`) — 쓰기 길이 이것을 채우는 것은 다음 조각.
+    pub mirror_message_id: Option<&'a str>,
+}
+
+/// S5.4 14d — 카드 meta 의 `decidedVia`(TS: chat·mirror·bundle 일 때만, button 은 없음).
+pub fn decided_via(
+    bundle_message_id: Option<&str>,
+    mirror_message_id: Option<&str>,
+) -> Option<Value> {
+    match (bundle_message_id, mirror_message_id) {
+        (Some(b), _) => Some(serde_json::json!({ "kind": "bundle", "bundleMessageId": b })),
+        (None, Some(m)) => Some(serde_json::json!({ "kind": "mirror", "mirrorMessageId": m })),
+        (None, None) => None,
+    }
 }
 
 /// detail 에 나올 수 있는 칸 전부(TS 와 같은 이름). 시험이 이 밖의 칸이 없는지·TS 원문에 이 이름들이 있는지 본다.
-pub const AUDIT_DETAIL_KEYS: [&str; 11] = [
+pub const AUDIT_DETAIL_KEYS: [&str; 12] = [
     "requestId",
     "kind",
     "target",
@@ -721,6 +754,7 @@ pub const AUDIT_DETAIL_KEYS: [&str; 11] = [
     "commandGrantId",
     "via",
     "bundleMessageId",
+    "mirrorMessageId",
 ];
 
 pub fn audit_detail(a: &AuditDetail<'_>) -> Value {
@@ -745,6 +779,9 @@ pub fn audit_detail(a: &AuditDetail<'_>) -> Value {
     if let Some(b) = a.bundle_message_id {
         o["via"] = serde_json::json!("bundle");
         o["bundleMessageId"] = serde_json::json!(b);
+    } else if let Some(m) = a.mirror_message_id {
+        o["via"] = serde_json::json!("mirror");
+        o["mirrorMessageId"] = serde_json::json!(m);
     } else {
         o["via"] = serde_json::json!("button");
     }
@@ -902,8 +939,8 @@ pub async fn deny_write(
         let mut patch = serde_json::json!({
             "status": "denied", "decidedAt": now, "decidedBy": args.actor_id,
         });
-        if let Some(b) = args.bundle_message_id {
-            patch["decidedVia"] = serde_json::json!({ "kind": "bundle", "bundleMessageId": b });
+        if let Some(v) = decided_via(args.bundle_message_id, None) {
+            patch["decidedVia"] = v;
         }
         patch["decidedByOwner"] = Value::Bool(as_owner);
         sqlx::query(DENY_UPDATE_CARD)
@@ -922,6 +959,7 @@ pub async fn deny_write(
         grant_expires_at: None,
         grant_mode: None,
         bundle_message_id: args.bundle_message_id,
+        mirror_message_id: None,
     });
     sqlx::query(DENY_AUDIT)
         .bind(args.actor_id)
@@ -995,6 +1033,18 @@ async fn deny_attempt(
     let Some(locked) = locked else {
         return Ok(Some(not_found()));
     };
+    // S5.4 12e — 만료면 TS 처럼 tx 를 버리고 그 요청만 만료로 닫은 뒤 409(거절 풀에 만료 칸이 다 있을 때만, 아니면 TS).
+    if locked.status == "pending" && locked.expired && super::decide_approve::deny_expire_core_on()
+    {
+        tx.rollback().await?;
+        crate::loops::permission_expire::expire_permission_requests(pool, Some(args.request_id))
+            .await?;
+        return Ok(Some(refused(
+            409,
+            "request_expired",
+            super::decide_approve::REQUEST_EXPIRED_MESSAGE,
+        )));
+    }
     let out = deny_write(&mut tx, &locked, args, as_owner).await?;
     if matches!(out, DenyOutcome::Denied { .. }) {
         tx.commit().await?;

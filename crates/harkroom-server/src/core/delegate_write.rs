@@ -6,7 +6,8 @@
 //!   의무를 못 만들면 글도 남지 않고 TS 로 넘긴다. 성공한 결과는 같다.
 //! - 문장은 전부 TS 상수를 골든(`delegation_insert`·`delegation_item_insert`·`delegate_supersede`·`delegate_mark_settled_quietly`·
 //!   `delegate_inbox_convert`·`delegate_inbox_insert`)으로 받는다.
-//! - 팀장이 자기 팀에 넘기는 갈래(`team_id`)는 아직 TS 몫이다 — 여기 오는 위임은 언제나 `team_id = null`·`kind = 'delegate'` 이다.
+//! - S5.4-11c: 팀장이 자기 팀 하나에 넘기는 갈래도 온다 — [`Plan::team_id`] 가 있으면 위임 행·부름에 `team_id` 를 적고,
+//!   TS 처럼 사슬 상한(`delegationChainCapped`)을 보지 않는다(TS 는 `!team` 일 때만 `beforeCommit` 에서 본다). `kind` 는 언제나 `'delegate'`.
 use super::mention_calls::{self, CHAIN_BACKSTOP_MS};
 use serde_json::Value;
 use sqlx::PgConnection;
@@ -30,6 +31,8 @@ pub(crate) struct Plan<'a> {
     pub(crate) delegate_ids: &'a [String],
     /// TS `deadlineAt.toISOString()`.
     pub(crate) deadline_at: &'a str,
+    /// 팀장이 자기 팀에 넘기면 그 팀 id(TS `team?.teamId ?? null`). 있으면 사슬 상한을 보지 않는다.
+    pub(crate) team_id: Option<&'a str>,
 }
 
 struct Sql {
@@ -82,7 +85,7 @@ pub(crate) async fn chain_capped(
     Ok(aged || i64::from(depth) >= mention_calls::chain_limit(conn).await?)
 }
 
-/// TS `createDelegation`(`teamId = null`, `kind = 'delegate'`). `v2` 는 위임 스위치(알 때만 이 갈래가 돈다). 돌려주는 것은 위임 id.
+/// TS `createDelegation`(`teamId = plan.team_id`, `kind = 'delegate'`). `v2` 는 위임 스위치(알 때만 이 갈래가 돈다). 돌려주는 것은 위임 id.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn create(
     conn: &mut PgConnection,
@@ -96,7 +99,7 @@ pub(crate) async fn create(
     let s = sql();
     let id: String = sqlx::query_scalar(s.insert.as_str())
         .bind(message_id)
-        .bind(None::<String>)
+        .bind(plan.team_id)
         .bind(lead_id)
         .bind(channel_id)
         .bind(thread_root_id)
@@ -130,14 +133,14 @@ pub(crate) async fn create(
         let converted = sqlx::query(s.convert.as_str())
             .bind(d)
             .bind(message_id)
-            .bind(None::<String>)
+            .bind(plan.team_id)
             .execute(&mut *conn)
             .await?;
         if converted.rows_affected() == 0 {
             sqlx::query(s.inbox.as_str())
                 .bind(d)
                 .bind(message_id)
-                .bind(None::<String>)
+                .bind(plan.team_id)
                 .execute(&mut *conn)
                 .await?;
         }

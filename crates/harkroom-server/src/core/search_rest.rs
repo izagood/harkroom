@@ -4,12 +4,11 @@
 //! - 순서가 규칙이다(TS 와 같다): 인증(401, 층) → 질의 검사 → `channelId` 가 있으면 볼 수 있는가(403) → 찾기.
 //! - REST 는 MCP 와 두 군데가 다르다: 본문을 `<@id>` 그대로 싣는다(`denormalize` 없음), `hasAttachment` 는 `'true'` 일 때만 참이고
 //!   그 밖은 거짓(`$10 is not true` 라 거짓과 없음은 같은 결과).
-//! - **답하지 않고 읽은 요청 그대로 TS 로 넘기는 것**(보수적으로 — 판정을 옮기지 않은 것과, TS 가 400 으로 답할 것 전부):
-//!   - 질의에 `@` 가 있으면 — TS `normalizeSearchQuery` 가 `@handle` 을 `<@id>` 로 바꾼다(MCP 와 같은 경계).
-//!   - `after`·`before` 가 있으면 — zod `datetime({ offset: true })` 판정을 옮기지 않는다.
-//!   - 형식이 zod 와 정확히 맞는지 확신할 수 없는 값 — `q` 길이 밖, uuid 가 아닌 id, 숫자만이 아닌 `offset`(TS `Number()` 는
-//!     `""`·`" 5"`·`1e2` 도 받는다), 천장 밖 `offset`, 모르는 `sort`·`hasAttachment`, 11개 넘는 `authorId`, `authorId` 밖 키의 되풀이.
-//!     TS 가 같은 요청에 400(또는 그 값을 받아 200)으로 답하므로 응답이 갈리지 않는다.
+//! - 질의는 TS zod 스키마 그대로 읽는다(`offset` 은 JS `Number()` 강제 변환). zod 가 거절하는 값 — `q` 없음·길이 밖, uuid 가 아닌
+//!   id, 정수가 아니거나 천장 밖 `offset`, 모르는 `sort`·`hasAttachment`, 상한 넘는 `authorId`, `authorId` 밖 키의 되풀이 — 은
+//!   TS 와 같은 400 `invalid_request` 로 답한다(문구는 다르다 — 대조는 상태만 본다).
+//! - 질의의 `@handle` 은 TS `normalizeSearchQuery` 처럼 저장 토큰(`<@id>`·`group:`·`team:`)으로 바꾼다. `after`·`before` 는 zod
+//!   `datetime({ offset: true })` 그대로 본다.
 use crate::auth::RequireAccount;
 use crate::core::mcp::respond::minify;
 use crate::core::mcp::search::{LIMIT, SEARCH_MAX_AUTHORS, SEARCH_MAX_OFFSET, has_more, sql};
@@ -39,10 +38,20 @@ struct Q {
     authors: Option<Vec<String>>,
     has_attachment: bool,
     recent: bool,
+    after: Option<String>,
+    before: Option<String>,
 }
 
-/// 질의 문자열을 읽는다. Rust 가 TS 와 같은 답을 낸다고 확신할 수 없으면 `None`(→ TS).
-fn parse(raw: Option<&str>) -> Option<Q> {
+/// 읽은 질의를 Rust 가 맡을 수 없을 때의 갈래.
+#[derive(Debug, PartialEq)]
+enum Reject {
+    /// zod 가 거절한다 — TS 와 같은 400.
+    Bad,
+}
+
+/// 질의 문자열을 TS zod 스키마 그대로 읽는다. zod 가 거절하면 [`Reject::Bad`].
+/// 되풀이된 키는 fastify 에서 배열이 된다 — `authorId` 밖의 키는 문자열만 받으니 400 이다.
+fn parse(raw: Option<&str>) -> Result<Q, Reject> {
     let mut q: Option<String> = None;
     let mut channel: Option<String> = None;
     let mut thread: Option<String> = None;
@@ -50,33 +59,45 @@ fn parse(raw: Option<&str>) -> Option<Q> {
     let mut authors: Vec<String> = Vec::new();
     let mut has_attachment: Option<bool> = None;
     let mut recent: Option<bool> = None;
+    let mut after: Option<String> = None;
+    let mut before: Option<String> = None;
     let mut seen: Vec<String> = Vec::new();
     for (k, v) in url::form_urlencoded::parse(raw.unwrap_or("").as_bytes()) {
         let (k, v) = (k.into_owned(), v.into_owned());
         if k == "authorId" {
             if !crate::core::channels::is_uuid(&v) {
-                return None;
+                return Err(Reject::Bad);
             }
             authors.push(v);
             continue;
         }
-        // 되풀이된 키는 TS 에서 배열이 된다 — 아래 키들은 문자열만 받으니 400. 판정은 TS 에 맡긴다.
-        if seen.contains(&k) {
-            return None;
-        }
+        let repeated = seen.contains(&k);
         seen.push(k.clone());
+        let known = matches!(
+            k.as_str(),
+            "q" | "channelId"
+                | "threadRootId"
+                | "offset"
+                | "after"
+                | "before"
+                | "hasAttachment"
+                | "sort"
+        );
+        if repeated && known {
+            return Err(Reject::Bad);
+        }
         match k.as_str() {
             "q" => {
                 // `z.string().min(1).max(256)` — JS 길이(UTF-16 단위).
                 let n = v.encode_utf16().count();
-                if !(1..=256).contains(&n) || v.contains('@') {
-                    return None;
+                if !(1..=256).contains(&n) {
+                    return Err(Reject::Bad);
                 }
                 q = Some(v);
             }
             "channelId" | "threadRootId" => {
                 if !crate::core::channels::is_uuid(&v) {
-                    return None;
+                    return Err(Reject::Bad);
                 }
                 if k == "channelId" {
                     channel = Some(v);
@@ -85,28 +106,36 @@ fn parse(raw: Option<&str>) -> Option<Q> {
                 }
             }
             "offset" => {
-                if v.is_empty() || v.len() > 4 || !v.bytes().all(|b| b.is_ascii_digit()) {
-                    return None;
+                // `z.coerce.number().pipe(int().min(0).max(SEARCH_MAX_OFFSET))` — JS `Number(v)`.
+                let n = crate::core::inbox_rest::js_number(&v).ok_or(Reject::Bad)?;
+                if !n.is_finite() || n.fract() != 0.0 || n < 0.0 || n > SEARCH_MAX_OFFSET as f64 {
+                    return Err(Reject::Bad);
                 }
-                let n: i64 = v.parse().ok()?;
-                if n > SEARCH_MAX_OFFSET {
-                    return None;
-                }
-                offset = Some(n);
+                offset = Some(n as i64);
             }
-            "after" | "before" => return None,
+            // zod `datetime({ offset: true })`.
+            "after" | "before" => {
+                if !crate::core::mcp::search::zod_datetime_offset(&v) {
+                    return Err(Reject::Bad);
+                }
+                if k == "after" {
+                    after = Some(v);
+                } else {
+                    before = Some(v);
+                }
+            }
             "hasAttachment" => {
                 has_attachment = Some(match v.as_str() {
                     "true" => true,
                     "false" => false,
-                    _ => return None,
+                    _ => return Err(Reject::Bad),
                 })
             }
             "sort" => {
                 recent = Some(match v.as_str() {
                     "relevance" => false,
                     "recent" => true,
-                    _ => return None,
+                    _ => return Err(Reject::Bad),
                 })
             }
             // zod `object` 는 모르는 키를 버린다.
@@ -114,27 +143,34 @@ fn parse(raw: Option<&str>) -> Option<Q> {
         }
     }
     if authors.len() > SEARCH_MAX_AUTHORS {
-        return None;
+        return Err(Reject::Bad);
     }
-    Some(Q {
-        query: q?,
+    let query = q.ok_or(Reject::Bad)?;
+    Ok(Q {
+        query,
         channel,
         thread,
         offset: offset.unwrap_or(0),
         authors: (!authors.is_empty()).then_some(authors),
         has_attachment: has_attachment.unwrap_or(false),
         recent: recent.unwrap_or(false),
+        after,
+        before,
     })
 }
 
 async fn search(
     State(st): State<Arc<SearchState>>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    ConnectInfo(_peer): ConnectInfo<SocketAddr>,
     RequireAccount(me, _): RequireAccount,
     req: Request,
 ) -> Response {
-    let Some(q) = parse(req.uri().query()) else {
-        return crate::proxy::forward(State(st.up.clone()), ConnectInfo(peer), req).await;
+    let q = match parse(req.uri().query()) {
+        Ok(q) => q,
+        // TS zod 오류와 같은 400 — 문구는 다르다(대조는 상태만 본다, `channels.rs` 와 같은 약속).
+        Err(Reject::Bad) => {
+            return json_err(StatusCode::BAD_REQUEST, "invalid_request", "query: invalid");
+        }
     };
     if let Some(ch) = q.channel.as_deref() {
         match crate::core::channels::visible(&st.pool, &me.id, ch).await {
@@ -149,16 +185,21 @@ async fn search(
             Err(e) => return internal(e),
         }
     }
+    // TS `normalizeSearchQuery` — `@handle` 을 저장 토큰(`<@id>`)으로.
+    let query = match crate::core::mention_parse::normalize_search_query(&st.pool, &q.query).await {
+        Ok(s) => s,
+        Err(e) => return internal(e),
+    };
     let rows: Vec<String> = match sqlx::query_scalar::<_, String>(sql(q.recent))
-        .bind(&q.query)
+        .bind(&query)
         .bind(LIMIT + 1)
         .bind(&me.id)
         .bind(q.channel.as_deref())
         .bind(q.thread.as_deref())
         .bind(q.offset)
         .bind(q.authors.as_deref())
-        .bind(None::<String>)
-        .bind(None::<String>)
+        .bind(q.after.as_deref())
+        .bind(q.before.as_deref())
         .bind(q.has_attachment)
         .fetch_all(&st.pool)
         .await
@@ -238,39 +279,73 @@ mod tests {
     }
 
     #[test]
-    fn doubtful_queries_go_to_ts() {
+    fn offset_follows_js_number() {
+        for (raw, n) in [("", 0), ("+5", 5), ("1e2", 100), ("%205", 5), ("1.0", 1)] {
+            assert_eq!(
+                parse(Some(&format!("q=a&offset={raw}"))).unwrap().offset,
+                n,
+                "{raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn unported_judgements_go_to_ts() {
+        assert_eq!(parse(Some("q=%40alice")).unwrap().query, "@alice");
+        let ok = parse(Some(
+            "q=a&after=2026-01-01T00:00:00Z&before=2026-02-29T09:00%2B0900",
+        ));
+        assert_eq!(ok, Err(Reject::Bad), "2026 은 윤년이 아니다");
+        let ok = parse(Some(
+            "q=a&after=2026-01-01T00:00:00.5Z&before=2028-02-29T09:00%2B09:00",
+        ))
+        .unwrap();
+        assert_eq!(ok.after.as_deref(), Some("2026-01-01T00:00:00.5Z"));
+        assert_eq!(ok.before.as_deref(), Some("2028-02-29T09:00+09:00"));
+        for raw in [
+            "q=a&before=x",
+            "q=a&after=2026-01-01",
+            "q=a&after=2026-01-01T24:00Z",
+            "q=a&after=2026-01-01T00:00:00",
+        ] {
+            assert_eq!(parse(Some(raw)), Err(Reject::Bad), "{raw}");
+        }
+    }
+
+    #[test]
+    fn zod_rejections_are_400() {
         for raw in [
             None,
             Some(""),
             Some("q="),
-            Some("q=%40alice"),
-            Some("q=a&after=2026-01-01T00:00:00Z"),
-            Some("q=a&before=x"),
             Some("q=a&channelId=nope"),
             Some("q=a&threadRootId="),
-            Some("q=a&offset="),
-            Some("q=a&offset=+5"),
-            Some("q=a&offset=1e2"),
             Some("q=a&offset=1001"),
             Some("q=a&offset=-1"),
+            Some("q=a&offset=1.5"),
+            Some("q=a&offset=x"),
             Some("q=a&hasAttachment=1"),
             Some("q=a&sort=new"),
             Some("q=a&authorId=bad"),
             Some("q=a&q=b"),
             Some("q=a&sort=recent&sort=recent"),
+            // zod 실패가 `@`·`after` 보다 먼저다.
+            Some("q=%40a&sort=new"),
+            Some("q=a&after=x&after=y"),
         ] {
-            assert_eq!(parse(raw), None, "{raw:?}");
+            assert_eq!(parse(raw), Err(Reject::Bad), "{raw:?}");
         }
         let long = "x".repeat(257);
-        assert_eq!(parse(Some(&format!("q={long}"))), None);
-        assert!(parse(Some(&format!("q={}", "x".repeat(256)))).is_some());
-        // 😀 는 UTF-16 두 단위 — 128개 = 256 은 받고 129개는 넘긴다.
-        assert!(parse(Some(&format!("q={}", "%F0%9F%98%80".repeat(128)))).is_some());
+        assert_eq!(parse(Some(&format!("q={long}"))), Err(Reject::Bad));
+        assert!(parse(Some(&format!("q={}", "x".repeat(256)))).is_ok());
+        // 😀 는 UTF-16 두 단위 — 128개 = 256 은 받고 129개는 거절한다.
+        assert!(parse(Some(&format!("q={}", "%F0%9F%98%80".repeat(128)))).is_ok());
         assert_eq!(
             parse(Some(&format!("q={}", "%F0%9F%98%80".repeat(129)))),
-            None
+            Err(Reject::Bad)
         );
         let eleven: String = (0..11).map(|_| format!("&authorId={A}")).collect();
-        assert_eq!(parse(Some(&format!("q=a{eleven}"))), None);
+        assert_eq!(parse(Some(&format!("q=a{eleven}"))), Err(Reject::Bad));
+        assert!(parse(Some("q=a&x=1&x=2")).is_ok());
     }
 }

@@ -4,9 +4,8 @@
 //! - 문장은 TS 정본 `SEARCH_MESSAGES_SQL`(`services/messages.ts`, 정렬 두 갈래)을 `golden/sql_fragments.json` 에서 읽는다.
 //!   가시성 술어·스코프·거르기는 그 문장 안에 있다.
 //! - 답하지 않고 TS 로 넘기는 것(보수적으로):
-//!   - 질의에 `@` 가 있으면 — TS `normalizeSearchQuery` 가 `@handle` 을 `<@id>` 로 바꾼다(shared `mentionedHandles`·
-//!     `normalizeMentions` 의 JS 규칙). `@` 가 없으면 그 함수는 질의를 그대로 돌려준다.
-//!   - `after`·`before` 가 있으면 — zod `datetime({ offset: true })` 판정을 옮기지 않는다.
+//!   - `after`·`before` 가 zod `datetime({ offset: true })` 를 지나지 못하면(그 거절 문구는 TS 몫).
+//! - 질의의 `@handle` 은 TS `normalizeSearchQuery` 처럼 저장 토큰으로 바꾼다([`normalize_search_query`](crate::core::mention_parse::normalize_search_query)).
 //! - 결과: TS `searchMessages` 처럼 `limit + 1`(51)을 떠서 50 을 싣고, `hasMore` 는 `searchHasMore`(천장 1000).
 //!   그 뒤 `message.read` 와 같은 `denormalizeBodies` → `markSystemLines`([`super::tools::denormalize_marked`]).
 use super::respond::{minify, text_result};
@@ -64,6 +63,8 @@ struct Args {
     authors: Option<Vec<String>>,
     has_attachment: Option<bool>,
     recent: bool,
+    after: Option<String>,
+    before: Option<String>,
 }
 
 fn parse(args: &Value) -> Option<Args> {
@@ -71,12 +72,12 @@ fn parse(args: &Value) -> Option<Args> {
     // `z.string().min(1).max(256)` — JS 길이(UTF-16 단위).
     let query = o.get("query")?.as_str()?;
     let n = query.encode_utf16().count();
-    if !(1..=256).contains(&n) || query.contains('@') {
+    if !(1..=256).contains(&n) {
         return None;
     }
-    if o.contains_key("after") || o.contains_key("before") {
-        return None;
-    }
+    // zod `datetime({ offset: true })` — 틀리면 TS 가 거절한다(그 문구째로).
+    let after = opt_datetime(o.get("after"))?;
+    let before = opt_datetime(o.get("before"))?;
     let authors = match o.get("authorIds") {
         None => None,
         Some(v) => {
@@ -114,7 +115,32 @@ fn parse(args: &Value) -> Option<Args> {
         authors,
         has_attachment,
         recent,
+        after,
+        before,
     })
+}
+
+/// 없으면 `Some(None)`, zod 가 받는 문자열이면 `Some(Some(s))`, 그 밖은 `None`(TS 로).
+fn opt_datetime(v: Option<&Value>) -> Option<Option<String>> {
+    match v {
+        None => Some(None),
+        Some(Value::String(s)) if zod_datetime_offset(s) => Some(Some(s.clone())),
+        Some(_) => None,
+    }
+}
+
+/// zod 3.25 `z.string().datetime({ offset: true })` 의 정규식 그대로(`\d` 는 ASCII 숫자).
+pub fn zod_datetime_offset(s: &str) -> bool {
+    static RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(concat!(
+            "^((([0-9][0-9][2468][048]|[0-9][0-9][13579][26]|[0-9][0-9]0[48]|[02468][048]00|[13579][26]00)-02-29|",
+            "[0-9]{4}-((0[13578]|1[02])-(0[1-9]|[12][0-9]|3[01])|(0[469]|11)-(0[1-9]|[12][0-9]|30)|(02)-(0[1-9]|1[0-9]|2[0-8]))))",
+            "T([01][0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9](\\.[0-9]+)?)?",
+            "(Z|([+-][0-9]{2}:?[0-9]{2}))$"
+        ))
+        .expect("datetime regex")
+    });
+    RE.is_match(s)
 }
 
 pub async fn answer(pool: &PgPool, me: &Account, args: &Value) -> Option<String> {
@@ -127,16 +153,20 @@ pub async fn answer(pool: &PgPool, me: &Account, args: &Value) -> Option<String>
     {
         return Some(err("forbidden", "not a member of this channel"));
     }
+    // TS `normalizeSearchQuery` — `@handle` 을 저장 토큰(`<@id>`)으로.
+    let query = crate::core::mention_parse::normalize_search_query(pool, &a.query)
+        .await
+        .ok()?;
     let rows: Vec<String> = sqlx::query_scalar::<_, String>(sql(a.recent))
-        .bind(&a.query)
+        .bind(&query)
         .bind(LIMIT + 1)
         .bind(&me.id)
         .bind(a.channel.as_deref())
         .bind(a.thread.as_deref())
         .bind(a.offset)
         .bind(a.authors.as_deref())
-        .bind(None::<String>)
-        .bind(None::<String>)
+        .bind(a.after.as_deref())
+        .bind(a.before.as_deref())
         .bind(a.has_attachment)
         .fetch_all(pool)
         .await
@@ -184,9 +214,8 @@ mod tests {
             json!({}),
             json!({ "query": "" }),
             json!({ "query": 1 }),
-            json!({ "query": "@bot 찾기" }),
-            json!({ "query": "x", "after": "2026-11-15T00:00:00Z" }),
-            json!({ "query": "x", "before": "2026-11-15T00:00:00Z" }),
+            json!({ "query": "x", "after": "2026-11-15" }),
+            json!({ "query": "x", "before": 1 }),
             json!({ "query": "x", "offset": 1001 }),
             json!({ "query": "x", "offset": -1 }),
             json!({ "query": "x", "offset": 1.5 }),
@@ -200,6 +229,9 @@ mod tests {
         ] {
             assert!(parse(&bad).is_none(), "{bad}");
         }
+        let a = parse(&json!({ "query": "x", "after": "2026-11-15T00:00:00Z", "before": "2026-11-16T09:00-0500" })).unwrap();
+        assert_eq!(a.after.as_deref(), Some("2026-11-15T00:00:00Z"));
+        assert_eq!(a.before.as_deref(), Some("2026-11-16T09:00-0500"));
     }
 
     #[test]

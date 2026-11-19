@@ -1,8 +1,8 @@
 //! S5.3 C1c-4c — MCP `message.post` 의 몸통. TS `mcp/mcpPlugin.ts` 의 같은 도구를 옮긴다: 채널 가시성 → 모델 신고 meta →
 //! `postMessage`(원인 입력과 함께, [`crate::core::msg_post::post_in_tx`]) → `postedResult`.
 //!
-//! - **TS 로 넘기는 것**(`None` — 아무것도 쓰지 않았다): zod 가 받지 않을 인자(모양을 모르면 넘긴다) · `agentModels`(모델 지정은
-//!   `applyAgentPicks`, TS 몫) · ASCII 밖 모델 신고(JS `trim`·UTF-16 자르기를 그대로 맞추지 않는다) · `post_in_tx` 가 TS 몫이라고 한
+//! - **TS 로 넘기는 것**(`None` — 아무것도 쓰지 않았다): zod 가 받지 않을 인자(모양을 모르면 넘긴다) · 비지 않은 `agentModels` 중 고르기 쓰기 권한이
+//!   없을 때(거절 갈래만 [`picks_refusal`] 이 답한다 — 권한이 있으면 [`answer_picks`] 가 글과 같은 tx 에서 `applyAgentPicks` 까지 맡는다) · 자른 자리가 서로게이트 쌍을 가르는 모델 신고([`cause_link::trimmed_model`]) · `post_in_tx` 가 TS 몫이라고 한
 //!   글(상한에 막힌 부름·암묵 위임을 모르는 부름·TS 몫 스레드) · DB 오류(트랜잭션이 버려져 아무것도 남지 않았다 — TS 가 같은 요청을 다시 돈다).
 //! - REST 와 다른 점(TS 와 같다): 보관된 채널도 막지 않는다(`assertChannelVisible` 만) · 링크 미리보기·글 승인이 없어 본문 가드가
 //!   없다 — 그래서 메시지 링크가 든 글도 Rust 가 맡고, 정체 판정의 「같은 대화 링크」 갈래가 여기서 닿는다 · 재시도 키가 없다 ·
@@ -33,11 +33,14 @@ struct Args {
     model: Option<String>,
 }
 
-/// zod `inputSchema` 를 그대로 받는 인자만 `Some`. 틀린 꼴·`agentModels`·ASCII 밖 모델은 `None`(→ TS 가 검증 오류나 그 갈래를 낸다).
+/// zod `inputSchema` 를 그대로 받는 인자만 `Some`. 틀린 꼴·비지 않은 `agentModels`·서로게이트 쌍이 갈리는 모델은 `None`(→ TS 가 검증 오류나 그 갈래를 낸다).
 fn parse(args: &Value) -> Option<Args> {
     let Value::Object(o) = args else { return None };
-    if o.contains_key("agentModels") {
-        return None;
+    // 빈 `agentModels` 는 TS 에서도 고를 것이 없어(`cleanPicks([])` → `beforeCommit` 없음) 없는 것과 같다. 고르는 갈래만 TS 몫.
+    match o.get("agentModels") {
+        None => {}
+        Some(Value::Array(a)) if a.is_empty() => {}
+        Some(_) => return None,
     }
     let channel = o
         .get("channelId")?
@@ -174,6 +177,168 @@ pub async fn answer(
         cause,
         turn,
         operator,
+        None,
+    )
+    .await
+}
+
+/// MCP `artifact.publish` 의 게시([`super::artifact_publish::publish`]) — 페이지(·표지) 첨부를 붙인 글을 `artifact` 훅과 같은 tx 로 올린다.
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn answer_artifact(
+    st: &PostState,
+    me: &Account,
+    channel: &str,
+    post_body: PostBody,
+    model: Option<String>,
+    hook: &super::artifact_write::NewArtifact,
+    cause: Option<&str>,
+    turn: Option<&str>,
+    operator: bool,
+) -> Option<String> {
+    let a = Args {
+        channel: channel.to_owned(),
+        post: post_body,
+        model,
+    };
+    post(
+        st,
+        me,
+        a,
+        Map::new(),
+        Kind::User,
+        false,
+        false,
+        cause,
+        turn,
+        operator,
+        Some(hook),
+    )
+    .await
+}
+
+/// zod `AGENT_MODELS_ARG` 한 칸 — `{ agentId: uuid, model?: string(≤MODEL_ID_MAX)|null, effort?: string(≤64)|null }`.
+pub(crate) type Pick = (String, Option<String>, Option<String>);
+
+pub(crate) fn parse_picks(v: &Value) -> Option<Vec<Pick>> {
+    let a = v.as_array()?;
+    if a.len() > 8 {
+        return None;
+    }
+    let axis = |o: &Map<String, Value>, k: &str, max: usize| -> Option<Option<String>> {
+        match o.get(k) {
+            None | Some(Value::Null) => Some(None),
+            Some(Value::String(s)) if s.encode_utf16().count() <= max => Some(Some(s.clone())),
+            _ => None,
+        }
+    };
+    a.iter()
+        .map(|p| {
+            let o = p.as_object()?;
+            let id = o
+                .get("agentId")?
+                .as_str()
+                .filter(|s| is_uuid(s))?
+                .to_owned();
+            Some((
+                id,
+                axis(o, "model", cause_link::MODEL_ID_MAX)?,
+                axis(o, "effort", 64)?,
+            ))
+        })
+        .collect()
+}
+
+/// `message.post` 에 비지 않은 `agentModels` 가 왔을 때 TS `preparePicks` 까지의 거절(채널 가시성 → `cleanPicks` →
+/// `axisValid`(`bad_model_value`) → `checkOffered`(`model_not_offered`·`effort_not_offered`))만 Rust 가 답한다. 모두 지나면 `None`
+/// (→ TS 가 게시 트랜잭션 안의 `applyAgentPicks` 와 함께 처음부터 돈다 — 여기서는 읽기만 했다). 하네스 목록은 능력 스냅숏만 보므로
+/// 오퍼레이터 코어가 Rust 일 때(`relay_moved`)만 부른다. 인자가 zod 를 못 지나거나 DB 오류여도 `None`.
+pub async fn picks_refusal(st: &PostState, me: &Account, args: &Value) -> Option<String> {
+    let picks = parse_picks(args.get("agentModels")?)?;
+    if picks.is_empty() {
+        return None;
+    }
+    let mut rest = args.clone();
+    rest.as_object_mut()?.remove("agentModels");
+    let a = parse(&rest)?;
+    match channel_visible(&st.read, &me.id, &a.channel).await {
+        Ok(true) => {}
+        Ok(false) => return Some(err("forbidden", "not a member of this dm channel")),
+        Err(_) => return None,
+    }
+    check_picks(st, &picks).await?
+}
+
+/// TS `preparePicks` 의 `axisValid`·`checkOffered` — `Some(Some(거절))`·`Some(None)`(지났다)·`None`(DB 오류).
+/// `message.delegate` 도 같은 판정을 쓴다.
+pub(crate) async fn check_picks(st: &PostState, picks: &[Pick]) -> Option<Option<String>> {
+    use crate::core::thread_model_set::{axis_valid, check_offered, clean_axis};
+    for (agent, model, effort) in picks {
+        let model = clean_axis(model.as_deref(), cause_link::MODEL_ID_MAX);
+        let effort = clean_axis(effort.as_deref(), 64);
+        if model.is_none() && effort.is_none() {
+            continue;
+        }
+        if !axis_valid(model.as_deref()) || !axis_valid(effort.as_deref()) {
+            return Some(Some(err(
+                "bad_model_value",
+                "모델·effort 는 영숫자로 시작하고 영숫자·._:/[]- 만 쓴다",
+            )));
+        }
+        if let Err((code, message)) =
+            check_offered(&st.write, agent, model.as_deref(), effort.as_deref())
+                .await
+                .ok()?
+        {
+            return Some(Some(err(code, &message)));
+        }
+    }
+    Some(None)
+}
+
+/// `message.post` + 비지 않은 `agentModels` — 거절 앞머리([`picks_refusal`]) 뒤 글과 같은 tx 에서 TS `applyAgentPicks` 를 돈다
+/// ([`crate::core::agent_model_picks::AgentPicks`]). 바뀐 줄은 커밋 뒤 시스템 줄·이벤트. 인자가 zod 를 못 지나거나 DB 오류면 `None`(→ TS).
+pub async fn answer_picks(
+    st: &PostState,
+    me: &Account,
+    args: &Value,
+    cause: Option<&str>,
+    turn: Option<&str>,
+    operator: bool,
+) -> Option<String> {
+    use crate::core::agent_model_picks::{AgentPicks, Pick};
+    use crate::core::thread_model_set::clean_axis;
+    if let Some(refused) = picks_refusal(st, me, args).await {
+        return Some(refused);
+    }
+    let raw = parse_picks(args.get("agentModels")?)?;
+    let mut rest = args.clone();
+    rest.as_object_mut()?.remove("agentModels");
+    let a = parse(&rest)?;
+    let picks: Vec<Pick> = raw
+        .into_iter()
+        .map(|(agent_id, model, effort)| Pick {
+            agent_id,
+            model: clean_axis(model.as_deref(), cause_link::MODEL_ID_MAX),
+            effort: clean_axis(effort.as_deref(), 64),
+        })
+        .collect();
+    let hook = AgentPicks::new(&a.channel, a.post.thread_root.as_deref(), &me.id, picks);
+    post_with(
+        st,
+        me,
+        a,
+        Map::new(),
+        Kind::User,
+        false,
+        false,
+        cause,
+        turn,
+        operator,
+        None,
+        &[],
+        None,
+        Some(&hook),
+        None,
     )
     .await
 }
@@ -222,6 +387,7 @@ pub async fn answer_progress(
         cause,
         turn,
         operator,
+        None,
     )
     .await
 }
@@ -362,6 +528,7 @@ pub async fn answer_notice(
         None,
         None,
         operator,
+        None,
     )
     .await
 }
@@ -469,8 +636,121 @@ pub async fn answer_fail(
         cause,
         turn,
         operator,
+        None,
     )
     .await
+}
+
+/// `message.ask` 의 평범한 카드(사람 앞·거울/머지 거절 없음, `supersedes` 는 글이 선 뒤 닫는다) — [`super::message_ask::answer_plain`] 이 고른 인자와 ask meta 로
+/// `message.post` 와 같은 길(가시성 → 모델 신고 → `postMessage` → `postedResult`)을 탄다. `sub` 는 `channelId`·`body`·`model`·`threadRootId` 만.
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn answer_ask(
+    st: &PostState,
+    me: &Account,
+    sub: &Value,
+    meta: Map<String, Value>,
+    cause: Option<&str>,
+    turn: Option<&str>,
+    operator: bool,
+    supersedes: &[&str],
+    plan_step: Option<&str>,
+    push_to: Option<&str>,
+) -> Option<String> {
+    let a = parse(sub)?;
+    post_with(
+        st,
+        me,
+        a,
+        meta,
+        Kind::User,
+        false,
+        false,
+        cause,
+        turn,
+        operator,
+        None,
+        supersedes,
+        plan_step,
+        None,
+        push_to,
+    )
+    .await
+}
+
+/// 권한 카드 글([`super::message_ask`] 의 머지 거절 카드) — 세운 글의 id·`notified` 를 돌려준다. 거절(`forbidden`·`bad_thread` 등)은
+/// `Err(답)`, 재생·TS 로 넘길 꼴·DB 오류는 `None`(→ TS: 재생이면 TS 가 같은 키로 답한다).
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn post_card(
+    st: &PostState,
+    me: &Account,
+    sub: &Value,
+    mut meta: Map<String, Value>,
+    cause: Option<&str>,
+    turn: Option<&str>,
+    operator: bool,
+) -> Option<Result<(String, Vec<String>), String>> {
+    let a = parse(sub)?;
+    match channel_visible(&st.read, &me.id, &a.channel).await {
+        Ok(true) => {}
+        Ok(false) => return Some(Err(err("forbidden", "not a member of this dm channel"))),
+        Err(_) => return None,
+    }
+    cause_link::reported_model_meta(
+        &st.read,
+        &me.id,
+        a.model.as_deref(),
+        a.post.thread_root.as_deref(),
+        &mut meta,
+    )
+    .await
+    .ok()?;
+    let is_dm = msg_post::channel_is_dm(&st.read, &a.channel).await.ok()?;
+    let audience = audience_for(&st.read, &a.channel).await.ok()?.to_json();
+    let origin = Origin {
+        cause,
+        chain_cause: cause.filter(|_| operator),
+        turn_id: turn.filter(|_| operator),
+        meta,
+        server_notice: false,
+        closes_delegation: false,
+        delegation: None,
+        system: false,
+        progress: false,
+        wake: false,
+        no_mentions: false,
+        before_commit: None,
+        service_call: false,
+    };
+    let out = msg_post::post_in_tx(
+        st,
+        &a.channel,
+        &me.id,
+        me.kind == "agent",
+        &a.post,
+        None,
+        &audience,
+        is_dm,
+        &origin,
+    )
+    .await
+    .ok()?;
+    match out {
+        Outcome::ToTs | Outcome::Replayed(_) | Outcome::ChainLimit => None,
+        Outcome::Rejected(r) => Some(Err(err(&r.code, &r.message))),
+        Outcome::BadThread => Some(Err(err("bad_thread", BAD_THREAD))),
+        Outcome::BadAttachment => Some(Err(err(
+            "bad_attachment",
+            "attachments must be your own, unused uploads",
+        ))),
+        Outcome::Posted { row, notified, .. } => {
+            let id = serde_json::from_str::<Value>(&row)
+                .ok()?
+                .get("id")?
+                .as_str()?
+                .to_owned();
+            Some(Ok((id, notified)))
+        }
+    }
 }
 
 /// shared `REPORT_MAX_ITEMS`·`REPORT_MAX_NEXT`.
@@ -579,12 +859,49 @@ pub async fn answer_report(
         cause,
         turn,
         operator,
+        None,
     )
     .await
 }
 
 #[allow(clippy::too_many_arguments)]
 async fn post(
+    st: &PostState,
+    me: &Account,
+    a: Args,
+    meta: Map<String, Value>,
+    kind: Kind,
+    closes_delegation: bool,
+    fold: bool,
+    cause: Option<&str>,
+    turn: Option<&str>,
+    operator: bool,
+    artifact: Option<&super::artifact_write::NewArtifact>,
+) -> Option<String> {
+    post_with(
+        st,
+        me,
+        a,
+        meta,
+        kind,
+        closes_delegation,
+        fold,
+        cause,
+        turn,
+        operator,
+        artifact,
+        &[],
+        None,
+        None,
+        None,
+    )
+    .await
+}
+
+/// [`post`] 에 `message.ask` 의 대신하기(`supersedes`)를 더한 것 — 새 카드가 선 **뒤**(커밋 뒤, 재생이 아닐 때) TS `supersedeAsk` 처럼
+/// 옛 카드를 하나씩 닫는다([`super::message_ask::supersede_ask`]).
+#[allow(clippy::too_many_arguments)]
+async fn post_with(
     st: &PostState,
     me: &Account,
     a: Args,
@@ -595,7 +912,18 @@ async fn post(
     cause: Option<&str>,
     turn: Option<&str>,
     operator: bool,
+    artifact: Option<&super::artifact_write::NewArtifact>,
+    supersedes: &[&str],
+    plan_step: Option<&str>,
+    picks: Option<&crate::core::agent_model_picks::AgentPicks>,
+    push_to: Option<&str>,
 ) -> Option<String> {
+    // TS `if (mirrorOf) await syncAskMirrors(pool, mirrorOf)` — 검사와 발행 사이에 원본이 정해졌으면 새 거울을 곧바로 닫는다.
+    let mirror_root = meta
+        .get("ask")
+        .and_then(|x| x.get("mirrorOf"))
+        .and_then(Value::as_str)
+        .map(str::to_owned);
     match channel_visible(&st.read, &me.id, &a.channel).await {
         Ok(true) => {}
         Ok(false) => return Some(err("forbidden", "not a member of this dm channel")),
@@ -626,6 +954,11 @@ async fn post(
         system: kind == Kind::Notice,
         progress: kind == Kind::Progress,
         wake: false,
+        no_mentions: false,
+        before_commit: artifact
+            .map(|h| h as &dyn msg_post::BeforeCommit)
+            .or(picks.map(|h| h as &dyn msg_post::BeforeCommit)),
+        service_call: false,
     };
     let out = msg_post::post_in_tx(
         st,
@@ -642,6 +975,8 @@ async fn post(
     .ok()?;
     match out {
         Outcome::ToTs | Outcome::Replayed(_) | Outcome::ChainLimit => None,
+        // TS `failure === 'rejected'` — `{ error: { code, message } }`.
+        Outcome::Rejected(r) => Some(err(&r.code, &r.message)),
         Outcome::BadThread => Some(err("bad_thread", BAD_THREAD)),
         Outcome::BadAttachment => Some(err(
             "bad_attachment",
@@ -649,6 +984,70 @@ async fn post(
         )),
         // 에이전트 글은 새 위임을 만들지 않는다(`mandate` 는 사람 글만) — 감사 줄이 없다.
         Outcome::Posted { row, notified, .. } => {
+            // TS: 지정이 바뀌었으면 커밋 뒤 시스템 줄(`byKind: 'agent'`)·`thread.agent_model.changed`. 행은 이미 커밋됐다.
+            if let Some((root, changes)) = picks.and_then(|h| h.changes()) {
+                for (agent, axes) in &changes {
+                    if let Err(e) = crate::core::thread_model_set::announce_agent_pick(
+                        st,
+                        &a.channel,
+                        &root,
+                        &me.id,
+                        agent,
+                        axes.as_ref(),
+                    )
+                    .await
+                    {
+                        eprintln!("message.post: agent pick announce failed: {e}");
+                    }
+                }
+            }
+            let new_id = serde_json::from_str::<Value>(&row)
+                .ok()
+                .and_then(|v| v.get("id").and_then(Value::as_str).map(str::to_owned));
+            let mut plan_extra = String::new();
+            if let Some(new_id) = new_id {
+                if let Some(root) = &mirror_root {
+                    let r: Result<(), sqlx::Error> = async {
+                        let mut conn = st.write.acquire().await?;
+                        crate::core::ask_sync::sync_ask_mirrors(
+                            &mut conn,
+                            "message.ask mirrorOf",
+                            root,
+                        )
+                        .await
+                    }
+                    .await;
+                    if let Err(e) = r {
+                        eprintln!("message.ask: mirror sync for {root} failed: {e}");
+                    }
+                }
+                for old in supersedes {
+                    super::message_ask::supersede_ask(&st.write, old, &new_id, &me.id).await;
+                }
+                // TS: 이름으로 정한 받는 사람이 이 글로 inbox 를 받지 않았으면 `enqueueAskPush`(에이전트면 문장이 아무것도 넣지 않는다).
+                if let Some(to) = push_to.filter(|t| !notified.iter().any(|n| n == t))
+                    && let Err(e) =
+                        sqlx::query(crate::core::permission_card::enqueue_ask_push_sql())
+                            .bind(to)
+                            .bind(&new_id)
+                            .execute(&st.write)
+                            .await
+                {
+                    eprintln!("message.ask: ask push for {new_id} failed: {e}");
+                }
+                // TS `postedResult(message, notified, { plan: planHookOut(await linkPlanCard(…)) })` — 재생이 아닐 때만(재생은 TS 가 답한다).
+                if let (Some(step), Some(root)) = (plan_step, a.post.thread_root.as_deref()) {
+                    match super::plan_write::link_plan_card(
+                        &st.write, &me.id, root, &a.channel, step, &new_id,
+                    )
+                    .await
+                    {
+                        Ok(plan) => plan_extra = format!(",\"plan\":{plan}"),
+                        // 다름(기록): TS 는 이 DB 오류를 도구 오류로 던진다. Rust 는 카드가 이미 섰으므로 기록만 하고 `plan` 칸 없이 답한다.
+                        Err(e) => eprintln!("message.ask: plan link {step} failed: {e}"),
+                    }
+                }
+            }
             // TS `message.report` — 보고가 선 **뒤**(커밋 뒤) 따로 예약을 접는다. 접기가 막혀도 보고는 되돌리지 않는다(TS `.catch(() => [])`).
             let extra = match (fold, a.post.thread_root.as_deref()) {
                 (true, Some(root)) => {
@@ -661,9 +1060,16 @@ async fn post(
                         format!(",\"foldedWakes\":[{}]", folded.join(","))
                     }
                 }
-                _ => String::new(),
+                _ => match artifact.and_then(|h| h.published()) {
+                    // TS `postedResult(message, notified, { artifact: published })`.
+                    Some((id, version)) => format!(
+                        ",\"artifact\":{{\"artifactId\":{},\"version\":{version}}}",
+                        Value::from(id)
+                    ),
+                    None => String::new(),
+                },
             };
-            posted_result(&row, &notified, &extra)
+            posted_result(&row, &notified, &format!("{extra}{plan_extra}"))
         }
     }
 }
@@ -801,6 +1207,21 @@ mod tests {
             parse(&json!({ "channelId": C, "body": "x", "model": "  " })).map(|a| a.model),
             Some(None)
         );
+        assert_eq!(
+            parse_picks(&json!([{ "agentId": C, "model": "m", "effort": null }])),
+            Some(vec![(C.to_owned(), Some("m".to_owned()), None)])
+        );
+        assert!(parse_picks(&json!([{ "agentId": "x" }])).is_none());
+        assert!(parse_picks(&json!([{ "agentId": C, "effort": "e".repeat(65) }])).is_none());
+        assert!(parse_picks(&json!(vec![json!({ "agentId": C }); 9])).is_none());
+        // 빈 agentModels 는 고를 것이 없어 없는 것과 같다.
+        assert!(parse(&json!({ "channelId": C, "body": "x", "agentModels": [] })).is_some());
+        // ASCII 밖 모델도 JS `trim` 처럼 다듬어 Rust 가 맡는다.
+        assert_eq!(
+            parse(&json!({ "channelId": C, "body": "x", "model": "\u{3000}오푸스 " }))
+                .map(|a| a.model),
+            Some(Some("오푸스".into()))
+        );
         for bad in [
             json!({ "channelId": C, "body": "" }),
             json!({ "channelId": "x", "body": "a" }),
@@ -810,8 +1231,9 @@ mod tests {
             json!({ "channelId": C, "body": "a", "attachmentIds": vec![C; 11] }),
             json!({ "channelId": C, "body": "a", "model": "" }),
             json!({ "channelId": C, "body": "a", "model": "x".repeat(121) }),
-            json!({ "channelId": C, "body": "a", "model": "오푸스" }),
-            json!({ "channelId": C, "body": "a", "agentModels": [] }),
+            json!({ "channelId": C, "body": "a", "model": format!("{}😀", "a".repeat(119)) }),
+            json!({ "channelId": C, "body": "a", "agentModels": null }),
+            json!({ "channelId": C, "body": "a", "agentModels": [{ "agentId": C }] }),
             json!({ "channelId": C, "body": "a".repeat(8001) }),
         ] {
             assert!(parse(&bad).is_none(), "{bad}");

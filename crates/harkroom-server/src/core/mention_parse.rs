@@ -456,6 +456,47 @@ pub fn mention_token_keys(body: &str) -> Vec<String> {
         .collect()
 }
 
+/// TS `normalizeSearchQuery` — 질의의 `@handle` 을 본문 저장과 같은 토큰으로(계정 > 집합 > 팀). 손잡이가 없으면 그대로.
+/// 권한: `account.{id,handle}`·`handle_group.{id,handle}`·`agent_team.{id,name}` SELECT.
+pub async fn normalize_search_query(db: &sqlx::PgPool, query: &str) -> sqlx::Result<String> {
+    let handles = mentioned_handles(query);
+    if handles.is_empty() {
+        return Ok(query.to_string());
+    }
+    let mut map: HashMap<String, String> = HashMap::new();
+    let rows: Vec<(String, String)> =
+        sqlx::query_as("select id::text, lower(handle) from account where lower(handle) = any($1)")
+            .bind(&handles)
+            .fetch_all(db)
+            .await?;
+    map.extend(rows.into_iter().map(|(id, h)| (h, id)));
+    let rest: Vec<String> = handles
+        .into_iter()
+        .filter(|h| !map.contains_key(h))
+        .collect();
+    if !rest.is_empty() {
+        let groups: Vec<(String, String)> = sqlx::query_as(
+            "select id::text, lower(handle) from handle_group where lower(handle) = any($1)",
+        )
+        .bind(&rest)
+        .fetch_all(db)
+        .await?;
+        for (id, h) in groups {
+            map.insert(h, format!("group:{id}"));
+        }
+        let teams: Vec<(String, String)> = sqlx::query_as(
+            "select id::text, lower(name) from agent_team where lower(name) = any($1)",
+        )
+        .bind(&rest)
+        .fetch_all(db)
+        .await?;
+        for (id, n) in teams {
+            map.entry(n).or_insert_with(|| format!("team:{id}"));
+        }
+    }
+    Ok(normalize_mentions(query, &map))
+}
+
 /// TS `renderMentions` — 저장된 토큰을 지금 handle 로, 모르는 것은 `@알 수 없음`([`UNKNOWN_ACCOUNT_LABEL`]).
 pub fn render_mentions(body: &str, id_to_handle: &HashMap<String, String>) -> String {
     ANY_TOKEN

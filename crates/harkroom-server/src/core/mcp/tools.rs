@@ -36,6 +36,17 @@ pub const SERVED: &[&str] = &[
     "agent.modelOptions",
     // S5.4 A2b
     "memory.audit",
+    // S5.4 통합 — 오퍼레이터가 가로채는 도구([`super::operator_only`], DB 없이 `operator_required`)
+    "secret.mount",
+    "secret.generate",
+    "secret.import",
+    "secret.rotate",
+    "attachment.upload",
+    "pr.status",
+    // [`super::attachment_fetch`] — 거절·텍스트·PDF·작은 그림. 3MiB 넘는 그림 줄이기만 TS.
+    "attachment.fetch",
+    // S5.4 — 기다리지 않는 폴([`super::inbox_poll`]). 긴 폴·`version` 은 `writes::answer` 가 허브·쓰기 풀이 있을 때만, 임대는 TS.
+    "inbox.poll",
 ];
 
 /// 입력 스키마가 없는 도구 — SDK 는 `arguments` 를 레코드(객체)로만 받고, 없어도(`null`) 받는다. 스키마가 있는 도구는
@@ -116,7 +127,7 @@ fn mention_re() -> &'static regex::Regex {
 }
 
 /// 맨 겉 객체의 `key` 값이 문자열이면 그 글자 범위(따옴표 포함). 공백 없는 JSON([`minify`] 뒤)만 받는다.
-fn top_string_span(t: &str, key: &str) -> Option<(usize, usize)> {
+pub(super) fn top_string_span(t: &str, key: &str) -> Option<(usize, usize)> {
     let b = t.as_bytes();
     let str_end = |i: usize| -> Option<usize> {
         let mut j = i + 1;
@@ -355,9 +366,13 @@ pub async fn answer(
                 .then(|| text_result(one))
         }
         "message.read" => message_read(pool, me, args).await,
+        "inbox.poll" => super::inbox_poll::answer(pool, me, args).await,
         "message.search" => super::search::answer(pool, me, args).await,
         "memory.audit" => super::mem_audit::answer(pool, me, args).await,
+        "attachment.fetch" => super::attachment_fetch::answer(pool, me, args).await,
         "grant.list" => super::reads4::answer(pool, me, tool, args).await,
+        "secret.mount" | "secret.generate" | "secret.import" | "secret.rotate"
+        | "attachment.upload" | "pr.status" => super::operator_only::answer(tool, args),
         "workitem.list" | "automation.list" => {
             super::reads3::answer(pool, me, tool, args, cause).await
         }
@@ -374,9 +389,18 @@ mod tests {
 
     #[test]
     fn served_are_pure_reads_in_registry() {
+        // 오퍼레이터가 가로채는 도구(`Operator`)는 DB 에 닿지 않고 고정 글자만 낸다([`super::operator_only`]) — 읽기와 같이 친다.
         for n in SERVED {
             let s = super::super::find(n).expect(n);
-            assert_eq!(s.access, super::super::Access::Read, "{n}");
+            let operator_only = super::super::operator_only::SERVED.contains(n);
+            let want = if operator_only {
+                super::super::Access::Operator
+            } else if *n == "inbox.poll" {
+                super::super::Access::ReadSide
+            } else {
+                super::super::Access::Read
+            };
+            assert_eq!(s.access, want, "{n}");
         }
     }
 

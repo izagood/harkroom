@@ -1,0 +1,365 @@
+//! MCP `automation.propose` 의 Rust INSERT 가 **`AUTOMATION_PROPOSE_PRIVILEGES` 의 칸 단위 GRANT 만으로** 도는지 실제 Postgres 로 본다.
+//! 대조(`contrast`)의 쓰기 역할은 `pg_read_all_data` 를 가져 `returning *` 같은 넓은 SELECT 를 가린다 — 여기서는 그것 없이
+//! GRANT 목록만 가진 역할로 돌린다. 수신 비밀 칸(`ingress_token_hash`·`ingress_secret_enc`)을 읽는 문장이면 빨개진다.
+//! `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `packages/server/test/rustFrontDb.test.ts` 가 넘긴다).
+use harkroom_server::core::mcp::automation_propose::{AUTOMATION_PROPOSE_PRIVILEGES, insert_sql};
+use sqlx::{PgPool, Row};
+
+/// 시험들이 같은 표(`automation`)의 ACL 을 동시에 GRANT 하면 PG 가 `tuple concurrently updated` 로 떨어진다 — 이 파일의 시험은 하나씩 돈다.
+static GRANT_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+async fn run_as(
+    admin: &PgPool,
+    role: &str,
+    sql: &str,
+    owner: &str,
+    ch: &str,
+) -> Result<String, sqlx::Error> {
+    let mut tx = admin.begin().await?;
+    sqlx::query(sqlx::AssertSqlSafe(format!("set local role {role}")))
+        .execute(&mut *tx)
+        .await?;
+    let row = sqlx::query(sqlx::AssertSqlSafe(sql.to_owned()))
+        .bind(owner)
+        .bind(owner)
+        .bind(ch)
+        .bind("grant probe")
+        .bind("body")
+        .bind(r#"{"kind":"webhook"}"#)
+        .bind(None::<i32>)
+        .fetch_one(&mut *tx)
+        .await?;
+    let id: String = row.try_get("id")?;
+    tx.rollback().await?;
+    Ok(id)
+}
+
+#[tokio::test]
+async fn propose_insert_runs_with_column_grants_only() {
+    let _serial = GRANT_LOCK.lock().await;
+    let Ok(url) = std::env::var("HARKROOM_TEST_DATABASE_URL") else {
+        eprintln!("skip: HARKROOM_TEST_DATABASE_URL unset");
+        return;
+    };
+    let admin = PgPool::connect(&url).await.unwrap();
+    let owner: String = sqlx::query_scalar(
+        "insert into account(handle, display_name, kind) values ('ag_owner', 'ag_owner', 'agent') returning id::text",
+    )
+    .fetch_one(&admin)
+    .await
+    .unwrap();
+    let ch: String = sqlx::query_scalar(
+        "insert into channel(name, kind) values ('ag-rs', 'standard') returning id::text",
+    )
+    .fetch_one(&admin)
+    .await
+    .unwrap();
+
+    // GRANT 목록만 가진 역할 — pg_read_all_data 없음. 롤은 클러스터 단위다(시험 DB 는 템플릿 복제라
+    // 클러스터를 같이 쓴다) — 같은 클러스터에서 다시 돌아도 부딪히지 않게 이 실행의 채널 id 로 이름을 가른다.
+    let role = format!("ap_gp_{}", ch.replace('-', ""));
+    let role = role.as_str();
+    sqlx::query(sqlx::AssertSqlSafe(format!("create role {role} nologin")))
+        .execute(&admin)
+        .await
+        .unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "grant usage on schema public to {role}"
+    )))
+    .execute(&admin)
+    .await
+    .unwrap();
+    for (col, privilege) in AUTOMATION_PROPOSE_PRIVILEGES {
+        let (table, column) = col.split_once('.').expect("표.칸");
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "grant {privilege} ({column}) on {table} to {role}"
+        )))
+        .execute(&admin)
+        .await
+        .unwrap();
+    }
+    for secret in ["ingress_token_hash", "ingress_secret_enc"] {
+        let can: bool =
+            sqlx::query_scalar("select has_column_privilege($1, 'automation', $2, 'SELECT')")
+                .bind(role)
+                .bind(secret)
+                .fetch_one(&admin)
+                .await
+                .unwrap();
+        assert!(!can, "{secret} 는 SELECT 를 주지 않는다");
+    }
+
+    // Rust 가 실제로 보내는 문장은 이 GRANT 만으로 돈다.
+    let id = run_as(&admin, role, insert_sql(), &owner, &ch)
+        .await
+        .expect("칸 단위 GRANT 만으로 INSERT·returning 이 돈다");
+    assert_eq!(id.len(), 36);
+
+    // 같은 문장을 `returning *` 로 바꾸면 비밀 칸 SELECT 가 없어 막힌다 — 이 시험이 그 차이를 잡는다는 바닥.
+    let star = insert_sql().replace(
+        &format!("returning {})", "id, owner_id, channel_id, name, body, trigger, enabled, next_at, paused_reason, consecutive_failures, ingress_enabled_at, debounce_sec, proposed_by, approved_at, created_at, updated_at"),
+        "returning *)",
+    );
+    assert!(star.contains("returning *)"));
+    let e = run_as(&admin, role, &star, &owner, &ch)
+        .await
+        .expect_err("returning * 는 막혀야 한다");
+    assert!(e.to_string().contains("permission denied"), "{e}");
+
+    let left: i64 =
+        sqlx::query_scalar("select count(*) from automation where name = 'grant probe'")
+            .fetch_one(&admin)
+            .await
+            .unwrap();
+    assert_eq!(left, 0, "시험 INSERT 는 되돌린다");
+    println!("automation.propose: 칸 단위 GRANT 만으로 통과, returning * 는 permission denied");
+}
+
+/// MCP `automation.run` 의 잠금·셈·INSERT(`automation_run::enqueue_tx`)가 **`AUTOMATION_RUN_PRIVILEGES` 의 칸 단위 GRANT 만으로** 도는지.
+/// `for update` 잠금은 표의 UPDATE 칸 하나(`updated_at`)로, `on conflict … do nothing` 은 INSERT·SELECT 칸으로 통과해야 한다.
+#[tokio::test]
+async fn run_enqueue_runs_with_column_grants_only() {
+    let _serial = GRANT_LOCK.lock().await;
+    use harkroom_server::core::mcp::automation_run::{AUTOMATION_RUN_PRIVILEGES, Enq, enqueue_tx};
+    let Ok(url) = std::env::var("HARKROOM_TEST_DATABASE_URL") else {
+        eprintln!("skip: HARKROOM_TEST_DATABASE_URL unset");
+        return;
+    };
+    let admin = PgPool::connect(&url).await.unwrap();
+    let agent: String = sqlx::query_scalar(
+        "insert into account(handle, display_name, kind) values ('ar_agent', 'ar_agent', 'agent') returning id::text",
+    )
+    .fetch_one(&admin)
+    .await
+    .unwrap();
+    let ch: String = sqlx::query_scalar(
+        "insert into channel(name, kind) values ('ar-rs', 'standard') returning id::text",
+    )
+    .fetch_one(&admin)
+    .await
+    .unwrap();
+    let auto: String = sqlx::query_scalar(
+        "insert into automation(owner_id, channel_id, name, body, trigger, enabled, approved_at) \
+         values ($1::uuid, $2::uuid, 'run probe', 'b', '{\"kind\":\"webhook\"}', true, now()) returning id::text",
+    )
+    .bind(&agent)
+    .bind(&ch)
+    .fetch_one(&admin)
+    .await
+    .unwrap();
+    let cause: String = sqlx::query_scalar(
+        "insert into message(channel_id, author_id, body, kind) values ($1::uuid, $2::uuid, 'x', 'user') returning id::text",
+    )
+    .bind(&ch)
+    .bind(&agent)
+    .fetch_one(&admin)
+    .await
+    .unwrap();
+
+    let role = format!("ar_gp_{}", ch.replace('-', ""));
+    let role = role.as_str();
+    sqlx::query(sqlx::AssertSqlSafe(format!("create role {role} nologin")))
+        .execute(&admin)
+        .await
+        .unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "grant usage on schema public to {role}"
+    )))
+    .execute(&admin)
+    .await
+    .unwrap();
+    for (col, privilege) in AUTOMATION_RUN_PRIVILEGES {
+        let (table, column) = col.split_once('.').expect("표.칸");
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "grant {privilege} ({column}) on {table} to {role}"
+        )))
+        .execute(&admin)
+        .await
+        .unwrap();
+    }
+    for secret in ["ingress_token_hash", "ingress_secret_enc"] {
+        let can: bool =
+            sqlx::query_scalar("select has_column_privilege($1, 'automation', $2, 'SELECT')")
+                .bind(role)
+                .bind(secret)
+                .fetch_one(&admin)
+                .await
+                .unwrap();
+        assert!(!can, "{secret} 는 SELECT 를 주지 않는다");
+    }
+
+    let payload = serde_json::json!({ "vars": {}, "events": [{ "key": "manual:probe", "summary": "manual:probe" }] });
+    let mut tx = admin.begin().await.unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!("set local role {role}")))
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    let first = enqueue_tx(&mut tx, &auto, &cause, &agent, "manual:probe", &payload)
+        .await
+        .expect("칸 단위 GRANT 만으로 잠금·셈·INSERT 가 돈다");
+    assert!(matches!(first, Enq::Queued(_)), "첫 회차는 들어간다");
+    // 같은 원인으로 다시 — 셈 문장(원인 한 번)이 같은 권한으로 돌아 거절한다.
+    let again = enqueue_tx(&mut tx, &auto, &cause, &agent, "manual:probe2", &payload)
+        .await
+        .expect("두 번째도 권한 오류 없이 판정한다");
+    assert!(matches!(again, Enq::Refused("cause_used")));
+    tx.rollback().await.unwrap();
+
+    // 바닥: UPDATE 칸이 없으면 `for update` 잠금이 막힌다 — 이 시험이 잠금 권한을 실제로 잰다.
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "revoke update (updated_at) on automation from {role}"
+    )))
+    .execute(&admin)
+    .await
+    .unwrap();
+    let mut tx = admin.begin().await.unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!("set local role {role}")))
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    let e = enqueue_tx(&mut tx, &auto, &cause, &agent, "manual:probe3", &payload)
+        .await
+        .err()
+        .expect("UPDATE 칸 없이는 잠금이 막혀야 한다");
+    assert!(e.to_string().contains("permission denied"), "{e}");
+    tx.rollback().await.unwrap();
+
+    let left: i64 =
+        sqlx::query_scalar("select count(*) from automation_run where automation_id = $1::uuid")
+            .bind(&auto)
+            .fetch_one(&admin)
+            .await
+            .unwrap();
+    assert_eq!(left, 0, "시험 INSERT 는 되돌린다");
+    println!(
+        "automation.run: 칸 단위 GRANT 만으로 통과, UPDATE(updated_at) 없으면 잠금이 permission denied"
+    );
+}
+
+/// 위임장 줄(`decide_approve::MANDATE_LINE_PRIVILEGES`)의 유효성 문장(골든 `grant_valid_mandate_owner`)이 `automation` **4칸 SELECT 만으로**
+/// 도는지 — 표 단위 SELECT 를 요구하면 운영 쓰기 롤이 수신 비밀 칸까지 읽게 된다(security 11-18). 대조 rw 는 `pg_read_all_data` 라 이것을 못 본다.
+#[tokio::test]
+async fn mandate_valid_owner_runs_with_column_grants_only() {
+    let _serial = GRANT_LOCK.lock().await;
+    use harkroom_server::core::decide_approve::MANDATE_LINE_PRIVILEGES;
+    use harkroom_server::core::mandate_line_write::valid_owner_sql;
+    let Ok(url) = std::env::var("HARKROOM_TEST_DATABASE_URL") else {
+        eprintln!("skip: HARKROOM_TEST_DATABASE_URL unset");
+        return;
+    };
+    let admin = PgPool::connect(&url).await.unwrap();
+    let owner: String = sqlx::query_scalar(
+        "insert into account(handle, display_name, kind) values ('mv_owner', 'mv_owner', 'agent') returning id::text",
+    )
+    .fetch_one(&admin)
+    .await
+    .unwrap();
+    let ch: String = sqlx::query_scalar(
+        "insert into channel(name, kind) values ('mv-rs', 'standard') returning id::text",
+    )
+    .fetch_one(&admin)
+    .await
+    .unwrap();
+    let auto: String = sqlx::query_scalar(
+        "insert into automation(owner_id, channel_id, name, body, trigger, enabled, approved_at) \
+         values ($1::uuid, $2::uuid, 'mandate probe', 'b', '{\"kind\":\"webhook\"}', true, now()) returning id::text",
+    )
+    .bind(&owner)
+    .bind(&ch)
+    .fetch_one(&admin)
+    .await
+    .unwrap();
+    let mandate: String = sqlx::query_scalar(
+        "insert into mandate(owner_account_id, channel_id, automation_id) values ($1::uuid, $2::uuid, $3::uuid) returning id::text",
+    )
+    .bind(&owner)
+    .bind(&ch)
+    .bind(&auto)
+    .fetch_one(&admin)
+    .await
+    .unwrap();
+
+    let role = format!("mv_gp_{}", ch.replace('-', ""));
+    let role = role.as_str();
+    sqlx::query(sqlx::AssertSqlSafe(format!("create role {role} nologin")))
+        .execute(&admin)
+        .await
+        .unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "grant usage on schema public to {role}"
+    )))
+    .execute(&admin)
+    .await
+    .unwrap();
+    for (obj, privilege) in MANDATE_LINE_PRIVILEGES {
+        let grant = match obj.split_once('.') {
+            Some((table, column)) => format!("grant {privilege} ({column}) on {table} to {role}"),
+            None => format!("grant {privilege} on {obj} to {role}"),
+        };
+        sqlx::query(sqlx::AssertSqlSafe(grant))
+            .execute(&admin)
+            .await
+            .unwrap();
+    }
+    let table_select: bool =
+        sqlx::query_scalar("select has_table_privilege($1, 'automation', 'SELECT')")
+            .bind(role)
+            .fetch_one(&admin)
+            .await
+            .unwrap();
+    assert!(
+        !table_select,
+        "automation 표 단위 SELECT 는 요구하지 않는다"
+    );
+    for secret in ["ingress_token_hash", "ingress_secret_enc"] {
+        let can: bool =
+            sqlx::query_scalar("select has_column_privilege($1, 'automation', $2, 'SELECT')")
+                .bind(role)
+                .bind(secret)
+                .fetch_one(&admin)
+                .await
+                .unwrap();
+        assert!(!can, "{secret} 는 SELECT 를 주지 않는다");
+    }
+
+    let run = |role: String| {
+        let admin = admin.clone();
+        let mandate = mandate.clone();
+        async move {
+            let mut tx = admin.begin().await?;
+            sqlx::query(sqlx::AssertSqlSafe(format!("set local role {role}")))
+                .execute(&mut *tx)
+                .await?;
+            let got: Option<(String,)> = sqlx::query_as(valid_owner_sql())
+                .bind(&mandate)
+                .bind("1970-01-01T00:00:00Z")
+                .fetch_optional(&mut *tx)
+                .await?;
+            tx.rollback().await?;
+            Ok::<_, sqlx::Error>(got)
+        }
+    };
+    let got = run(role.to_owned())
+        .await
+        .expect("automation 4칸 SELECT 만으로 유효성 문장이 돈다");
+    assert_eq!(
+        got.map(|g| g.0),
+        Some(owner.clone()),
+        "켜지고 승인된 자동화의 위임장은 유효하다"
+    );
+
+    // 바닥 — 4칸 중 하나(approved_at)를 회수하면 같은 문장이 막힌다. 시험이 그 칸을 실제로 읽는다는 증거.
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "revoke select (approved_at) on automation from {role}"
+    )))
+    .execute(&admin)
+    .await
+    .unwrap();
+    let e = run(role.to_owned())
+        .await
+        .expect_err("approved_at SELECT 없이는 막혀야 한다");
+    assert!(e.to_string().contains("permission denied"), "{e}");
+    println!(
+        "mandate line: automation 4칸 SELECT 만으로 통과, approved_at 회수 시 permission denied"
+    );
+}

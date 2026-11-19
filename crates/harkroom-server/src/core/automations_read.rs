@@ -5,9 +5,8 @@
 //! - **비밀은 고르지 않는다.** `ingress_token_hash`·`ingress_secret_enc`(서명 비밀 봉투)는 문장에 없다 — 답 칸은 TS `COLS`·
 //!   `LAST_RUN_JOIN`·`RUN_COLS` 그대로다. 수신이 켜졌는지는 `ingressEnabledAt` 시각만 싣는다.
 //! - **읽기만 한다.** 읽기 풀만 쓰므로 새 GRANT 가 없다.
-//! - `DELETE /automations/:id` 는 TS 에 남긴다: 지우면 그 자동화의 위임장을 끝내고(`mandate`·`mandate_line`) 그 위임을 단 열린
-//!   권한 카드의 meta 를 고쳐 `message.updated` 를 낸다(`endAutomationMandates` → `refreshMandateCards`). 카드 직렬화·청중까지
-//!   옮겨야 같은 일이 되므로 이 조각에서는 옮기지 않는다.
+//! - `DELETE /automations/:id` 는 [`super::automation_delete`] 가 맡는다(위임장 끝내기·카드 `message.updated` 는
+//!   [`super::perm_card`]).
 //! - 만들기·고치기·승인·돌리기·수신(봉투·서명)은 TS 에 남긴다.
 use crate::auth::RequireAccount;
 use crate::directory::{internal, json_err, json_ok};
@@ -80,6 +79,52 @@ const GET_SQL: &str = concat!(
     "::text from automation a ",
     last_run_join!(),
     "where a.id = $1::uuid and a.owner_id = $2::uuid and a.deleted_at is null"
+);
+
+/// TS `approveAutomation` 의 `writeReturningView` — `returning *` 대신 `COLS` 칸만 돌려받는다(수신 비밀 칸은 고르지 않는다).
+/// $1 id · $2 소유자 · $3 다음 회차(timestamptz 또는 null) · $4 사람 세션으로 승인했나.
+pub(crate) const APPROVE_SQL: &str = concat!(
+    "with w as (update automation set approved_at = now(), enabled = true, next_at = $3::timestamptz, updated_at = now(), ",
+    "mandate_session_at = case when $4 then now() else null end ",
+    "where id = $1::uuid and owner_id = $2::uuid and approved_at is null and deleted_at is null ",
+    "returning id, owner_id, channel_id, name, body, trigger, enabled, next_at, paused_reason, consecutive_failures, ",
+    "ingress_enabled_at, debounce_sec, proposed_by, approved_at, created_at, updated_at) select ",
+    view_json!(),
+    "::text from w a ",
+    last_run_join!()
+);
+
+/// TS `createAutomation` — `returning ${COLS}` + `lastRun: null`(새 행이라 회차 join 은 늘 비어 null 이다).
+/// $1 소유자 · $2 채널 · $3 이름 · $4 본문 · $5 trigger(json 글자) · $6 다음 회차 · $7 debounce · $8 사람 세션.
+pub(crate) const CREATE_SQL: &str = concat!(
+    "with w as (insert into automation (owner_id, channel_id, name, body, trigger, next_at, debounce_sec, mandate_session_at) ",
+    "values ($1::uuid, $2::uuid, $3, $4, $5::jsonb, $6::timestamptz, $7, case when $8 then now() else null end) ",
+    "returning id, owner_id, channel_id, name, body, trigger, enabled, next_at, paused_reason, consecutive_failures, ",
+    "ingress_enabled_at, debounce_sec, proposed_by, approved_at, created_at, updated_at) select ",
+    view_json!(),
+    "::text from w a ",
+    last_run_join!()
+);
+
+/// TS `updateAutomationRow` 의 `writeReturningView` — `returning *` 대신 `COLS` 칸만. 시간 트리거로 바뀔 때 수신 칸 지우기는
+/// 같은 tx 의 따로 문장(`automation_patch::CLEAR_INGRESS_SQL`) — `case ... else ingress_token_hash` 는 그 칸 SELECT 를 요구한다.
+/// $1 id · $2 소유자 · $3 이름 · $4 본문 · $5 채널 · $6 trigger(json 글자) · $7 enabled · $8 다시 잡나 · $9 다음 회차 ·
+/// $10 다시 켜나 · $11 debounce 를 고치나 · $12 debounce.
+pub(crate) const PATCH_SQL: &str = concat!(
+    "with w as (update automation set ",
+    "name = coalesce($3, name), body = coalesce($4, body), channel_id = coalesce($5::uuid, channel_id), ",
+    "trigger = $6::jsonb, enabled = $7, ",
+    "next_at = case when $8 then $9::timestamptz else next_at end, ",
+    "paused_reason = case when $10 then null else paused_reason end, ",
+    "consecutive_failures = case when $10 then 0 else consecutive_failures end, ",
+    "debounce_sec = case when $11 then $12::int else debounce_sec end, ",
+    "updated_at = now() ",
+    "where id = $1::uuid and owner_id = $2::uuid and deleted_at is null ",
+    "returning id, owner_id, channel_id, name, body, trigger, enabled, next_at, paused_reason, consecutive_failures, ",
+    "ingress_enabled_at, debounce_sec, proposed_by, approved_at, created_at, updated_at) select ",
+    view_json!(),
+    "::text from w a ",
+    last_run_join!()
 );
 
 /// TS `listRuns(pool, id)` — `RUN_COLS`, 최근 50.
@@ -179,7 +224,7 @@ mod tests {
 
     #[test]
     fn sql_never_selects_ingress_secrets() {
-        for q in [LIST_SQL, GET_SQL, RUNS_SQL] {
+        for q in [LIST_SQL, GET_SQL, RUNS_SQL, APPROVE_SQL, CREATE_SQL] {
             assert!(!q.contains("ingress_token"), "{q}");
             assert!(!q.contains("secret"), "{q}");
             assert!(!q.contains("a.*"), "{q}");

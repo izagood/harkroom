@@ -396,6 +396,7 @@ pub async fn rest_approve(
     agent: &str,
     request: &str,
     option: &str,
+    once: Option<&super::decide_merge_once::Once>,
 ) -> Taken {
     let Some(pool) = st.approve.as_ref() else {
         return Taken::Hand;
@@ -422,8 +423,9 @@ pub async fn rest_approve(
         request_id: request,
         actor_id: &me.id,
         option,
-        // REST 는 카드를 거치지 않는다(TS: `ref.cardMessageId` null → onceFromCard 안 부름).
-        has_once: false,
+        // REST 는 카드를 거치지 않는다(TS: `ref.cardMessageId` null → onceFromCard 안 부름). `approve-once` 만 본문에서 once 를 받는다.
+        has_once: once.is_some(),
+        once,
         bundle_message_id: None,
     };
     Taken::Done(match approve_then_answer(st, pool, args).await {
@@ -435,14 +437,20 @@ pub async fn rest_approve(
             message,
         }) => refusal(status, code, &message),
         Ok(ApproveOutcome::Granted {
+            status,
+            approval_expires_at,
             card_message_id,
             grant_expires_at,
             grant_mode,
             ..
         }) => {
             let mut body = json!({
-                "status": "granted", "grantExpiresAt": grant_expires_at, "cardMessageId": card_message_id,
+                "status": status, "grantExpiresAt": grant_expires_at,
             });
+            if let Some(a) = approval_expires_at {
+                body["approvalExpiresAt"] = json!(a);
+            }
+            body["cardMessageId"] = json!(card_message_id);
             if let Some(m) = grant_mode {
                 body["grantMode"] = json!(m);
             }
@@ -451,16 +459,35 @@ pub async fn rest_approve(
     })
 }
 
-async fn card_has_once(read: &PgPool, card: &str, option: &str) -> sqlx::Result<bool> {
+const CARD_META: &str = "select meta from message where id = $1::uuid";
+
+async fn card_has_once(
+    read: &PgPool,
+    card: &str,
+    option: &str,
+) -> sqlx::Result<(bool, Option<super::decide_merge_once::Once>)> {
     // TS 는 `approve_once` 일 때만 카드에서 1회 머지 값을 읽는다.
     if option != "approve_once" {
-        return Ok(false);
+        return Ok((false, None));
     }
-    Ok(sqlx::query_scalar::<_, bool>(CARD_HAS_ONCE)
+    let has = sqlx::query_scalar::<_, bool>(CARD_HAS_ONCE)
         .bind(card)
         .fetch_optional(read)
         .await?
-        .unwrap_or(false))
+        .unwrap_or(false);
+    if !has {
+        return Ok((false, None));
+    }
+    // 값이 정수가 아니면(드문 꼴) once 없이 — 머지 갈래는 쓰기 전에 TS 로 넘긴다.
+    let meta: Option<serde_json::Value> = sqlx::query_scalar(CARD_META)
+        .bind(card)
+        .fetch_optional(read)
+        .await?;
+    Ok((
+        true,
+        meta.as_ref()
+            .and_then(super::decide_merge_once::once_from_card),
+    ))
 }
 
 /// 2'. ask-answer 의 권한 카드 승인. `gate` 뒤에 부른다.
@@ -482,7 +509,7 @@ pub async fn answer_card_approve(
         Ok(None) => return Taken::Hand,
         Err(e) => return Taken::Done(internal(e)),
     };
-    let has_once = match card_has_once(&st.read, card, option).await {
+    let (has_once, once) = match card_has_once(&st.read, card, option).await {
         Ok(b) => b,
         Err(e) => return Taken::Done(internal(e)),
     };
@@ -492,6 +519,7 @@ pub async fn answer_card_approve(
         actor_id: &me.id,
         option,
         has_once,
+        once: once.as_ref(),
         bundle_message_id: None,
     };
     Taken::Done(match approve_then_answer(st, pool, args).await {
@@ -551,7 +579,7 @@ pub async fn answer_bundle_approve(
         Ok(None) => return Taken::Hand,
         Err(e) => return Taken::Done(internal(e)),
     };
-    let has_once = match card_has_once(&st.read, root, option).await {
+    let (has_once, once) = match card_has_once(&st.read, root, option).await {
         Ok(b) => b,
         Err(e) => return Taken::Done(internal(e)),
     };
@@ -561,6 +589,7 @@ pub async fn answer_bundle_approve(
         actor_id: &me.id,
         option,
         has_once,
+        once: once.as_ref(),
         bundle_message_id: Some(bundle),
     };
     Taken::Done(match approve_then_answer(st, pool, args).await {
@@ -600,7 +629,7 @@ async fn approve_route_with(
         Ok((b, _)) => b,
         Err(r) => return r,
     };
-    match rest_approve(&st, &me, &auth, &agent, &request, option).await {
+    match rest_approve(&st, &me, &auth, &agent, &request, option, None).await {
         Taken::Done(r) => r,
         Taken::Hand => to_ts(st.up.clone(), peer, parts, bytes).await,
     }
@@ -622,3 +651,188 @@ macro_rules! approve_route {
 approve_route!(approve_route, "approve");
 approve_route!(approve_once_route, "approve_once");
 approve_route!(approve_hour_route, "approve_hour");
+
+const BAD_PARAMS: &str = "agent id and request id must be uuids; decision is approve, approve-once (a merge refusal card), approve_once, approve_hour (an exact command) or deny";
+const NOT_SESSION: &str = "only a person signed in to the app can decide a permission request";
+const BAD_ONCE: &str = "number and a 40-hex headSha are required; ghUser is optional (null lets the operator pick); relaxChecks is a boolean; nothing else";
+
+/// TS `onceBody`(`.strict()`) — `{ ghUser?: string(1..39)|null, relaxChecks?: bool, number, headSha, failedChecks?: string(≤200)[≤20] }`.
+pub fn once_body_ok(body: Option<&serde_json::Value>) -> bool {
+    let empty = serde_json::Map::new();
+    let o = match body {
+        None => &empty,
+        Some(v) => match v.as_object() {
+            Some(o) => o,
+            None => return false,
+        },
+    };
+    let ok = (|| {
+        for k in o.keys() {
+            if !matches!(
+                k.as_str(),
+                "ghUser" | "relaxChecks" | "number" | "headSha" | "failedChecks"
+            ) {
+                return None;
+            }
+        }
+        match o.get("ghUser") {
+            None | Some(Value::Null) => {}
+            Some(v) => {
+                super::merge_approval_peek::str_len_ok(v, 1, 39)?;
+            }
+        }
+        if let Some(v) = o.get("relaxChecks") {
+            v.as_bool()?;
+        }
+        super::merge_approval_peek::positive_int(o.get("number")?)?;
+        let h = o.get("headSha")?.as_str()?;
+        if !(h.len() == 40 && h.bytes().all(|c| matches!(c, b'0'..=b'9' | b'a'..=b'f'))) {
+            return None;
+        }
+        if let Some(v) = o.get("failedChecks") {
+            let a = v.as_array()?;
+            if a.len() > 20 {
+                return None;
+            }
+            for x in a {
+                super::merge_approval_peek::str_len_ok(x, 0, 200)?;
+            }
+        }
+        Some(())
+    })();
+    ok.is_some()
+}
+
+/// TS 라우트의 `once` — `{ ghUser: ghUser ?? null, relaxChecks: relaxChecks ?? false, number, headSha, failedChecks? }`.
+/// [`once_body_ok`] 를 지난 본문에만 부른다. number 가 i64 로 안 읽히면 `None`(TS 로 넘긴다).
+pub fn once_from_body(body: Option<&serde_json::Value>) -> Option<super::decide_merge_once::Once> {
+    let o = body?.as_object()?;
+    let number = super::merge_approval_peek::positive_int(o.get("number")?)?;
+    Some(super::decide_merge_once::Once {
+        gh_user: o.get("ghUser").and_then(Value::as_str).map(str::to_owned),
+        relax_checks: o
+            .get("relaxChecks")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        number,
+        head_sha: o.get("headSha")?.as_str()?.to_owned(),
+        failed_checks: o.get("failedChecks").and_then(Value::as_array).map(|a| {
+            a.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        }),
+    })
+}
+
+/// `POST /agents/{id}/permission-requests/{requestId}/approve-once`(1회 머지, 머지 거절 카드).
+/// 판정 전 세 갈래(경로 400·사람 세션 아님 403·본문 400)는 Rust. 그 뒤 1회 승인 쓰기도 Rust(10차 카드 [이번 한 번]과 같은 코어,
+/// once 는 본문에서) — 맡지 않는 꼴(위임장·소유자 아님·만료·스위치 꺼짐 등)은 쓰기 전에 TS.
+pub async fn approve_once_merge_route(
+    axum::extract::State(st): axum::extract::State<std::sync::Arc<AskState>>,
+    crate::auth::RequireAccount(me, auth): crate::auth::RequireAccount,
+    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<std::net::SocketAddr>,
+    axum::extract::Path((agent, request)): axum::extract::Path<(String, String)>,
+    req: axum::extract::Request,
+) -> Response {
+    let (parts, body) = req.into_parts();
+    let (bytes, parsed) = match super::ask::read_bytes(&parts.headers, body).await {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    if !is_uuid(&agent) || !is_uuid(&request) {
+        return json_err(StatusCode::BAD_REQUEST, "bad_request", BAD_PARAMS);
+    }
+    if !human_session(&me, &auth) {
+        return json_err(StatusCode::FORBIDDEN, "forbidden", NOT_SESSION);
+    }
+    if !once_body_ok(parsed.as_ref()) {
+        return json_err(StatusCode::BAD_REQUEST, "bad_request", BAD_ONCE);
+    }
+    // 빈 본문(`{}`)은 number 가 없어 위에서 400 — 여기 오면 언제나 객체다.
+    let Some(once) = once_from_body(parsed.as_ref()) else {
+        return to_ts(st.up.clone(), peer, parts, bytes).await;
+    };
+    match rest_approve(
+        &st,
+        &me,
+        &auth,
+        &agent,
+        &request,
+        "approve_once",
+        Some(&once),
+    )
+    .await
+    {
+        Taken::Done(r) => r,
+        Taken::Hand => to_ts(st.up.clone(), peer, parts, bytes).await,
+    }
+}
+
+/// 그 밖의 `{decision}` — TS `params` zod(`approve|deny|approve-once|approve_once|approve_hour`)에 없는 낱말은 언제나 400
+/// (정확한 낱말은 위의 고정 경로가 먼저 받는다; 혹시 여기로 오면 TS 로 넘긴다).
+pub async fn other_decision_route(
+    axum::extract::State(st): axum::extract::State<std::sync::Arc<AskState>>,
+    crate::auth::RequireAccount(_me, _auth): crate::auth::RequireAccount,
+    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<std::net::SocketAddr>,
+    axum::extract::Path((_agent, _request, decision)): axum::extract::Path<(
+        String,
+        String,
+        String,
+    )>,
+    req: axum::extract::Request,
+) -> Response {
+    let (parts, body) = req.into_parts();
+    let bytes = match super::ask::read_bytes(&parts.headers, body).await {
+        Ok((b, _)) => b,
+        Err(r) => return r,
+    };
+    if matches!(
+        decision.as_str(),
+        "approve" | "deny" | "approve-once" | "approve_once" | "approve_hour"
+    ) {
+        return to_ts(st.up.clone(), peer, parts, bytes).await;
+    }
+    json_err(StatusCode::BAD_REQUEST, "bad_request", BAD_PARAMS)
+}
+
+#[cfg(test)]
+mod once_tests {
+    use super::{once_body_ok, once_from_body};
+    use serde_json::json;
+
+    #[test]
+    fn once_from_body_like_ts_route() {
+        let b = json!({ "ghUser": null, "number": 7.0, "headSha": "a".repeat(40) });
+        let o = once_from_body(Some(&b)).unwrap();
+        assert_eq!(o.gh_user, None);
+        assert!(!o.relax_checks);
+        assert_eq!(o.number, 7);
+        assert_eq!(o.failed_checks, None);
+        let b = json!({ "ghUser": "octo", "relaxChecks": true, "number": 3, "headSha": "b".repeat(40), "failedChecks": ["ci"] });
+        let o = once_from_body(Some(&b)).unwrap();
+        assert_eq!(o.gh_user.as_deref(), Some("octo"));
+        assert!(o.relax_checks);
+        assert_eq!(o.failed_checks, Some(vec!["ci".to_owned()]));
+        assert!(once_from_body(None).is_none());
+    }
+
+    #[test]
+    fn once_body_like_zod_strict() {
+        let ok = json!({ "ghUser": null, "relaxChecks": true, "number": 7, "headSha": "a".repeat(40), "failedChecks": ["ci"] });
+        assert!(once_body_ok(Some(&ok)));
+        assert!(!once_body_ok(None));
+        for (k, v) in [
+            ("ghUser", json!("")),
+            ("relaxChecks", json!(null)),
+            ("number", json!(0)),
+            ("headSha", json!("x")),
+            ("failedChecks", json!(["c".repeat(201)])),
+            ("extra", json!(1)),
+        ] {
+            let mut b = ok.clone();
+            b[k] = v;
+            assert!(!once_body_ok(Some(&b)), "{k}");
+        }
+    }
+}

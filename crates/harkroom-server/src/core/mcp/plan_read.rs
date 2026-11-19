@@ -60,7 +60,7 @@ mod tests {
 
     #[test]
     fn only_plain_reads_are_served() {
-        let r = "6ef97871-80a1-43d3-b232-22152fe9d226";
+        let r = "9c3a7e51-2b4d-4f8a-a1c6-5d7e8f9a0b12";
         assert_eq!(read_root(&json!({ "threadRootId": r })), Some(r));
         assert_eq!(read_root(&json!({ "threadRootId": r, "x": 1 })), Some(r));
         for a in [

@@ -1,8 +1,8 @@
 //! 신고·차단(S5.2 P4c) — TS `routes/moderationRoutes.ts`.
 //!
 //! 옮기는 것: `POST /admin/reports/{id}/resolve` · `PUT`·`DELETE /accounts/me/blocks/{id}` · `GET /admin/reports` · `GET /accounts/me/blocks`.
-//! **옮기지 않는 것: `POST /messages/{id}/report`** — 신고자별 상한(`REPORT_RULE`, 한 시간 30건)을 TS 프로세스 메모리의
-//! `createRateLimiter` Map 이 센다. 두 프로세스가 따로 세면 상한이 갈라져 두 배가 된다 → 그 상한을 DB 로 옮기거나 S5.3 코어와 함께.
+//! `POST /messages/{id}/report` 도 옮긴다 — 신고자별 상한(`REPORT_RULE`, 한 시간 30건)은 이 줄을 Rust 만 답하므로 이 프로세스의
+//! 리미터([`report_limiter`])가 센다(TS 는 더 이상 이 줄을 받지 않아 둘로 갈라지지 않는다). 재시작하면 TS 처럼 셈이 비워진다.
 //!
 //! 순서는 TS 와 같다: 본문 읽기 → preHandler(`requireAdmin`·`requireAccount`) → zod. 이벤트는 없다(TS 도 내지 않는다).
 //! 감사: 해결만 `message.report.resolved`(ip 는 `TRUST_PROXY` 규칙). 차단은 감사가 없다(TS 와 같다 — 상대에게 알리지 않는 개인 목록).
@@ -33,6 +33,169 @@ macro_rules! db {
             Err(e) => return internal(e),
         }
     };
+}
+
+/// TS `REPORT_RULE` — 신고자별 한 시간 30건.
+pub const REPORT_RULE: crate::rate_limit::Rule = crate::rate_limit::Rule {
+    window_ms: 60 * 60_000,
+    max: 30,
+};
+
+/// 신고 상한 리미터 — TS `opts.limiter` 처럼 프로세스에 하나.
+fn report_limiter() -> &'static crate::rate_limit::RateLimiter {
+    static L: std::sync::OnceLock<crate::rate_limit::RateLimiter> = std::sync::OnceLock::new();
+    L.get_or_init(crate::rate_limit::RateLimiter::default)
+}
+
+/// zod `{ reason: enum, note: string.trim().max(1000).optional() }` — 빈 note 는 `null`(TS `body.note || null`).
+pub fn parse_report(body: &Body) -> Result<(String, Option<String>), &'static str> {
+    let Body::Json(Value::Object(o)) = body else {
+        return Err("expected object");
+    };
+    let reason = match o.get("reason") {
+        Some(Value::String(r))
+            if ["spam", "abuse", "inappropriate", "other"].contains(&r.as_str()) =>
+        {
+            r.clone()
+        }
+        _ => return Err("reason"),
+    };
+    let note = match o.get("note") {
+        None => None,
+        Some(Value::String(n)) => {
+            let t = crate::core::ask::js_trim(n).to_owned();
+            if crate::writes_settings::js_len(&t) > 1000 {
+                return Err("note");
+            }
+            (!t.is_empty()).then_some(t)
+        }
+        _ => return Err("note"),
+    };
+    Ok((reason, note))
+}
+
+const REPORT_EXISTING: &str = concat!(
+    "select json_build_object('id', id, 'createdAt', ",
+    crate::iso!("created_at"),
+    ")::text from message_report where message_id = $1::uuid and reporter_id = $2::uuid"
+);
+
+fn report_reply(code: StatusCode, report: &str, duplicate: bool) -> Response {
+    (
+        code,
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "application/json; charset=utf-8",
+        )],
+        format!(
+            "{{\"report\":{},\"duplicate\":{duplicate}}}",
+            crate::core::mcp::respond::minify(report)
+        ),
+    )
+        .into_response()
+}
+
+/// `POST /messages/{id}/report` — 사람만(403), 안 보이면 404, 자기 글 400 `own_message`, 다시 신고는 200 `duplicate: true`,
+/// 상한 429(`retry-after`), 새 신고 201 + 감사 `message.reported`.
+pub async fn report_message(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    req: Request,
+) -> Response {
+    let (body, RequireAccount(me, _), parts) = tri!(body_then::<RequireAccount>(req).await);
+    if !is_zod_uuid(&id) {
+        return bad("id");
+    }
+    let (reason, note) = tri!(parse_report(&body).map_err(bad));
+    if me.kind != "human" {
+        return json_err(
+            StatusCode::FORBIDDEN,
+            "forbidden",
+            "only people can report messages",
+        );
+    }
+    let pool = tri!(write_pool(&st));
+    let not_found = || json_err(StatusCode::NOT_FOUND, "not_found", "no such message");
+    let msg: Option<(String, Option<String>)> = db!(sqlx::query_as(
+        "select channel_id::text, author_id::text from message where id = $1::uuid and deleted_at is null"
+    )
+    .bind(&id)
+    .fetch_optional(&st.pool)
+    .await);
+    let Some((channel, author)) = msg else {
+        return not_found();
+    };
+    if !db!(crate::core::channels::visible(&st.pool, &me.id, &channel).await) {
+        return not_found();
+    }
+    if author.as_deref() == Some(me.id.as_str()) {
+        return json_err(
+            StatusCode::BAD_REQUEST,
+            "own_message",
+            "you cannot report your own message",
+        );
+    }
+    let existing: Option<String> = db!(sqlx::query_scalar(REPORT_EXISTING)
+        .bind(&id)
+        .bind(&me.id)
+        .fetch_optional(pool)
+        .await);
+    if let Some(r) = existing {
+        return report_reply(StatusCode::OK, &r, true);
+    }
+    let verdict = report_limiter().hit(&format!("report:{}", me.id), REPORT_RULE);
+    if !verdict.allowed {
+        let mut r = json_err(
+            StatusCode::TOO_MANY_REQUESTS,
+            "rate_limited",
+            "too many reports, try again later",
+        );
+        if let Ok(v) =
+            axum::http::HeaderValue::from_str(&verdict.retry_after_ms.div_ceil(1000).to_string())
+        {
+            r.headers_mut().insert("retry-after", v);
+        }
+        return r;
+    }
+    let inserted: Option<String> = db!(sqlx::query_scalar(concat!(
+        "insert into message_report (message_id, reporter_id, reason, note, body_snapshot, message_edited_at) \
+         select $1::uuid, $2::uuid, $3, $4, m.body, m.edited_at from message m where m.id = $1::uuid and m.deleted_at is null \
+         on conflict (message_id, reporter_id) do nothing \
+         returning json_build_object('id', id, 'createdAt', ",
+        crate::iso!("created_at"),
+        ")::text"
+    ))
+    .bind(&id)
+    .bind(&me.id)
+    .bind(&reason)
+    .bind(note.as_deref())
+    .fetch_optional(pool)
+    .await);
+    let Some(report) = inserted else {
+        let raced: Option<String> = db!(sqlx::query_scalar(REPORT_EXISTING)
+            .bind(&id)
+            .bind(&me.id)
+            .fetch_optional(pool)
+            .await);
+        return match raced {
+            Some(r) => report_reply(StatusCode::OK, &r, true),
+            None => not_found(),
+        };
+    };
+    let ip = ip_of(&parts, &st.trust);
+    record_audit(
+        pool,
+        AuditEntry {
+            action: "message.reported",
+            actor_id: Some(&me.id),
+            actor_handle: Some(&me.handle),
+            target: Some(&id),
+            ip: ip.as_deref(),
+            detail: json!({ "reason": reason }),
+        },
+    )
+    .await;
+    report_reply(StatusCode::CREATED, &report, false)
 }
 
 /// zod `{ resolution: enum('dismissed','removed') }`.
@@ -268,6 +431,34 @@ pub async fn list_reports(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn report_body_like_zod() {
+        let b = |v: serde_json::Value| Body::Json(v);
+        assert_eq!(
+            parse_report(&b(json!({ "reason": "spam", "x": 1 }))),
+            Ok(("spam".to_owned(), None))
+        );
+        assert_eq!(
+            parse_report(&b(json!({ "reason": "other", "note": "  hi  " }))),
+            Ok(("other".to_owned(), Some("hi".to_owned())))
+        );
+        assert_eq!(
+            parse_report(&b(json!({ "reason": "abuse", "note": "   " }))),
+            Ok(("abuse".to_owned(), None))
+        );
+        assert_eq!(parse_report(&b(json!({ "reason": "nope" }))), Err("reason"));
+        assert_eq!(
+            parse_report(&b(json!({ "reason": "spam", "note": null }))),
+            Err("note")
+        );
+        let long = "a".repeat(1001);
+        assert_eq!(
+            parse_report(&b(json!({ "reason": "spam", "note": long }))),
+            Err("note")
+        );
+        assert_eq!(REPORT_RULE.max, 30);
+    }
 
     #[test]
     fn resolution_and_query_shapes() {

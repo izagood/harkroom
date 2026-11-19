@@ -7,12 +7,14 @@
 //! 3. 주인이면 sweep 을 돌리고, 끝나면(실패해도) 같은 연결에서 잠금을 푼다.
 //!
 //! class·키·순서가 TS 와 같아야 겹침이 0 이다. 옮긴 루프: [`wake`](C5b) · [`retention`](C5c) · [`mandate_idle`](C5c-2a) · [`permission_expire`](C5c-2b) · [`outbox_prune`](C5c-4) · [`delegation_deadline`](S5.4 L1).
+pub mod automation;
 pub mod bg;
 pub mod bg_produce;
 pub mod delegation_deadline;
 pub mod mandate_idle;
 pub mod outbox_prune;
 pub mod permission_expire;
+pub mod projection;
 pub mod push;
 pub mod retention;
 pub mod scheduled;

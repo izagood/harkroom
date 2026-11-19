@@ -95,6 +95,56 @@ pub(crate) async fn work_item_owner(
     }
 }
 
+/// `PUT /work-items` 를 Rust 가 답해도 되는가 — `main.rs` 가 MCP `workitem.upsert` 권한
+/// (`core::mcp::workitem::WORK_ITEM_UPSERT_PRIVILEGES`)을 다 확인했을 때만 켠다. 꺼져 있으면 요청을 그대로 TS 로 넘긴다.
+pub static WORK_ITEM_UPSERT_READY: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// `PUT /work-items` — TS `workItemRoutes.ts` 의 upsert. 판정 순서: 본문 파서 → `requireAccount` → zod(400 `invalid_request`)
+/// → 주인(403 `no_owner`) → `upsertWorkItem`(거절 404·403·409·400) → `{ item }`. 코어는 MCP `workitem.upsert` 와 같다.
+pub async fn put_item(
+    State(st): State<AppState>,
+    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<std::net::SocketAddr>,
+    req: Request,
+) -> Response {
+    if !WORK_ITEM_UPSERT_READY.load(std::sync::atomic::Ordering::Relaxed) {
+        return crate::proxy::forward(State(st.up.clone()), axum::extract::ConnectInfo(peer), req)
+            .await;
+    }
+    let (body, RequireAccount(me, _), _) = tri!(body_then::<RequireAccount>(req).await);
+    let args = match body {
+        Body::Json(v) => v,
+        _ => return bad("Expected object"),
+    };
+    let Some(u) = crate::core::mcp::workitem::parse_upsert(&args) else {
+        return bad("invalid work item");
+    };
+    let pool = tri!(write_pool(&st));
+    use crate::core::mcp::workitem::Upserted;
+    match crate::core::mcp::workitem::upsert_core(pool, pool, &me, &u).await {
+        Some(Upserted::Item(item)) => json_ok(format!("{{\"item\":{item}}}")),
+        Some(Upserted::NoOwner) => no_owner(),
+        Some(Upserted::Refused(code)) => {
+            let status = match code {
+                "thread_not_found" => StatusCode::NOT_FOUND,
+                "thread_forbidden" => StatusCode::FORBIDDEN,
+                "too_many" => StatusCode::CONFLICT,
+                _ => StatusCode::BAD_REQUEST,
+            };
+            json_err(
+                status,
+                code,
+                crate::core::mcp::workitem::refusal_message(code),
+            )
+        }
+        Some(Upserted::Internal) | None => json_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            "internal error",
+        ),
+    }
+}
+
 fn no_owner() -> Response {
     json_err(StatusCode::FORBIDDEN, "no_owner", NO_OWNER)
 }

@@ -31,6 +31,10 @@ pub const REQUIRED_PRIVILEGES: &[(&str, &str)] = &[
     ("workspace_skill", "UPDATE"),
     ("workspace_skill_usage", "INSERT"),
     ("builtin_skill_usage", "INSERT"),
+    // MCP 레지스트리 PUT·DELETE(`writes_settings.rs`, `MCP_SERVER_WRITE_PRIVILEGES`). 에이전트 쪽 줄은 FK cascade 가 지운다.
+    ("mcp_server", "INSERT"),
+    ("mcp_server.credential_kind", "UPDATE"),
+    ("mcp_server", "DELETE"),
     // P4b — 팀·집합(`writes_teams.rs`·`writes_groups.rs`). 구성원 표는 부모를 지울 때 FK cascade 가 지운다(표 주인 권한).
     ("agent_team", "INSERT"),
     ("agent_team", "UPDATE"),
@@ -44,7 +48,8 @@ pub const REQUIRED_PRIVILEGES: &[(&str, &str)] = &[
     ("handle_group", "DELETE"),
     ("handle_group_member", "INSERT"),
     ("handle_group_member", "DELETE"),
-    // P4c — 신고 해결·차단(`writes_moderation.rs`). 신고 올리기는 TS 에 남아 message_report INSERT 는 앞단이 쓰지 않는다.
+    // P4c — 신고 올리기·해결·차단(`writes_moderation.rs`). 신고 올리기는 message_report INSERT(+ message 본문 SELECT).
+    ("message_report", "INSERT"),
     ("message_report", "UPDATE"),
     ("account_block", "INSERT"),
     ("account_block", "DELETE"),
@@ -502,6 +507,8 @@ mod tests {
                 "handle_group",
                 "handle_group_member",
                 "inbox_view_cursor",
+                "mcp_server",
+                "mcp_server.credential_kind",
                 "mention_policy",
                 "message_report",
                 "pat",
@@ -513,7 +520,7 @@ mod tests {
             ],
             "넓힐 때는 homelab GRANT 와 이 시험을 같이 고친다"
         );
-        // DELETE 는 P4b 의 팀·집합(과 그 구성원)·P4c 차단·작업 항목·임대·푸시 기기 표에만 — homelab#353 목록과 같다. TRUNCATE·그 밖의 것은 없다.
+        // DELETE 는 P4b 의 팀·집합(과 그 구성원)·P4c 차단·작업 항목·임대·푸시 기기·MCP 서버 표에만 — homelab#353 목록과 같다. TRUNCATE·그 밖의 것은 없다.
         const DELETE_OK: &[&str] = &[
             "account_block",
             "agent_thread_claim",
@@ -524,6 +531,8 @@ mod tests {
             "agent_team_invoker",
             "handle_group",
             "handle_group_member",
+            // DELETE /mcp-servers/:name (S5.4)
+            "mcp_server",
         ];
         assert!(
             REQUIRED_PRIVILEGES.iter().all(|x| x.1 == "INSERT"

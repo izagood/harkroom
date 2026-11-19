@@ -1,7 +1,7 @@
 use super::*;
 use serde_json::json;
 
-const ROOT: &str = "6ef97871-80a1-43d3-b232-22152fe9d226";
+const ROOT: &str = "9c3a7e51-2b4d-4f8a-a1c6-5d7e8f9a0b12";
 const CHILD: &str = "11111111-2222-4333-8444-555555555555";
 const ME: &str = "4527ba9a-ac07-4aba-b347-bddd972fb969";
 const OTHER: &str = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
@@ -278,4 +278,23 @@ fn privileges_cover_sql() {
         &[("event_outbox_id_seq", "USAGE")]
     );
     assert!(children_sql().contains("$2::uuid") && manager_sql().contains("a.kind = 'agent'"));
+}
+
+#[test]
+fn link_plan_card_hook_out_like_ts() {
+    assert_eq!(plan_hook_out(Ok(4)), r#"{"ok":true,"rev":4}"#);
+    assert_eq!(
+        plan_hook_out(Err(Refusal::plain("unchanged"))),
+        r#"{"ok":true,"unchanged":true}"#
+    );
+    let v: Value =
+        serde_json::from_str(&plan_hook_out(Err(Refusal::id("unknown_item", "s9")))).unwrap();
+    assert_eq!(
+        v,
+        json!({ "ok": false, "error": { "code": "unknown_item", "id": "s9", "message": "그런 단계·그룹이 없다" } })
+    );
+    let doc = json!({ "steps": [{ "id": "s1" }, { "id": "s2" }] });
+    assert!(has_step(&doc, "s2"));
+    assert!(!has_step(&doc, "s3"));
+    assert!(!has_step(&json!({}), "s1"));
 }

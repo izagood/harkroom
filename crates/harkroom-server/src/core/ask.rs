@@ -5,7 +5,8 @@
 //! - 순서가 규칙이다(TS 와 같다): 인증(401) → 경로(400) → 본문(400) → 볼 수 있는가(403) → 이 채널의 글인가(404) → 판정 → 쓰기 → 이벤트.
 //! - **Rust 가 맡는 카드는 좁다(닫힌 쪽).** 카드나 그 거울의 원본이 권한·머지·사슬 카드(`permissionRequest`·`permissionMirror`·
 //!   `mergeDenial`·`chainBackstop`)이거나 권한 요청 줄이 가리키는 카드, 또는 종류(`meta.kind`)·모양을 못 읽는 카드면
-//!   Rust 는 판정하지 않고 읽어 둔 본문 그대로 TS 로 넘긴다([`hand_to_ts`]). 그런 카드의 결정은 C3b-3 몫이다.
+//!   Rust 는 판정하지 않고 읽어 둔 본문 그대로 TS 로 넘긴다([`hand_answer_to_ts`]). 그런 카드의 결정은 C3b-3 몫이다.
+//!   단 답하기·닫기는 사슬 백스톱·옛 머지 거절 카드(와 그 거울)도 Rust 가 맡는다 — TS 에서도 보통 물음 길이다([`ANSWER_TS_MARKERS`]).
 //! - 판정·쓰기·깨움·이벤트는 쓰기 풀의 **한 트랜잭션**이다. `Err` 면 500 이고 답·닫힘도 되돌아간다. 깨움 실패만 TS 처럼 삼킨다
 //!   (SAVEPOINT — 답은 남는다).
 //! - 이벤트 순서는 TS 그대로: 거울 경로는 원본 `message.updated` → 거울 맞추기(묶음 → 거울마다 깨움·`message.updated`) →
@@ -36,8 +37,8 @@ pub const ASK_SEQUENCE_PRIVILEGES: &[(&str, &str)] = &[("event_outbox_id_seq", "
 /// TS shared `ASK_TEXT_OPTION_ID`·`ASK_TEXT_MAX_CHARS`·`ASK_MIN_OPTIONS`·`ASK_MAX_OPTIONS`.
 pub const ASK_TEXT_OPTION_ID: &str = "__text__";
 pub const ASK_TEXT_MAX_CHARS: usize = 2000;
-const ASK_MIN_OPTIONS: usize = 2;
-const ASK_MAX_OPTIONS: usize = 5;
+pub(crate) const ASK_MIN_OPTIONS: usize = 2;
+pub(crate) const ASK_MAX_OPTIONS: usize = 5;
 use crate::write::BODY_LIMIT;
 const LABEL: &str = "ask";
 
@@ -139,9 +140,14 @@ fn ask_takes_text(meta: &Value) -> bool {
     meta.is_object() && TS_ONLY_MARKERS.iter().all(|k| meta.get(*k).is_none())
 }
 
-fn has_ts_marker(meta: &Value) -> bool {
-    TS_ONLY_MARKERS.iter().any(|k| meta.get(*k).is_some())
+fn has_marker(meta: &Value, markers: &[&str]) -> bool {
+    markers.iter().any(|k| meta.get(*k).is_some())
 }
+
+/// 답하기·닫기(`ask-answer`·`ask-close`)에서 아직 TS 가 맡는 표지 — 권한 카드와 그 거울뿐이다.
+/// 사슬 백스톱(`chainBackstop`)·옛 머지 거절(`mergeDenial`) 카드는 TS 에서도 보통 물음 길(`decide` → `recordAskAnswer`,
+/// `closeAsk`)이라 Rust 가 맡는다 — 글로 쓴 답의 거절은 [`ask_takes_text`] 가 TS 처럼 네 표지 모두로 한다.
+const ANSWER_TS_MARKERS: &[&str] = &["permissionRequest", "permissionMirror"];
 
 async fn meta_of<'e, E: sqlx::PgExecutor<'e>>(ex: E, id: &str) -> sqlx::Result<Option<Value>> {
     sqlx::query_scalar("select meta from message where id = $1::uuid and deleted_at is null")
@@ -160,15 +166,19 @@ async fn is_permission_request_card(pool: &PgPool, id: &str) -> sqlx::Result<boo
     .await
 }
 
-/// 이 카드를 TS 에 넘기나 — 닫힌 쪽: 확신할 수 없으면 넘긴다.
-pub(super) async fn hand_to_ts(pool: &PgPool, id: &str) -> sqlx::Result<bool> {
+/// 이 카드를 TS 에 넘기나 — 닫힌 쪽: 확신할 수 없으면 넘긴다. 사슬·머지 거절 카드는 넘기지 않는다([`ANSWER_TS_MARKERS`]).
+pub(super) async fn hand_answer_to_ts(pool: &PgPool, id: &str) -> sqlx::Result<bool> {
+    hand_to_ts_with(pool, id, ANSWER_TS_MARKERS).await
+}
+
+async fn hand_to_ts_with(pool: &PgPool, id: &str, markers: &[&str]) -> sqlx::Result<bool> {
     let Some(meta) = meta_of(pool, id).await? else {
         return Ok(true);
     };
     let Some(ask) = read_ask_meta(&meta) else {
         return Ok(true);
     };
-    if has_ts_marker(&meta) || is_permission_request_card(pool, id).await? {
+    if has_marker(&meta, markers) || is_permission_request_card(pool, id).await? {
         return Ok(true);
     }
     // 거울 표지가 문자열이 아니거나 uuid 가 아니면 못 읽은 것이다.
@@ -181,7 +191,7 @@ pub(super) async fn hand_to_ts(pool: &PgPool, id: &str) -> sqlx::Result<bool> {
     if let Some(root) = &ask.mirror_of
         && let Some(root_meta) = meta_of(pool, root).await?
         && (read_ask_meta(&root_meta).is_none()
-            || has_ts_marker(&root_meta)
+            || has_marker(&root_meta, markers)
             || is_permission_request_card(pool, root).await?)
     {
         return Ok(true);
@@ -661,21 +671,21 @@ pub async fn answer(
     if let Some(r) = gate(&st, &me.id, &id, &message).await {
         return r;
     }
-    // C3b-3c — 권한 카드(거울 아님)의 거절은 3b 코어가 정한다. 그 밖의 권한 카드 답은 아래 `hand_to_ts` 가 TS 로 넘긴다.
+    // C3b-3c — 권한 카드(거울 아님)의 거절은 3b 코어가 정한다. 그 밖의 권한 카드 답은 아래 `hand_answer_to_ts` 가 TS 로 넘긴다.
     if let Answer::Option(o) = &ans
         && let super::decide_routes::Taken::Done(r) =
             super::decide_routes::answer_card_deny(&st, &me, &auth, &message, o).await
     {
         return r;
     }
-    // S5.3 B2 — 소유자의 승인(tool approve·command approve_once/hour). 맡지 않는 꼴은 아래 `hand_to_ts` 가 TS 로 넘긴다.
+    // S5.3 B2 — 소유자의 승인(tool approve·command approve_once/hour). 맡지 않는 꼴은 아래 `hand_answer_to_ts` 가 TS 로 넘긴다.
     if let Answer::Option(o) = &ans
         && let super::decide_routes::Taken::Done(r) =
             super::decide_routes::answer_card_approve(&st, &me, &auth, &message, o).await
     {
         return r;
     }
-    match hand_to_ts(&st.read, &message).await {
+    match hand_answer_to_ts(&st.read, &message).await {
         Ok(false) => {}
         Ok(true) => return to_ts(st.up.clone(), peer, parts, bytes).await,
         Err(e) => return internal(e),
@@ -724,7 +734,7 @@ pub async fn close(
     if let Some(r) = gate(&st, &me.id, &id, &message).await {
         return r;
     }
-    match hand_to_ts(&st.read, &message).await {
+    match hand_answer_to_ts(&st.read, &message).await {
         Ok(false) => {}
         Ok(true) => return to_ts(st.up.clone(), peer, parts, bytes).await,
         Err(e) => return internal(e),
@@ -763,6 +773,16 @@ pub fn routes(
         .post(
             "/agents/{id}/permission-requests/{requestId}/approve_hour",
             super::decide_routes::approve_hour_route,
+        )
+        // `approve-once`(1회 머지) — 거절·1회 승인 쓰기 모두 Rust(맡지 않는 꼴은 쓰기 전에 TS).
+        .post(
+            "/agents/{id}/permission-requests/{requestId}/approve-once",
+            super::decide_routes::approve_once_merge_route,
+        )
+        // 그 밖의 낱말 — TS zod 처럼 400(고정 경로가 먼저 맞는다).
+        .post(
+            "/agents/{id}/permission-requests/{requestId}/{decision}",
+            super::decide_routes::other_decision_route,
         )
         // C3b-2a — 묶음 카드 REST. 같은 표·같은 칸을 쓰므로 같은 잠금(`ASK_PRIVILEGES`)으로 함께 붙는다.
         .post(
@@ -836,8 +856,11 @@ mod tests {
     fn markers_route_to_ts_and_block_text() {
         for k in TS_ONLY_MARKERS {
             let m = card(json!({ *k: {} }));
-            assert!(has_ts_marker(&m), "{k}");
+            assert!(has_marker(&m, TS_ONLY_MARKERS), "{k}");
             assert!(!ask_takes_text(&m), "{k}");
+            // 답하기·닫기는 권한 카드·거울만 TS 로 넘긴다 — 사슬·머지 거절은 Rust(글 답 거절은 그대로).
+            let answer_to_ts = *k == "permissionRequest" || *k == "permissionMirror";
+            assert_eq!(has_marker(&m, ANSWER_TS_MARKERS), answer_to_ts, "{k}");
         }
         assert!(ask_takes_text(&card(json!({}))));
     }

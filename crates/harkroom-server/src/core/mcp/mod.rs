@@ -8,26 +8,38 @@
 //! - 도구의 실패는 JSON-RPC 오류가 아니라 **성공 결과** `content[0].text = {"error":{code,message}}` 다([`tool_error`]).
 //! - 모든 도구를 감싸는 층: 비밀 본문 거절(leakGuard) · 백그라운드 회차 허용 목록(`BG_ALLOWED_TOOLS`) · 쓰기 출처 ·
 //!   presence mark(요청마다). Rust 가 도구를 받으려면 이 넷을 같이 가져야 한다.
+pub mod artifact_publish;
+pub mod artifact_write;
+pub mod attachment_fetch;
+pub mod automation_propose;
+pub mod automation_run;
 pub mod bg_claim;
 pub mod bg_complete;
 pub mod delegate_gate;
+pub mod grant_delegate;
 pub mod grant_writes;
+pub mod inbox_poll;
 pub mod mem_audit;
 pub mod mem_body;
 pub mod mem_recall;
 pub mod mem_writes;
+pub mod message_ask;
 pub mod model_options;
 pub mod msg_post;
 pub mod note;
+pub mod operator_only;
+pub mod permission_request;
 pub mod plan_input;
 pub mod plan_read;
 pub mod plan_write;
+pub mod pr_watch;
 pub mod reads2;
 pub mod reads3;
 pub mod reads4;
 pub mod respond;
 pub mod route;
 pub mod search;
+pub mod skill_propose;
 pub mod tools;
 pub mod turn_cancel;
 pub mod turn_wake;

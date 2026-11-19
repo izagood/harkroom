@@ -13,6 +13,8 @@
 mod js;
 pub(crate) mod keyring;
 pub(crate) mod leak;
+pub(crate) mod secret_box;
+pub(crate) mod verify;
 
 #[cfg(test)]
 mod golden;

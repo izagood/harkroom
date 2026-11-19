@@ -55,7 +55,12 @@ pub const MANDATE_LINE_PRIVILEGES: &[(&str, &str)] = &[
     ("mandate", "SELECT"),
     ("mandate.last_activity_at", "UPDATE"),
     ("mandate_line", "INSERT"),
-    ("automation", "SELECT"),
+    // 자동화 위임장의 유효성(골든 `grant_valid_mandate_owner`)이 읽는 4칸만 — 표 단위 SELECT 를 요구하면 운영 쓰기 롤이
+    // 수신 비밀 칸(`ingress_token_hash`·`ingress_secret_enc`)까지 읽게 된다(security 11-18, `tests/automation_grant.rs` 가 본다).
+    ("automation.id", "SELECT"),
+    ("automation.deleted_at", "SELECT"),
+    ("automation.enabled", "SELECT"),
+    ("automation.approved_at", "SELECT"),
     ("agent_config", "SELECT"),
 ];
 
@@ -134,6 +139,69 @@ pub async fn check_mandate_core(pool: &sqlx::PgPool) -> bool {
     on
 }
 
+/// S5.4 12e — 승인 길이 만료를 만났을 때 그 자리에서 카드를 닫는 칸(TS `expirePermissionRequests(requestId)`).
+/// 만료 루프와 같은 칸([`crate::loops::permission_expire::PERMISSION_EXPIRE_PRIVILEGES`]) — 승인 칸에 더해 `inbox` INSERT 가 새로 든다.
+/// 다 있을 때만 승인 길의 만료 409 를 Rust 가 답한다(fail-closed — 없으면 「permission decide expire core off」, 그 꼴은 TS).
+static DECIDE_EXPIRE_CORE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// 승인 길의 만료(409 `request_expired` + 카드 닫기)를 Rust 가 맡는가.
+pub fn decide_expire_core_on() -> bool {
+    DECIDE_EXPIRE_CORE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+static DENY_EXPIRE_CORE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// 거절 길의 만료(409 `request_expired` + 카드 닫기)를 Rust 가 맡는가 — 거절 풀에 만료 칸이 다 있을 때만.
+pub fn deny_expire_core_on() -> bool {
+    DENY_EXPIRE_CORE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// 거절 풀에 만료 칸이 다 있는가 — 기동 때 한 번(거절 칸에 더해 `inbox`·`event_outbox` INSERT·시퀀스 USAGE).
+pub async fn check_deny_expire_core(pool: &sqlx::PgPool) -> bool {
+    let on = expire_privileges_ok(pool, "deny").await;
+    DENY_EXPIRE_CORE.store(on, std::sync::atomic::Ordering::Relaxed);
+    on
+}
+
+/// 승인 풀에 만료 칸이 다 있는가 — 기동 때 한 번.
+pub async fn check_decide_expire_core(pool: &sqlx::PgPool) -> bool {
+    let on = expire_privileges_ok(pool, "decide").await;
+    DECIDE_EXPIRE_CORE.store(on, std::sync::atomic::Ordering::Relaxed);
+    on
+}
+
+async fn expire_privileges_ok(pool: &sqlx::PgPool, which: &str) -> bool {
+    use crate::loops::permission_expire as pe;
+    match crate::write::missing_in(
+        pool,
+        pe::PERMISSION_EXPIRE_PRIVILEGES,
+        pe::PERMISSION_EXPIRE_SEQUENCE_PRIVILEGES,
+    )
+    .await
+    {
+        Ok(m) if m.is_empty() => true,
+        Ok(m) => {
+            eprintln!("front: permission {which} expire core off — missing privileges {m:?}");
+            false
+        }
+        Err(e) => {
+            eprintln!(
+                "front: permission {which} expire core off — privilege check failed ({})",
+                e.as_database_error().map_or("io", |_| "db")
+            );
+            false
+        }
+    }
+}
+
+/// TS `request_expired` 문구(골든).
+/// TS `select reason from merge_denial where id = $1`(merge 7일 승인의 CI 거절 대조, 쓰기 전).
+const DENIAL_REASON: &str = "select reason from merge_denial where id = $1::uuid";
+/// TS `MERGE_NO_MANDATE_MESSAGE`(골든).
+pub const MERGE_NO_MANDATE_MESSAGE: &str = "a merge cannot be approved for 7 days without a mandate on this thread — approve the merge once from the refusal card, or approve from a thread you started";
+pub const REQUEST_EXPIRED_MESSAGE: &str = "this request expired — the agent has to ask again";
+
 pub const APPROVE_SEQUENCE_PRIVILEGES: &[(&str, &str)] = &[("event_outbox_id_seq", "USAGE")];
 
 /// TS `PERMISSION_GRANT_TTL_MS`(7일)·`COMMAND_GRANT_TTL_MS`(1시간) — 시험이 TS 원문과 대조한다.
@@ -180,6 +248,8 @@ pub struct ApproveArgs<'a> {
     pub option: &'a str,
     /// 카드 길이면 카드 meta 에 1회 머지 값(`permissionRequest.once`)이 있는가 — TS `onceFromCard`. 있으면 TS(`not_once` 갈래).
     pub has_once: bool,
+    /// 카드의 1회 머지 값(TS `onceFromCard`, gh 계정은 비움 — 오퍼레이터가 고른다). 머지 [이번 한 번]만 쓴다.
+    pub once: Option<&'a super::decide_merge_once::Once>,
     pub bundle_message_id: Option<&'a str>,
 }
 
@@ -187,6 +257,10 @@ pub struct ApproveArgs<'a> {
 pub enum ApproveOutcome {
     /// 쓰고 커밋했다. 카드 답은 호출자 몫 — `answer_candidates` 중 카드에 있는 첫 것(TS `answerOptionId`).
     Granted {
+        /// TS 결과 `status` — `granted` 또는 머지 1회의 `approved_once`.
+        status: &'static str,
+        /// 머지 1회 승인의 기한(TS `approvalExpiresAt`).
+        approval_expires_at: Option<String>,
         card_message_id: Option<String>,
         grant_expires_at: Option<String>,
         grant_mode: Option<&'static str>,
@@ -205,6 +279,15 @@ pub enum ApproveError {
     Lock(LockRetryError),
     RestartsExhausted,
 }
+
+/// TS `not_once` 문구(골든).
+/// TS `decidePermissionRequest` 의 `bad_decision` 문구(골든).
+pub const BAD_DECISION_COMMAND_MANDATE: &str =
+    "an exact-command request is approved once (or for an hour) — not for a mandate";
+pub const BAD_DECISION_TURN: &str =
+    "only a tool request on a mandate thread can be approved for one turn";
+pub const BAD_DECISION_HOUR: &str = "once/hour is only for an exact-command request";
+pub const NOT_ONCE_MESSAGE: &str = "only a card raised from a merge refusal can approve one merge";
 
 fn refused(status: u16, code: &'static str, message: impl Into<String>) -> ApproveOutcome {
     ApproveOutcome::Refused {
@@ -293,6 +376,12 @@ pub const UPSERT_TOOL_GRANT: &str = "insert into account_grant (account_id, capa
      on conflict (account_id, capability, scope) do update \
        set granted_by = excluded.granted_by, granted_at = now(), expires_at = excluded.expires_at, allow_agent_cause = false";
 
+/// merge 7일 승인의 account_grant upsert — capability 만 다르고 [`UPSERT_TOOL_GRANT`] 와 같다(소유자 승인이라 늘 덮는다).
+pub const UPSERT_MERGE_GRANT: &str = "insert into account_grant (account_id, capability, scope, granted_by, expires_at, allow_agent_cause) \
+     values ($1::uuid, 'repo.merge', $2, $3::uuid, $4::timestamptz, false) \
+     on conflict (account_id, capability, scope) do update \
+       set granted_by = excluded.granted_by, granted_at = now(), expires_at = excluded.expires_at, allow_agent_cause = false";
+
 pub const APPROVE_UPDATE_REQUEST: &str = "update permission_request set status = 'granted', decided_at = $3::timestamptz, \
      decided_by = $2::uuid, grant_expires_at = $4::timestamptz, grant_mode = $5 where id = $1::uuid";
 pub const APPROVE_UPDATE_CARD: &str = super::decide_core::DENY_UPDATE_CARD;
@@ -307,6 +396,7 @@ pub async fn approve_write(
     locked: &LockedRequest,
     args: ApproveArgs<'_>,
     decision: Decision,
+    as_owner: bool,
 ) -> sqlx::Result<ApproveOutcome> {
     match locked.status.as_str() {
         "obsolete" => {
@@ -336,16 +426,72 @@ pub async fn approve_write(
         // TS 는 이 자리에서 카드를 만료로 닫는다 — 그 일은 TS 가 한다(쓰기 전).
         return Ok(ApproveOutcome::HandToTs);
     }
+    // S5.4 — 머지 거절 카드의 [이번 한 번](rust_takes 가 거절 기록 있음·위임장 없음·카드 once 있음만 들인다).
+    if decision == Decision::ApproveOnce && locked.kind == "merge" {
+        if !as_owner {
+            return Ok(ApproveOutcome::HandToTs);
+        }
+        return merge_once_write(conn, locked, args).await;
+    }
+    // TS `decidePermissionRequest`: command 가 아닌 카드의 `approve_once` 는 머지 거절 카드 + once 일 때만 — 그 밖은 쓰기 없이 409.
+    if decision == Decision::ApproveOnce && locked.kind != "command" {
+        return Ok(refused(409, "not_once", NOT_ONCE_MESSAGE));
+    }
+    // S5.4 11d — TS 와 같은 차례의 쓰기 없는 409 `bad_decision` 셋(소유자 승인만 여기 온다 — 위임장 줄 지우기 갈래 없음).
+    if locked.kind == "command"
+        && matches!(
+            decision,
+            Decision::ApproveMandate | Decision::ApproveNewMandate
+        )
+    {
+        return Ok(refused(409, "bad_decision", BAD_DECISION_COMMAND_MANDATE));
+    }
+    // S5.4 12e — 소유자가 아닌 사람은 TS 가 그 사람이 맡긴 위임장이 아니면 위임장을 지운 뒤에 [이번 턴만]을 본다 — 위임장이 있으면 TS.
+    if !as_owner && decision == Decision::ApproveTurn && locked.mandate_id.is_some() {
+        return Ok(ApproveOutcome::HandToTs);
+    }
+    if decision == Decision::ApproveTurn
+        && (locked.kind != "tool"
+            || locked.mandate_id.is_none()
+            || locked.card_message_id.is_none())
+    {
+        return Ok(refused(409, "bad_decision", BAD_DECISION_TURN));
+    }
+    if decision == Decision::ApproveHour && locked.kind != "command" {
+        return Ok(refused(409, "bad_decision", BAD_DECISION_HOUR));
+    }
+    // S5.4 12e — 소유자가 아닌 사람의 승인은 쓰기 없는 거절(위)까지만 Rust. 쓰는 길(그 사람 이름 grant·소유자 알림 글)은 TS.
+    if !as_owner {
+        return Ok(ApproveOutcome::HandToTs);
+    }
     let (target, channel_id, thread_root_id): (String, Option<String>, Option<String>) =
         sqlx::query_as(READ_LOCKED_TARGET)
             .bind(args.request_id)
             .fetch_one(&mut *conn)
             .await?;
     let turn = decision == Decision::ApproveTurn;
+    // 14d — TS D1: 위임장 있는 merge `approve_mandate` 는 grant 를 쓰지 않는다(줄이 실패하면 결정 전체를 되돌린다).
+    let line_only = locked.kind == "merge"
+        && decision == Decision::ApproveMandate
+        && locked.mandate_id.is_some();
     let (ttl, grant_mode, candidates) = match (locked.kind.as_str(), decision) {
         ("command", Decision::ApproveHour) => (COMMAND_GRANT_TTL, Some("hour"), ANSWER_HOUR),
         ("command", Decision::ApproveOnce) => (COMMAND_GRANT_TTL, Some("once"), ANSWER_ONCE),
         ("tool", Decision::Approve) => (TOOL_GRANT_TTL, None, ANSWER_TOOL),
+        // S5.4 12e — merge 7일 승인. 14d — 위임장이 있어도(TS `writesStandingGrant`: `approve` 는 grant + 그 위임장에 merge 줄).
+        ("merge", Decision::Approve) => (TOOL_GRANT_TTL, None, ANSWER_TOOL),
+        // 14d — 위임장 있는 merge `approve_mandate`(D1): grant 없이 그 위임장의 merge 줄 하나가 승인의 전부.
+        ("merge", Decision::ApproveMandate) if locked.mandate_id.is_some() => {
+            (TOOL_GRANT_TTL, None, ANSWER_TOOL_MANDATE)
+        }
+        // 13d — TS D1: merge 는 위임장 없이 7일 승인으로 넘어가지 않는다(쓰기 없음, 거절 기록 대조보다 먼저).
+        ("merge", Decision::ApproveMandate) if locked.mandate_id.is_none() => {
+            return Ok(refused(
+                409,
+                "mandate_unavailable",
+                MERGE_NO_MANDATE_MESSAGE,
+            ));
+        }
         ("tool", Decision::ApproveMandate) => (TOOL_GRANT_TTL, None, ANSWER_TOOL_MANDATE),
         ("tool", Decision::ApproveNewMandate) => (TOOL_GRANT_TTL, None, ANSWER_TOOL_NEW_MANDATE),
         // [이번 턴만] — grant 없이 줄 하나가 승인의 전부(기한 칸은 비운다, TS 와 같음).
@@ -368,6 +514,24 @@ pub async fn approve_write(
     let new_mandate = decision == Decision::ApproveNewMandate && locked.mandate_id.is_none();
     if new_mandate && !new_mandate_core_on() {
         return Ok(ApproveOutcome::HandToTs);
+    }
+    // S5.4 13d — 거절 기록이 붙은 merge 카드의 7일 승인: TS 처럼 CI 거절이면 쓰기 없이 400 `ci_card_once_only`(security D4).
+    // `merge_denial.reason` 읽기 칸은 [`super::decide_merge_once::MERGE_ONCE_PRIVILEGES`] 에 있다 — 꺼져 있으면 쓰기 전에 TS.
+    if let (Some(denial_id), "merge") = (locked.denial_id.as_deref(), locked.kind.as_str()) {
+        if !super::decide_merge_once::merge_once_on() {
+            return Ok(ApproveOutcome::HandToTs);
+        }
+        let reason: Option<(String,)> = sqlx::query_as(DENIAL_REASON)
+            .bind(denial_id)
+            .fetch_optional(&mut *conn)
+            .await?;
+        if reason.is_some_and(|(r,)| r == "ci_not_green") {
+            return Ok(refused(
+                400,
+                "ci_card_once_only",
+                super::merge_denial_grant::CI_ONCE,
+            ));
+        }
     }
     let (now, now_iso, expires, expires_iso): (String, String, String, String) =
         sqlx::query_as(TIMES)
@@ -438,6 +602,16 @@ pub async fn approve_write(
             .fetch_one(&mut *conn)
             .await?;
         command_grant_id = Some(id);
+    } else if locked.kind == "merge" && !line_only {
+        // TS: capability `repo.merge`, scope 는 저장한 꼴(`repo:owner/name`) 그대로.
+        sqlx::query(UPSERT_MERGE_GRANT)
+            .bind(args.agent_id)
+            .bind(&target)
+            .bind(args.actor_id)
+            .bind(expires.as_deref())
+            .execute(&mut *conn)
+            .await?;
+        tool_scope = Some(target.clone());
     } else if !turn {
         let Some(ch) = channel_id.as_deref() else {
             // 채널 없는 tool 요청은 없다(요청 길이 채널을 요구) — 꼴이 다르면 TS.
@@ -477,14 +651,16 @@ pub async fn approve_write(
                             once: mode == "once",
                         },
                         None if turn => LineKind::Turn,
+                        None if locked.kind == "merge" => LineKind::MergeStanding,
                         None => LineKind::Standing,
                     },
                     now: &now,
                     until: expires_iso.as_deref(),
+                    merge_once: None,
                 },
             )
             .await?;
-            if turn && !out.ok() {
+            if (turn || line_only) && !out.ok() {
                 return Ok(refused(
                     MANDATE_LINE_FAILED_STATUS,
                     "mandate_line_failed",
@@ -516,8 +692,8 @@ pub async fn approve_write(
         if let Some(id) = line.as_ref().and_then(|l| l.line_id()) {
             patch["lineId"] = json!(id);
         }
-        if let Some(b) = args.bundle_message_id {
-            patch["decidedVia"] = json!({ "kind": "bundle", "bundleMessageId": b });
+        if let Some(v) = super::decide_core::decided_via(args.bundle_message_id, None) {
+            patch["decidedVia"] = v;
         }
         patch["decidedByOwner"] = Value::Bool(true);
         sqlx::query(APPROVE_UPDATE_CARD)
@@ -536,6 +712,7 @@ pub async fn approve_write(
         grant_expires_at: expires_iso.as_deref(),
         grant_mode: grant_mode.zip(command_grant_id.as_deref()),
         bundle_message_id: args.bundle_message_id,
+        mirror_message_id: None,
     });
     sqlx::query(APPROVE_AUDIT)
         .bind(args.actor_id)
@@ -568,7 +745,7 @@ pub async fn approve_write(
     }
     if let Some(scope) = &tool_scope {
         let given = json!({
-            "capability": "tool.allow", "scope": scope, "expiresAt": expires_iso,
+            "capability": if locked.kind == "merge" { "repo.merge" } else { "tool.allow" }, "scope": scope, "expiresAt": expires_iso,
             "allowAgentCause": false, "via": "permission_request", "requestId": args.request_id,
         });
         sqlx::query(GRANT_GIVEN_AUDIT)
@@ -579,7 +756,7 @@ pub async fn approve_write(
             .await?;
     }
     // TS: command 이거나 grant 를 썼을 때만(이번 턴만은 grant 가 없어 이벤트도 없다).
-    if !turn {
+    if !turn && !line_only {
         crate::write::emit_event(
             conn,
             &json!({ "type": "grant.changed", "accountId": args.agent_id, "audience": "all" }),
@@ -587,10 +764,214 @@ pub async fn approve_write(
         .await?;
     }
     Ok(ApproveOutcome::Granted {
+        status: "granted",
+        approval_expires_at: None,
         card_message_id: locked.card_message_id.clone(),
         grant_expires_at: expires_iso,
         grant_mode,
         answer_candidates: candidates,
+    })
+}
+
+/// 머지 거절 카드의 [이번 한 번] — TS `insertApprovalFromDenial` + `decidePermissionRequest` 의 그 갈래. 같은 tx, 감사도 tx 안.
+/// 위임장·소유자 아님·once 값 없음·스위치 꺼짐은 쓰기 전에 TS.
+async fn merge_once_write(
+    conn: &mut PgConnection,
+    locked: &LockedRequest,
+    args: ApproveArgs<'_>,
+) -> sqlx::Result<ApproveOutcome> {
+    use super::decide_merge_once as m;
+    let (Some(once), Some(denial_id), true) =
+        (args.once, locked.denial_id.as_deref(), m::merge_once_on())
+    else {
+        return Ok(ApproveOutcome::HandToTs);
+    };
+    let (now, now_iso, expires, expires_iso): (String, String, String, String) =
+        sqlx::query_as(TIMES)
+            .bind(m::APPROVAL_TTL)
+            .fetch_one(&mut *conn)
+            .await?;
+    type DenialRow = (
+        String,
+        String,
+        String,
+        i64,
+        String,
+        Option<String>,
+        Option<String>,
+        bool,
+        String,
+        Vec<String>,
+        bool,
+    );
+    let row: Option<DenialRow> = sqlx::query_as(m::READ_DENIAL_LOCKED_SQL)
+        .bind(denial_id)
+        .bind(&now)
+        .fetch_optional(&mut *conn)
+        .await?;
+    let view = row.as_ref().map(|r| m::DenialView {
+        agent_id: &r.1,
+        expired: r.7,
+        obsolete: r.10,
+        number: r.3,
+        head_sha: &r.4,
+        reason: &r.8,
+        failed_checks: &r.9,
+    });
+    let ci_override = match m::check_once(args.agent_id, once, view.as_ref()) {
+        m::OnceCheck::Go { ci_override } => ci_override,
+        m::OnceCheck::Refused {
+            status,
+            code,
+            message,
+        } => return Ok(refused(status, code, message)),
+        m::OnceCheck::HandToTs => return Ok(ApproveOutcome::HandToTs),
+    };
+    let Some((d_id, d_agent, scope, number, head_sha, d_channel, d_root, _, reason, failed, _)) =
+        row
+    else {
+        return Ok(not_found());
+    };
+    let used: Option<String> = sqlx::query_scalar(m::USE_DENIAL_SQL)
+        .bind(&d_id)
+        .bind(&now)
+        .bind(args.actor_id)
+        .fetch_optional(&mut *conn)
+        .await?;
+    if used.is_none() {
+        return Ok(refused(409, "denial_used", m::DENIAL_USED_MESSAGE));
+    }
+    let checks: Vec<String> = if ci_override { failed } else { Vec::new() };
+    let approval_id: String = sqlx::query_scalar(m::INSERT_APPROVAL_SQL)
+        .bind(&d_id)
+        .bind(&d_agent)
+        .bind(&scope)
+        .bind(number)
+        .bind(&head_sha)
+        .bind(once.gh_user.as_deref())
+        .bind(once.relax_checks)
+        .bind(d_channel.as_deref())
+        .bind(d_root.as_deref())
+        .bind(args.actor_id)
+        .bind(&now)
+        .bind(&expires)
+        .bind(ci_override)
+        .bind(&checks)
+        .fetch_one(&mut *conn)
+        .await?;
+    let (target, channel_id, thread_root_id): (String, Option<String>, Option<String>) =
+        sqlx::query_as(READ_LOCKED_TARGET)
+            .bind(args.request_id)
+            .fetch_one(&mut *conn)
+            .await?;
+    // S5.4 15d — 위임장이 있으면 그 위임장에 이 PR·head 1회 merge 줄(TS `addLineFromRequest` once 갈래). 승인 기록이 승인의 전부라
+    // 줄이 실패해도 결정은 그대로(savepoint, TS 와 같음 — `mandate_line_failed` 는 7일·이번 턴 갈래만).
+    let line = match locked.mandate_id.as_deref() {
+        Some(mandate_id) => {
+            let limits = json!({
+                "pr": number, "head": head_sha, "uses": 1, "ghUser": once.gh_user, "ciOverride": ci_override,
+            });
+            Some(
+                super::mandate_line_write::add_line_from_request(
+                    conn,
+                    super::mandate_line_write::LineArgs {
+                        mandate_id,
+                        request_id: args.request_id,
+                        target: &target,
+                        card_message_id: locked.card_message_id.as_deref(),
+                        agent_id: args.agent_id,
+                        actor_id: args.actor_id,
+                        via: if args.bundle_message_id.is_some() {
+                            "bundle"
+                        } else {
+                            "button"
+                        },
+                        kind: LineKind::MergeOnce,
+                        now: &now,
+                        until: None,
+                        merge_once: Some(&limits),
+                    },
+                )
+                .await?,
+            )
+        }
+        None => None,
+    };
+    sqlx::query(m::MERGE_ONCE_UPDATE_REQUEST)
+        .bind(args.request_id)
+        .bind(args.actor_id)
+        .bind(&now)
+        .execute(&mut *conn)
+        .await?;
+    if let Some(card) = locked.card_message_id.as_deref() {
+        let mut patch = json!({
+            "status": "approved_once", "decidedAt": now_iso, "decidedBy": args.actor_id,
+            "approvedOnce": { "ghUser": once.gh_user, "relaxChecks": once.relax_checks, "expiresAt": expires_iso },
+        });
+        if let Some(id) = line.as_ref().and_then(|l| l.line_id()) {
+            patch["lineId"] = json!(id);
+        }
+        if let Some(v) = super::decide_core::decided_via(args.bundle_message_id, None) {
+            patch["decidedVia"] = v;
+        }
+        patch["decidedByOwner"] = Value::Bool(true);
+        sqlx::query(APPROVE_UPDATE_CARD)
+            .bind(card)
+            .bind(patch.to_string())
+            .execute(&mut *conn)
+            .await?;
+    }
+    let mut once_detail = json!({
+        "agentId": args.agent_id, "requestId": args.request_id, "approvalId": approval_id,
+        "denialId": denial_id, "reason": reason, "number": number, "headSha": head_sha,
+        "ghUser": once.gh_user,
+    });
+    if once.gh_user.is_none() {
+        once_detail["ghUserChosenBy"] = json!("operator");
+    }
+    once_detail["relaxChecks"] = json!(once.relax_checks);
+    once_detail["expiresAt"] = json!(expires_iso);
+    sqlx::query(m::MERGE_ONCE_AUDIT)
+        .bind(args.actor_id)
+        .bind(&scope)
+        .bind(once_detail.to_string())
+        .execute(&mut *conn)
+        .await?;
+    let detail = audit_detail(&AuditDetail {
+        request_id: args.request_id,
+        kind: locked.kind.as_str(),
+        target: target.as_str(),
+        channel_id: channel_id.as_deref(),
+        as_owner: true,
+        thread_root_id: thread_root_id.as_deref(),
+        grant_expires_at: None,
+        grant_mode: None,
+        bundle_message_id: args.bundle_message_id,
+        mirror_message_id: None,
+    });
+    sqlx::query(APPROVE_AUDIT)
+        .bind(args.actor_id)
+        .bind(args.agent_id)
+        .bind(detail.to_string())
+        .execute(&mut *conn)
+        .await?;
+    if let Some(l) = &line {
+        let (action, detail) = l.audit(args.request_id);
+        sqlx::query(LINE_AUDIT)
+            .bind(action)
+            .bind(args.actor_id)
+            .bind(args.agent_id)
+            .bind(detail.to_string())
+            .execute(&mut *conn)
+            .await?;
+    }
+    Ok(ApproveOutcome::Granted {
+        status: "approved_once",
+        approval_expires_at: Some(expires_iso),
+        card_message_id: locked.card_message_id.clone(),
+        grant_expires_at: None,
+        grant_mode: None,
+        answer_candidates: m::ANSWER_MERGE_ONCE,
     })
 }
 
@@ -635,19 +1016,30 @@ async fn approve_attempt(
     if d == Decision::Deny {
         return Ok(Some(ApproveOutcome::HandToTs));
     }
-    match after_verdict(&v, d) {
+    // S5.4 12e — 소유자가 아닌 사람(`AfterVerdict::HandToTs`)도 여기서는 들인다: 쓰기 없는 거절까지만 Rust, 쓰는 길은
+    // [`approve_write`] 가 쓰기 전에 TS 로 넘긴다.
+    let as_owner = match after_verdict(&v, d) {
         AfterVerdict::Forbidden => {
             return Ok(Some(refused(403, "forbidden", FORBIDDEN_MESSAGE)));
         }
-        AfterVerdict::HandToTs | AfterVerdict::Go { as_owner: false } => {
-            return Ok(Some(ApproveOutcome::HandToTs));
-        }
-        AfterVerdict::Go { as_owner: true } => {}
-    }
+        AfterVerdict::HandToTs => false,
+        AfterVerdict::Go { as_owner } => as_owner,
+    };
     let Some(locked) = locked else {
         return Ok(Some(not_found()));
     };
-    let out = approve_write(&mut tx, &locked, args, d).await?;
+    // S5.4 12e — 기다리던 요청이 만료됐으면 TS 처럼 결정 tx 를 버리고 그 요청만 만료로 닫은 뒤 409(쓰는 칸이 다 있을 때만).
+    if locked.status == "pending" && locked.expired && decide_expire_core_on() {
+        tx.rollback().await?;
+        crate::loops::permission_expire::expire_permission_requests(pool, Some(args.request_id))
+            .await?;
+        return Ok(Some(refused(
+            409,
+            "request_expired",
+            REQUEST_EXPIRED_MESSAGE,
+        )));
+    }
+    let out = approve_write(&mut tx, &locked, args, d, as_owner).await?;
     if matches!(out, ApproveOutcome::Granted { .. }) {
         tx.commit().await?;
     }
@@ -699,6 +1091,96 @@ async fn approve_once_shape(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tool_approve_once_routing() {
+        use super::super::decide_core::rust_takes;
+        let base = Shape {
+            option: "approve_once",
+            kind: "tool",
+            has_mandate: false,
+            has_denial: false,
+            has_once: false,
+            via_chat: false,
+            via_mirror: false,
+        };
+        assert_eq!(rust_takes(base), Some(Decision::ApproveOnce));
+        let mandate = Shape {
+            has_mandate: true,
+            ..base
+        };
+        assert_eq!(rust_takes(mandate), Some(Decision::ApproveOnce));
+        // once 본문·거절 기록·merge 는 TS(1회 머지 쓰기).
+        for s in [
+            Shape {
+                has_once: true,
+                ..base
+            },
+            Shape {
+                has_denial: true,
+                ..base
+            },
+            Shape {
+                kind: "merge",
+                ..base
+            },
+            // 머지 1회라도 거절 기록이 없거나 거울·글 승인이면 TS(15d — 위임장이 있으면 Rust, 아래).
+            Shape {
+                kind: "merge",
+                has_once: true,
+                ..base
+            },
+            Shape {
+                kind: "merge",
+                has_once: true,
+                has_denial: true,
+                via_mirror: true,
+                ..base
+            },
+            Shape {
+                kind: "merge",
+                has_once: true,
+                has_denial: true,
+                via_chat: true,
+                ..base
+            },
+            Shape {
+                kind: "command",
+                has_once: true,
+                ..base
+            },
+            Shape {
+                option: "approve",
+                kind: "merge",
+                has_once: true,
+                has_denial: true,
+                ..base
+            },
+        ] {
+            assert_eq!(rust_takes(s), None, "{s:?}");
+        }
+        // S5.4 — 머지 거절 카드의 [이번 한 번](once·거절 기록·위임장 없음)은 Rust.
+        let merge_once = Shape {
+            kind: "merge",
+            has_once: true,
+            has_denial: true,
+            ..base
+        };
+        assert_eq!(rust_takes(merge_once), Some(Decision::ApproveOnce));
+        let with_mandate = Shape {
+            has_mandate: true,
+            ..merge_once
+        };
+        assert_eq!(rust_takes(with_mandate), Some(Decision::ApproveOnce));
+    }
+
+    #[test]
+    fn not_once_message_matches_ts() {
+        assert_eq!(
+            NOT_ONCE_MESSAGE,
+            "only a card raised from a merge refusal can approve one merge"
+        );
+    }
 
     #[test]
     fn answer_candidates_follow_ts_order() {

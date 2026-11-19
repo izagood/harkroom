@@ -7,7 +7,8 @@
 //!   연결 꼴(`invalid_linked_root`·`self_link`) → **새로 더한** 연결만 존재·가시성(`linked_thread_unavailable`) →
 //!   쓰기 검사([`plan_texts`] → `scan_write`, 걸려도 저장하고 `flag_reason`) → 저장 → `thread_plan_link` 다시 쓰기 → 이벤트.
 //!   새 판은 **반드시** `validate_plan` 과 쓰기 검사를 지난 뒤에만 저장한다(security, A4b1 조건).
-//! - 관리자가 바뀌는데 자동 진행이 켜져 있으면 되감고 TS 로 넘긴다 — 자동 진행 끄기 알림(`noticePlanAutoOff`)은 A4b3 몫이다.
+//! - 관리자가 바뀌는데 자동 진행이 켜져 있으면 같은 tx 에서 끄고 커밋 뒤 끄기 알림(`noticePlanAutoOff`)을 올린다. 알림 글 경로
+//!   (`McpWrites::plan_auto_off`, TP3 끄기 칸 권한)가 없을 때만 되감고 TS 로 넘긴다.
 //! - `thread.plan.changed` 이벤트는 같은 트랜잭션에서 outbox 에 넣는다(커밋돼야 나간다). progress 는 **청중 맵**(public standard 이거나
 //!   같은 채널인 자식만 연다), 도구 답의 progress·nowReady·nowWaiting 은 **부른 계정 맵**이다(TS R2).
 //! - 트랜잭션 앞의 DB 오류는 `None`(TS 가 다시 돈다). 트랜잭션을 연 뒤의 오류는 `internal`(security W1).
@@ -306,7 +307,13 @@ enum Build {
     },
     /// `thread.plan.item`.
     Item(Box<ItemPatch>),
+    /// 잠근 판 `(doc, rev)` 에서 새 판을 만드는 함수(HTTP `plan/start`, S5.4 TP5b). `Err` 는 거절 코드.
+    Custom(StartBuild),
 }
+
+/// [`Build::Custom`] 의 함수.
+pub(crate) type StartBuild =
+    Box<dyn FnOnce(Option<(&Value, i64)>) -> Result<Value, &'static str> + Send>;
 
 /// TS `setThreadPlan` 의 build — guard 비교. 시각은 둘 다 밀리초 ISO 글자라 글자 비교가 `getTime()` 비교와 같다.
 #[allow(clippy::option_option)]
@@ -423,6 +430,8 @@ enum Outcome {
         before: Option<Value>,
         facts: Facts,
         flag: Option<crate::core::content_scan::ScanHit>,
+        /// 관리자가 바뀌어 자동 진행을 같은 tx 에서 껐다 — (새 관리자, 앞 관리자). 끄기 알림은 부른 쪽 몫이다.
+        auto_off: Option<(Option<String>, Option<String>)>,
     },
     /// 관리자가 바뀌는데 자동 진행이 켜져 있다 — 되감았다. TS 가 답한다.
     ToTs,
@@ -434,6 +443,7 @@ async fn write_plan(
     root: &str,
     channel: &str,
     build: Build,
+    clear_auto: bool,
 ) -> sqlx::Result<Outcome> {
     let mut tx = write.begin().await?;
     let cur: Option<(String, i64, String, Option<String>, bool)> = sqlx::query_as(LOCK_SQL)
@@ -454,6 +464,9 @@ async fn write_plan(
         Build::Item(p) => apply_plan_item(now.as_ref().map(|n| (&n.doc, n.rev)), &p)
             .map(|(d, id)| (Some(d), id))
             .map_err(|e| Refusal::plan(&e)),
+        Build::Custom(f) => f(now.as_ref().map(|n| (&n.doc, n.rev)))
+            .map(|d| (Some(d), String::new()))
+            .map_err(Refusal::plain),
     };
     let before = now.as_ref().map(|n| &n.doc);
     let doc = match built {
@@ -479,10 +492,16 @@ async fn write_plan(
         o.insert("seq".into(), json!({ "s": s, "g": g }));
     }
     let (manager, prev_manager) = settle_manager(&mut doc, before, me);
-    if now.is_some() && manager != prev_manager && now.as_ref().is_some_and(|n| n.auto_on) {
-        tx.rollback().await?;
-        return Ok(Outcome::ToTs);
-    }
+    let auto_off =
+        if now.is_some() && manager != prev_manager && now.as_ref().is_some_and(|n| n.auto_on) {
+            if !clear_auto {
+                tx.rollback().await?;
+                return Ok(Outcome::ToTs);
+            }
+            Some((manager.clone(), prev_manager.clone()))
+        } else {
+            None
+        };
     if let Some(m) = manager
         .as_deref()
         .filter(|m| Some(*m) != prev_manager.as_deref())
@@ -541,6 +560,13 @@ async fn write_plan(
         .execute(&mut *tx)
         .await?;
     }
+    // TS `managerChanged && written.auto` — 같은 tx 에서 끈다(rev 는 올리지 않는다).
+    if auto_off.is_some() {
+        sqlx::query(AUTO_CLEAR_SQL)
+            .bind(root)
+            .execute(&mut *tx)
+            .await?;
+    }
     // 답(보는 사람 맵)과 이벤트(청중 맵)에 쓸 사실 — 앞 판·새 판의 연결 전부.
     let mut all = roots;
     for id in before.map(linked_roots).unwrap_or_default() {
@@ -560,7 +586,29 @@ async fn write_plan(
         before: now.map(|n| n.doc),
         facts,
         flag,
+        auto_off,
     })
+}
+
+/// TS `writeThreadPlan` 의 관리자 바뀜 자동 진행 끄기.
+const AUTO_CLEAR_SQL: &str = "update thread_plan \
+     set auto_until = null, auto_source = null, auto_by = null, auto_mandate = null, auto_at = null, \
+         auto_woken = '{}'::jsonb, auto_range = '{}'::jsonb \
+     where root_id = $1::uuid";
+
+/// TS `emitPlanChanged(pool, channel, root, row)` — 판이 있을 때, 같은 tx 의 outbox 로(S5.4 TP3 자동 진행 끄기가 쓴다).
+/// 진행률은 청중 맵(public standard 이거나 같은 채널)으로 센다. `viewer` 는 자식 사실 문장의 자리를 채울 뿐 맵에 쓰지 않는다.
+pub(crate) async fn emit_changed(
+    conn: &mut PgConnection,
+    channel: &str,
+    root: &str,
+    rev: i64,
+    doc: &Value,
+    viewer: &str,
+) -> sqlx::Result<()> {
+    let facts = child_facts(&mut *conn, &linked_roots(doc), viewer).await?;
+    let progress = plan_progress(doc, &linked_map(doc, &facts, Some(channel)));
+    emit(conn, channel, root, Some((rev, &progress))).await
 }
 
 /// TS `emitPlanChanged` — 지웠으면 rev·progress 가 null.
@@ -651,6 +699,7 @@ async fn gate(read: &PgPool, me: &Account, root: &str) -> Option<Result<String, 
 async fn run(
     read: &PgPool,
     write: &PgPool,
+    post: Option<&crate::core::msg_post::PostState>,
     me: &Account,
     root: &str,
     build: Build,
@@ -664,9 +713,41 @@ async fn run(
         Err(t) => return Some(t),
     };
     Some(
-        match write_plan(write, &me.id, root, &channel, build).await {
+        match write_plan(write, &me.id, root, &channel, build, post.is_some()).await {
             Err(_) => internal(),
             Ok(Outcome::ToTs) => return None,
+            Ok(Outcome::Written {
+                id,
+                rev,
+                updated_at,
+                doc,
+                before,
+                facts,
+                flag,
+                auto_off: Some((next, prev)),
+            }) => {
+                // TS `writeThreadPlan` — 커밋 뒤 `noticePlanAutoOff(…, [나, 새 관리자, 앞 관리자], 'manager_changed')`.
+                if let Some(post) = post {
+                    let authors = [Some(me.id.as_str()), next.as_deref(), prev.as_deref()];
+                    if crate::core::thread_plan_auto_off::notice_manager_changed(
+                        post, &channel, root, &authors,
+                    )
+                    .await
+                    .is_err()
+                    {
+                        return Some(internal());
+                    }
+                }
+                written_text(
+                    rev,
+                    &updated_at,
+                    &doc,
+                    before.as_ref(),
+                    &facts,
+                    flag.as_ref(),
+                    item_removed.map(|r| (id.as_str(), r)),
+                )
+            }
             Ok(Outcome::Refused(r)) => r.text(),
             Ok(Outcome::Deleted) => text_result(r#"{"ok":true,"deleted":true}"#),
             Ok(Outcome::Written {
@@ -677,6 +758,7 @@ async fn run(
                 before,
                 facts,
                 flag,
+                ..
             }) => written_text(
                 rev,
                 &updated_at,
@@ -695,17 +777,28 @@ async fn run(
 pub async fn answer_set(
     read: &PgPool,
     write: &PgPool,
+    post: Option<&crate::core::msg_post::PostState>,
     me: &Account,
     args: &Value,
 ) -> Option<String> {
     let PlanSet { root, doc, guard } = parse_plan_set(args)?;
-    run(read, write, me, &root, Build::Set { doc, guard }, None).await
+    run(
+        read,
+        write,
+        post,
+        me,
+        &root,
+        Build::Set { doc, guard },
+        None,
+    )
+    .await
 }
 
 /// `thread.plan.item`(`auto` 칸 없는 것).
 pub async fn answer_item(
     read: &PgPool,
     write: &PgPool,
+    post: Option<&crate::core::msg_post::PostState>,
     me: &Account,
     args: &Value,
 ) -> Option<String> {
@@ -714,12 +807,156 @@ pub async fn answer_item(
     run(
         read,
         write,
+        post,
         me,
         &root,
         Build::Item(Box::new(patch)),
         Some(removed),
     )
     .await
+}
+
+/// HTTP `PUT /threads/:rootId/plan/manager`(S5.4 TP4)의 쓰기 결과.
+pub(crate) enum ManagerWrite {
+    /// 거절 — 코드와 TS 오류 객체의 칸 글자(중괄호 없이, TS 키 순서).
+    Refused { code: &'static str, fields: String },
+    /// 썼다. `auto_off` 는 관리자가 바뀌어 자동 진행을 껐을 때 (새 관리자, 앞 관리자) — 끄기 알림은 부른 쪽 몫.
+    Written {
+        auto_off: Option<(Option<String>, Option<String>)>,
+    },
+    /// TS `deleted` 갈래(type plan 은 판을 지우지 않지만 같은 꼴로 둔다).
+    Deleted,
+    /// 관리자가 바뀌는데 자동 진행이 켜져 있다 — 되감았다. TS 가 답한다(끄기 알림).
+    ToTs,
+}
+
+/// TS `writeThreadPlan(…, (prev) => applyPlanItem(prev, { type: 'plan', managerId }))` — 사람 세션 갈래. 루트·가시성은 부른 쪽이 봤다.
+pub(crate) async fn write_manager(
+    write: &PgPool,
+    me: &str,
+    root: &str,
+    channel: &str,
+    manager: Option<String>,
+    clear_auto: bool,
+) -> sqlx::Result<ManagerWrite> {
+    let patch = ItemPatch {
+        type_: Some("plan".to_owned()),
+        manager_id: Some(manager),
+        ..ItemPatch::default()
+    };
+    Ok(
+        match write_plan(
+            write,
+            me,
+            root,
+            channel,
+            Build::Item(Box::new(patch)),
+            clear_auto,
+        )
+        .await?
+        {
+            Outcome::Refused(r) => ManagerWrite::Refused {
+                code: r.code,
+                fields: r.fields,
+            },
+            Outcome::Written { auto_off, .. } => ManagerWrite::Written { auto_off },
+            Outcome::Deleted => ManagerWrite::Deleted,
+            Outcome::ToTs => ManagerWrite::ToTs,
+        },
+    )
+}
+
+/// HTTP `POST …/plan/start` 의 잠금 안 쓰기(TS `writeThreadPlan(…, (prev) => …)`). 루트·가시성은 부른 쪽이 봤다.
+/// 관리자는 바꾸지 않는 판이라 자동 진행 끄기 갈래는 없다 — 생기면 `ToTs`.
+pub(crate) async fn write_custom(
+    write: &PgPool,
+    me: &str,
+    root: &str,
+    channel: &str,
+    f: StartBuild,
+) -> sqlx::Result<(ManagerWrite, Option<i64>)> {
+    Ok(
+        match write_plan(write, me, root, channel, Build::Custom(f), false).await? {
+            Outcome::Refused(r) => (
+                ManagerWrite::Refused {
+                    code: r.code,
+                    fields: r.fields,
+                },
+                None,
+            ),
+            Outcome::Written { auto_off, rev, .. } => {
+                (ManagerWrite::Written { auto_off }, Some(rev))
+            }
+            Outcome::Deleted => (ManagerWrite::Deleted, None),
+            Outcome::ToTs => (ManagerWrite::ToTs, None),
+        },
+    )
+}
+
+/// TS `linkPlanCard` + `planHookOut` — `message.ask` 의 `planStepId`. 카드가 선 **뒤** 그 단계에 `{kind:'card', messageId}` 를 잇고,
+/// 도구 답의 `plan` 칸(JSON 글자)을 돌려준다. 루트·가시성은 부른 쪽이 봤다(그 스레드에 방금 카드를 세웠다).
+pub(crate) async fn link_plan_card(
+    write: &PgPool,
+    me: &str,
+    root: &str,
+    channel: &str,
+    step: &str,
+    message_id: &str,
+) -> sqlx::Result<String> {
+    let patch = ItemPatch {
+        type_: Some("step".to_owned()),
+        id: Some(step.to_owned()),
+        add_links: Some(vec![
+            serde_json::json!({ "kind": "card", "messageId": message_id }),
+        ]),
+        ..ItemPatch::default()
+    };
+    let out = write_plan(
+        write,
+        me,
+        root,
+        channel,
+        Build::Item(Box::new(patch)),
+        false,
+    )
+    .await?;
+    Ok(plan_hook_out(match out {
+        Outcome::Refused(r) => Err(r),
+        Outcome::Written { rev, .. } => Ok(rev),
+        Outcome::Deleted => Err(Refusal::plain("unexpected_delete")),
+        // 관리자를 바꾸지 않는 판이라 오지 않는다.
+        Outcome::ToTs => Err(Refusal::plain("internal")),
+    }))
+}
+
+/// TS `planHookOut(toHookResult(res))` — `unchanged` 는 성공으로 접는다.
+fn plan_hook_out(r: Result<i64, Refusal>) -> String {
+    match r {
+        Ok(rev) => format!("{{\"ok\":true,\"rev\":{rev}}}"),
+        Err(r) if r.code == "unchanged" => "{\"ok\":true,\"unchanged\":true}".to_owned(),
+        Err(r) => {
+            let msg = MESSAGES
+                .iter()
+                .find(|(c, _)| *c == r.code)
+                .map_or(r.code, |(_, m)| m);
+            format!(
+                "{{\"ok\":false,\"error\":{{{},\"message\":{}}}}}",
+                r.fields,
+                q(msg)
+            )
+        }
+    }
+}
+
+/// `planStepId` 미리 보기(읽기 풀) — 그 스레드에 계획이 있고 그 단계가 있는가. 없으면 부른 쪽이 TS 로 넘긴다(`no_plan`·`unknown_item`).
+pub(crate) const PLAN_DOC_SQL: &str = "select doc from thread_plan where root_id = $1::uuid";
+
+/// [`PLAN_DOC_SQL`] 의 판에 그 단계가 있는가.
+pub(crate) fn has_step(doc: &Value, step: &str) -> bool {
+    doc.get("steps").and_then(Value::as_array).is_some_and(|a| {
+        a.iter()
+            .any(|s| s.get("id").and_then(Value::as_str) == Some(step))
+    })
 }
 
 #[cfg(test)]

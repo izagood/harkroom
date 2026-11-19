@@ -346,6 +346,11 @@ impl SecretKeyring {
         &self.active_kid
     }
 
+    /// 키 묶음을 돌려받는다 — 기동 확인([`super::verify`])이 kid 하나짜리 키링으로 풀어 본 뒤 키를 되찾는 데 쓴다.
+    pub(crate) fn into_keys(self) -> Vec<(String, MasterKey)> {
+        self.keys
+    }
+
     pub(crate) fn kids(&self) -> impl Iterator<Item = &str> {
         self.keys.iter().map(|(k, _)| k.as_str())
     }
@@ -395,6 +400,59 @@ impl SecretKeyring {
 }
 
 /// 표준 base64(패딩 있음)를 정확히 N 바이트로. 다른 길이·꼴이면 None.
+impl SecretKeyring {
+    /// TS `seal` — 활성 kid 로 봉인한다. salt 16·iv 12바이트는 OS 난수.
+    pub(crate) fn seal(&self, plain: &[u8], aad: &SecretAad<'_>) -> String {
+        let mut salt = [0u8; SALT_LEN];
+        let mut iv = [0u8; IV_LEN];
+        getrandom::fill(&mut salt).expect("os random");
+        getrandom::fill(&mut iv).expect("os random");
+        self.seal_with(plain, aad, &salt, &iv)
+    }
+
+    /// 난수를 밖에서 받는 봉인 — 시험이 TS 와 같은 바이트를 대조하는 데 쓴다.
+    pub(crate) fn seal_with(
+        &self,
+        plain: &[u8],
+        aad: &SecretAad<'_>,
+        salt: &[u8; SALT_LEN],
+        iv: &[u8; IV_LEN],
+    ) -> String {
+        let kid = self.active_kid.as_str();
+        let (_, kek) = self
+            .keys
+            .iter()
+            .find(|(k, _)| k == kid)
+            .expect("active kid checked in new()");
+        let aad_bytes = format!(
+            "harkroom-secret-v2|{}|{}|{}|{}",
+            aad.secret_id,
+            aad.version,
+            aad.kind.as_str(),
+            kid
+        );
+        let mut okm = Zeroizing::new([0u8; 32]);
+        Hkdf::<Sha256>::new(Some(&salt[..]), kek.bytes())
+            .expand(aad_bytes.as_bytes(), &mut okm[..])
+            .expect("32 bytes is a valid HKDF-SHA256 length");
+        let cipher = Aes256Gcm::new_from_slice(&okm[..]).expect("32-byte key");
+        let nonce = Nonce::try_from(&iv[..]).expect("12-byte nonce");
+        let mut buf = Zeroizing::new(plain.to_vec());
+        let tag = cipher
+            .encrypt_inout_detached(&nonce, aad_bytes.as_bytes(), buf.as_mut_slice().into())
+            .expect("AES-GCM encrypt");
+        [
+            "v2".to_owned(),
+            kid.to_owned(),
+            STANDARD.encode(salt),
+            STANDARD.encode(iv),
+            STANDARD.encode(tag.as_slice()),
+            STANDARD.encode(buf.as_slice()),
+        ]
+        .join(".")
+    }
+}
+
 fn decode_exact<const N: usize>(s: &str) -> Option<Zeroizing<[u8; N]>> {
     let v = Zeroizing::new(STANDARD.decode(s).ok()?);
     if v.len() != N {
@@ -403,4 +461,48 @@ fn decode_exact<const N: usize>(s: &str) -> Option<Zeroizing<[u8; N]>> {
     let mut out = Zeroizing::new([0u8; N]);
     out.copy_from_slice(&v);
     Some(out)
+}
+
+#[cfg(test)]
+mod seal_tests {
+    use super::*;
+
+    /// node `crypto` 로 TS `secretKeyring.ts` 의 `seal` 과 같은 절차(KEK 0..31·kid k1·salt 0x11×16·iv 0x22×12)로 만든 값.
+    const TS_V2: &str = "v2.k1.EREREREREREREREREREREQ==.IiIiIiIiIiIiIiIi.Knn2uQfjEt1Cwl02xIEsVA==.pzKjuPAZxmhomgbODmw=";
+    const AAD: SecretAad<'static> = SecretAad {
+        secret_id: "00000000-0000-4000-8000-000000000001",
+        version: 3,
+        kind: SecretKind::Text,
+    };
+
+    fn ring() -> SecretKeyring {
+        let mut k = MasterKey::zeroed();
+        for (i, b) in k.0.iter_mut().enumerate() {
+            *b = i as u8;
+        }
+        SecretKeyring::new(LoadedSecretKeys {
+            keys: vec![("k1".to_owned(), k)],
+            active_kid: "k1".to_owned(),
+        })
+        .expect("ring")
+    }
+
+    #[test]
+    fn seal_matches_ts_bytes() {
+        assert_eq!(
+            ring().seal_with("hunter2 비밀".as_bytes(), &AAD, &[0x11; 16], &[0x22; 12]),
+            TS_V2
+        );
+    }
+
+    #[test]
+    fn opens_ts_and_round_trips() {
+        let r = ring();
+        let got = r.open(TS_V2, &AAD).expect("open");
+        assert_eq!(got.as_bytes(), "hunter2 비밀".as_bytes());
+        let s = r.seal(b"abc", &AAD);
+        assert_eq!(r.open(&s, &AAD).expect("open").as_bytes(), b"abc");
+        let other = SecretAad { version: 4, ..AAD };
+        assert!(r.open(&s, &other).is_none());
+    }
 }

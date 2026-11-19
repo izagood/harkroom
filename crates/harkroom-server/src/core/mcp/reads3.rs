@@ -50,7 +50,7 @@ fn work_items_sql() -> &'static str {
 const AGENT_LIST_BODY_CHARS: usize = 200;
 
 /// TS `agentRunOwner` 의 문장(1시간 = `AGENT_RUN_CAUSE_MAX_AGE_MS / 1000`).
-const RUN_OWNER_SQL: &str = "select m.author_id::text, (a.kind = 'agent'), (m.meta ? 'automation'), \
+pub(super) const RUN_OWNER_SQL: &str = "select m.author_id::text, (a.kind = 'agent'), (m.meta ? 'automation'), \
             m.created_at > now() - make_interval(secs => 3600) \
        from message m join account a on a.id = m.author_id \
       where m.id = $1::uuid and m.deleted_at is null \

@@ -72,8 +72,12 @@ fn who_takes_it() {
         ("deny", "merge", Decision::Deny),
         ("deny", "future_kind", Decision::Deny),
         ("approve", "tool", Decision::Approve),
+        // S5.4 12e — 위임장·거절 기록 없는 merge 7일 승인.
+        ("approve", "merge", Decision::Approve),
         ("approve_once", "command", Decision::ApproveOnce),
         ("approve_hour", "command", Decision::ApproveHour),
+        // S5.4 — tool 카드의 approve_once 는 Rust 가 409 not_once(쓰기 없음).
+        ("approve_once", "tool", Decision::ApproveOnce),
         // C1 — 위임장 없는 approve_mandate 는 TS 처럼 grant 만(approve 와 같음).
         ("approve_mandate", "tool", Decision::ApproveMandate),
         // C2 — 위임장 없는 approve_new_mandate(tool)는 Rust 가 카드 스레드에 위임장을 세운다.
@@ -81,24 +85,30 @@ fn who_takes_it() {
     ] {
         assert_eq!(rust_takes(shape(o, k)), Some(d), "{o}/{k}");
     }
-    // 승인 kind 는 허용 목록 — merge·모르는 kind 는 TS.
+    // 승인 kind 는 허용 목록 — merge(7일 승인 밖)·모르는 kind 는 TS.
     for (o, k) in [
-        ("approve", "merge"),
         ("approve", "command"),
         ("approve", "future_kind"),
         ("approve_once", "merge"),
-        ("approve_once", "tool"),
-        ("approve_hour", "tool"),
-        // C2 — new_mandate 는 tool 만(command 는 TS 409 bad_decision, merge 는 TS).
-        ("approve_new_mandate", "command"),
         ("approve_new_mandate", "merge"),
-        // 위임장 없는 [이번 턴만]은 TS(409 bad_decision).
-        ("approve_turn", "tool"),
         ("approve_turn", "merge"),
-        ("approve_mandate", "merge"),
         ("nope", "tool"),
     ] {
         assert_eq!(rust_takes(shape(o, k)), None, "{o}/{k}");
+    }
+    // S5.4 11d — TS 가 쓰기 없이 409 `bad_decision` 으로 답하는 꼴도 Rust(같은 답).
+    for (o, k, d) in [
+        ("approve_hour", "tool", Decision::ApproveHour),
+        ("approve_turn", "tool", Decision::ApproveTurn),
+        ("approve_turn", "command", Decision::ApproveTurn),
+        ("approve_mandate", "command", Decision::ApproveMandate),
+        (
+            "approve_new_mandate",
+            "command",
+            Decision::ApproveNewMandate,
+        ),
+    ] {
+        assert_eq!(rust_takes(shape(o, k)), Some(d), "{o}/{k}");
     }
     // C1·C2·C3 — 위임장이 있는 tool 승인 넷과 command once·hour 는 Rust, 나머지(merge·deny)는 TS.
     let m = |o, k| Shape {
@@ -126,15 +136,16 @@ fn who_takes_it() {
         rust_takes(m("approve_hour", "command")),
         Some(Decision::ApproveHour)
     );
+    // 14d — 위임장 있는 merge 7일 승인(`approve` = grant + 줄, `approve_mandate` = 줄만)은 Rust.
+    assert_eq!(rust_takes(m("approve", "merge")), Some(Decision::Approve));
+    assert_eq!(
+        rust_takes(m("approve_mandate", "merge")),
+        Some(Decision::ApproveMandate)
+    );
     for (o, k) in [
-        ("approve_mandate", "merge"),
-        ("approve", "merge"),
         ("approve_once", "merge"),
+        ("approve_new_mandate", "merge"),
         ("deny", "command"),
-        // command 에 위임장 갈래는 TS 409 bad_decision 그대로.
-        ("approve_mandate", "command"),
-        ("approve_new_mandate", "command"),
-        ("approve_turn", "command"),
     ] {
         assert_eq!(rust_takes(m(o, k)), None, "{o}/{k}");
     }
@@ -175,14 +186,27 @@ fn who_takes_it() {
     ] {
         assert_eq!(rust_takes(s), None, "{s:?}");
     }
-    // 머지 거절 카드(denial_id): deny 는 Rust, 같은 카드의 approve_once·approve 는 TS(security ②-6).
+    // 머지 거절 카드(denial_id): deny 는 Rust, once 값 없는 approve_once 는 TS(security ②-6).
+    // 13d — 같은 카드의 7일 approve 는 Rust(CI 거절이면 400 `ci_card_once_only`). 14d — 위임장이 있어도 Rust.
     let d = |o| Shape {
         has_denial: true,
         ..shape(o, "merge")
     };
     assert_eq!(rust_takes(d("deny")), Some(Decision::Deny));
     assert_eq!(rust_takes(d("approve_once")), None);
-    assert_eq!(rust_takes(d("approve")), None);
+    assert_eq!(rust_takes(d("approve")), Some(Decision::Approve));
+    // 13d — 위임장 없는 merge approve_mandate 는 쓰기 없는 409 `mandate_unavailable`(Rust).
+    assert_eq!(
+        rust_takes(shape("approve_mandate", "merge")),
+        Some(Decision::ApproveMandate)
+    );
+    assert_eq!(
+        rust_takes(Shape {
+            has_mandate: true,
+            ..d("approve")
+        }),
+        Some(Decision::Approve)
+    );
 }
 
 #[test]
@@ -399,6 +423,7 @@ fn audit_detail_keys_match_ts_and_carry_no_secrets() {
         grant_expires_at: Some("2026-11-16T00:00:00.000Z"),
         grant_mode: Some(("hour", "g")),
         bundle_message_id: Some("b"),
+        mirror_message_id: None,
     });
     let keys: Vec<&str> = full
         .as_object()
@@ -409,7 +434,8 @@ fn audit_detail_keys_match_ts_and_carry_no_secrets() {
     for k in &keys {
         assert!(AUDIT_DETAIL_KEYS.contains(k), "unexpected audit key {k}");
     }
-    assert_eq!(keys.len(), AUDIT_DETAIL_KEYS.len());
+    // bundle 과 mirror 는 함께 오지 않는다 — mirrorMessageId 하나만 빠진다.
+    assert_eq!(keys.len() + 1, AUDIT_DETAIL_KEYS.len());
     for bad in [
         "reason",
         "warnings",
@@ -431,9 +457,50 @@ fn audit_detail_keys_match_ts_and_carry_no_secrets() {
         grant_expires_at: None,
         grant_mode: None,
         bundle_message_id: None,
+        mirror_message_id: None,
     });
+    // 14d — 거울에서 온 결정: TS `{ via: 'mirror', mirrorMessageId }`.
+    let mirror = audit_detail(&AuditDetail {
+        request_id: "r",
+        kind: "tool",
+        target: "Bash(ls:*)",
+        channel_id: None,
+        as_owner: true,
+        thread_root_id: None,
+        grant_expires_at: None,
+        grant_mode: None,
+        bundle_message_id: None,
+        mirror_message_id: Some("m"),
+    });
+    assert_eq!(
+        mirror,
+        serde_json::json!({"requestId": "r", "kind": "tool", "target": "Bash(ls:*)", "channelId": null, "via": "mirror", "mirrorMessageId": "m"})
+    );
+    assert!(
+        TS_PERMISSION_REQUESTS
+            .contains("{ via: 'mirror', mirrorMessageId: args.via.mirrorMessageId }")
+    );
+    use harkroom_server::core::decide_core::decided_via;
+    assert_eq!(decided_via(None, None), None);
+    assert_eq!(
+        decided_via(None, Some("m")),
+        Some(serde_json::json!({"kind": "mirror", "mirrorMessageId": "m"}))
+    );
+    assert_eq!(
+        decided_via(Some("b"), None),
+        Some(serde_json::json!({"kind": "bundle", "bundleMessageId": "b"}))
+    );
     assert_eq!(
         deny,
         serde_json::json!({"requestId": "r", "kind": "tool", "target": "Bash(ls:*)", "channelId": null, "via": "button"})
     );
+}
+
+/// S5.4 12e — 결정 길의 만료 409 문구·코드는 TS `decidePermissionRequest` 원문과 같다.
+#[test]
+fn request_expired_matches_ts() {
+    use harkroom_server::core::decide_approve::REQUEST_EXPIRED_MESSAGE;
+    assert!(TS_PERMISSION_REQUESTS.contains(&format!(
+        "code: 'request_expired', message: '{REQUEST_EXPIRED_MESSAGE}'"
+    )));
 }

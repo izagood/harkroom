@@ -19,6 +19,8 @@ pub const INBOX_PAGE_LIMIT: i64 = 200;
 
 struct Sql {
     unread: String,
+    /// MCP `inbox.poll` 이 `lease` 를 줄 때(TS `skipLeased`) — 안 읽은 것 중 임대가 없거나 끝난 것만.
+    unread_unleased: String,
     unread_since: String,
     since: String,
     newest: String,
@@ -55,6 +57,16 @@ fn wrap(branch: &str) -> String {
     )
 }
 
+/// TS `listInboxSql({ unreadOnly: true, skipLeased: true })` — 정본 갈래의 마지막 `order by i.id` 앞에 TS 와 같은 거르기를 넣는다.
+fn skip_leased(branch: &str) -> String {
+    let (head, tail) = branch
+        .rsplit_once("order by i.id")
+        .expect("list_inbox_unread ends with order by i.id");
+    format!(
+        "{head}and (i.claimed_until is null or i.claimed_until < now())\n     order by i.id{tail}"
+    )
+}
+
 fn sql() -> &'static Sql {
     static S: OnceLock<Sql> = OnceLock::new();
     S.get_or_init(|| {
@@ -67,6 +79,7 @@ fn sql() -> &'static Sql {
         };
         Sql {
             unread: wrap(&frag("list_inbox_unread")),
+            unread_unleased: wrap(&skip_leased(&frag("list_inbox_unread"))),
             unread_since: wrap(&frag("list_inbox_unreadSince")),
             since: wrap(&frag("list_inbox_since")),
             newest: wrap(&frag("list_inbox_newest")),
@@ -131,6 +144,8 @@ fn sql() -> &'static Sql {
 pub enum InboxQuery {
     /// `unread=1`(러너 폴) — 안 읽은 것 전부, `since` 가 있으면 그 뒤만.
     Unread { since: Option<i64> },
+    /// MCP `inbox.poll` 의 `lease` 폴 — 안 읽은 것 중 임대가 없거나 끝난 것만(TS `skipLeased`).
+    UnreadUnleased,
     /// `since` 만 — 그 id 뒤의 것 전부(읽은 것 포함).
     Since(i64),
     /// 둘 다 없음 — 최신 `limit` 줄(`before` 가 있으면 그 id 앞에서). 문장에는 `limit + 1` 을 넘긴다.
@@ -160,6 +175,12 @@ pub async fn list_inbox(
     let rows: Vec<BaseRow> = match q {
         InboxQuery::Unread { since: None } => {
             sqlx::query_as(s.unread.as_str())
+                .bind(me)
+                .fetch_all(pool)
+                .await?
+        }
+        InboxQuery::UnreadUnleased => {
+            sqlx::query_as(s.unread_unleased.as_str())
                 .bind(me)
                 .fetch_all(pool)
                 .await?
@@ -684,6 +705,14 @@ mod tests {
         for q in [&s.unread, &s.since, &s.newest] {
             assert!(!q.contains("as \"bodyTruncated\"") && !q.contains("claimed_until"));
         }
+        assert!(
+            s.unread_unleased.contains("i.read_at is null")
+                && s.unread_unleased.contains(
+                    "and (i.claimed_until is null or i.claimed_until < now())\n     order by i.id"
+                )
+                && !s.unread_unleased.contains("$2")
+                && s.unread_unleased.ends_with("order by t.id")
+        );
         assert!(s.roster.contains("t.id = any($1::uuid[])"));
         assert!(s.handed.contains("d.message_id = any($1::uuid[])"));
         assert!(

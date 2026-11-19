@@ -241,6 +241,10 @@ export async function createAutomation(pool: Pool, input: {
   return { ...res.rows[0], lastRun: null };
 }
 
+/** 제안 INSERT(072). Rust MCP `automation.propose`(`core/mcp/automation_propose.rs`)가 골든 `automation_propose_insert` 로 같은 문장을 쓴다. */
+export const PROPOSE_AUTOMATION_SQL = `insert into automation (owner_id, proposed_by, approved_at, enabled, channel_id, name, body, trigger, debounce_sec)
+     values ($1::uuid, $2::uuid, null, false, $3::uuid, $4::text, $5::text, $6::text::jsonb, $7::int)`;
+
 /**
  * 에이전트의 제안(072). `enabled=false`·`approved_at=null` 로 들어가 시계도 입구도 돌지 않는다.
  * 소유자는 **승인할 사람**이다 — 승인하면 글이 그 사람 이름으로 나간다.
@@ -250,8 +254,7 @@ export async function proposeAutomation(pool: Pool, input: {
   trigger: AutomationTrigger; debounceSec?: number | null;
 }): Promise<AutomationView> {
   const res = await pool.query(
-    `insert into automation (owner_id, proposed_by, approved_at, enabled, channel_id, name, body, trigger, debounce_sec)
-     values ($1, $2, null, false, $3, $4, $5, $6, $7) returning ${COLS}`,
+    `${PROPOSE_AUTOMATION_SQL} returning ${COLS}`,
     [input.ownerId, input.proposedBy, input.channelId, input.name, input.body, JSON.stringify(input.trigger),
       input.debounceSec ?? null],
   );

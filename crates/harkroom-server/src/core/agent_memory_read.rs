@@ -7,8 +7,10 @@
 //! - 질의는 TS `listMemoryEntries`(`ENTRY_COLUMNS`, slug 순)·`listMemoryRevisions`(최근 것부터) 와 같은 칸·같은 순서다.
 //! - **읽기만 한다.** 읽기 풀만 쓰고 새 GRANT 가 없다. 필요한 SELECT 는 [`AGENT_MEMORY_READ_PRIVILEGES`] — 없으면 `main.rs` 가
 //!   이 줄을 붙이지 않아 TS 에 남는다.
-//! - 정리 후보(`GET …/memory/audit`, 분류·유사도 판정)·백그라운드 읽기(`GET …/background`·`…/background/runs/:runId`)는
-//!   TS 에 남긴다. 기억 쓰기·백그라운드 켜고 끄기는 [`super::agent_memory_write`].
+//! - 회차 하나 펼치기(`GET …/background/runs/:runId`, TS `bgRunChanges`)도 여기서 답한다 — 같은 문지기·읽기 풀이다.
+//! - 백그라운드 목록(`GET …/background`, TS `bgState`·`listBgRuns`)도 여기서 답한다 — 같은 경로의 PUT 은
+//!   [`super::agent_memory_write`] 가, 그쪽이 꺼져 있으면 `ts_fallback` 이 TS 로 넘긴다.
+//! - 정리 후보(`GET …/memory/audit`)는 [`super::agent_memory_audit_read`]. 기억 쓰기·백그라운드 켜고 끄기는 [`super::agent_memory_write`].
 use super::relay_routes::{Verdict, check_owner_or_admin};
 use crate::auth::{Account, RequireAccount};
 use crate::directory::{internal, json_err, json_ok};
@@ -24,6 +26,8 @@ pub const AGENT_MEMORY_READ_PRIVILEGES: &[(&str, &str)] = &[
     ("agent_config", "SELECT"),
     ("agent_memory", "SELECT"),
     ("agent_memory_revision", "SELECT"),
+    ("bg_job", "SELECT"),
+    ("bg_job_change", "SELECT"),
 ];
 
 /// zod `slug: z.string().min(1).max(255)` — UTF-16 단위.
@@ -229,6 +233,231 @@ pub async fn list_revisions(
     }
 }
 
+type Snap = (String, Option<String>, Option<String>);
+/// 첫 이전 판: 판 + reason + created.
+type FirstRev = (String, Option<String>, Option<String>, Option<String>, bool);
+/// 지금 행: 판 + archived + 회차 직후와 같은가.
+type CurRow = (String, Option<String>, Option<String>, bool, bool);
+
+fn snap_json(s: &Snap, archived: Option<bool>) -> String {
+    let q = |v: &Option<String>| serde_json::to_string(v).unwrap_or_else(|_| "null".into());
+    let mut out = format!(
+        "{{\"value\":{},\"description\":{},\"kind\":{}",
+        serde_json::to_string(&s.0).unwrap_or_else(|_| "null".into()),
+        q(&s.1),
+        q(&s.2)
+    );
+    if let Some(a) = archived {
+        out.push_str(&format!(",\"archived\":{a}"));
+    }
+    out.push('}');
+    out
+}
+
+/// TS `bgRunChanges` — 없는 회차·남의 회차면 None. 바뀐 기억마다(첫 등장 순) 전/후·`unchangedSince`.
+async fn bg_run_changes(
+    read: &PgPool,
+    id: &str,
+    run_id: &str,
+) -> Result<Option<String>, sqlx::Error> {
+    let own: Option<i32> =
+        sqlx::query_scalar("select 1 from bg_job where id = $1::uuid and account_id = $2::uuid")
+            .bind(run_id)
+            .bind(id)
+            .fetch_optional(read)
+            .await?;
+    if own.is_none() {
+        return Ok(None);
+    }
+    // 시각은 JS Date 처럼 밀리초에서 자른다(sameMs). 다시 넘길 때도 그 값 그대로다.
+    let ch: Vec<(String, String, Option<String>)> = sqlx::query_as(
+        "select slug, op, date_trunc('milliseconds', after_updated_at)::text \
+           from bg_job_change where run_id = $1::uuid order by id",
+    )
+    .bind(run_id)
+    .fetch_all(read)
+    .await?;
+    // Map 삽입 순서(첫 등장 순)를 지킨다. after 는 마지막 것.
+    let mut by_slug: Vec<(String, Vec<String>, Option<String>)> = Vec::new();
+    for (slug, op, after) in ch {
+        if let Some(e) = by_slug.iter_mut().find(|e| e.0 == slug) {
+            e.1.push(op);
+            e.2 = after;
+        } else {
+            by_slug.push((slug, vec![op], after));
+        }
+    }
+    let mut out: Vec<String> = Vec::with_capacity(by_slug.len());
+    for (slug, ops, e_after) in by_slug {
+        let fr: Option<FirstRev> =
+            sqlx::query_as(
+                "select value, description, kind, reason, coalesce((detail->>'created')::boolean, false) \
+                   from agent_memory_revision where account_id = $1::uuid and slug = $2 and run_id = $3::uuid \
+                  order by replaced_at, id limit 1",
+            )
+            .bind(id)
+            .bind(&slug)
+            .bind(run_id)
+            .fetch_optional(read)
+            .await?;
+        let before: Option<Snap> = match fr {
+            None => None,
+            Some((_, _, _, Some(ref r), true)) if r == "merge" => None,
+            Some((v, d, k, _, _)) => Some((v, d, k)),
+        };
+        let cur: Option<CurRow> = sqlx::query_as(
+            "select value, description, kind, archived_at is not null, \
+                    coalesce(date_trunc('milliseconds', updated_at) = $3::timestamptz, false) \
+               from agent_memory where account_id = $1::uuid and slug = $2",
+        )
+        .bind(id)
+        .bind(&slug)
+        .bind(&e_after)
+        .fetch_optional(read)
+        .await?;
+        let unchanged_since = cur.as_ref().is_some_and(|c| c.4);
+        let mut after: Option<String> = None;
+        if let (Some(c), true) = (&cur, unchanged_since) {
+            after = Some(snap_json(
+                &(c.0.clone(), c.1.clone(), c.2.clone()),
+                Some(c.3),
+            ));
+        } else if let Some(t) = &e_after {
+            let later: Option<Snap> = sqlx::query_as(
+                "select value, description, kind from agent_memory_revision where account_id = $1::uuid and slug = $2 \
+                   and date_trunc('milliseconds', updated_at) = date_trunc('milliseconds', $3::timestamptz) \
+                  order by replaced_at limit 1",
+            )
+            .bind(id)
+            .bind(&slug)
+            .bind(t)
+            .fetch_optional(read)
+            .await?;
+            if let Some(l) = later {
+                after = Some(snap_json(&l, Some(false)));
+            }
+        }
+        let before = before.or_else(|| {
+            // 보관만 한 회차는 「전」이 지금 행이다.
+            if ops.iter().all(|o| o == "archive") {
+                cur.as_ref()
+                    .map(|c| (c.0.clone(), c.1.clone(), c.2.clone()))
+            } else {
+                None
+            }
+        });
+        out.push(format!(
+            "{{\"slug\":{},\"ops\":{},\"before\":{},\"after\":{},\"unchangedSince\":{}}}",
+            serde_json::to_string(&slug).unwrap_or_else(|_| "null".into()),
+            serde_json::to_string(&ops).unwrap_or_else(|_| "[]".into()),
+            before.map_or_else(|| "null".into(), |b| snap_json(&b, None)),
+            after.unwrap_or_else(|| "null".into()),
+            unchanged_since
+        ));
+    }
+    Ok(Some(format!("[{}]", out.join(","))))
+}
+
+/// TS `GET /accounts/agents/:id/background/runs/:runId` — 문지기 → 경로 zod(둘 다 uuid) → 에이전트(지운 것 포함) → 회차.
+pub async fn bg_run(
+    State(read): State<Arc<PgPool>>,
+    RequireAccount(me, _): RequireAccount,
+    Path((id, run_id)): Path<(String, String)>,
+) -> Response {
+    if let Err(r) = access(&read, &me, &id, None).await {
+        return r;
+    }
+    if !crate::lists::is_zod_uuid(&run_id) {
+        return bad("params");
+    }
+    if let Err(r) = agent_target(&read, &id, false).await {
+        return r;
+    }
+    match bg_run_changes(&read, &id, &run_id).await {
+        Ok(Some(changes)) => json_ok(format!("{{\"changes\":{changes}}}")),
+        Ok(None) => json_err(StatusCode::NOT_FOUND, "not_found", "no such run"),
+        Err(e) => internal(e),
+    }
+}
+
+/// TS `listBgRuns` — 최근 30 회차, `created_at desc`. 칸 순서는 TS `select` 와 같다.
+const BG_RUNS_SQL: &str = concat!(
+    "select coalesce(json_agg(s.r order by s.ord desc), '[]'::json)::text from (",
+    "select j.created_at as ord, json_build_object(",
+    "'id', j.id, 'kind', j.kind, 'day', to_char(j.day, 'YYYY-MM-DD'), 'status', j.status, ",
+    "'summary', j.summary, 'error', j.error, 'writes', j.writes, 'tokens', j.tokens, ",
+    "'durationMs', j.duration_ms, 'createdAt', ",
+    iso!("j.created_at"),
+    ", 'finishedAt', ",
+    iso!("j.finished_at"),
+    ", 'revertedAt', ",
+    iso!("j.reverted_at"),
+    ", 'changes', (select count(distinct c.slug) from bg_job_change c where c.run_id = j.id)::int",
+    ") as r from bg_job j where j.account_id = $1::uuid order by j.created_at desc limit 30) s(ord, r)"
+);
+
+/// TS `BG_KINDS` 순서 그대로 — `paused` 배열 순서가 이것을 따른다.
+const BG_KINDS: [&str; 3] = ["distill", "cleanup", "organize"];
+/// TS `BG_PAUSE_AFTER_FAILURES`.
+const BG_PAUSE_AFTER_FAILURES: i64 = 3;
+
+/// TS `bgState` — 토글(행이 없으면 끔)과 멈춘 종류(최근 끝난 3 회차가 모두 failed).
+async fn bg_state(read: &PgPool, id: &str) -> Result<(bool, Vec<&'static str>), sqlx::Error> {
+    let on: Option<bool> =
+        sqlx::query_scalar("select bg_enabled from agent_config where account_id = $1::uuid")
+            .bind(id)
+            .fetch_optional(read)
+            .await?;
+    let mut paused = Vec::new();
+    for k in BG_KINDS {
+        let st: Vec<String> = sqlx::query_scalar(
+            "select status from bg_job where account_id = $1::uuid and kind = $2 \
+               and status in ('done', 'failed', 'skipped') order by created_at desc limit $3",
+        )
+        .bind(id)
+        .bind(k)
+        .bind(BG_PAUSE_AFTER_FAILURES)
+        .fetch_all(read)
+        .await?;
+        if st.len() as i64 == BG_PAUSE_AFTER_FAILURES && st.iter().all(|s| s == "failed") {
+            paused.push(k);
+        }
+    }
+    Ok((on.unwrap_or(false), paused))
+}
+
+/// TS `GET /accounts/agents/:id/background` — 문지기 → 경로 zod → 에이전트(지운 것 포함) →
+/// `{ enabled, paused, serverEnabled, runs }`(TS 의 펼침 순서).
+pub async fn bg_list(
+    State(read): State<Arc<PgPool>>,
+    RequireAccount(me, _): RequireAccount,
+    Path(id): Path<String>,
+) -> Response {
+    if let Err(r) = gate(&read, &me, &id, None, false).await {
+        return r;
+    }
+    let (enabled, paused) = match bg_state(&read, &id).await {
+        Ok(v) => v,
+        Err(e) => return internal(e),
+    };
+    // TS `backgroundEnabled()` 는 요청마다 env 를 읽는다.
+    let server_enabled = crate::loops::bg::background_enabled(
+        std::env::var("HARKROOM_BACKGROUND_ENABLED").ok().as_deref(),
+    );
+    let runs: String = match sqlx::query_scalar(BG_RUNS_SQL)
+        .bind(&id)
+        .fetch_one(&*read)
+        .await
+    {
+        Ok(v) => v,
+        Err(e) => return internal(e),
+    };
+    json_ok(format!(
+        "{{\"enabled\":{enabled},\"paused\":{},\"serverEnabled\":{server_enabled},\"runs\":{runs}}}",
+        serde_json::to_string(&paused).unwrap_or_else(|_| "[]".into())
+    ))
+}
+
 pub fn routes(
     pool: PgPool,
     auth: crate::auth::AuthPools,
@@ -241,6 +470,8 @@ pub fn routes(
             "/accounts/agents/{id}/memory/{slug}/revisions",
             list_revisions,
         )
+        .get("/accounts/agents/{id}/background", bg_list)
+        .get("/accounts/agents/{id}/background/runs/{runId}", bg_run)
         .map(|r| {
             r.route_layer(axum::middleware::from_fn_with_state(
                 auth,

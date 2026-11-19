@@ -47,6 +47,33 @@ export type CreateWatchResult =
   | { ok: true; watchId: string; created: boolean; expiresAt: string }
   | { ok: false; code: CreateWatchDenial };
 
+/*
+ * `createWatch` 의 문장들 — Rust 코어(MCP `pr.watch`, S5.4)가 `golden/sql_fragments.json` 으로 받아 그대로 쓴다.
+ */
+/** $1 채널 · $2 계정 · $3 스레드 머리. 채널 멤버(`channel_member` 행)이고 머리가 그 채널의 머리 글인가. */
+export const PR_WATCH_MEMBER_SQL = `select 1 from channel_member cm join message m on m.channel_id = cm.channel_id
+      where cm.channel_id = $1::uuid and cm.account_id = $2::uuid and m.id = $3::uuid and m.thread_root_id is null`;
+/** $1 위임 · $2 스레드 머리 · $3 계정(넘긴 쪽이거나 받은 쪽). */
+export const PR_WATCH_DELEGATION_SQL = `select 1 from team_delegation d
+        where d.id = $1::uuid and d.thread_root_id = $2::uuid
+          and (d.lead_account_id = $3::uuid or exists (select 1 from team_delegation_item di where di.delegation_id = d.id and di.delegate_account_id = $3::uuid))`;
+/** $1 계정 — 계정 단위 상한 잠금(트랜잭션 끝까지). */
+export const PR_WATCH_LOCK_SQL = `select pg_advisory_xact_lock(hashtext('pr_watch_open:' || $1::text))`;
+/** $1 계정 · $2 repo · $3 number · $4 head · $5 until — 열린 감시 수와 같은 키에 이미 붙었는지. */
+export const PR_WATCH_COUNT_SQL = `select count(distinct w.id)::int as n,
+              bool_or(w.repo = $2::text and w.number = $3::int and w.head = $4::text and w.until = $5::text) as already
+         from pr_watch_subscriber s join pr_watch w on w.id = s.watch_id
+        where s.account_id = $1::uuid and w.state = 'open' and w.expires_at > now()`;
+/** $1 repo · $2 number · $3 head · $4 until · $5 TTL 초. */
+export const PR_WATCH_INSERT_SQL = `insert into pr_watch (repo, number, head, until, expires_at)
+       values ($1::text, $2::int, $3::text, $4::text, now() + make_interval(secs => $5::int))
+       on conflict (repo, number, head, until) where state = 'open' do update set expires_at = greatest(pr_watch.expires_at, excluded.expires_at)
+       returning id, expires_at, (xmax = 0) as created`;
+/** $1 감시 · $2 계정 · $3 채널 · $4 스레드 · $5 위임 · $6 source. */
+export const PR_WATCH_SUBSCRIBE_SQL = `insert into pr_watch_subscriber (watch_id, account_id, channel_id, thread_root_id, delegation_id, source)
+       values ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::uuid, $6::text)
+       on conflict (watch_id, account_id, thread_root_id) do update set delegation_id = coalesce(excluded.delegation_id, pr_watch_subscriber.delegation_id)`;
+
 /** 감시를 걸고·보고하는 근거는 **머지 grant 만**이다(리뷰 결정) — 읽기 grant(`repo.read`)는 감시를 열지 않는다. 그 채널에서 센다. */
 export async function holdsPrGrant(pool: Pool, accountId: string, repo: string, channelId: string): Promise<boolean> {
   return !!(await mergeGrantFor(pool, accountId, repo, { channelId }));
@@ -68,10 +95,7 @@ export async function createWatch(pool: Pool, args: {
   if (!scope) return { ok: false, code: 'bad_request' };
   const repo = scope.slice('repo:'.length);
   // 채널 멤버(공개 채널 열람이 아니라 `channel_member` 행)이고, 스레드 머리가 그 채널의 머리 글이어야 한다.
-  const member = await pool.query(
-    `select 1 from channel_member cm join message m on m.channel_id = cm.channel_id
-      where cm.channel_id = $1 and cm.account_id = $2 and m.id = $3 and m.thread_root_id is null`,
-    [args.channelId, args.accountId, args.threadRootId]);
+  const member = await pool.query(PR_WATCH_MEMBER_SQL, [args.channelId, args.accountId, args.threadRootId]);
   if (!member.rowCount) return { ok: false, code: 'forbidden' };
   if (!internal.skipGrant && !(await holdsPrGrant(pool, args.accountId, repo, args.channelId))) {
     await recordAudit(pool, { action: 'pr.status.denied', actorId: args.accountId, target: scope, detail: { number: args.number, code: 'not_granted', via: 'pr.watch' } });
@@ -79,11 +103,7 @@ export async function createWatch(pool: Pool, args: {
   }
   if (args.delegationId) {
     // 그 스레드의 위임이고, 나는 넘긴 쪽(lead)이거나 받은 쪽(delegate)이다.
-    const d = await pool.query(
-      `select 1 from team_delegation d
-        where d.id = $1 and d.thread_root_id = $2
-          and (d.lead_account_id = $3 or exists (select 1 from team_delegation_item di where di.delegation_id = d.id and di.delegate_account_id = $3))`,
-      [args.delegationId, args.threadRootId, args.accountId]);
+    const d = await pool.query(PR_WATCH_DELEGATION_SQL, [args.delegationId, args.threadRootId, args.accountId]);
     if (!d.rowCount) return { ok: false, code: 'delegation_not_found' };
   }
   const client = await pool.connect();
@@ -91,29 +111,18 @@ export async function createWatch(pool: Pool, args: {
     await client.query('begin');
     // 상한(security b): 이 계정이 구독한 열린 감시 수. 같은 키에 다시 붙는 것(이미 구독 중)은 새로 세지 않는다.
     // 같은 계정의 동시 생성이 상한을 함께 넘지 않게 계정 단위 advisory lock 을 잡는다.
-    await client.query(`select pg_advisory_xact_lock(hashtext('pr_watch_open:' || $1::text))`, [args.accountId]);
-    const counted = await client.query<{ n: number; already: boolean }>(
-      `select count(distinct w.id)::int as n,
-              bool_or(w.repo = $2 and w.number = $3 and w.head = $4 and w.until = $5) as already
-         from pr_watch_subscriber s join pr_watch w on w.id = s.watch_id
-        where s.account_id = $1 and w.state = 'open' and w.expires_at > now()`,
+    await client.query(PR_WATCH_LOCK_SQL, [args.accountId]);
+    const counted = await client.query<{ n: number; already: boolean }>(PR_WATCH_COUNT_SQL,
       [args.accountId, repo, args.number, args.head, args.until]);
     const c = counted.rows[0]!;
     if (!c.already && c.n >= PR_WATCH_OPEN_PER_ACCOUNT) {
       await client.query('rollback');
       return { ok: false, code: 'too_many' };
     }
-    const ins = await client.query<{ id: string; expires_at: Date; created: boolean }>(
-      `insert into pr_watch (repo, number, head, until, expires_at)
-       values ($1, $2, $3, $4, now() + make_interval(secs => $5))
-       on conflict (repo, number, head, until) where state = 'open' do update set expires_at = greatest(pr_watch.expires_at, excluded.expires_at)
-       returning id, expires_at, (xmax = 0) as created`,
+    const ins = await client.query<{ id: string; expires_at: Date; created: boolean }>(PR_WATCH_INSERT_SQL,
       [repo, args.number, args.head, args.until, PR_WATCH_TTL_SEC]);
     const w = ins.rows[0]!;
-    await client.query(
-      `insert into pr_watch_subscriber (watch_id, account_id, channel_id, thread_root_id, delegation_id, source)
-       values ($1, $2, $3, $4, $5, $6)
-       on conflict (watch_id, account_id, thread_root_id) do update set delegation_id = coalesce(excluded.delegation_id, pr_watch_subscriber.delegation_id)`,
+    await client.query(PR_WATCH_SUBSCRIBE_SQL,
       [w.id, args.accountId, args.channelId, args.threadRootId, args.delegationId ?? null, internal.source ?? 'manual']);
     await client.query('commit');
     return { ok: true, watchId: w.id, created: w.created, expiresAt: w.expires_at.toISOString() };

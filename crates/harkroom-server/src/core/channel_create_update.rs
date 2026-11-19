@@ -7,8 +7,8 @@
 //!   - 고치기: `channel.manage`(경로의 채널). 이름·공개 범위가 오면 고치기 **전** 의 이름·공개 범위를 읽는다(감사 from,
 //!     비공개화 판정). 이름 겹침(23505)은 409 `channel_name_taken`, 0 행(없음·DM)은 404. 커밋 뒤 public→private 이면
 //!     목록을 잃은 계정에게 `channel.deleted`, 그다음 `channel.updated`. 감사는 TS 와 같은 갈래·차례.
-//! - 지우기(`DELETE /channels/{id}`)와 `GET /channels/{id}/delete-info` 는 **TS 에 남는다** — 지운 뒤 첨부 파일을 저장소에서
-//!   지워야 하는데 Rust 에는 첨부 저장소가 없다(옮기면 파일이 고아로 남는다).
+//! - 지우기(`DELETE /channels/{id}`)는 `channel_delete.rs`(첨부 저장소가 있을 때만), `GET /channels/{id}/delete-info` 는
+//!   `channels.rs` 에 있다.
 //! - 문장은 TS 정본을 골든(`create_channel`·`update_channel`·`channel_name_visibility`·`add_channel_member`)으로 받는다.
 //! - 권한은 [`CREATE_UPDATE_PRIVILEGES`] — 없으면 `main.rs` 가 이 줄을 붙이지 않아 TS 에 남는다.
 use super::audience::{channel_list_audience, channel_list_lost_audience};
