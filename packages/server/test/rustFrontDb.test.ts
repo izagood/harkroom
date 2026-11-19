@@ -11300,6 +11300,44 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
               expect(await lag(tsUrl)).toMatchObject({ delegated: ['c3b2c4del'], unreachable: [] });
               expect(await lag(v2Url)).toMatchObject({ delegated: [], unreachable: ['c3b2c4del'], message: null });
             }
+            // P6-4a — `message.ask` 의 planStepId. 계획이 없거나(no_plan) 단계가 없어도(unknown_item) 카드는 서고 거절은 답의 plan 칸에 실린다.
+            // 두 쪽에서 돌려 답·카드 meta·계획판(doc·rev·고친 사람)을 견주고, Rust 가 실제로 답했는지도 본다.
+            {
+              const AP: [string, boolean, string][] = [
+                ['ask planStepId → plan ok(단계 links 에 카드)', true, 's1'],
+                ['ask planStepId 없는 단계 → plan unknown_item', true, 's9'],
+                ['ask planStepId 계획 없음 → plan no_plan', false, 's1'],
+              ];
+              const runA = async (base: string) => {
+                const out: Record<string, unknown>[] = [];
+                for (const [name, withPlan, step] of AP) {
+                  const ch = await freshCh();
+                  const root = await ins({ ch, author: member.accountId, body: '계획 스레드' });
+                  if (withPlan) {
+                    await db.pool.query(`insert into thread_plan (root_id, channel_id, doc, rev, updated_by, updated_at) values ($1, $2, $3::jsonb, 2, $4, now() - interval '1 minute')`,
+                      [root, ch, JSON.stringify({ goal: 'g', groups: [], steps: [{ id: 's1', title: '고를 일', state: 'active', assigneeId: member.accountId, links: [], dependsOn: [] }] }), member.accountId]);
+                  }
+                  const r = await mcpCall(base, viaPat.token, 'message.ask', {
+                    channelId: ch, threadRootId: root, body: '고르기', options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }], planStepId: step }, 7, {});
+                  const body = sse(r.text) as { message?: { id?: string } } | null;
+                  const meta = body?.message?.id ? (await db.pool.query(`select meta from message where id = $1`, [body.message.id])).rows[0]?.meta : null;
+                  const planRow = (await db.pool.query(`select doc, rev, updated_by::text as by from thread_plan where root_id = $1`, [root])).rows[0] ?? null;
+                  out.push({ name, status: r.status, rust: base === tsUrl ? true : r.core === 'mcp', body: shape(body), meta: shape(meta), planRow: shape(planRow) });
+                }
+                return out;
+              };
+              const tsA = await runA(tsUrl);
+              const rsA = await runA(v2Url);
+              for (let i = 0; i < tsA.length; i++) expect(rsA[i], `장면 ${String(tsA[i]!.name)}`).toEqual(tsA[i]);
+              type AO = { body: Record<string, unknown>; planRow: { rev: number; doc: { steps: { links: unknown[] }[] } } | null };
+              const a = (i: number) => tsA[i] as unknown as AO;
+              expect(a(0).body).toMatchObject({ message: { id: '<uuid>' }, plan: { ok: true, rev: 3 } });
+              expect(a(0).planRow).toMatchObject({ rev: 3, by: 'BOT3', doc: { steps: [{ links: [{ kind: 'card', messageId: '<uuid>' }] }] } });
+              expect(a(1).body).toMatchObject({ message: { id: '<uuid>' }, plan: { ok: false, error: { code: 'unknown_item', id: 's9' } } });
+              expect(a(1).planRow).toMatchObject({ rev: 2, doc: { steps: [{ links: [] }] } });
+              expect(a(2).body).toMatchObject({ message: { id: '<uuid>' }, plan: { ok: false, error: { code: 'no_plan' } } });
+              expect(a(2).planRow).toBeNull();
+            }
             // S5.4-15c — 팀장이 사람인 팀의 위임(MEM 이 이끄는 팀 → DEL4). 사람이라 호출 게이트 대신 팀 명단으로 지나고, 글은 사람 글이다.
             // 두 쪽이 같은 팀 행으로 같은 장면을 돌려 답·위임 행·부름·글 행을 견주고, Rust 가 실제로 답했는지(core === 'mcp')도 본다.
             // 팀장 FK(046)가 (팀, 팀장)을 명단에서 찾으므로 MEM 도 명단에 넣는다.
