@@ -8,12 +8,12 @@
 //!   (`automation_ingress_verify::safe_equal`). 본문 상한은 전역 `bodyLimit` 과 같은 1MiB.
 //! - github 의 `matchGithub` 거절 중 변수 없이 확정되는 것(`repo`·`event`·`not_a_branch`·push `branch`)은 여기서
 //!   `200 {status:'ignored', reason}` 으로 답한다([`github_ignored`]) — 트리거는 이미 읽던 `automation.trigger` 에서(새 GRANT 없음).
-//! - github 이 맞으면(쓰기 풀이 있고 디바운스가 없을 때) 회차도 여기서 만든다(`github:<delivery>`, 상한은 200 `rate_limited`).
+//! - github 이 맞으면(쓰기 풀이 있을 때) 회차도 여기서 만든다(`github:<delivery>`, 상한은 200 `rate_limited`).
 //!   paths/change 글롭 필터도 여기서(`globToRegExp` 이식) — ASCII 아닌 경로·글롭, JS 강제 변환이 다를 수 있는 값은 TS 로.
 //! - **TS 로 넘기는 것**: 위에서 장담하지 못한 꼴과 회차 만들기(`enqueueRun` —
-//!   디바운스 모으기·시간당 상한 일시정지)는 아직 TS 다. 원문 바이트를 그대로 넘기므로 TS 가 같은 판정을 다시 한다.
-//!   예외: generic 은 쓰기 풀이 있으면 `genericVars`·`enqueueRun`(디바운스 없음·시간당 상한 일시정지·429)을 여기서 한다 —
-//!   디바운스가 걸렸거나 50 칸 넘는 본문·JS 와 문자열화가 다른 숫자는 TS 로 넘긴다.
+//!   시간당 상한 일시정지)는 아직 TS 다(디바운스 모으기는 P5-3 부터 Rust — [`merge_into_gathering`]). 원문 바이트를 그대로 넘기므로 TS 가 같은 판정을 다시 한다.
+//!   예외: generic 은 쓰기 풀이 있으면 `genericVars`·`enqueueRun`(디바운스 모으기·시간당 상한 일시정지·429)을 여기서 한다 —
+//!   50 칸 넘는 본문·JS 와 문자열화가 다른 숫자는 TS 로 넘긴다.
 //!   `application/json` 이 아닌 content-type 도 fastify 파서 동작(415·문자열 본문)을 그대로 두려고 TS 로 넘긴다.
 //! - 비밀(토큰 해시·봉인된 서명 키·열린 키)은 기록하지 않는다. [`IngressTarget`] 의 Debug 는 가린다.
 use crate::core::automation_ingress_verify::{verify_bearer, verify_github_signature};
@@ -413,6 +413,7 @@ pub fn write_privileges() -> Vec<(&'static str, &'static str)> {
     rn::AUTOMATION_RUN_NOW_PRIVILEGES
         .iter()
         .chain(rn::AUTOMATION_RUN_NOW_PAUSE_PRIVILEGES)
+        .chain(DEBOUNCE_PRIVILEGES)
         .copied()
         .collect()
 }
@@ -503,9 +504,100 @@ async fn enqueue_generic(
     enqueue_vars(w, id, kind, "generic", idem, vars).await
 }
 
-/// TS `enqueueRun`(디바운스 없는 갈래). `suffix` 가 없으면 `prefix:` + 새 uuid. 디바운스가 걸렸으면 `None`(TS 로).
+/// TS `MAX_MERGED_EVENTS`.
+pub(crate) const MAX_MERGED_EVENTS: usize = 50;
+
+/// 디바운스 모으기에 더 쓰는 권한(P5-3) — 열린 회차를 잠그고 읽어 `payload` 를 고친다. 자동화 행 잠금(`for update`)은 이미 받은
+/// `automation.enabled` UPDATE 로 된다.
+pub const DEBOUNCE_PRIVILEGES: &[(&str, &str)] = &[
+    ("automation_run.payload", "SELECT"),
+    ("automation_run.not_before", "SELECT"),
+    ("automation_run.payload", "UPDATE"),
+];
+
+/// TS `enqueueRun` 의 INSERT — `not_before` 는 디바운스가 있을 때만(초).
+pub(crate) const INSERT_HOOK_RUN_SQL: &str = "insert into automation_run (automation_id, event_key, trigger_kind, payload, not_before, \
+                                 initiated_by, cause_message_id, chain_depth) \
+     values ($1::uuid, $2, $3, $4::jsonb, now() + make_interval(secs => $5::int), null, null, null) \
+     on conflict (automation_id, event_key) do nothing \
+     returning id::text";
+
+const GATHER_LOCK_SQL: &str = "select 1 from automation where id = $1::uuid for update";
+const GATHER_OPEN_SQL: &str = "select id::text, payload::text from automation_run \
+     where automation_id = $1::uuid and status = 'pending' and not_before is not null and not_before > now() \
+     order by created_at desc limit 1 for update";
+const GATHER_UPDATE_SQL: &str = "update automation_run set payload = $2::jsonb where id = $1::uuid";
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Merged {
+    Merged,
+    Duplicate,
+}
+
+/// TS `mergeIntoGathering` 의 판 고치기 — 같은 키면 `None`(중복), 아니면 새 payload. 변수는 가장 마지막 이벤트 것으로 덮고,
+/// 이벤트는 [`MAX_MERGED_EVENTS`] 까지만 더한다(창은 늘리지 않는다).
+pub(crate) fn merged_payload(
+    payload: &Value,
+    event_key: &str,
+    vars: &serde_json::Map<String, Value>,
+) -> Option<Value> {
+    let mut events: Vec<Value> = payload
+        .get("events")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if events
+        .iter()
+        .any(|e| e.get("key").and_then(Value::as_str) == Some(event_key))
+    {
+        return None;
+    }
+    if events.len() < MAX_MERGED_EVENTS {
+        let summary = crate::loops::automation::event_summary(vars, event_key);
+        events.push(serde_json::json!({ "key": event_key, "summary": summary }));
+    }
+    Some(serde_json::json!({ "vars": vars, "events": events }))
+}
+
+/// TS `mergeIntoGathering` — 모으는 중인 회차가 없으면 `None`(새 회차를 만든다).
+pub(crate) async fn merge_into_gathering(
+    w: &PgPool,
+    id: &str,
+    event_key: &str,
+    vars: &serde_json::Map<String, Value>,
+) -> Result<Option<Merged>, sqlx::Error> {
+    let mut tx = w.begin().await?;
+    sqlx::query(GATHER_LOCK_SQL)
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    let open: Option<(String, String)> = sqlx::query_as(GATHER_OPEN_SQL)
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await?;
+    let Some((run, payload)) = open else {
+        tx.commit().await?;
+        return Ok(None);
+    };
+    let payload: Value = serde_json::from_str(&payload).unwrap_or(Value::Null);
+    let out = match merged_payload(&payload, event_key, vars) {
+        None => Merged::Duplicate,
+        Some(next) => {
+            sqlx::query(GATHER_UPDATE_SQL)
+                .bind(&run)
+                .bind(next.to_string())
+                .execute(&mut *tx)
+                .await?;
+            Merged::Merged
+        }
+    };
+    tx.commit().await?;
+    Ok(Some(out))
+}
+
+/// TS `enqueueRun`. `suffix` 가 없으면 `prefix:` + 새 uuid. 디바운스가 걸렸으면 모으는 회차에 더하거나 창을 연 회차를 만든다(P5-3).
 #[allow(clippy::result_large_err)]
-async fn enqueue_vars(
+pub async fn enqueue_vars(
     w: &PgPool,
     id: &str,
     kind: &str,
@@ -533,9 +625,6 @@ async fn enqueue_vars(
     if !enabled {
         return Ok(Some(status(StatusCode::OK, "inactive")));
     }
-    if debounce.is_some_and(|d| d != 0) {
-        return Ok(None); // 디바운스 모으기는 아직 TS.
-    }
     let event_key = match suffix {
         Some(k) => format!("{prefix}:{k}"),
         None => {
@@ -545,6 +634,16 @@ async fn enqueue_vars(
                 .await?
         }
     };
+    // 디바운스(071, P5-3) — TS `mergeIntoGathering`: 모으는 중인 회차가 있으면 거기에 이벤트를 더한다.
+    let debounce = debounce.filter(|d| *d > 0);
+    if debounce.is_some()
+        && let Some(merged) = merge_into_gathering(w, id, &event_key, &vars).await?
+    {
+        return Ok(Some(match merged {
+            Merged::Merged => status(StatusCode::ACCEPTED, "merged"),
+            Merged::Duplicate => status(StatusCode::OK, "duplicate"),
+        }));
+    }
     let recent: i32 = sqlx::query_scalar(ar::RECENT_SQL)
         .bind(id)
         .fetch_one(w)
@@ -568,11 +667,13 @@ async fn enqueue_vars(
     let summary = la::event_summary(&vars, &event_key);
     let body =
         serde_json::json!({ "vars": vars, "events": [{ "key": event_key, "summary": summary }] });
-    let ins: Option<String> = sqlx::query_scalar(la::INSERT_SCHEDULE_RUN_SQL)
+    // 디바운스가 걸렸으면 창(`not_before = now() + debounce_sec`)을 연다 — TS 는 프로세스 시각, 여기는 DB 시각이다.
+    let ins: Option<String> = sqlx::query_scalar(INSERT_HOOK_RUN_SQL)
         .bind(id)
         .bind(&event_key)
         .bind(kind)
         .bind(body.to_string())
+        .bind(debounce)
         .fetch_optional(w)
         .await?;
     Ok(Some(match ins {
@@ -763,6 +864,29 @@ pub fn routes(st: HooksState, cors: Arc<crate::cors::Cors>) -> crate::route_tabl
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn merged_payload_like_ts() {
+        let mut vars = serde_json::Map::new();
+        vars.insert("sha".into(), "abcdef0123".into());
+        let p = serde_json::json!({"vars": {"sha": "old"}, "events": [{"key": "github:a", "summary": "a"}]});
+        // 같은 키 → 중복.
+        assert_eq!(merged_payload(&p, "github:a", &vars), None);
+        // 새 키 → 변수는 새 것으로, 이벤트는 뒤에.
+        let n = merged_payload(&p, "github:b", &vars).unwrap();
+        assert_eq!(n["vars"]["sha"], "abcdef0123");
+        assert_eq!(n["events"].as_array().unwrap().len(), 2);
+        assert_eq!(n["events"][1]["key"], "github:b");
+        // 50 개면 더하지 않고 변수만 덮는다.
+        let many: Vec<Value> = (0..MAX_MERGED_EVENTS)
+            .map(|i| serde_json::json!({"key": format!("k{i}"), "summary": "s"}))
+            .collect();
+        let p = serde_json::json!({"vars": {}, "events": many});
+        let n = merged_payload(&p, "github:z", &vars).unwrap();
+        assert_eq!(n["events"].as_array().unwrap().len(), MAX_MERGED_EVENTS);
+        assert_eq!(n["vars"]["sha"], "abcdef0123");
+    }
+
     use super::*;
     use ring::hmac;
 
