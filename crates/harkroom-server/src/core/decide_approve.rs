@@ -821,6 +821,7 @@ async fn merge_once_write(
         String,
         Vec<String>,
         bool,
+        bool,
     );
     let row: Option<DenialRow> = sqlx::query_as(m::READ_DENIAL_LOCKED_SQL)
         .bind(denial_id)
@@ -831,6 +832,7 @@ async fn merge_once_write(
         agent_id: &r.1,
         expired: r.7,
         obsolete: r.10,
+        head_moved: r.11,
         number: r.3,
         head_sha: &r.4,
         reason: &r.8,
@@ -843,9 +845,8 @@ async fn merge_once_write(
             code,
             message,
         } => return Ok(refused(status, code, message)),
-        m::OnceCheck::HandToTs => return Ok(ApproveOutcome::HandToTs),
     };
-    let Some((d_id, d_agent, scope, number, head_sha, d_channel, d_root, _, reason, failed, _)) =
+    let Some((d_id, d_agent, scope, number, head_sha, d_channel, d_root, _, reason, failed, _, _)) =
         row
     else {
         return Ok(not_found());

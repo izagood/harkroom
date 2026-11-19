@@ -21,6 +21,8 @@ pub const MERGE_ONCE_PRIVILEGES: &[(&str, &str)] = &[
     ("merge_denial.reason", "SELECT"),
     ("merge_denial.failed_checks", "SELECT"),
     ("merge_denial.obsoleted_at", "SELECT"),
+    // `headMoved`(낡은 까닭이 새 head 인가) 하위 질의가 읽는다.
+    ("merge_denial.created_at", "SELECT"),
     ("merge_denial.used_at", "UPDATE"),
     ("merge_denial.used_by", "UPDATE"),
     ("merge_approval.id", "SELECT"),
@@ -88,10 +90,15 @@ pub const DENIAL_USED_MESSAGE: &str = "the merge refusal behind this card was al
 /// TS `APPROVAL_TTL_MS`(24시간).
 pub const APPROVAL_TTL: &str = "24 hours";
 
-/// TS `readDenial(client, id, now, true)` — 거절 기록을 잠그고 읽는다(`headMoved` 는 obsolete 문구에만 쓰여 뺐다: obsolete 면 TS).
+/// TS `readDenial(client, id, now, true)` — 거절 기록을 잠그고 읽는다. 마지막 칸 `headMoved` 는 obsolete 거절 문구를 가른다
+/// (TS `obsoleteRefusal`, security n4) — 같은 (에이전트, 저장소, 스레드, PR)에 다른 head 의 더 늦은 기록이 있는가.
 /// $1 거절 id, $2 결정 시각.
 pub const READ_DENIAL_LOCKED_SQL: &str = "select id::text, agent_id::text, scope, pr_number::bigint, head_sha, channel_id::text, \
-     thread_root_id::text, expires_at <= $2::timestamptz as expired, reason, failed_checks, obsoleted_at is not null as obsolete \
+     thread_root_id::text, expires_at <= $2::timestamptz as expired, reason, failed_checks, obsoleted_at is not null as obsolete, \
+     (obsoleted_at is not null and exists ( \
+       select 1 from merge_denial n \
+        where n.agent_id = d.agent_id and n.scope = d.scope and n.channel_id = d.channel_id and n.thread_root_id = d.thread_root_id \
+          and n.pr_number = d.pr_number and n.head_sha <> d.head_sha and n.created_at > d.created_at)) as head_moved \
      from merge_denial d where id = $1::uuid for update of d";
 
 /// TS 의 거절 기록 소모(같은 문장).
@@ -158,6 +165,8 @@ pub struct DenialView<'a> {
     pub agent_id: &'a str,
     pub expired: bool,
     pub obsolete: bool,
+    /// obsolete 의 까닭이 같은 PR 의 새 head 인가(TS `headMoved`).
+    pub head_moved: bool,
     pub number: i64,
     pub head_sha: &'a str,
     pub reason: &'a str,
@@ -174,8 +183,6 @@ pub enum OnceCheck {
         code: &'static str,
         message: &'static str,
     },
-    /// TS 가 따로 문구를 만드는 갈래(`obsoleteRefusal`) — 쓰기 전이므로 TS 로 넘긴다.
-    HandToTs,
 }
 
 const fn refused(status: u16, code: &'static str, message: &'static str) -> OnceCheck {
@@ -204,7 +211,12 @@ pub fn check_once(agent_id: &str, once: &Once, denial: Option<&DenialView<'_>>) 
         );
     }
     if d.obsolete {
-        return OnceCheck::HandToTs;
+        // TS `obsoleteRefusal` — 새 head 로 낡았으면 `head_moved`, 아니면 PR 이 머지·닫혔다.
+        return if d.head_moved {
+            refused(409, "head_moved", super::merge_denial_grant::HEAD_MOVED)
+        } else {
+            refused(409, "pr_closed", super::merge_denial_grant::PR_CLOSED)
+        };
     }
     if d.number != once.number || d.head_sha != once.head_sha {
         return refused(
@@ -251,6 +263,7 @@ mod tests {
             agent_id: "a",
             expired: false,
             obsolete: false,
+            head_moved: false,
             number: 7,
             head_sha: "abc",
             reason,
@@ -346,8 +359,39 @@ mod tests {
         };
         assert_eq!(
             check_once("a", &once(true), Some(&obs)),
-            OnceCheck::HandToTs
+            refused(
+                409,
+                "pr_closed",
+                super::super::merge_denial_grant::PR_CLOSED
+            )
         );
+        let moved = DenialView {
+            obsolete: true,
+            head_moved: true,
+            ..d.clone()
+        };
+        assert_eq!(
+            check_once("a", &once(true), Some(&moved)),
+            refused(
+                409,
+                "head_moved",
+                super::super::merge_denial_grant::HEAD_MOVED
+            )
+        );
+        // 만료가 먼저다(TS 차례): 만료되고 낡은 기록은 denial_expired.
+        let both = DenialView {
+            expired: true,
+            obsolete: true,
+            head_moved: true,
+            ..d.clone()
+        };
+        assert!(matches!(
+            check_once("a", &once(true), Some(&both)),
+            OnceCheck::Refused {
+                code: "denial_expired",
+                ..
+            }
+        ));
         let other = DenialView {
             head_sha: "def",
             ..d.clone()
