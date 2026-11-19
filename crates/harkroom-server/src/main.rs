@@ -2146,6 +2146,28 @@ async fn main() {
         }
         _ => None,
     };
+    // P4 — 부를 사람·대리 호출자 명단(`PUT|DELETE /accounts/agents/{id}/invokers|delegates/…`). 권한이 다 있을 때만.
+    let agent_invokers_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::agent_invokers as a;
+            match write::missing_in(w, a::AGENT_INVOKERS_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: agent invokers core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: agent invokers core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // S5.4 — 역할 바꾸기(`PUT /accounts/{id}/role`). 쓰기 풀에 그 권한이 다 있을 때만 — 아니면 TS 에 남는다.
     let account_role_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -4577,6 +4599,20 @@ async fn main() {
             core_routes.router = core_routes.router.merge(ri.router);
             core_routes.http.extend(ri.http);
             core_routes.sockets.extend(ri.sockets);
+        }
+        // P4 — 부를 사람·대리 호출자 명단 4줄. 권한이 있을 때만 — 아니면 TS 에 남는다.
+        if let Some(write) = agent_invokers_write {
+            let ai = harkroom_server::core::agent_invokers::routes(
+                harkroom_server::core::agent_invokers::AgentInvokersState {
+                    write,
+                    trust: state.trust.clone(),
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(ai.router);
+            core_routes.http.extend(ai.http);
+            core_routes.sockets.extend(ai.sockets);
         }
         // S5.4 — 역할 바꾸기 1줄. 권한이 있을 때만 — 아니면 TS 에 남는다.
         if let Some(write) = account_role_write {

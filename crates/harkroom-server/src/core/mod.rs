@@ -18,6 +18,7 @@ pub mod agent_config_read;
 pub mod agent_create;
 pub mod agent_delete;
 pub mod agent_grants_read;
+pub mod agent_invokers;
 pub mod agent_memory_audit_read;
 pub mod agent_memory_read;
 pub mod agent_memory_write;
