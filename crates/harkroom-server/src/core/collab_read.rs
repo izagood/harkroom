@@ -709,6 +709,10 @@ fn fold_repos(bound: Vec<(String, String)>) -> Option<Vec<(String, Vec<String>)>
         return None;
     }
     out.sort_by(|a, b| a.0.cmp(&b.0));
+    // 채널 행은 ORDER BY 없이 읽힌다 — 답의 `channelIds` 순서가 DB 계획에 따라 흔들리지 않게 정렬한다(TS 도 순서를 약속하지 않는다).
+    for (_, ids) in &mut out {
+        ids.sort();
+    }
     Some(out)
 }
 
@@ -941,6 +945,14 @@ mod tests {
                 ("o/a".to_owned(), vec!["2".to_owned()]),
                 ("o/b".to_owned(), vec!["1".to_owned(), "3".to_owned()]),
             ])
+        );
+        assert_eq!(
+            fold_repos(b(&[("o/a", "9"), ("o/a", "1"), ("o/a", "5")])),
+            Some(vec![(
+                "o/a".to_owned(),
+                vec!["1".to_owned(), "5".to_owned(), "9".to_owned()]
+            )]),
+            "채널 id 는 읽힌 순서가 아니라 정렬해 낸다"
         );
         assert_eq!(fold_repos(b(&[("o/B", "1"), ("o/a", "2")])), None);
         assert_eq!(fold_repos(b(&[("o/a_b", "1"), ("o/a", "2")])), None);
