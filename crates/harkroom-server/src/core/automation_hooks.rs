@@ -10,7 +10,9 @@
 //!   `200 {status:'ignored', reason}` 으로 답한다([`github_ignored`]) — 트리거는 이미 읽던 `automation.trigger` 에서(새 GRANT 없음).
 //! - github 이 맞으면(쓰기 풀이 있을 때) 회차도 여기서 만든다(`github:<delivery>`, 상한은 200 `rate_limited`).
 //!   paths/change 글롭 필터도 여기서(`globToRegExp` 이식, UTF-16 매처 [`Glob`] — ASCII 아닌 경로·글롭 포함).
-//! - **TS 로 넘기는 것**: 위에서 장담하지 못한 꼴(utf-8 아닌 헤더·문자열 아닌 path·`commits` 안 null 등)과 쓰기 풀이 없을 때다.
+//! - 헤더는 Node 처럼 latin1 로 읽고 같은 이름은 `, ` 로 잇는다([`node_header`]). push 의 path 는 문자열이 아니어도
+//!   TS 처럼 읽는다([`PushPath`]). `commits` 안 null 은 TS 가 던지지만(500) Rust 는 400 `bad_json` 이 정답이다(jaebin 11-19).
+//! - **TS 로 넘기는 것**: 위에서 장담하지 못한 꼴(문자열·숫자 아닌 변수 값 등)과 쓰기 풀이 없을 때다.
 //!   원문 바이트를 그대로 넘기므로 TS 가 같은 판정을 다시 한다. 디바운스 모으기는 P5-3 부터 Rust([`merge_into_gathering`]).
 //!   generic 은 쓰기 풀이 있으면 `genericVars`·`enqueueRun`(디바운스 모으기·시간당 상한 일시정지·429)을 여기서 한다 —
 //!   P5 PR3b 부터 50 칸 넘는 본문(JS `Object.entries` 순서, [`js_entries`])·숫자(`String(number)`, [`js_number`])도 여기서.
@@ -224,8 +226,7 @@ pub(crate) fn match_github(
     let action = payload.get("action");
     let is = |v: Option<&Value>, s: &str| v.and_then(Value::as_str) == Some(s);
     let mut branch: Option<String> = None;
-    let mut files: Vec<String> = Vec::new();
-    let mut changes: Vec<(String, &'static str)> = Vec::new();
+    let mut changes: Vec<(PushPath, &'static str)> = Vec::new();
     match t_event {
         "push" => {
             if event != "push" {
@@ -239,13 +240,13 @@ pub(crate) fn match_github(
             if let Some(Value::Array(cs)) = payload.get("commits") {
                 for c in cs {
                     if c.is_null() {
-                        return None; // TS 가 던진다(500).
+                        // TS 는 `null[k]` 에서 던진다(500). jaebin 결정(11-19): Rust 는 400 `bad_json` 이 정답.
+                        return Some(Err(BAD_PAYLOAD));
                     }
                     for k in ["added", "modified", "removed"] {
                         if let Some(Value::Array(ps)) = c.get(k) {
                             for p in ps {
-                                files.push(p.as_str()?.to_owned());
-                                changes.push((p.as_str()?.to_owned(), k));
+                                changes.push((PushPath::new(p), k));
                             }
                         }
                     }
@@ -348,42 +349,106 @@ pub(crate) fn match_github(
             Some(Value::String(c)) if !c.is_empty() && c != "any" => Some(c.as_str()),
             _ => None,
         };
-        let hit: Vec<&(String, &str)> = changes
+        let hit: Vec<&(PushPath, &str)> = changes
             .iter()
-            .filter(|(p, k)| res.iter().any(|r| r.is_match(p)) && change.is_none_or(|c| c == *k))
+            .filter(|(p, k)| {
+                res.iter().any(|r| r.is_match(&p.test)) && change.is_none_or(|c| c == *k)
+            })
             .collect();
         if hit.is_empty() {
             return Some(Err("paths"));
         }
-        let join = |it: &mut dyn Iterator<Item = &str>| {
-            let mut seen = std::collections::HashSet::new();
-            it.filter(|p| seen.insert(*p))
-                .take(50)
-                .map(|p| neutralize(p, 300))
-                .collect::<Vec<_>>()
-                .join("\n")
-        };
         vars.insert(
             "files".into(),
-            Value::String(join(&mut hit.iter().map(|(p, _)| p.as_str()))),
+            Value::String(PushPath::join(hit.iter().map(|(p, _)| p))),
         );
         for k in ["added", "modified", "removed"] {
-            let v = join(&mut hit.iter().filter(|(_, c)| *c == k).map(|(p, _)| p.as_str()));
+            let v = PushPath::join(hit.iter().filter(|(_, c)| *c == k).map(|(p, _)| p));
             vars.insert(format!("files.{k}"), Value::String(v));
         }
         return Some(Ok(vars));
     }
-    if !files.is_empty() {
-        let mut seen = std::collections::HashSet::new();
-        let uniq: Vec<String> = files
-            .iter()
-            .filter(|p| seen.insert(p.as_str()))
-            .take(50)
-            .map(|p| neutralize(p, 300))
-            .collect();
-        vars.insert("files".into(), Value::String(uniq.join("\n")));
+    if !changes.is_empty() {
+        vars.insert(
+            "files".into(),
+            Value::String(PushPath::join(changes.iter().map(|(p, _)| p))),
+        );
     }
     Some(Ok(vars))
+}
+
+/// [`match_github`] 이 `400 bad_json` 으로 답하라는 거절 — TS 가 던지는(500) 본문(`commits` 안 null). 200 `ignored` 가 아니다.
+pub(crate) const BAD_PAYLOAD: &str = "bad_json";
+
+/// TS `pushChanges` 의 path 하나(JSON 이 주는 어떤 값이든). TS 는 원래 값을 들고 다니며 세 곳에서 다르게 읽는다 —
+/// 글롭 대조는 `RegExp.test` 의 ToString(`String(p)`), 중복 거르기는 `Set`(SameValueZero: 원시값은 타입과 값,
+/// 객체·배열은 저마다 다름), 표시는 `neutralize` 의 `String(p ?? '')`(null 은 빈 글자).
+#[derive(Debug)]
+struct PushPath {
+    /// `Set` 의 같음 — None 이면 객체·배열이라 무엇과도 같지 않다.
+    key: Option<String>,
+    test: String,
+    show: String,
+}
+
+impl PushPath {
+    fn new(v: &Value) -> Self {
+        let test = js_to_string(v);
+        let key = match v {
+            Value::String(s) => Some(format!("s{s}")),
+            Value::Number(_) => Some(format!("n{test}")),
+            Value::Bool(_) => Some(format!("b{test}")),
+            Value::Null => Some("z".into()),
+            Value::Array(_) | Value::Object(_) => None,
+        };
+        let show = if v.is_null() {
+            String::new()
+        } else {
+            test.clone()
+        };
+        PushPath { key, test, show }
+    }
+
+    /// TS `[...new Set(paths)].slice(0, 50).map((p) => neutralize(p)).join('\n')`.
+    fn join<'a>(it: impl Iterator<Item = &'a PushPath>) -> String {
+        let mut seen = std::collections::HashSet::new();
+        it.filter(|p| p.key.as_ref().is_none_or(|k| seen.insert(k.clone())))
+            .take(50)
+            .map(|p| neutralize(&p.show, 300))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+/// JS 의 ToString 전부(`String(v)`) — 배열은 원소를 `,` 로 잇고(null 원소는 빈 글자), 객체는 `[object Object]`.
+fn js_to_string(v: &Value) -> String {
+    match v {
+        Value::Null => "null".into(),
+        Value::Array(a) => a
+            .iter()
+            .map(|e| {
+                if e.is_null() {
+                    String::new()
+                } else {
+                    js_to_string(e)
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(","),
+        Value::Object(_) => "[object Object]".into(),
+        prim => js_string(prim).unwrap_or_default(),
+    }
+}
+
+/// Node `req.headers[name]` — 헤더 바이트를 **latin1** 로 읽고(utf-8 이 아니다), 같은 이름이 여럿이면 `, ` 로 잇는다.
+/// Node 22 실측: `X-GitHub-Event: p\xe9\xc3\xbc` + `X-GitHub-Event: q` → `"péÃ¼, q"`.
+fn node_header(h: &HeaderMap, name: &str) -> Option<String> {
+    let vals: Vec<String> = h
+        .get_all(name)
+        .iter()
+        .map(|v| v.as_bytes().iter().map(|&b| char::from(b)).collect())
+        .collect();
+    (!vals.is_empty()).then(|| vals.join(", "))
 }
 
 /// TS `globToRegExp` 가 만드는 JS 정규식(`u` 깃발 없음)을 그대로 흉내 낸다 — UTF-16 단위로 맞추고,
@@ -917,12 +982,13 @@ async fn handle(
             if target.kind.as_deref() != Some("github") {
                 return hook_not_found();
             }
-            let sig = header_str(&parts.headers, "x-hub-signature-256");
+            // Node 는 같은 이름의 x-* 헤더를 `, ` 로 이어 준다 — 서명 헤더가 둘이면 TS 처럼 이어진 글자로 맞춰 본다(401).
+            let sig = node_header(&parts.headers, "x-hub-signature-256");
             if !github_ok(
                 st.secret_box.as_ref(),
                 target.secret_enc.as_deref(),
                 raw,
-                sig,
+                sig.as_deref(),
             ) {
                 return json_err(
                     StatusCode::UNAUTHORIZED,
@@ -930,7 +996,9 @@ async fn handle(
                     "signature does not match",
                 );
             }
-            if header_str(&parts.headers, "x-github-event") == Some("ping") {
+            // TS `String(req.headers['x-github-event'] ?? '')` — Node 는 헤더를 latin1 로 읽는다.
+            let event = node_header(&parts.headers, "x-github-event").unwrap_or_default();
+            if event == "ping" {
                 return (
                     StatusCode::OK,
                     [(header::CONTENT_TYPE, "application/json; charset=utf-8")],
@@ -941,20 +1009,17 @@ async fn handle(
             let Some(payload @ (Value::Object(_) | Value::Array(_))) = parse(raw) else {
                 return json_err(StatusCode::BAD_REQUEST, "bad_json", "body is not JSON");
             };
-            // 헤더가 utf-8 이 아니면 TS(latin1) 와 글자가 다를 수 있다 — 판정하지 않는다.
-            let event = match parts.headers.get("x-github-event") {
-                None => Some(""),
-                Some(v) => v.to_str().ok(),
-            };
             let trigger = target
                 .trigger
                 .as_deref()
                 .and_then(|t| serde_json::from_str::<Value>(t).ok());
             match trigger
                 .as_ref()
-                .zip(event)
-                .and_then(|(t, e)| match_github(t, e, &payload))
+                .and_then(|t| match_github(t, &event, &payload))
             {
+                Some(Err(BAD_PAYLOAD)) => {
+                    return json_err(StatusCode::BAD_REQUEST, "bad_json", "body is not JSON");
+                }
                 Some(Err(reason)) => {
                     return (
                         StatusCode::OK,
@@ -964,15 +1029,10 @@ async fn handle(
                         .into_response();
                 }
                 Some(Ok(vars)) => {
-                    // 배달 id 가 utf-8 이 아니면 TS(latin1) 와 키가 달라진다 — TS 로.
-                    let delivery = match parts.headers.get("x-github-delivery") {
-                        None => Some(None),
-                        Some(v) => v
-                            .to_str()
-                            .ok()
-                            .map(|s| Some(s.to_owned()).filter(|s| !s.is_empty())),
-                    };
-                    if let (Some(w), Some(delivery)) = (&st.write, delivery) {
+                    // TS `String(req.headers['x-github-delivery'] ?? '') || randomUUID()` — latin1, 빈 값은 새 uuid.
+                    let delivery =
+                        node_header(&parts.headers, "x-github-delivery").filter(|s| !s.is_empty());
+                    if let Some(w) = &st.write {
                         match enqueue_vars(w, &id, "github", "github", delivery, vars).await {
                             Ok(Some(r)) => return r,
                             Ok(None) => {}
@@ -999,8 +1059,9 @@ async fn handle(
                 } else {
                     "webhook"
                 };
-                let idem = header_str(&parts.headers, "idempotency-key").filter(|s| !s.is_empty());
-                match enqueue_generic(w, &id, kind, idem, &entries).await {
+                // TS `req.headers['idempotency-key']` — Node 처럼 latin1·같은 이름은 `, ` 로.
+                let idem = node_header(&parts.headers, "idempotency-key").filter(|s| !s.is_empty());
+                match enqueue_generic(w, &id, kind, idem.as_deref(), &entries).await {
                     Ok(Some(r)) => return r,
                     Ok(None) => {}
                     Err(e) => return internal(e),
@@ -1076,6 +1137,7 @@ mod tests {
     }
 
     use super::*;
+    use axum::http::HeaderValue;
     use ring::hmac;
 
     const KEY: &str = "hkhook_test-key";
@@ -1192,7 +1254,8 @@ mod tests {
             "a match goes to TS"
         );
         let nulls = json!({ "repository": { "full_name": "acme/app" }, "ref": "refs/heads/dev", "commits": [null] });
-        assert_eq!(github_ignored(&push, "push", &nulls), None, "TS throws");
+        // TS 는 던진다(500). jaebin 결정(11-19): Rust 는 400 bad_json.
+        assert_eq!(github_ignored(&push, "push", &nulls), Some(BAD_PAYLOAD));
         let num = json!({ "repository": { "full_name": 7.5 } });
         // PR3b: `String(7.5)` 를 Rust 가 그대로 만든다 — TS 로 넘기지 않고 repo 로 거른다.
         assert_eq!(github_ignored(&push, "push", &num), Some("repo"));
@@ -1247,6 +1310,72 @@ mod tests {
                 "{gl:?} ~ {p:?}"
             );
         }
+        // P5 PR3c — push path 가 문자열이 아닌 꼴(TS `matchGithub` 정본).
+        for c in g["github"].as_array().unwrap() {
+            let name = c["name"].as_str().unwrap();
+            let got = match match_github(&c["trigger"], c["event"].as_str().unwrap(), &c["payload"])
+                .unwrap_or_else(|| panic!("TS 로 넘김: {name}"))
+            {
+                Ok(vars) => {
+                    serde_json::json!({ "vars": vars.into_iter().map(|(k, v)| serde_json::json!([k, v])).collect::<Vec<_>>() })
+                }
+                Err(reason) => serde_json::json!({ "reason": reason }),
+            };
+            assert_eq!(got, c["want"], "{name}");
+        }
+        // jaebin 결정(11-19) — TS 와 갈리지만 Rust 가 정답인 꼴.
+        let decided = g["rustDecided"].as_array().unwrap();
+        assert_eq!(decided.len(), 4);
+        for c in decided {
+            let (id, raw) = (c["id"].as_str().unwrap(), c["raw"].as_str().unwrap());
+            match id {
+                "depth_129" | "number_1e400" => {
+                    assert_eq!(c["ts"], "accepts", "{id}");
+                    assert!(parse(raw.as_bytes()).is_none(), "{id}: Rust 는 bad_json");
+                }
+                "commits_null" => {
+                    assert_eq!(c["ts"], "throws");
+                    let t = serde_json::json!({ "kind": "github", "repo": "acme/app", "event": "push" });
+                    let payload = parse(raw.as_bytes()).unwrap();
+                    assert_eq!(
+                        match_github(&t, "push", &payload).unwrap().err(),
+                        Some(BAD_PAYLOAD)
+                    );
+                }
+                "surrogate_cut" => {
+                    assert_eq!(c["ts"], "lone_surrogate");
+                    let got: serde_json::Map<String, Value> =
+                        generic_vars(&js_entries(raw).unwrap())
+                            .unwrap()
+                            .into_iter()
+                            .collect();
+                    assert_eq!(Value::Object(got), c["rust"]);
+                }
+                other => panic!("모르는 rustDecided {other}"),
+            }
+        }
+    }
+
+    /// Node 22 실측(`req.headers[name]`): 바이트를 latin1 로 읽고, 같은 이름은 `, ` 로 잇는다.
+    #[test]
+    fn node_header_like_node() {
+        let mut h = HeaderMap::new();
+        assert_eq!(node_header(&h, "x-github-event"), None);
+        h.append(
+            "x-github-event",
+            HeaderValue::from_bytes(b"p\xe9\xc3\xbc").unwrap(),
+        );
+        assert_eq!(
+            node_header(&h, "x-github-event").as_deref(),
+            Some("p\u{e9}\u{c3}\u{bc}")
+        );
+        h.append("x-github-event", HeaderValue::from_static("q"));
+        assert_eq!(
+            node_header(&h, "x-github-event").as_deref(),
+            Some("p\u{e9}\u{c3}\u{bc}, q")
+        );
+        h.insert("x-github-delivery", HeaderValue::from_static(""));
+        assert_eq!(node_header(&h, "x-github-delivery").as_deref(), Some(""));
     }
 
     /// fastify 5.12.1 실측(hooks 범위) — json 은 매개변수·대소문자·앞뒤 공백 무시, text/plain 은 빈 바이트, 그 밖은 빈 본문만.

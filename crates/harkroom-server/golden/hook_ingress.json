@@ -1526,5 +1526,706 @@
    "path": "ａ",
    "want": false
   }
+ ],
+ "github": [
+  {
+   "name": "paths 필터 없이 — 문자열 아닌 path 를 files 에",
+   "trigger": {
+    "kind": "github",
+    "repo": "acme/app",
+    "event": "push"
+   },
+   "event": "push",
+   "payload": {
+    "repository": {
+     "full_name": "acme/app"
+    },
+    "ref": "refs/heads/main",
+    "after": "abc",
+    "commits": [
+     {
+      "added": [
+       1,
+       "1",
+       1,
+       true,
+       "true",
+       null,
+       "null",
+       1.5,
+       1e+21,
+       0,
+       0,
+       [],
+       [
+        "a",
+        null,
+        [
+         "b",
+         2
+        ]
+       ],
+       {},
+       {
+        "a": 1
+       },
+       {},
+       "x\ny",
+       "@forge"
+      ]
+     }
+    ]
+   },
+   "want": {
+    "vars": [
+     [
+      "author",
+      ""
+     ],
+     [
+      "branch",
+      "main"
+     ],
+     [
+      "commit.message",
+      ""
+     ],
+     [
+      "compare",
+      ""
+     ],
+     [
+      "event",
+      "push"
+     ],
+     [
+      "files",
+      "1\n1\ntrue\ntrue\n\nnull\n1.5\n1e+21\n0\n\na,,b,2\n[object Object]\n[object Object]\n[object Object]\nx y\n@​forge"
+     ],
+     [
+      "repo",
+      "acme/app"
+     ],
+     [
+      "sha",
+      "abc"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "** 글롭 — 모두 맞음, 중복은 타입별",
+   "trigger": {
+    "kind": "github",
+    "repo": "acme/app",
+    "event": "push",
+    "paths": [
+     "**"
+    ]
+   },
+   "event": "push",
+   "payload": {
+    "repository": {
+     "full_name": "acme/app"
+    },
+    "ref": "refs/heads/main",
+    "after": "abc",
+    "commits": [
+     {
+      "added": [
+       1,
+       "1",
+       1,
+       true,
+       "true",
+       null,
+       "null",
+       1.5,
+       1e+21,
+       0,
+       0,
+       [],
+       [
+        "a",
+        null,
+        [
+         "b",
+         2
+        ]
+       ],
+       {},
+       {
+        "a": 1
+       },
+       {},
+       "x\ny",
+       "@forge"
+      ]
+     }
+    ]
+   },
+   "want": {
+    "vars": [
+     [
+      "author",
+      ""
+     ],
+     [
+      "branch",
+      "main"
+     ],
+     [
+      "commit.message",
+      ""
+     ],
+     [
+      "compare",
+      ""
+     ],
+     [
+      "event",
+      "push"
+     ],
+     [
+      "files",
+      "1\n1\ntrue\ntrue\n\nnull\n1.5\n1e+21\n0\n\na,,b,2\n[object Object]\n[object Object]\n[object Object]\n@​forge"
+     ],
+     [
+      "files.added",
+      "1\n1\ntrue\ntrue\n\nnull\n1.5\n1e+21\n0\n\na,,b,2\n[object Object]\n[object Object]\n[object Object]\n@​forge"
+     ],
+     [
+      "files.modified",
+      ""
+     ],
+     [
+      "files.removed",
+      ""
+     ],
+     [
+      "repo",
+      "acme/app"
+     ],
+     [
+      "sha",
+      "abc"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "글롭 1 — 숫자 1 과 문자열 1",
+   "trigger": {
+    "kind": "github",
+    "repo": "acme/app",
+    "event": "push",
+    "paths": [
+     "1"
+    ]
+   },
+   "event": "push",
+   "payload": {
+    "repository": {
+     "full_name": "acme/app"
+    },
+    "ref": "refs/heads/main",
+    "after": "abc",
+    "commits": [
+     {
+      "added": [
+       1,
+       "1",
+       1
+      ]
+     }
+    ]
+   },
+   "want": {
+    "vars": [
+     [
+      "author",
+      ""
+     ],
+     [
+      "branch",
+      "main"
+     ],
+     [
+      "commit.message",
+      ""
+     ],
+     [
+      "compare",
+      ""
+     ],
+     [
+      "event",
+      "push"
+     ],
+     [
+      "files",
+      "1\n1"
+     ],
+     [
+      "files.added",
+      "1\n1"
+     ],
+     [
+      "files.modified",
+      ""
+     ],
+     [
+      "files.removed",
+      ""
+     ],
+     [
+      "repo",
+      "acme/app"
+     ],
+     [
+      "sha",
+      "abc"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "글롭 null — null 은 표시가 빈 글자",
+   "trigger": {
+    "kind": "github",
+    "repo": "acme/app",
+    "event": "push",
+    "paths": [
+     "null"
+    ]
+   },
+   "event": "push",
+   "payload": {
+    "repository": {
+     "full_name": "acme/app"
+    },
+    "ref": "refs/heads/main",
+    "after": "abc",
+    "commits": [
+     {
+      "modified": [
+       null,
+       "null"
+      ]
+     }
+    ]
+   },
+   "want": {
+    "vars": [
+     [
+      "author",
+      ""
+     ],
+     [
+      "branch",
+      "main"
+     ],
+     [
+      "commit.message",
+      ""
+     ],
+     [
+      "compare",
+      ""
+     ],
+     [
+      "event",
+      "push"
+     ],
+     [
+      "files",
+      "\nnull"
+     ],
+     [
+      "files.added",
+      ""
+     ],
+     [
+      "files.modified",
+      "\nnull"
+     ],
+     [
+      "files.removed",
+      ""
+     ],
+     [
+      "repo",
+      "acme/app"
+     ],
+     [
+      "sha",
+      "abc"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "글롭 [object Object] — 객체는 저마다 다름",
+   "trigger": {
+    "kind": "github",
+    "repo": "acme/app",
+    "event": "push",
+    "paths": [
+     "[object Object]"
+    ]
+   },
+   "event": "push",
+   "payload": {
+    "repository": {
+     "full_name": "acme/app"
+    },
+    "ref": "refs/heads/main",
+    "after": "abc",
+    "commits": [
+     {
+      "removed": [
+       {},
+       {},
+       "x"
+      ]
+     }
+    ]
+   },
+   "want": {
+    "vars": [
+     [
+      "author",
+      ""
+     ],
+     [
+      "branch",
+      "main"
+     ],
+     [
+      "commit.message",
+      ""
+     ],
+     [
+      "compare",
+      ""
+     ],
+     [
+      "event",
+      "push"
+     ],
+     [
+      "files",
+      "[object Object]\n[object Object]"
+     ],
+     [
+      "files.added",
+      ""
+     ],
+     [
+      "files.modified",
+      ""
+     ],
+     [
+      "files.removed",
+      "[object Object]\n[object Object]"
+     ],
+     [
+      "repo",
+      "acme/app"
+     ],
+     [
+      "sha",
+      "abc"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "배열 path 는 , 로 잇는다",
+   "trigger": {
+    "kind": "github",
+    "repo": "acme/app",
+    "event": "push",
+    "paths": [
+     "a,,b,2"
+    ]
+   },
+   "event": "push",
+   "payload": {
+    "repository": {
+     "full_name": "acme/app"
+    },
+    "ref": "refs/heads/main",
+    "after": "abc",
+    "commits": [
+     {
+      "added": [
+       [
+        "a",
+        null,
+        [
+         "b",
+         2
+        ]
+       ]
+      ]
+     }
+    ]
+   },
+   "want": {
+    "vars": [
+     [
+      "author",
+      ""
+     ],
+     [
+      "branch",
+      "main"
+     ],
+     [
+      "commit.message",
+      ""
+     ],
+     [
+      "compare",
+      ""
+     ],
+     [
+      "event",
+      "push"
+     ],
+     [
+      "files",
+      "a,,b,2"
+     ],
+     [
+      "files.added",
+      "a,,b,2"
+     ],
+     [
+      "files.modified",
+      ""
+     ],
+     [
+      "files.removed",
+      ""
+     ],
+     [
+      "repo",
+      "acme/app"
+     ],
+     [
+      "sha",
+      "abc"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "change 필터 + 숫자 path",
+   "trigger": {
+    "kind": "github",
+    "repo": "acme/app",
+    "event": "push",
+    "change": "removed"
+   },
+   "event": "push",
+   "payload": {
+    "repository": {
+     "full_name": "acme/app"
+    },
+    "ref": "refs/heads/main",
+    "after": "abc",
+    "commits": [
+     {
+      "added": [
+       3
+      ],
+      "removed": [
+       3,
+       4.25
+      ]
+     }
+    ]
+   },
+   "want": {
+    "vars": [
+     [
+      "author",
+      ""
+     ],
+     [
+      "branch",
+      "main"
+     ],
+     [
+      "commit.message",
+      ""
+     ],
+     [
+      "compare",
+      ""
+     ],
+     [
+      "event",
+      "push"
+     ],
+     [
+      "files",
+      "3\n4.25"
+     ],
+     [
+      "files.added",
+      ""
+     ],
+     [
+      "files.modified",
+      ""
+     ],
+     [
+      "files.removed",
+      "3\n4.25"
+     ],
+     [
+      "repo",
+      "acme/app"
+     ],
+     [
+      "sha",
+      "abc"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "맞는 것 없음",
+   "trigger": {
+    "kind": "github",
+    "repo": "acme/app",
+    "event": "push",
+    "paths": [
+     "src/**"
+    ]
+   },
+   "event": "push",
+   "payload": {
+    "repository": {
+     "full_name": "acme/app"
+    },
+    "ref": "refs/heads/main",
+    "after": "abc",
+    "commits": [
+     {
+      "added": [
+       1,
+       true,
+       null
+      ]
+     }
+    ]
+   },
+   "want": {
+    "reason": "paths"
+   }
+  },
+  {
+   "name": "commit 이 원시값·배열이면 건너뜀",
+   "trigger": {
+    "kind": "github",
+    "repo": "acme/app",
+    "event": "push"
+   },
+   "event": "push",
+   "payload": {
+    "repository": {
+     "full_name": "acme/app"
+    },
+    "ref": "refs/heads/main",
+    "after": "abc",
+    "commits": [
+     3,
+     "c",
+     [
+      1
+     ],
+     {
+      "added": "notarray"
+     },
+     {
+      "added": [
+       7
+      ]
+     }
+    ]
+   },
+   "want": {
+    "vars": [
+     [
+      "author",
+      ""
+     ],
+     [
+      "branch",
+      "main"
+     ],
+     [
+      "commit.message",
+      ""
+     ],
+     [
+      "compare",
+      ""
+     ],
+     [
+      "event",
+      "push"
+     ],
+     [
+      "files",
+      "7"
+     ],
+     [
+      "repo",
+      "acme/app"
+     ],
+     [
+      "sha",
+      "abc"
+     ]
+    ]
+   }
+  }
+ ],
+ "rustDecided": [
+  {
+   "id": "depth_129",
+   "hook": "generic",
+   "raw": "[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]",
+   "rust": "bad_json",
+   "ts": "accepts"
+  },
+  {
+   "id": "number_1e400",
+   "hook": "generic",
+   "raw": "{\"a\":1e400}",
+   "rust": "bad_json",
+   "ts": "accepts"
+  },
+  {
+   "id": "commits_null",
+   "hook": "github",
+   "raw": "{\"repository\":{\"full_name\":\"acme/app\"},\"ref\":\"refs/heads/main\",\"commits\":[null]}",
+   "rust": "bad_json",
+   "ts": "throws"
+  },
+  {
+   "id": "surrogate_cut",
+   "hook": "generic",
+   "raw": "{\"s\":\"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\"}",
+   "rust": {
+    "payload.s": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀�…"
+   },
+   "ts": "lone_surrogate"
+  }
  ]
 }
