@@ -466,6 +466,7 @@ async fn write(
         no_mentions: false,
         before_commit: hook.as_ref().map(|h| h as &dyn msg_post::BeforeCommit),
         service_call: service_call_for(me.kind == "agent"),
+        chain_depth: None,
     };
     let post = PostBody {
         body: a.body.clone(),
