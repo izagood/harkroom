@@ -4,7 +4,7 @@
 //! (→ TS). 그 뒤 스레드 안의 사람 앞 카드는 [`answer_plain`] 이 열린 카드 검사(`open_card_in_thread`, `keepOpen` 반영)를 하고,
 //! 평범한 카드(사람 앞·원인 헤더 없음, 스레드 안팎)는 글 올리기 풀로 세운다 — 대신하기(`supersedes`)는 새 카드를 세운 뒤
 //! 옛 카드를 닫고, 계획 단계(`planStepId`)는 세운 뒤 그 단계에 카드를 잇는다(계획·단계가 없으면 그 거절을 `plan` 칸에 싣는다. 묶음에 담긴 옛 카드는 TS). 머지 거절 카드(`mergeDenialId`)는 거절 기록
-//! 검사(`prepareDenialCard` 거절)와 같은 거절 기록의 기다리는 카드(`pending`)까지 읽기 풀로 답하고, 첫 부름(새 요청 줄·카드·잇기·푸시)도 세운다(위임 있는 턴·재생은 TS).
+//! 검사(`prepareDenialCard` 거절)와 같은 거절 기록의 기다리는 카드(`pending`)까지 읽기 풀로 답하고, 첫 부름(새 요청 줄·카드·잇기·푸시)도 세운다(위임 있는 턴은 위임장 칩·선택지까지 — P6-4c. 재생은 TS).
 //! `to` 로 정한 받는 사람(사람이면 글 뒤 `enqueueAskPush`)도 세운다. 거울(`mirrorOf`)은 거절(`mirror_audience`·`checkAskMirror`)을 답하고, 평범한 거울과 권한 카드 거울(중립, 그리고 경고·파일·위임장 없는 같은 카드 꼴)을 원인 기반 차례 주인 푸시와 함께 세운다(그 밖의 권한 거울은 TS). 인자가 zod 를 못 지나거나 DB 오류여도 `None`.
 use super::tools::err;
 use crate::auth::Account;
@@ -1072,7 +1072,7 @@ async fn merge_denial_answer(
 }
 
 /// TS `raisePermission`(merge · 거절에서 온 요청)의 첫 부름 — 요청 줄 세우기(하루 상한 → insert → supersede → 감사)를 tx 로 열어 둔 채
-/// 카드를 세우고, 카드가 섰으면 커밋한 뒤 잇기·푸시. 위임 있는 턴(`mandateId`)·쓰기 칸 없음·재생·TS 로 넘길 글은 tx 를 되돌리고 `None`(→ TS).
+/// 카드를 세우고, 카드가 섰으면 커밋한 뒤 잇기·푸시. 위임 있는 턴은 그 위임을 요청 줄·카드에 싣는다(P6-4c). 쓰기 칸 없음·재생·TS 로 넘길 글은 tx 를 되돌리고 `None`(→ TS).
 #[allow(clippy::too_many_arguments)]
 async fn open_denial_card(
     read: &PgPool,
@@ -1114,17 +1114,24 @@ async fn open_denial_card(
     let why = pc::merge_denial_reason(number, Some(once.reason.as_str()), body);
     let now = now_ms();
     let (now_iso, expires_iso) = (iso_ms(now), iso_ms(now + pc::PERMISSION_REQUEST_TTL_MS));
-    // W4: 위임 있는 턴의 요청(`mandateId`·카드 위임 칸)은 TS.
-    if let Some(c) = cause.filter(|_| operator) {
-        let mut conn = st.write.acquire().await.ok()?;
-        if crate::core::cause_link::mandate_for_agent_post(&mut conn, &me.id, c, now, iso_ms)
-            .await
-            .ok()?
-            .is_some()
-        {
-            return None;
+    // W4(P6-4c): 요청을 낸 턴의 위임 — 그 원인으로 받은 살아 있는 턴 임대의 것(TS `mandateForAgentPost`). 오퍼레이터를 거치지 않은 부름이면 없다.
+    // 있으면 요청 줄의 `mandate_id`·카드 meta 의 `mandateId`·위임장 칩(`cardMandateMeta`)·[이 위임장 동안] 선택지·`line` 한도가 그것을 따른다.
+    let mandate: Option<String> = match cause.filter(|_| operator) {
+        Some(c) => {
+            let mut conn = st.write.acquire().await.ok()?;
+            crate::core::cause_link::mandate_for_agent_post(&mut conn, &me.id, c, now, iso_ms)
+                .await
+                .ok()?
         }
-    }
+        None => None,
+    };
+    let chip = match mandate.as_deref() {
+        Some(m) => Some((
+            m,
+            super::permission_request::card_mandate_meta(read, m, channel).await?,
+        )),
+        None => None,
+    };
     let short = target.strip_prefix("repo:").unwrap_or(target);
     // 요청 id 는 카드와 같은 tx 의 훅이 세운 뒤 meta 에 박는다 — 여기서는 빈 자리.
     let pr_meta = pc::merge_request_meta(
@@ -1136,6 +1143,7 @@ async fn open_denial_card(
         &once,
         &now_iso,
         &expires_iso,
+        chip,
     );
     let meta = pc::merge_card_meta(pr_meta, once.ci());
     let card_body = pc::merge_card_body(short, Some(&once), &format!("@{}", me.handle), &why);
@@ -1157,6 +1165,7 @@ async fn open_denial_card(
         now: &now_iso,
         expires: &expires_iso,
         owner,
+        mandate: mandate.as_deref(),
         request_id: std::sync::OnceLock::new(),
     };
     let posted = super::msg_post::post_card(
@@ -1207,6 +1216,7 @@ struct DenialRequestHook<'a> {
     now: &'a str,
     expires: &'a str,
     owner: Option<&'a str>,
+    mandate: Option<&'a str>,
     request_id: std::sync::OnceLock<String>,
 }
 
@@ -1250,7 +1260,7 @@ impl crate::core::msg_post::BeforeCommit for DenialRequestHook<'_> {
                     channel: self.channel,
                     thread: self.thread,
                     denial: Some((self.denial, self.number)),
-                    mandate: None,
+                    mandate: self.mandate,
                     now: self.now,
                     expires: self.expires,
                 },
