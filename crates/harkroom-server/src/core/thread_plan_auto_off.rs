@@ -184,7 +184,16 @@ pub(crate) async fn notice_manager_changed(
                 "i18n".into(),
                 json!({ "key": "system.plan.autoOffManagerChanged", "args": {} }),
             );
-            return post_line(st, channel, root, a, "▶ 자동 진행 꺼짐".to_owned(), meta).await;
+            return post_line(
+                st,
+                channel,
+                root,
+                a,
+                "▶ 자동 진행 꺼짐".to_owned(),
+                meta,
+                "threadPlanAutoOff",
+            )
+            .await;
         }
     }
     Ok(())
@@ -193,16 +202,18 @@ pub(crate) async fn notice_manager_changed(
 /// TS `notice` — 스레드 안 시스템 줄(`serverNotice`·`noMentions`). `message.created` 는 글 경로가 같은 tx 의 outbox 로 낸다.
 async fn announce(st: &PostState, channel: &str, root: &str, actor: &str) -> sqlx::Result<()> {
     let (body, meta) = off_line(actor);
-    post_line(st, channel, root, actor, body, meta).await
+    post_line(st, channel, root, actor, body, meta, "threadPlanAutoOff").await
 }
 
-async fn post_line(
+/// 스레드 안 시스템 줄 하나(`serverNotice`·`noMentions`). 계획판 감시의 ready 줄도 쓴다. `tag` 는 못 올렸을 때 흔적의 머리다.
+pub(crate) async fn post_line(
     st: &PostState,
     channel: &str,
     root: &str,
     actor: &str,
     body: String,
     meta: Map<String, Value>,
+    tag: &str,
 ) -> sqlx::Result<()> {
     let audience = audience_for(&st.write, channel).await?.to_json();
     let is_dm = channel_is_dm(&st.write, channel).await?;
@@ -226,13 +237,13 @@ async fn post_line(
     {
         Outcome::Posted { .. } => {}
         // TS 는 `posted.failure` 면 알리지 않고 지나간다 — 판은 이미 꺼졌다. 흔적만 남긴다.
-        Outcome::ToTs => eprintln!("[threadPlanAutoOff] system line not posted: to_ts"),
-        Outcome::BadThread => eprintln!("[threadPlanAutoOff] system line not posted: bad_thread"),
+        Outcome::ToTs => eprintln!("[{tag}] system line not posted: to_ts"),
+        Outcome::BadThread => eprintln!("[{tag}] system line not posted: bad_thread"),
         Outcome::BadAttachment
         | Outcome::ChainLimit
         | Outcome::Rejected(_)
         | Outcome::Replayed(_) => {
-            eprintln!("[threadPlanAutoOff] system line not posted")
+            eprintln!("[{tag}] system line not posted")
         }
     }
     Ok(())

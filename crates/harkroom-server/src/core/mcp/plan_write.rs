@@ -959,6 +959,117 @@ pub(crate) fn has_step(doc: &Value, step: &str) -> bool {
     })
 }
 
+/// [`write_system`] 이 쓴 판.
+pub(crate) struct SystemWritten {
+    pub channel: String,
+    pub rev: i64,
+    pub doc: Value,
+    pub before: Value,
+}
+
+const SYSTEM_LOCK_SQL: &str =
+    "select channel_id::text, doc::text from thread_plan where root_id = $1::uuid for update";
+
+/// TS `writeThreadPlan(pool, root, { system: true }, build)` — 계획판 감시(P5)의 자동 갱신 한 경로.
+///
+/// `build` 가 `None` 이면 바꿀 것이 없다(TS `unchanged`) — rev 를 올리지 않고 `None`. 계획이 없어도 `None`.
+/// system 은 계정이 아니라서 스레드 권한을 보지 않고 `updated_by` 는 null 이다. 관리자 칸은 앞 판 값을 그대로 둔다
+/// (처음 세우는 판이 아니므로 기본 관리자도 없다). 감시의 build 는 단계 상태만 바꾸므로 연결이 늘지 않는다 —
+/// 늘었으면 쓰지 않는다(그런 build 는 없다).
+pub(crate) async fn write_system(
+    write: &PgPool,
+    root: &str,
+    build: impl FnOnce(&Value) -> Option<Value>,
+) -> sqlx::Result<Option<SystemWritten>> {
+    let mut tx = write.begin().await?;
+    let cur: Option<(String, String)> = sqlx::query_as(SYSTEM_LOCK_SQL)
+        .bind(root)
+        .fetch_optional(&mut *tx)
+        .await?;
+    let Some((channel, before)) = cur else {
+        tx.rollback().await?;
+        return Ok(None);
+    };
+    let before: Value = serde_json::from_str(&before).unwrap_or(Value::Null);
+    let Some(mut doc) = build(&before) else {
+        tx.rollback().await?;
+        return Ok(None);
+    };
+    let (s, g) = plan_seq(Some(&before), &doc);
+    if let Some(o) = doc.as_object_mut() {
+        o.insert("seq".into(), json!({ "s": s, "g": g }));
+    }
+    if validate_plan(&doc).is_err()
+        || link_shape(&doc, root).is_some()
+        || !added_links(&doc, Some(&before)).is_empty()
+    {
+        tx.rollback().await?;
+        return Ok(None);
+    }
+    let texts = plan_texts(&doc);
+    let parts: Vec<Option<&str>> = texts.iter().map(|t| Some(t.as_str())).collect();
+    let flag = crate::core::content_scan::scan_write(&parts);
+    let (rev, _): (i64, String) = sqlx::query_as(UPSERT_SQL)
+        .bind(root)
+        .bind(&channel)
+        .bind(doc.to_string())
+        .bind(flag.as_ref().map(|f| f.reason.as_str()))
+        .bind(None::<&str>)
+        .fetch_one(&mut *tx)
+        .await?;
+    // 연결이 그대로라 thread_plan_link 는 다시 쓰지 않는다(TS 는 같은 줄로 다시 쓴다 — 결과가 같다).
+    let map = audience_map(&mut tx, &doc, &channel).await?;
+    emit(
+        &mut tx,
+        &channel,
+        root,
+        Some((rev, &plan_progress(&doc, &map))),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(Some(SystemWritten {
+        channel,
+        rev,
+        doc,
+        before,
+    }))
+}
+
+/// 보는 사람이 없는 자리(청중 맵만 쓸 때) — 자식 사실 문장의 `$2` 를 채울 뿐이다.
+pub(crate) const NO_VIEWER: &str = "00000000-0000-0000-0000-000000000000";
+
+/// TS `linkedFor(pool, doc, { audience: channel }).map` — 부모 채널 청중 전원에게 한 값으로 갈 맵.
+pub(crate) async fn audience_map(
+    conn: &mut PgConnection,
+    doc: &Value,
+    channel: &str,
+) -> sqlx::Result<HashMap<String, Linked>> {
+    let facts = child_facts(&mut *conn, &linked_roots(doc), NO_VIEWER).await?;
+    Ok(linked_map(doc, &facts, Some(channel)))
+}
+
+/// 부모 전파의 이벤트(TS `emitEvent({..., via: 'linked'})`) — 같은 tx 의 outbox 로. 진행률은 청중 맵으로 센다.
+pub(crate) async fn emit_linked(
+    conn: &mut PgConnection,
+    channel: &str,
+    root: &str,
+    rev: i64,
+    progress: &Progress,
+) -> sqlx::Result<()> {
+    let audience = crate::core::audience::audience_on(&mut *conn, channel).await?;
+    let event = json!({
+        "type": "thread.plan.changed",
+        "channelId": channel,
+        "rootId": root,
+        "rev": rev,
+        "progress": progress_value(progress),
+        "audience": audience.to_json(),
+        "via": "linked",
+    });
+    crate::write::emit_event(conn, &event).await?;
+    Ok(())
+}
+
 #[cfg(test)]
 #[path = "plan_write_tests.rs"]
 mod tests;

@@ -19,6 +19,7 @@ pub mod push;
 pub mod retention;
 pub mod scheduled;
 pub mod stale;
+pub mod thread_plan;
 pub mod thread_status;
 pub mod wake;
 
