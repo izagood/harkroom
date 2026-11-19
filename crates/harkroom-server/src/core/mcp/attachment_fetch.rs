@@ -3,7 +3,7 @@
 //! 판정은 `GET /attachments/{id}`([`crate::core::attachment_download`])와 같은 순서·같은 문장이다: 없음·지운 메시지·고아
 //! → `not_found`(`no such attachment`) → 안 붙은 업로드는 올린 사람만(`forbidden` `not your upload`) → 붙은 것은 채널
 //! 가시성(`forbidden` `not a member of this dm channel`). 통과하면 바이트도 Rust 가 싣는다 — 텍스트(UTF-8 판정·앞뒤 남기고
-//! 자르기)·PDF(`resource` blob)·3MiB 이하 그림(`image`). **3MiB 넘는 그림 줄이기만 `None`**(→ TS), 저장소
+//! 자르기)·PDF(`resource` blob)·3MiB 이하 그림(`image`)·32MiB 이하 그림 줄이기([`super::image_downscale`]). 저장소
 //! (`ATTACHMENT_ROOT`)가 없거나 읽기 오류여도 `None`. 바이트 없이 답이 정해지는 갈래(큰 PDF·실을 수 없는 타입·상한 넘는 텍스트·32MiB 넘는 그림)는 Rust 가 답한다. 인자가 zod(`z.string().uuid()`)를 못 지나거나 DB 오류(권한 없음 포함)여도 `None`.
 use super::tools::{err, uuid_arg};
 use crate::auth::Account;
@@ -72,7 +72,7 @@ fn is_pdf_type(ct: &str) -> bool {
 }
 
 /// 바이트를 읽지 않고 답이 정해지는 갈래(큰 PDF·실을 수 없는 타입·읽기 상한을 넘는 것)만 답한다. 바이트를 싣는 갈래
-/// (텍스트·PDF·그림·줄이기)는 `None`(→ TS).
+/// (텍스트·PDF·그림·줄이기)는 `None`(→ 바이트 갈래).
 fn metadata_only(m: &Meta) -> Option<String> {
     let (id, filename, ct, size) = m;
     let size = i64::from(*size);
@@ -168,8 +168,67 @@ pub async fn answer(pool: &PgPool, me: &Account, args: &Value) -> Option<String>
     if i64::from(meta.3) <= IMAGE_MAX_BYTES {
         return image_path(&meta, &f.8).await;
     }
-    // 줄이기(3MiB 넘는 그림)는 아직 TS.
-    None
+    // 3MiB 넘고 32MiB 이하인 그림 — 줄인 JPEG 사본(TS `imageDownscale.ts`).
+    downscale_path(&meta, &f.8).await
+}
+
+/// TS 줄이기 갈래 — 자리를 먼저 잡고(원본을 쥔 채 줄 서지 않게) 원본을 읽어 줄인다. 실패는 이유를 담은 안내.
+async fn downscale_path(m: &Meta, key: &str) -> Option<String> {
+    let size = m.3;
+    let not_inlined = |reason: &str| {
+        super::respond::text_result(&format!(
+            "{{\"attachment\":{},\"note\":{},\"download\":{}}}",
+            meta_json(m),
+            Value::from(format!(
+                "too large to inline ({size}B > {IMAGE_MAX_BYTES}B) and could not be downscaled: {reason}"
+            )),
+            Value::from(format!("GET /attachments/{}{DOWNLOAD_TAIL}", m.0))
+        ))
+    };
+    let Some(slot) = super::image_downscale::try_slot() else {
+        return Some(not_inlined(
+            "busy (too many downscales in flight); try again shortly",
+        ));
+    };
+    let body = match read_limited(m, key, DOWNSCALE_READ_MAX_BYTES).await? {
+        Ok(b) => b,
+        Err(r) => return Some(r),
+    };
+    let small = super::image_downscale::downscale(body, IMAGE_MAX_BYTES as usize).await;
+    drop(slot);
+    let small = match small {
+        Ok(s) => s,
+        Err(reason) => return Some(not_inlined(&reason)),
+    };
+    let mut downscaled = serde_json::Map::new();
+    downscaled.insert("originalBytes".into(), Value::from(size));
+    downscaled.insert(
+        "originalResolution".into(),
+        Value::from(format!("{}x{}", small.original.0, small.original.1)),
+    );
+    downscaled.insert("bytes".into(), Value::from(small.data.len()));
+    downscaled.insert(
+        "resolution".into(),
+        Value::from(format!("{}x{}", small.resized.0, small.resized.1)),
+    );
+    downscaled.insert("mimeType".into(), Value::from("image/jpeg"));
+    if small.first_frame_only {
+        downscaled.insert("firstFrameOnly".into(), Value::from(true));
+    }
+    downscaled.insert(
+        "note".into(),
+        Value::from("resized copy for this response only; the stored original is unchanged"),
+    );
+    let text = format!(
+        "{{\"attachment\":{},\"downscaled\":{}}}",
+        meta_json(m),
+        Value::Object(downscaled)
+    );
+    Some(format!(
+        "{{\"content\":[{{\"type\":\"text\",\"text\":{}}},{{\"type\":\"image\",\"data\":\"{}\",\"mimeType\":\"image/jpeg\"}}]}}",
+        Value::from(text),
+        b64(&small.data)
+    ))
 }
 
 /// TS `readAttachment` — `Ok(바이트)`, 또는 답이 정해진 거절(`Some(Err)`). 저장소가 없거나 읽기 오류면 `None`(→ TS).
