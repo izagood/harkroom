@@ -13,6 +13,7 @@
 //! - 방어용 갈래: 임대 `channel_id`·`thread_root_id`, grant `granted_by` 가 null 인 행. 셋 다 스키마가 `not null` 이라
 //!   (086 `secret_turn_lease`, 055 `account_grant`) 실제로는 닿지 않는다 — sqlx 가 `Option` 으로 읽어서 남은 꼴이다.
 //! - `merge-results`: int4 를 넘는 PR 번호, `queued` 감시 쓰기 풀이 없을 때.
+//!
 //! 15a: 위임 스위치가 꺼졌고 [`super::mandate_line_match::MERGE_CHECKS_MANDATE_PRIVILEGES`] 가 있으면, 임대에 위임장이 있어도 위 갈래를 Rust 가 답하고
 //! 그림자는 `findLine` 결과(`mandateVerdict`·`lineId`·`lineVia`)를 적는다. 스위치가 켜진 판정(`consumeLine`·`no_mandate_line`)은
 //! S5.5 a 부터 [`super::mandate_line_match::MERGE_CHECKS_ENFORCE_PRIVILEGES`]·카드 권한까지 있으면 Rust 가 답한다(없으면 TS).
