@@ -10156,7 +10156,15 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           await db.pool.query(`update permission_request set card_message_id = $2 where id = $1`, [req, card]);
           return { head, card };
         };
-        const mirrorAsk = (pr: Record<string, unknown>, o: { op?: boolean } = {}) => async (ch: string): Promise<Setup> => {
+        const mirrorAsk = (pr: Record<string, unknown>, o: { op?: boolean; mandate?: boolean } = {}) => async (ch: string): Promise<Setup> => {
+          // P6-4d — 위임장이 실린 원본: 거울은 원본의 칩을 옮기지 않고 거울 채널 기준으로 다시 만든다(이름은 위임 머리 글에서).
+          if (o.mandate) {
+            const mroot = await ins({ ch, author: member.accountId, body: '<@' + bot3.accountId + '> 배포 정리 맡아 줘' });
+            const m = (await db.pool.query<{ id: string }>(
+              `insert into mandate(owner_account_id, delegator_account_id, root_message_id, channel_id, thread_root_id, last_activity_at)
+               values ($1, $1, $2, $3, $2, now()) returning id::text`, [member.accountId, mroot, ch])).rows[0]!.id;
+            pr = { ...pr, mandateId: m, mandate: { id: m, name: '원본 카드의 칩' } };
+          }
           const { card } = await permRoot(ch, pr);
           const args = { channelId: ch, body: '정해 주세요', mirrorOf: card, options: AD };
           if (!o.op) return { tool: 'message.ask', args, via: viaPat };
@@ -10286,7 +10294,14 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           ['ask 권한 거울 · merge 1회(CI 실패)', mirrorAsk({ kind: 'merge', target: 'repo:acme/app', reason: 'x', once: { number: 7, headSha: 'c'.repeat(40), reason: 'ci_not_green', failedChecks: ['secrets'] } }), true],
           ['ask 권한 거울 · 위임 줄 표지', mirrorAsk({ kind: 'tool', target: 'Bash(echo line:*)', reason: 'x', line: { scope: 'tool:Bash(echo line:*)' } }), true],
           ['ask 권한 거울 · 오퍼레이터 원인(차례 주인 푸시)', mirrorAsk({ kind: 'tool', target: 'Bash(echo op:*)', reason: 'x' }, { op: true }), true],
-          ['ask 권한 거울 · 경고 실린 요청 → TS', mirrorAsk({ kind: 'tool', target: 'Bash(echo warn:*)', reason: 'x', warnings: ['broad'] }), false],
+          // P6-4d — 경고·파일·위임장이 실린 요청의 같은 카드 거울도 Rust 가 다시 쓴다(경고 줄·코드, 파일 블록, 거울 채널 기준 칩).
+          ['ask 권한 거울 · 모르는 경고만 → 빈 warnings', mirrorAsk({ kind: 'tool', target: 'Bash(echo warn:*)', reason: 'x', warnings: ['broad'] }), true],
+          ['ask 권한 거울 · 경고 줄(줄 카드)', mirrorAsk({ kind: 'tool', target: 'Bash(echo w2:*)', reason: 'x', warnings: ['short_prefix', 'runs_arbitrary'], line: { scope: 'tool:Bash(echo w2:*)' } }), true],
+          ['ask 권한 거울 · command 경고·파일', mirrorAsk({ kind: 'command', target: 'cat a.txt', reason: 'x', warnings: ['reads_file'],
+            files: [{ path: 'a.txt', size: 3, sha256: '0123456789abcdef'.repeat(4), secret: false, preview: '@admin ```x```' },
+              { path: 'k.pem', size: 9, sha256: 'f'.repeat(64), secret: true }] }), true],
+          ['ask 권한 거울 · 위임장 칩(거울 채널 기준)', mirrorAsk({ kind: 'tool', target: 'Bash(echo man:*)', reason: 'x', line: { scope: 'tool:Bash(echo man:*)' } }, { mandate: true }), true],
+          ['ask 권한 거울 · 꼴이 어긋난 파일 → TS', mirrorAsk({ kind: 'command', target: 'cat b', reason: 'x', files: [{ path: 'b' }] }), false],
           // 이 앞단의 쓰기 역할에는 요청 줄 INSERT 칸이 없어 새 카드는 TS 가 세운다 — 칸을 준 앞단의 장면은 따로 둔다.
           ['ask 머지 거절 카드 → 요청·카드 한 번에', denialAsk(), true],
           ['ask 머지 거절 카드 · CI 실패 거절', denialAsk({ ci: true }), true],
@@ -10474,6 +10489,22 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect(by('보관된 채널도 올린다').row).not.toBeNull();
         expect(row('fail 원인 없음 · what/reason · 옛 account')).toMatchObject({ kind: 'failure', failure: { retryable: true, what: '빌드', reason: '권한' }, model: { id: 'claude-opus-5' }, depth: 0 });
         expect(row('fail 원인 없음 · what/reason · 옛 account').failure).not.toHaveProperty('account');
+        // P6-4d — 경고·파일·위임장 거울: TS 쪽 값을 못 박는다(둘 다 빈 거울로 같아지지 않게).
+        {
+          type M = { body?: string; meta?: { permissionMirror?: Record<string, unknown> } };
+          const pm = (n: string) => (by(n).body.message as M | undefined);
+          expect(pm('ask 권한 거울 · 모르는 경고만 → 빈 warnings')?.meta?.permissionMirror).toMatchObject({ neutral: false, warnings: [] });
+          expect(pm('ask 권한 거울 · 모르는 경고만 → 빈 warnings')?.meta?.permissionMirror).not.toHaveProperty('bodyWarningLine');
+          expect(pm('ask 권한 거울 · 경고 줄(줄 카드)')?.meta?.permissionMirror).toMatchObject({
+            warnings: ['runs_arbitrary', 'short_prefix'], bodyWarningLine: '⚠ 무엇이든 돌릴 수 있다 · 접두가 짧다' });
+          expect(pm('ask 권한 거울 · 경고 줄(줄 카드)')?.body).toContain('\n⚠ 무엇이든 돌릴 수 있다 · 접두가 짧다\n');
+          const files = pm('ask 권한 거울 · command 경고·파일')?.body ?? '';
+          expect(files).toContain('파일 2개 — 내용은 요청 시점에 고정됨');
+          expect(files).toContain('· k.pem (9B, sha256 ffffffffffff…) — 내용 비공개');
+          expect(files).toContain('＠admin');
+          expect(pm('ask 권한 거울 · 위임장 칩(거울 채널 기준)')?.meta?.permissionMirror).toMatchObject({
+            mandate: { id: '<uuid>', name: '배포 정리 맡아 줘', ownerId: 'MEM' } });
+        }
         // S5.5 f — 새 카드: 요청 줄과 카드가 한 번에 서고 이어진다(Rust 가 직접 세운다).
         for (const n of ['ask 머지 거절 카드 → 요청·카드 한 번에', 'ask 머지 거절 카드 · CI 실패 거절']) {
           const perms = (by(n) as unknown as { perms: Record<string, unknown>[] }).perms;
