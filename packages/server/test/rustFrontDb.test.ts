@@ -11351,7 +11351,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                 for (const [name, bundled] of AS) {
                   const ch = await freshCh();
                   const root = await ins({ ch, author: member.accountId, body: '고를 스레드' });
-                  const old = await ins({ ch, root, author: bot3.accountId, body: '옛 고르기', meta: { kind: 'ask', ask: { prompt: '옛 고르기', options: OPTS } } });
+                  const old = await ins({ ch, root, author: bot3.accountId, body: '옛 고르기', meta: { kind: 'ask', ask: { prompt: '옛 고르기', options: OPTS, to: { kind: 'human' } } } });
                   const bundle = bundled
                     ? await ins({ ch, author: member.accountId, body: '묶음', meta: { kind: 'askBundle', askBundle: { items: [{ rootId: old, askerId: null, channelId: ch, threadRootId: root, prompt: '옛 고르기', options: OPTS }] } } })
                     : null;
