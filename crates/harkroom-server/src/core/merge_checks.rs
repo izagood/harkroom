@@ -16,7 +16,8 @@
 //! 읽기 풀([`MERGE_RESULTS_PRIVILEGES`])이 있으면 N1 관문(403 `lease_invalid`·400 `bad_repo`·409 `already_reported`/`not_checked`)도
 //! Rust 가 답한다. 글 경로와 [`MERGE_RESULTS_WRITE_PRIVILEGES`] 까지 있으면 받을 `failed` 보고(CI 거절이면 `recordCiDenial`·`denialId` 까지)와 `merged` 보고
 //! (무시한 체크 꼬리·`obsoleteMergeCards` 카드 닫기·`noteOnceGhUserUsed` gh 이름 메모 포함)도 Rust 가 적는다 — 시스템 줄·감사·201 `{ messageId }`.
-//! `queued` 보고도 위임 v2 스위치가 꺼졌다고 확실하면(감시 없음) Rust 가 적는다. 스위치가 켜졌거나 모르는 「큐」 줄(감시)이 필요한 보고는 쓰기 전에 TS 로 넘긴다.
+//! `queued` 보고도 Rust 가 적는다. 위임 v2 스위치가 켜졌으면 TS `autoWatchOnQueued` 처럼 머지 스레드에 `until: merged` 감시
+//! (`source: merge_queue`)까지 건다 — 감시 쓰기 풀([`super::mcp::pr_watch::PR_WATCH_PRIVILEGES`])이 없거나 스위치를 모르면 쓰기 전에 TS 로 넘긴다.
 use super::grant_reads::through_operator;
 use super::merge_approval_peek::str_len_ok;
 use super::msg_read::is_uuid;
@@ -180,6 +181,8 @@ pub struct ResultsState {
     pub read: Option<sqlx::PgPool>,
     /// 받을 `failed` 보고(CI 거절 아님)를 Rust 가 적는 글 경로 — 쓰기 풀에 [`MERGE_RESULTS_WRITE_PRIVILEGES`] 까지 있을 때만.
     pub post: Option<super::msg_post::PostState>,
+    /// 위임 v2 가 켜진 `queued` 보고의 감시(TS `autoWatchOnQueued`)를 거는 풀 — 쓰기 풀에 `PR_WATCH_PRIVILEGES` 가 다 있을 때만.
+    pub watch: Option<sqlx::PgPool>,
 }
 
 /// 받을 보고 중 Rust 가 적는 갈래(`result: failed`·CI 거절 아님)가 읽고 쓰는 칸. 글 경로 칸은
@@ -282,7 +285,7 @@ pub fn is_ci_refusal(c: Option<&Value>) -> bool {
 }
 
 /// Rust 가 적을 수 있는 보고인가 — `failed`(CI 거절 포함)·`merged`(카드 닫기·gh 이름 메모 포함)·`queued`(무시한 체크 포함). 감시
-/// 가 필요한 `queued` 는 `report_failed` 가 DB 를 보고 TS 로 넘긴다.
+/// 가 필요한 `queued` 는 감시 쓰기 풀이 없으면 `report_failed` 가 TS 로 넘긴다.
 pub fn rust_reportable(o: &Value) -> bool {
     matches!(
         o.get("result").and_then(Value::as_str),
@@ -536,10 +539,17 @@ pub fn failed_line(
     (body, meta)
 }
 
-/// 위임 v2 스위치가 꺼졌다고 확실한가(값이 없으면 모른다 → TS) — 그러면 `queued` 보고는 감시 없이 줄·감사뿐이다.
-fn queued_without_watch() -> bool {
-    super::msg_post::delegation_v2(std::env::var("HARKROOM_DELEGATION_V2").ok().as_deref())
-        == Some(false)
+/// `queued` 보고에서 감시를 누가 거는가. 스위치를 모르거나(값 없음) 켜졌는데 감시 쓰기 풀이 없으면 TS(`Err(())`),
+/// 꺼졌으면 감시 없이 줄·감사뿐(`Ok(None)`), 켜졌고 풀이 있으면 그 풀로 Rust 가 건다(`Ok(Some)`).
+fn queued_watch_pool(
+    v2: Option<bool>,
+    watch: Option<&sqlx::PgPool>,
+) -> Result<Option<&sqlx::PgPool>, ()> {
+    match (v2, watch) {
+        (None, _) | (Some(true), None) => Err(()),
+        (Some(false), _) => Ok(None),
+        (Some(true), Some(p)) => Ok(Some(p)),
+    }
 }
 
 enum Report {
@@ -710,6 +720,7 @@ async fn note_once_gh_user_used(
 /// TS `reportMerge` 의 `failed`(CI 거절 아님) 갈래 — 관문부터 줄·감사까지.
 async fn report_failed(
     st: &super::msg_post::PostState,
+    watch: Option<&sqlx::PgPool>,
     agent: &str,
     operator: &str,
     o: &Value,
@@ -718,10 +729,17 @@ async fn report_failed(
     use super::msg_post::{Origin, Outcome, PostBody, channel_is_dm, post_in_tx};
     let w = &st.write;
     let g = |k: &str| o.get(k).and_then(Value::as_str).map(str::to_owned);
-    // `queued` 는 TS `autoWatchOnQueued` 가 위임 v2 스위치가 켜졌을 때 감시를 건다 — 꺼졌다고 **확실할** 때만 Rust 가 적는다.
-    if g("result").as_deref() == Some("queued") && !queued_without_watch() {
-        return Ok(Report::ToTs);
-    }
+    // `queued` 는 위임 v2 스위치가 켜졌을 때 감시(TS `autoWatchOnQueued`)를 건다 — 스위치를 모르거나 감시 풀이 없으면 TS 로.
+    let queued_watch = if g("result").as_deref() == Some("queued") {
+        let v2 =
+            super::msg_post::delegation_v2(std::env::var("HARKROOM_DELEGATION_V2").ok().as_deref());
+        match queued_watch_pool(v2, watch) {
+            Ok(p) => p,
+            Err(()) => return Ok(Report::ToTs),
+        }
+    } else {
+        None
+    };
     let Some(number) = pk::positive_int(o.get("number").unwrap_or(&Value::Null)) else {
         return Ok(Report::ToTs);
     };
@@ -965,6 +983,19 @@ async fn report_failed(
     if let Some((id, u)) = &gh_memo {
         let _ = note_once_gh_user_used(w, id, u).await;
     }
+    // P5: 머지 큐에 넣었으면 머지한 에이전트 이름으로 그 스레드에 `until: merged` 감시를 건다(source=merge_queue). 실패해도 보고는 남는다.
+    if let Some(p) = queued_watch {
+        let _ = super::mcp::pr_watch::auto_watch_on_queued(
+            p,
+            agent,
+            &repo,
+            number,
+            &head_sha,
+            &channel,
+            &thread_root,
+        )
+        .await;
+    }
     // Q3-a: 통과한 판정 뒤의 `merged` 보고면 그 PR 의 기다리는 머지 카드를 모든 에이전트에 걸쳐 닫는다. 실패해도 보고는 남는다.
     if merged {
         let _ = super::merge_closed::obsolete_merge_cards(
@@ -1056,7 +1087,7 @@ pub async fn results_route(
         parsed.as_ref(),
     ) && rust_reportable(body)
     {
-        match report_failed(post, &me.id, op, body).await {
+        match report_failed(post, st.watch.as_ref(), &me.id, op, body).await {
             Ok(Report::Refused(code)) => {
                 let status = match code {
                     "bad_repo" => StatusCode::BAD_REQUEST,
@@ -2410,6 +2441,7 @@ pub fn routes(
     checks_enforce: bool,
     results_read: Option<sqlx::PgPool>,
     results_post: Option<super::msg_post::PostState>,
+    results_watch: Option<sqlx::PgPool>,
     auth: crate::auth::AuthPools,
     cors: Arc<crate::cors::Cors>,
 ) -> crate::route_table::Routes<()> {
@@ -2460,6 +2492,7 @@ pub fn routes(
                 up,
                 read: results_read,
                 post: results_post,
+                watch: results_watch,
             }))),
         http,
         sockets,
@@ -3030,6 +3063,22 @@ mod tests {
         let g = include_str!("../../../../packages/server/src/services/mergeGrants.ts");
         assert!(g.contains("export const MERGE_DENIAL_DAILY_CAP = 20;"));
         assert!(g.contains("export const MERGE_DENIAL_TTL_MS = 24 * 3_600_000;"));
+    }
+
+    #[test]
+    fn queued_watch_pool_hands_unknown_or_unwritable_to_ts() {
+        // 스위치를 모르면 TS 로 — 감시를 걸지 말지 정할 수 없다.
+        assert_eq!(queued_watch_pool(None, None).map(|p| p.is_some()), Err(()));
+        // 꺼졌으면 감시 없이 Rust 가 줄·감사만 적는다(앞판과 같다).
+        assert_eq!(
+            queued_watch_pool(Some(false), None).map(|p| p.is_some()),
+            Ok(false)
+        );
+        // 켜졌는데 감시 쓰기 풀이 없으면 TS 로(감시가 빠지면 안 된다).
+        assert_eq!(
+            queued_watch_pool(Some(true), None).map(|p| p.is_some()),
+            Err(())
+        );
     }
 
     #[test]

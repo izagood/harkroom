@@ -4385,6 +4385,7 @@ async fn main() {
                 merge_checks_enforce,
                 merge_results_read.clone(),
                 merge_results_post.clone(),
+                pr_watch_write.clone(),
                 auth.clone(),
                 state.cors.clone(),
             );
