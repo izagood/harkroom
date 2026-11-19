@@ -14,7 +14,7 @@
 //!   위임 글이 선 뒤 TS `linkPlanGroup` 처럼 부모 계획의 그룹을 잇는다([`super::plan_write::link_plan_group`]). 결과·거절은 답의
 //!   `plan` 칸에만 싣는다(위임은 되돌리지 않는다). 계획 쓰기 권한(`PLAN_WRITE_PRIVILEGES`)이 없으면 글을 쓰기 전에 TS.
 //! - **TS 로 넘기는 것**(`None` — fail-closed): 위 밖의 팀 명단 갈래 · 권한 없는 `agentModels`·계획판 칸 · zod 가 받지 않을 인자 ·
-//!   자른 자리가 서로게이트 쌍을 가르는 모델 신고 · `to` 에 같은 이름이 두 번 · 위임 스위치를 모름 · DB 오류.
+//!   자른 자리가 서로게이트 쌍을 가르는 모델 신고 · `to` 에 접속한 같은 담당이 두 번(TS 는 글만 남기고 `delegation_failed`) · 위임 스위치를 모름 · DB 오류.
 //! - 접속 확인: TS 는 프로세스 메모리(`presence.online()`)를, Rust 는 DB `agent_presence`(`expires_at > now()`)를 읽는다. TS 는
 //!   그 표를 담당마다 10초에 한 번만 고쳐 쓰므로(`PERSIST_EVERY_MS`) DB 의 만료가 메모리보다 최대 약 10초 이르다 — 폴을 멈춘 담당은
 //!   Rust 쪽에서 최대 약 10초 **먼저** `unreachable` 이 된다(없는 것을 있다고 하지 않는 쪽). 처음 접속은 첫 폴에 바로 쓰인다.
@@ -404,14 +404,16 @@ async fn rounds_then_write(
     }
     // 게이트·상한을 다 지났다 — 쓰기 칸이 있으면 위임을 쓴다(C3b-2c-4b).
     let st = st?;
-    let mut seen = std::collections::HashSet::new();
-    if !wanted.iter().all(|h| seen.insert(h.as_str())) {
-        return None;
-    }
     write(
         st, me, a, wanted, members, team_id, used, cause, turn, operator,
     )
     .await
+}
+
+/// 같은 값이 두 번 있나 — 접속한 담당 명단(`delegate_ids`)에 쓴다.
+fn has_dup(ids: &[String]) -> bool {
+    let mut seen = std::collections::HashSet::new();
+    !ids.iter().all(|x| seen.insert(x.as_str()))
 }
 
 /// TS `message.delegate` 의 뒷부분 — 접속 확인 → 위임 글 → 의무 → 결과.
@@ -448,6 +450,12 @@ async fn write(
             delegated.push(a.to[i].clone());
             delegate_ids.push(id.clone());
         }
+    }
+    // `to` 에 같은 담당이 두 번(대소문자만 달라도) — 접속한 담당이 겹치면 TS 는 글을 올린 뒤 의무 행의 기본 키에 걸려
+    // `delegation_failed` 로 답한다(글만 남는다). Rust 는 글과 의무가 한 tx 라 그 꼴을 만들 수 없으므로 TS 로 넘긴다.
+    // 겹친 담당이 접속하지 않았으면 TS 도 `unreachable` 에 두 번 싣고 끝난다 — 그 꼴은 Rust 가 그대로 답한다(P6-5b).
+    if has_dup(&delegate_ids) {
+        return None;
     }
     // 계획 잇기는 위임 글 **뒤**라 되돌릴 수 없다 — 계획 쓰기 권한이 없으면 글을 쓰기 전에 TS 로 넘긴다.
     if matches!(a.plan, PlanArg::Link(..)) {
@@ -629,6 +637,14 @@ async fn write(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn dup_only_among_reachable_hands_to_ts() {
+        let v = |xs: &[&str]| xs.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
+        assert!(!has_dup(&v(&[])));
+        assert!(!has_dup(&v(&["a", "b"])));
+        assert!(has_dup(&v(&["a", "b", "a"])));
+    }
 
     #[test]
     fn golden_sql_loads() {
