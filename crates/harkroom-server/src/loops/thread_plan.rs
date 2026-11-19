@@ -48,8 +48,14 @@ pub const THREAD_PLAN_PRIVILEGES: &[(&str, &str)] = &[
     ("event_outbox", "INSERT"),
     // 자동 진행 깨움 글의 위임 키·principal 도장(`thread_plan_auto::wake` → msg_post `plan_auto_stamp`). mandate_id 는 글 권한에 있다.
     ("message.principal_account_id", "UPDATE"),
-    // 켤 때의 위임장이 아직 유효한가(`mandate_line_write::valid_owner_sql`).
+    // 켤 때의 위임장이 아직 유효한가(`mandate_line_write::valid_owner_sql`, 골든 `grant_valid_mandate_owner`).
     ("mandate", "SELECT"),
+    // 자동화 위임장이면 그 자동화가 살아 있는지 읽는 4칸만 — 표 단위 SELECT 는 수신 비밀 칸까지 연다(security 11-18,
+    // `decide_approve::MANDATE_LINE_PRIVILEGES` 와 같은 꼴). 빠지면 위임장 있는 판의 깨우기가 권한 오류로 멈춘다(`tests/thread_plan.rs`).
+    ("automation.id", "SELECT"),
+    ("automation.deleted_at", "SELECT"),
+    ("automation.enabled", "SELECT"),
+    ("automation.approved_at", "SELECT"),
 ];
 pub const THREAD_PLAN_SEQUENCE_PRIVILEGES: &[(&str, &str)] = &[("event_outbox_id_seq", "USAGE")];
 
