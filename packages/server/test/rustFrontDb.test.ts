@@ -2751,6 +2751,33 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect(b.core, `${name} — 누가 답했나`).toBe(null);
       }
 
+      // P6-1 — inbox.poll 빈 폴의 승인 안 된 종료 요청(TS `readAgentStop` → `ackAgentStop`). 전에는 Rust 가 TS 로 넘겼다 — 이제 Rust 가
+      // 수령을 찍고 요청 시각을 싣는다. 안 읽은 줄은 잠깐 읽음으로 돌려 두고(빈 폴) 끝나면 되돌린다.
+      const parked = (await db.pool.query<{ id: string }>(
+        `update inbox set read_at = now() where account_id = $1 and read_at is null returning id`, [agent.accountId])).rows.map((r) => r.id);
+      const stopAt = async () => (await db.pool.query<{ acked: boolean }>(
+        `select stop_acked_at is not null as acked from agent_config where account_id = $1`, [agent.accountId])).rows[0]!.acked;
+      const askStop = () => db.pool.query(
+        `update agent_config set stop_requested_at = '2026-01-02T03:04:05.678Z', stop_acked_at = null where account_id = $1`, [agent.accountId]);
+      try {
+        await askStop();
+        const tsStop = await mcpCall(tsUrl, agent.pat, 'inbox.poll', {});
+        expect(await stopAt(), 'TS 가 수령을 찍는다').toBe(true);
+        await askStop();
+        const rsStop = await mcpCall(rsUrl4, agent.pat, 'inbox.poll', {});
+        expect({ status: rsStop.status, type: rsStop.type, text: rsStop.text }, 'inbox.poll 승인 안 된 종료 요청').toEqual({ status: tsStop.status, type: tsStop.type, text: tsStop.text });
+        expect(rsStop.core, 'inbox.poll 종료 요청 — Rust 가 답한다').toBe('mcp');
+        expect(rsStop.text).toContain('2026-01-02T03:04:05.678Z');
+        expect(await stopAt(), 'Rust 가 수령을 찍는다').toBe(true);
+        // 이미 수령한 요청 — 다시 찍지 않고 같은 값을 싣는다.
+        const again = await mcpCall(rsUrl4, agent.pat, 'inbox.poll', {});
+        expect(again.core).toBe('mcp');
+        expect(again.text).toBe(rsStop.text);
+      } finally {
+        await db.pool.query(`update agent_config set stop_requested_at = null, stop_acked_at = null where account_id = $1`, [agent.accountId]);
+        if (parked.length) await db.pool.query(`update inbox set read_at = null where id = any($1::bigint[])`, [parked]);
+      }
+
       // S5.3 C4b ④-a(2/2) — bg.claim. 켜짐은 앞단 env(P2), 값이 없으면 TS admit 의 `bgEnabled` 로 안다(꺼짐 → TS 가 `disabled`). 러너가 아닌 꼴(PAT·cause·턴 id)은
       // TS 가 `runner_only` 로 답한다. 켜진 러너면 Rust 가 답하고 글자가 TS 와 같다 — 창 밖이면 outside_window, 창 안이면 일감이 없어 none
       // (시각을 주입할 수 없어 창 안의 집기·distill digest 는 `bg_claim.rs` 단위 시험이 본다).

@@ -1,13 +1,15 @@
 //! MCP `inbox.poll` 의 빈 즉답 갈래(TS `mcpPlugin.ts` `inbox.poll`). Rust 는 **기다리지 않는 폴**(`timeoutMs` 없음·0)에
 //! 버전·임대가 없을 때 답한다. 줄이 없으면 — 그때 TS 는 `{entries:[],messages:[]}` 를 내고, 에이전트면
 //! `stopRequestedAt`(키는 늘 있다)을 덧붙인다. 줄이 있으면 `{entries,messages}`(본문 펼치기·시스템 줄 표시)에 에이전트면
-//! `memoryRev` — 위임 스위치(`HARKROOM_DELEGATION_V2`)가 없거나 `delegation_update` 사유를 고쳐 써야 하면 TS. 그 밖은 모두 `None`(→ TS): 긴 폴(이벤트 버스·종료 park), (쓰기 풀이 없을 때의) `version` 기록·`lease`
-//! 임대(쓰기 — 쓰기 풀에 [`INBOX_LEASE_PRIVILEGES`] 가 있으면 [`answer_full`] 이 TS `leaseInboxEntries` 처럼 걸고 임대 걸린 줄을 빼고 읽는다), 아직 승인 안 된 종료 요청(TS `ackAgentStop` 이 쓴다),
+//! `memoryRev` — 위임 스위치(`HARKROOM_DELEGATION_V2`)가 없으면 TS. 그 밖은 모두 `None`(→ TS): (허브가 없을 때의) 긴 폴, (쓰기 풀이 없을 때의) `version` 기록·`lease`
+//! 임대(쓰기 — 쓰기 풀에 [`INBOX_LEASE_PRIVILEGES`] 가 있으면 [`answer_full`] 이 TS `leaseInboxEntries` 처럼 걸고 임대 걸린 줄을 빼고 읽는다),
+//! (쓰기 풀에 [`INBOX_POLL_WRITE_PRIVILEGES`] 가 없을 때의) 옛 러너 접기·아직 승인 안 된 종료 요청 — 있으면 [`answer_full`] 이 TS 처럼 쓴다(P6-1),
 //! zod 를 못 지나는 인자, DB 오류. 읽기만 한다 — 쓰기 권한(`*_PRIVILEGES`)이 필요 없다.
 //!
 //! `version` 이 온 폴([`answer_versioned`])은 쓰기 풀에 [`RUNNER_VERSION_PRIVILEGES`] 가 있을 때만 Rust 가 답한다 — 답이 정해진 뒤
 //! TS `recordRunnerVersion` 처럼 값이 바뀔 때만 쓰고(프로세스 안 10분 캐시), 위임 v2 에서 `delegation_update` 를 모르는 러너라도
-//! 버전이 `0.4.426` 이상이면(TS `knowsDelegationFollowup`) 사유를 `delegation_followup` 으로 바꿔 싣는다. 그보다 옛 러너의 접기(쓰기)는 TS.
+//! 버전이 `0.4.426` 이상이면(TS `knowsDelegationFollowup`) 사유를 `delegation_followup` 으로 바꿔 싣는다. 그보다 옛 러너(버전을 안 밝힌 러너 포함)는
+//! TS 처럼 그 줄을 읽음으로 접고 뺀다([`fold_old_runner`]) — 읽기마다(첫 읽기·긴 폴 뒤 다시 읽기) 먼저 접는다. 접기 쓰기 풀이 없으면 TS.
 use super::respond::{minify, text_result};
 use crate::auth::Account;
 use crate::core::inbox_list::{InboxQuery, list_inbox};
@@ -170,6 +172,80 @@ fn batch_text(entries: &[String], messages: &str, rev: Option<&str>) -> String {
 const AGENT_STOP_SQL: &str = "select to_char(stop_requested_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'), \
        stop_acked_at is not null from agent_config where account_id = $1::uuid";
 
+/// TS `ackAgentStop` — 승인 안 된 종료 요청에 수령 시각을 찍는다(경합에서 이미 찍혔으면 0줄 — TS 도 값을 그대로 싣는다).
+const AGENT_STOP_ACK_SQL: &str = "update agent_config set stop_acked_at = now() \
+      where account_id = $1::uuid and stop_requested_at is not null and stop_acked_at is null";
+
+/// TS `inbox.poll` 의 옛 러너 접기 — `update inbox set read_at = now() where account_id = $1 and id = any($2::bigint[]) and read_at is null`.
+const FOLD_SQL: &str = "update inbox set read_at = now() \
+      where account_id = $1::uuid and id = any($2::bigint[]) and read_at is null";
+
+/// [`FOLD_SQL`]·[`AGENT_STOP_ACK_SQL`] 이 쓰는 칸(UPDATE)과 `where` 가 읽는 칸(SELECT). 빠지면 옛 러너 접기·승인 안 된 종료 요청은 TS.
+/// 운영 GRANT 는 이미 있다 — `update (read_at) on inbox`(inbox.read)·`update (stop_acked_at) on agent_config`(GET /agent/config).
+pub const INBOX_POLL_WRITE_PRIVILEGES: &[(&str, &str)] = &[
+    ("inbox.read_at", "UPDATE"),
+    ("inbox.id", "SELECT"),
+    ("inbox.account_id", "SELECT"),
+    ("inbox.read_at", "SELECT"),
+    ("agent_config.stop_acked_at", "UPDATE"),
+    ("agent_config.account_id", "SELECT"),
+    ("agent_config.stop_requested_at", "SELECT"),
+    ("agent_config.stop_acked_at", "SELECT"),
+];
+
+/// 옛 러너면 참 — 위임 v2 가 켜졌고, 러너가 `delegation_update` 를 밝히지 않았고, `delegation_followup` 도 모른다(TS 의 `else` 갈래).
+fn folds_for(v2: bool, args: &Value, version: Option<&str>) -> bool {
+    let knows_update = args
+        .get("inboxReasons")
+        .and_then(Value::as_array)
+        .is_some_and(|a| a.iter().any(|r| r == "delegation_update"));
+    v2 && !knows_update && !knows_delegation_followup(version)
+}
+
+/// 접을 줄의 id — 사유가 `delegation_update` 인 줄. 못 읽는 줄이 있으면 `None`(→ TS).
+fn fold_ids(rows: &[crate::core::inbox_list::InboxRow]) -> Option<Vec<i64>> {
+    let mut ids = Vec::new();
+    for r in rows {
+        let v: Value = serde_json::from_str(&r.body).ok()?;
+        if v.get("reason").and_then(Value::as_str) == Some("delegation_update") {
+            ids.push(r.id);
+        }
+    }
+    Some(ids)
+}
+
+/// TS `fetchUnread` 의 옛 러너 접기 — 읽기 **전에** 접을 줄을 읽음으로 바꾼다. 그 뒤의 읽기는 그 줄을 보지 않는다(TS 가 걸러 낸 목록과 같다).
+/// 접을 일이 없으면 아무것도 쓰지 않는다. 접을 줄이 있는데 쓰기 풀이 없거나 쓰기가 실패하면 `None`(→ TS — 아직 아무 답도 내지 않았다).
+async fn fold_old_runner(
+    pool: &PgPool,
+    fold: Option<&PgPool>,
+    me: &Account,
+    args: &Value,
+    version: Option<&str>,
+    leased: bool,
+) -> Option<()> {
+    // 접기는 v2 에서만 일어난다. 스위치를 모르면 줄이 있을 때 [`batch`] 가 TS 로 넘긴다 — 여기서는 건너뛴다.
+    let v2 = crate::core::msg_post::delegation_v2(
+        std::env::var("HARKROOM_DELEGATION_V2").ok().as_deref(),
+    )
+    .unwrap_or(false);
+    if !folds_for(v2, args, version) {
+        return Some(());
+    }
+    let rows = list_inbox(pool, &me.id, unread(leased), false).await.ok()?;
+    let ids = fold_ids(&rows)?;
+    if ids.is_empty() {
+        return Some(());
+    }
+    sqlx::query(FOLD_SQL)
+        .bind(&me.id)
+        .bind(&ids)
+        .execute(fold?)
+        .await
+        .ok()?;
+    Some(())
+}
+
 /// zod 를 지나고 Rust 가 답할 꼴이면 참 — `timeoutMs` 는 없거나 0, `version`·`lease` 는 없어야(있으면 TS 가 쓴다).
 fn quick(args: &Value, allow_version: bool) -> bool {
     quick_with(args, allow_version, false)
@@ -314,7 +390,7 @@ pub async fn answer(pool: &PgPool, me: &Account, args: &Value) -> Option<String>
     if !quick(args, false) {
         return None;
     }
-    respond(pool, me, args, None, false).await
+    respond(pool, None, me, args, None, false).await
 }
 
 /// `version` 이 온 폴 — 답이 정해지면 TS 처럼 버전을 기록하고(빈 글자는 기록하지 않는다, TS `if (version)`) 답한다. 기록이 실패하면 TS.
@@ -322,11 +398,14 @@ pub async fn answer(pool: &PgPool, me: &Account, args: &Value) -> Option<String>
 /// `hub` 이 있으면 긴 폴(`timeoutMs > 0`)도 받는다 — TS 처럼 첫 읽기 **전에** 이벤트 허브를 구독하고, 비었으면 이 계정의
 /// `inbox.updated` 가 오거나 시한이 될 때까지 기다린 뒤 다시 읽는다. 기다리기 전에 TS 로 넘길 갈래(줄이 있는데 고쳐 쓸 일·승인 안 된
 /// 종료 요청)가 보이면 기다리지 않고 넘긴다 — TS 가 처음부터 다시 기다리지 않게.
+///
+/// `fold` 는 [`INBOX_POLL_WRITE_PRIVILEGES`] 쓰기 풀 — 옛 러너 접기와 승인 안 된 종료 요청의 수령 기록을 TS 처럼 여기서 쓴다. 없으면 그 둘은 TS.
 pub async fn answer_full(
     read: &PgPool,
     write: Option<&PgPool>,
     hub: Option<&crate::core::events::Hub>,
     lease_write: Option<&PgPool>,
+    fold: Option<&PgPool>,
     me: &Account,
     args: &Value,
 ) -> Option<String> {
@@ -344,8 +423,8 @@ pub async fn answer_full(
     let version = args.get("version").and_then(Value::as_str);
     let wait = timeout_ms(args)?;
     let out = match hub.filter(|_| wait > 0) {
-        Some(h) => wait_then_respond(read, me, args, version, h, wait, leased).await?,
-        None => respond(read, me, args, version, leased).await?,
+        Some(h) => wait_then_respond(read, fold, me, args, version, h, wait, leased).await?,
+        None => respond(read, fold, me, args, version, leased).await?,
     };
     if let (Some(w), Some(v)) = (write, version.filter(|v| !v.is_empty())) {
         record_runner_version(w, &me.id, v).await.ok()?;
@@ -369,8 +448,10 @@ fn wakes(e: &Value, account: &str) -> bool {
         && e.get("accountId").and_then(Value::as_str) == Some(account)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn wait_then_respond(
     pool: &PgPool,
+    fold: Option<&PgPool>,
     me: &Account,
     args: &Value,
     version: Option<&str>,
@@ -382,12 +463,14 @@ async fn wait_then_respond(
     // 첫 읽기 전에 구독한다 — 그 왕복 사이에 온 깨움을 잃지 않게(TS 주석과 같은 까닭).
     let mut rx = hub.subscribe();
     let mut drain = drain_tx().subscribe();
+    fold_old_runner(pool, fold, me, args, version, leased).await?;
     let rows = list_inbox(pool, &me.id, unread(leased), false).await.ok()?;
     if !rows.is_empty() {
-        return respond(pool, me, args, version, leased).await;
+        return respond(pool, fold, me, args, version, leased).await;
     }
-    // 비었는데 승인 안 된 종료 요청이 있으면 TS 가 답한다 — 기다리기 전에 넘긴다.
-    if me.kind == "agent" {
+    // 비었는데 승인 안 된 종료 요청이 있고 수령을 쓸 풀이 없으면 TS 가 답한다 — 기다리기 전에 넘긴다. 풀이 있으면 TS 처럼
+    // 기다린 뒤 다시 읽으며 수령을 찍는다([`respond`]).
+    if me.kind == "agent" && fold.is_none() {
         let stop = sqlx::query_as::<_, (Option<String>, bool)>(AGENT_STOP_SQL)
             .bind(&me.id)
             .fetch_optional(pool)
@@ -439,23 +522,26 @@ async fn wait_then_respond(
         .await;
     }
     // 깨웠거나 시한을 다 기다렸다 — TS 처럼 다시 읽어 답한다.
-    respond(pool, me, args, version, leased).await
+    respond(pool, fold, me, args, version, leased).await
 }
 
 async fn respond(
     pool: &PgPool,
+    fold: Option<&PgPool>,
     me: &Account,
     args: &Value,
     version: Option<&str>,
     leased: bool,
 ) -> Option<String> {
+    // TS `fetchUnread` 처럼 읽기마다 먼저 접는다.
+    fold_old_runner(pool, fold, me, args, version, leased).await?;
     // 빈 목록에는 위임 요약이 붙지 않으니 `v2` 값과 무관하다.
     let rows = list_inbox(pool, &me.id, unread(leased), false).await.ok()?;
     let agent = me.kind == "agent";
     if !rows.is_empty() {
         return batch(pool, me, args, &rows, agent, version, leased).await;
     }
-    let stop = if agent {
+    let mut stop = if agent {
         sqlx::query_as::<_, (Option<String>, bool)>(AGENT_STOP_SQL)
             .bind(&me.id)
             .fetch_optional(pool)
@@ -464,6 +550,15 @@ async fn respond(
     } else {
         None
     };
+    // TS `readAgentStop` — 승인 안 된 요청이면 수령을 찍고 요청 시각을 싣는다. 쓸 풀이 없으면 [`empty_text`] 가 `None`(→ TS).
+    if let (Some((Some(_), acked @ false)), Some(w)) = (stop.as_mut(), fold) {
+        sqlx::query(AGENT_STOP_ACK_SQL)
+            .bind(&me.id)
+            .execute(w)
+            .await
+            .ok()?;
+        *acked = true;
+    }
     empty_text(agent, stop)
 }
 
@@ -503,7 +598,7 @@ async fn batch(
         entries.push(minify(&r.body));
     }
     if needs_reason_rewrite(v2, args, &reasons) {
-        // 옛 러너(163 미만)는 접기(쓰기) — TS.
+        // 옛 러너(163 미만)의 줄은 [`fold_old_runner`] 가 읽기 전에 접었다 — 그 사이에 새로 온 줄(경합)만 여기 닿는다. TS 로.
         if !knows_delegation_followup(version) {
             return None;
         }
@@ -571,6 +666,61 @@ mod tests {
         }
         assert!(matches!(unread(true), InboxQuery::UnreadUnleased));
         assert!(matches!(unread(false), InboxQuery::Unread { since: None }));
+    }
+
+    #[test]
+    fn old_runner_fold_like_ts() {
+        // TS `else` 갈래: v2 켜짐 · `delegation_update` 를 안 밝힘 · `knowsDelegationFollowup` 거짓.
+        assert!(folds_for(true, &json!({}), None));
+        assert!(folds_for(true, &json!({}), Some("0.4.425")));
+        assert!(folds_for(
+            true,
+            &json!({ "inboxReasons": ["mention"] }),
+            Some("bad")
+        ));
+        assert!(!folds_for(false, &json!({}), None));
+        assert!(!folds_for(true, &json!({}), Some("0.4.426")));
+        assert!(!folds_for(
+            true,
+            &json!({ "inboxReasons": ["delegation_update"] }),
+            None
+        ));
+        let row = |id: i64, reason: &str| crate::core::inbox_list::InboxRow {
+            id,
+            body: json!({ "id": id, "reason": reason }).to_string(),
+            root: String::new(),
+        };
+        assert_eq!(
+            fold_ids(&[
+                row(3, "mention"),
+                row(5, "delegation_update"),
+                row(9, "delegation_update")
+            ]),
+            Some(vec![5, 9])
+        );
+        assert_eq!(fold_ids(&[row(3, "mention")]), Some(vec![]));
+        let bad = crate::core::inbox_list::InboxRow {
+            id: 1,
+            body: "{".into(),
+            root: String::new(),
+        };
+        assert_eq!(fold_ids(&[bad]), None);
+        assert!(
+            FOLD_SQL
+                .ends_with("account_id = $1::uuid and id = any($2::bigint[]) and read_at is null")
+        );
+        assert!(FOLD_SQL.starts_with("update inbox set read_at = now()"));
+        assert!(AGENT_STOP_ACK_SQL.ends_with(
+            "account_id = $1::uuid and stop_requested_at is not null and stop_acked_at is null"
+        ));
+        for (c, p) in [
+            ("inbox.read_at", "UPDATE"),
+            ("agent_config.stop_acked_at", "UPDATE"),
+            ("agent_config.stop_requested_at", "SELECT"),
+            ("inbox.account_id", "SELECT"),
+        ] {
+            assert!(INBOX_POLL_WRITE_PRIVILEGES.contains(&(c, p)), "{c} {p}");
+        }
     }
 
     #[test]
