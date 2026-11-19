@@ -831,8 +831,7 @@ pub fn spawn_server_link(
             return;
         }
         // 러너로 가는 말은 다중화기가 runnerId 로 보낸다(러너가 없으면 거기서 로그를 남기고 버린다).
-        if crate::relay_mux::unwrap_server_frame(&frame).is_some() {
-            frame_mux.on_server_frame(&frame);
+        if frame_mux.route_server_frame(&frame).is_some() {
             return;
         }
         let ty = serde_json::to_value(&frame)
