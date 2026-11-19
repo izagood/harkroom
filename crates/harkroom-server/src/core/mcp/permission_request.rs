@@ -538,7 +538,11 @@ fn chip_name(title: Option<&str>, body: Option<&str>) -> Option<String> {
 }
 
 /// TS `cardMandateMeta` — 위임장 칩. 이름은 위임장 뿌리 채널을 카드 채널의 청중이 다 볼 때만(security F1). 못 읽으면 `None`(→ TS).
-async fn card_mandate_meta(read: &PgPool, mandate: &str, card_channel: &str) -> Option<Value> {
+pub(super) async fn card_mandate_meta(
+    read: &PgPool,
+    mandate: &str,
+    card_channel: &str,
+) -> Option<Value> {
     use crate::core::msg_post::iso_ms;
     let row: Option<(String, String, i64)> = sqlx::query_as(MANDATE_CHIP_SQL)
         .bind(mandate)

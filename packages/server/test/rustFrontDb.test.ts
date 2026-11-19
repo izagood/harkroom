@@ -10163,7 +10163,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           const { call } = await chainBy(member.accountId, 0, 0)(ch);
           return { tool: 'message.ask', args, via: viaOp, cause: call, turn: turnId };
         };
-        const denialAsk = (o: { used?: boolean; otherThread?: boolean; pending?: boolean; ci?: boolean } = {}) => async (ch: string): Promise<Setup> => {
+        const denialAsk = (o: { used?: boolean; otherThread?: boolean; pending?: boolean; ci?: boolean; op?: boolean } = {}) => async (ch: string): Promise<Setup> => {
           const head = await ins({ ch, author: member.accountId, body: '머지해 줘' });
           const other = await ins({ ch, author: member.accountId, body: '다른 스레드' });
           const denial = (await db.pool.query<{ id: string }>(
@@ -10179,9 +10179,14 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             const card = await ins({ ch, root: head, author: bot3.accountId, body: '기다리는 카드', meta: { kind: 'ask', ask: { options: AD, to: { kind: 'human' } }, permissionRequest: { requestId: req, status: 'pending' } } });
             await db.pool.query(`update permission_request set card_message_id = $2 where id = $1`, [req, card]);
           }
-          return { tool: 'message.ask', via: viaPat, args: {
+          const args = {
             channelId: ch, threadRootId: o.otherThread ? other : head, body: '머지가 거절됐다', mergeDenialId: denial,
-            options: [{ id: 'retry', label: '다시 머지' }, { id: 'later', label: '나중에' }] } };
+            options: [{ id: 'retry', label: '다시 머지' }, { id: 'later', label: '나중에' }] };
+          if (!o.op) return { tool: 'message.ask', via: viaPat, args };
+          // P6-4c — 위임 있는 턴: 그 스레드에서 사람이 부른 글이 원인이고, `run` 의 `leaseFor` 가 그 원인으로 위임 달린 턴 임대를 세운다.
+          const call = await ins({ ch, root: head, author: member.accountId, body: `<@${bot3.accountId}> 머지해 줘` });
+          await wokeBy(call);
+          return { tool: 'message.ask', via: viaOp, args, cause: call, turn: turnId };
         };
         const SCENES: [string, (ch: string) => Promise<Setup>, boolean][] = [
           ['원인 없음(PAT) · 모델 어긋남', async (ch) => ({ args: { channelId: ch, body: '보고 드림', model: ' claude-sonnet-5 ' }, via: viaPat }), true],
@@ -10288,6 +10293,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           ['ask 머지 거절 카드 · 기다리는 카드 있음 → pending', denialAsk({ pending: true }), true],
           ['ask 머지 거절 카드 · 쓴 거절 → denial_used', denialAsk({ used: true }), true],
           ['ask 머지 거절 카드 · 다른 스레드 → denial_other_thread', denialAsk({ otherThread: true }), true],
+          ['ask 머지 거절 카드 · 위임 있는 턴 → mandateId·칩·[이 위임장 동안]', denialAsk({ op: true }), true],
+          ['ask 머지 거절 카드 · 위임 있는 턴 · CI 실패 거절', denialAsk({ op: true, ci: true }), true],
           // P6-2a — `permission.request` 의 받아들여지는 tool·merge 요청(요청 줄·감사·카드 글·잇기를 카드와 한 tx).
           ...((): [string, (ch: string) => Promise<Setup>, boolean][] => {
             const pr = (args: Record<string, unknown>, rust: boolean, name: string, prep?: (ch: string, head: string) => Promise<void>):
@@ -10408,7 +10415,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
              from agent_wake w join message m on m.id = w.message_id where w.channel_id = $1 order by m.body`, [ch])).rows;
         // S5.5 e·f — 그 채널의 권한 요청 줄과 이어진 카드의 표지(요청·카드가 같이 섰는가).
         const permsOf = async (ch: string) => shape((await db.pool.query(
-          `select p.kind, p.target, p.status, p.denial_id is not null as from_denial, p.card_message_id is not null as linked,
+          `select p.kind, p.target, p.status, p.denial_id is not null as from_denial, p.card_message_id is not null as linked, p.mandate_id is not null as mandated,
                   m.body, m.meta->'permissionRequest' as pr, m.meta->'ask' as ask
              from permission_request p left join message m on m.id = p.card_message_id where p.channel_id = $1 order by p.created_at`, [ch])).rows);
         const sse = (t: string) => {
@@ -10430,10 +10437,10 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         };
         const run = async (base: string) => {
           const out: unknown[] = [];
-          // 하루 요청 상한(20)은 에이전트 단위다 — 앞 서버 회차가 세운 요청 줄이 뒤 회차의 카드 장면을 too_many 로 막지 않게
-          // 회차마다 하루 밖으로 민다(두 서버가 같은 셈에서 시작한다).
-          await db.pool.query(`update permission_request set created_at = created_at - interval '2 days' where agent_id = $1 and created_at > now() - interval '1 day'`, [bot3.accountId]);
           for (const [name, setup, rust] of SCENES) {
+            // 하루 요청 상한(20)은 에이전트 단위다 — 앞 장면·앞 서버 회차가 세운 요청 줄이 뒤 장면을 too_many 로 막지 않게
+            // 장면마다 하루 밖으로 민다(장면이 늘어도 두 서버가 같은 셈에서 시작한다).
+            await db.pool.query(`update permission_request set created_at = created_at - interval '2 days' where agent_id = $1 and created_at > now() - interval '1 day'`, [bot3.accountId]);
             const ch = await freshCh();
             const st = await setup(ch);
             if (st.cause && st.via === viaOp) await leaseFor(st.cause, ch);
@@ -10471,7 +10478,16 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         for (const n of ['ask 머지 거절 카드 → 요청·카드 한 번에', 'ask 머지 거절 카드 · CI 실패 거절']) {
           const perms = (by(n) as unknown as { perms: Record<string, unknown>[] }).perms;
           expect(perms).toHaveLength(1);
-          expect(perms[0]).toMatchObject({ kind: 'merge', target: 'repo:acme/app', status: 'pending', from_denial: true, linked: true });
+          expect(perms[0]).toMatchObject({ kind: 'merge', target: 'repo:acme/app', status: 'pending', from_denial: true, linked: true, mandated: false });
+        }
+        // P6-4c — 위임 있는 턴: 요청 줄에 위임이 실리고, 카드 meta 에 mandateId·위임장 칩, 선택지 맨 앞은 [이 위임장 동안](CI 거절 카드 선택지는 TS·Rust 대조로만 본다).
+        for (const [n, ci] of [['ask 머지 거절 카드 · 위임 있는 턴 → mandateId·칩·[이 위임장 동안]', false], ['ask 머지 거절 카드 · 위임 있는 턴 · CI 실패 거절', true]] as const) {
+          const perms = (by(n) as unknown as { perms: (Record<string, unknown> & { pr: Record<string, unknown>; ask: { options: { id: string }[] } })[] }).perms;
+          expect(perms).toHaveLength(1);
+          expect(perms[0]).toMatchObject({ kind: 'merge', status: 'pending', from_denial: true, linked: true, mandated: true });
+          expect(perms[0]!.pr).toHaveProperty('mandateId');
+          expect(perms[0]!.pr).toHaveProperty('mandate');
+          if (!ci) expect(perms[0]!.ask.options[0]!.id).toBe('approve_mandate');
         }
         expect(row('fail 오퍼레이터 원인 → 깊이·고리·턴 id')).toMatchObject({ kind: 'failure', failure: { retryable: false }, depth: 3, stall: 2, linked: true, turn: '<uuid>' });
         expect(by('fail 없는 머리 → bad_thread').body.error?.code).toBe('bad_thread');

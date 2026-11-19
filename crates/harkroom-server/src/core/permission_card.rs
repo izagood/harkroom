@@ -200,8 +200,8 @@ pub fn merge_denial_reason(number: i64, reason: Option<&str>, body: &str) -> Str
     format!("PR #{number} 머지가 {why} 막혔다 — {body}")
 }
 
-/// 새 요청의 카드 meta `permissionRequest`(TS `openPermissionRequest` 의 `created.meta`, merge · 위임 없는 턴).
-/// `target` 은 저장한 꼴(`repo:owner/name`). 칸 차례도 TS 와 같다.
+/// 새 요청의 카드 meta `permissionRequest`(TS `openPermissionRequest` 의 `created.meta`, merge · 거절에서 온 요청).
+/// `target` 은 저장한 꼴(`repo:owner/name`). 칸 차례도 TS 와 같다. 위임 있는 턴이면 `mandate` 에 (위임 id, 칩)을 주고, `once` 뒤에 `mandateId`·`mandate` 가 선다.
 #[allow(clippy::too_many_arguments)]
 pub fn merge_request_meta(
     request_id: &str,
@@ -212,8 +212,10 @@ pub fn merge_request_meta(
     once: &Once,
     requested_at: &str,
     expires_at: &str,
+    mandate: Option<(&str, Value)>,
 ) -> Value {
     let short = target.strip_prefix("repo:").unwrap_or(target);
+    let has_mandate = mandate.is_some();
     let mut m = Map::new();
     m.insert("requestId".into(), json!(request_id));
     m.insert("agentId".into(), json!(agent_id));
@@ -224,7 +226,14 @@ pub fn merge_request_meta(
     m.insert("warnings".into(), json!([]));
     m.insert("reason".into(), json!(one_line_reason(reason)));
     m.insert("once".into(), once.meta());
-    m.insert("line".into(), merge_card_line(target, Some(once), false));
+    if let Some((id, chip)) = mandate {
+        m.insert("mandateId".into(), json!(id));
+        m.insert("mandate".into(), chip);
+    }
+    m.insert(
+        "line".into(),
+        merge_card_line(target, Some(once), has_mandate),
+    );
     if let Some(l) = merge_body_target_line(short, Some(once)) {
         m.insert("bodyTargetLine".into(), json!(l));
     }
@@ -234,13 +243,15 @@ pub fn merge_request_meta(
 }
 
 /// 카드 글의 ask meta(TS `raisePermission` 의 `meta` — 모델 신고 칸은 글 쓰는 길이 더한다).
+/// 선택지는 TS `permissionCardOptions('merge', { ciOnce, mandate: !!mandateId })` — 위임 있는 턴이면 [이 위임장 동안].
 pub fn merge_card_meta(permission_request: Value, ci: bool) -> Map<String, Value> {
+    let mandate = permission_request.get("mandateId").is_some();
     let mut m = Map::new();
     m.insert("kind".into(), json!("ask"));
     m.insert(
         "ask".into(),
         json!({
-            "options": merge_card_options(ci, false),
+            "options": merge_card_options(ci, mandate),
             "to": { "kind": "human" },
             "prompt": merge_card_prompt(ci),
         }),
@@ -744,6 +755,7 @@ mod tests {
             &o,
             "2026-11-18T00:00:00.000Z",
             "2026-11-19T00:00:00.000Z",
+            None,
         );
         let keys: Vec<&str> = m.as_object().unwrap().keys().map(String::as_str).collect();
         let mut want = vec![
@@ -772,6 +784,36 @@ mod tests {
         let meta = merge_card_meta(m, false);
         assert_eq!(meta["ask"]["prompt"], "권한을 줄까?");
         assert_eq!(meta["ask"]["to"], json!({ "kind": "human" }));
+    }
+
+    #[test]
+    fn request_meta_with_mandate_like_ts() {
+        // TS openPermissionRequest(denial + mandateId): mandateId·mandate 칸, line 은 approve_mandate, 선택지는 [이 위임장 동안]·거절.
+        let o = once("not_granted", &[]);
+        let chip = json!({ "id": "d1", "name": "", "ownerId": "o1", "startedAt": "2026-11-18T00:00:00.000Z" });
+        let m = merge_request_meta(
+            "r1",
+            "a1",
+            Some("o1"),
+            "repo:a/b",
+            "x",
+            &o,
+            "2026-11-18T00:00:00.000Z",
+            "2026-11-19T00:00:00.000Z",
+            Some(("d1", chip.clone())),
+        );
+        assert_eq!(m["mandateId"], "d1");
+        assert_eq!(m["mandate"], chip);
+        assert!(m["line"]["limits"].get("approve_mandate").is_some());
+        assert!(m["line"]["limits"].get("approve_new_mandate").is_none());
+        let meta = merge_card_meta(m.clone(), false);
+        assert_eq!(meta["ask"]["options"][0]["id"], "approve_mandate");
+        assert_eq!(meta["ask"]["options"][1]["id"], "deny");
+        // CI 거절 카드는 위임이 있어도 거절 하나뿐이다.
+        assert_eq!(
+            merge_card_meta(m, true)["ask"]["options"],
+            json!([{ "id": "deny", "label": "거절" }])
+        );
     }
 
     #[test]
