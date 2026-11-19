@@ -455,7 +455,8 @@ pub async fn answer(
     } else {
         format!(",\"replaced\":[{}]", replaced.join(","))
     };
-    // 행 글자는 그대로 싣는다 — 키 순서가 TS `JSON.stringify(row)` 와 같다.
+    // 행 글자는 순서를 지킨 채 공백만 걷는다 — jsonb 글자(`"id" : …`)가 아니라 TS `JSON.stringify(row)` 와 같은 꼴.
+    let row = super::respond::minify(&row);
     Some(super::respond::text_result(&format!(
         "{{\"wake\":{wake},\"message\":{row}{replaced}}}"
     )))
