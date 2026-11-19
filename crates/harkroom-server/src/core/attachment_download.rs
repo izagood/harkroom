@@ -43,7 +43,7 @@ pub const DOWNLOAD_PRIVILEGES: &[(&str, &str)] = &[
 ];
 
 /// TS `findDownloadTarget` 의 문장(칸은 `COLS` + 채널·지움).
-const TARGET_SQL: &str = "select a.id::text, a.message_id::text, a.uploader_id::text, a.filename, \
+pub(crate) const TARGET_SQL: &str = "select a.id::text, a.message_id::text, a.uploader_id::text, a.filename, \
      a.content_type, a.size_bytes::int, a.storage_key, m.channel_id::text, (m.deleted_at is not null) \
      from attachment a left join message m on m.id = a.message_id where a.id = $1::uuid";
 
@@ -52,7 +52,7 @@ const NEVER_INLINE: &[&str] = &["image/svg+xml", "text/html", "application/xhtml
 
 const CHUNK: usize = 64 * 1024;
 
-type TargetRow = (
+pub(crate) type TargetRow = (
     String,
     Option<String>,
     Option<String>,

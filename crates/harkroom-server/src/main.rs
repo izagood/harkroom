@@ -1625,6 +1625,44 @@ async fn main() {
         }
         _ => None,
     };
+    // P4-4 — 미리보기 두 줄(`POST /attachments/{id}/preview`·`GET /preview/{token}`). 네 겹 잠금: `HARKROOM_CORE=rust`,
+    // 읽기 풀에 가시성·아티팩트 칸 SELECT, 쓰기 풀에 서명 키 표 INSERT·SELECT, 첨부 저장소(`ATTACHMENT_ROOT`). 하나라도 없으면 TS.
+    let attachment_preview = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::attachment_preview as c;
+            use harkroom_server::core::attachment_store::LocalStorage;
+            match (
+                write::missing_in(&state.pool, c::PREVIEW_READ_PRIVILEGES, &[]).await,
+                write::missing_in(w, c::PREVIEW_WRITE_PRIVILEGES, &[]).await,
+                LocalStorage::from_env(),
+            ) {
+                (Ok(r), Ok(m), Ok(Some(s))) if r.is_empty() && m.is_empty() => Some((w.clone(), s)),
+                (Ok(r), Ok(m), Ok(Some(_))) => {
+                    let mut all = r;
+                    all.extend(m);
+                    eprintln!("front: attachment preview core off — missing privileges {all:?}");
+                    refuse_missing_grants(&all);
+                    None
+                }
+                (Ok(_), Ok(_), Ok(None)) => {
+                    eprintln!("front: attachment preview core off — ATTACHMENT_ROOT not set");
+                    None
+                }
+                (Ok(_), Ok(_), Err(e)) => {
+                    eprintln!("front: attachment preview core off — attachment root ({e})");
+                    None
+                }
+                (Err(e), _, _) | (_, Err(e), _) => {
+                    eprintln!(
+                        "front: attachment preview core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // S5.4 CH2 — 채널 읽음 상태 쓰기(`PUT /channels/{id}/read`·`/unread`). 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 그 칸 권한이 다 있을 때만.
     let channel_read_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -4577,6 +4615,20 @@ async fn main() {
             core_routes.router = core_routes.router.merge(ad.router);
             core_routes.http.extend(ad.http);
             core_routes.sockets.extend(ad.sockets);
+        }
+        if let Some((write, storage)) = attachment_preview {
+            let ap = harkroom_server::core::attachment_preview::routes(
+                harkroom_server::core::attachment_preview::PreviewState::new(
+                    state.pool.clone(),
+                    write,
+                    storage,
+                ),
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(ap.router);
+            core_routes.http.extend(ap.http);
+            core_routes.sockets.extend(ap.sockets);
         }
         if let Some(write) = auto_mention_doc {
             let am = harkroom_server::core::channel_auto_mention_doc::routes(
