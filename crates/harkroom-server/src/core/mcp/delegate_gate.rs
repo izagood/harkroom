@@ -6,7 +6,7 @@
 //!   ([`crate::core::delegate_write`]) → 이벤트. 쓰기 칸(`McpWrites::delegate`)이 없으면 지금처럼 TS 로 넘긴다.
 //! - S5.4-11c: 팀장 **에이전트**가 `to` 전원을 담는 자기 팀 **하나**에 넘기는 요청(팀 명단 갈래)도 맡는다 — TS 처럼 호출 게이트·
 //!   사슬 상한을 건너뛰고 팀 명단의 (계정, 꺼짐)으로 접속을 본 뒤 위임 행·부름에 `team_id` 를 적는다. `to` 를 담는 팀이 둘 이상이면
-//!   TS 처럼 같은 문장의 행 순서 첫 팀(S5.4-14c). 팀장이 사람이면 TS 로 넘긴다.
+//!   TS 처럼 같은 문장의 행 순서 첫 팀(S5.4-14c). 팀장이 사람이어도 같은 팀 갈래를 탄다(`route_for`).
 //! - S5.4-14c: 비지 않은 `agentModels` 도 맡는다 — 접속 확인 뒤 TS `preparePicks`([`super::msg_post::check_picks`]), 글 tx 의
 //!   `applyAgentPicks`(`notified` 에 넘겨받는 팀원을 더한다), 커밋 뒤 시스템 줄·이벤트. 하네스 목록(`relay_moved`)·고르기 쓰기 권한
 //!   (`AGENT_MODEL_PICKS_PRIVILEGES`)이 없으면 TS.
