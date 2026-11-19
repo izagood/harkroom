@@ -126,6 +126,28 @@ describe('the preview card in a message', () => {
     expect(c.openArtifactPreview).toHaveBeenCalledWith(expect.objectContaining({ id: 'p1' }), 'thread');
   });
 
+  // 카드에서 바로 내려받는다 — 여는 버튼과 형제라 누르면 패널은 열리지 않고, 그 카드의 판(첨부)을 저장한다.
+  it('saves the version on the card from its own button without opening the panel', () => {
+    const c = fakeController();
+    render(<Attachments attachments={[page(), page({ id: 'p2' }, { version: 2, latestVersion: 2 })]} />);
+    const buttons = screen.getAllByTestId('artifact-card-download');
+    expect(buttons[1]!.textContent).toBe('저장…');
+    expect(buttons[1]!.getAttribute('aria-label')).toBe('저장… Inbox 보드 v1 v2');
+    expect(buttons[1]!.closest('[data-testid="artifact-card"]')).toBeNull();
+    fireEvent.click(buttons[1]!);
+    expect(c.saveAttachment).toHaveBeenCalledWith(expect.objectContaining({ id: 'p2' }));
+    expect(c.openArtifactPreview).not.toHaveBeenCalled();
+  });
+
+  it('holds the card download while a save of that version is running', () => {
+    fakeController();
+    render(<Attachments attachments={[page()]} />);
+    act(() => { useAppStore.getState().set({ attachmentSaving: { p1: { phase: 'fetching', loaded: 1024, total: 2048 } } }); });
+    const b = screen.getByTestId('artifact-card-download') as HTMLButtonElement;
+    expect(b.disabled).toBe(true);
+    expect(b.textContent).toContain('50');
+  });
+
   // designer a: 고쳐 올린 안인지 첫 판인지 카드에서 보인다.
   it('shows how many earlier versions a revised card has', () => {
     fakeController();

@@ -2067,6 +2067,7 @@ export const ko = {
   'artifact.card.html': 'HTML',
   'artifact.card.openLabel': '미리보기 열기 ›',
   'artifact.card.previewing': '미리보기 중',
+  'artifact.card.save': '저장… {title} v{version}',
   'artifact.panel.label': '미리보기',
   'artifact.panel.expand': '창 전체로 키우기',
   'artifact.panel.collapse': '옆 패널로 되돌리기',

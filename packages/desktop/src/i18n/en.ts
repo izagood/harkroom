@@ -3703,6 +3703,7 @@ export const en = {
   'artifact.card.html': 'HTML',
   'artifact.card.openLabel': 'Open preview ›',
   'artifact.card.previewing': 'Previewing',
+  'artifact.card.save': 'Save… {title} v{version}',
   'artifact.panel.label': 'Preview',
   'artifact.panel.expand': 'Expand to window',
   'artifact.panel.collapse': 'Back to side panel',
