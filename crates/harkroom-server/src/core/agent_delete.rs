@@ -86,10 +86,13 @@ pub struct AgentDeleteState {
     pub trust: Arc<TrustProxy>,
 }
 
-const DELETED_HANDLE_PREFIX: &str = "deleted-";
+pub(crate) const DELETED_HANDLE_PREFIX: &str = "deleted-";
 
 /// `freeDeletedHandle` — 묘비 이름. 앞 8자, 겹치면 24자, 그래도 겹치면 난수 12바이트.
-async fn free_deleted_handle(tx: &mut sqlx::PgConnection, id: &str) -> Result<String, sqlx::Error> {
+pub(crate) async fn free_deleted_handle(
+    tx: &mut sqlx::PgConnection,
+    id: &str,
+) -> Result<String, sqlx::Error> {
     let hex: String = id.chars().filter(|c| *c != '-').collect();
     for n in [8usize, 24] {
         let cand = format!("{DELETED_HANDLE_PREFIX}{}", &hex[..n.min(hex.len())]);
