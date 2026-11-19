@@ -4705,13 +4705,16 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           expect((await both('환원 500')).mine).toEqual({ repo: 'o/collab-r', channelIds: [ch1, ch2].sort(), error: 'unreachable', proposals: [], reducedAt: null });
           av.reduced = 'ok';
           expect((await both('되살아남')).mine!.proposals.map((p) => p.state)).toEqual(['needs_decision', 'open']);
-          // https 서버 — 이 앞단의 avcs 클라이언트는 TLS 를 못 붙는다. 읽지 않고 TS 에 넘긴다(TS 는 자기 워커의 URL 로 답한다).
+          // https 서버 — 앞단의 avcs 클라이언트가 TLS 로 붙는다(`avcs_http`). TS 에 넘기지 않고 Rust 가 그 주소로 답한다.
+          // `.example` 은 풀리지 않는 이름이라 그 저장소만 unreachable 이다(TLS 접속 자체는 `avcs_http` 단위 시험이 본다).
           await db.pool.query(`update projection_config set avcs_base_url = 'https://collab.example' where id = true`);
           const b1 = av.hits.get(portB) ?? 0;
-          const viaTs = await callX(rsC, 'GET', '/collab/proposals');
-          expect(viaTs.status).toBe(200);
-          expect((viaTs.json as unknown as View).baseUrl, 'https → TS 가 답했다').toBe(urlA);
-          expect(av.hits.get(portB) ?? 0, 'Rust 는 읽지 않았다').toBe(b1);
+          const viaRs = await callX(rsC, 'GET', '/collab/proposals');
+          expect(viaRs.status).toBe(200);
+          const httpsView = viaRs.json as unknown as View;
+          expect(httpsView.baseUrl, 'https → Rust 가 답했다(TS 워커 URL 이 아님)').toBe('https://collab.example');
+          expect(httpsView.repos.map((r) => r.error)).toEqual(['unreachable']);
+          expect(av.hits.get(portB) ?? 0, '옛 http 서버는 읽지 않았다').toBe(b1);
         } finally {
           fC?.child.kill('SIGTERM');
           await appC.close();
