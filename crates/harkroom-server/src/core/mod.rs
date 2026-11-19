@@ -37,6 +37,7 @@ pub mod ask_bundle_resolve;
 pub mod ask_reply_close;
 pub mod ask_sync;
 pub mod attachment_download;
+pub mod attachment_preview;
 pub mod attachment_store;
 pub mod attachment_upload;
 pub mod audience;
