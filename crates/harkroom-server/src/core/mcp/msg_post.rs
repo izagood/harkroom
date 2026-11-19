@@ -708,6 +708,7 @@ pub(super) async fn post_card(
     let is_dm = msg_post::channel_is_dm(&st.read, &a.channel).await.ok()?;
     let audience = audience_for(&st.read, &a.channel).await.ok()?.to_json();
     let origin = Origin {
+        plan_auto_stamp: None,
         defer_inbox_events: false,
         chat_ask_rust: false,
         close_asks_after_commit: false,
@@ -949,6 +950,7 @@ async fn post_with(
     let is_dm = msg_post::channel_is_dm(&st.read, &a.channel).await.ok()?;
     let audience = audience_for(&st.read, &a.channel).await.ok()?.to_json();
     let origin = Origin {
+        plan_auto_stamp: None,
         defer_inbox_events: false,
         chat_ask_rust: false,
         close_asks_after_commit: false,

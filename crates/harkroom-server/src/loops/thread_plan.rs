@@ -565,8 +565,9 @@ impl Watcher {
 
     /// TS `wakeAuto` — 자동 진행 한 번. 실패가 감시를 멈추지 않는다.
     async fn wake_auto(&self, root: &str) {
-        // TODO(P5 PR2): TS `wakePlanAuto` 이식.
-        let _ = root;
+        if let Err(e) = super::thread_plan_auto::wake(&self.st, root).await {
+            eprintln!("[threadPlanWatcher] auto wake failed: {root}: {e}");
+        }
     }
 }
 

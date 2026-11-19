@@ -124,6 +124,9 @@ pub const MESSAGE_POST_SEQUENCE_PRIVILEGES: &[(&str, &str)] = &[("event_outbox_i
 
 /// TS `postMessage` 의 principal 옮겨 적기(152·153) — 다음 에이전트의 임대가 이것을 이어받는다. 판정에는 아직 쓰지 않는다.
 /// 문장이 TS 와 같은지는 대조 시험이 행으로 본다(TS 는 인라인 문장이다).
+/// TS `planAutoStamp` 의 도장.
+const PLAN_AUTO_STAMP_SQL: &str =
+    "update message set mandate_id = $2::uuid, principal_account_id = $3::uuid where id = $1::uuid";
 const SET_PRINCIPAL_SQL: &str = "update message set principal_account_id = $2::uuid, principal_cause_reasons = $3 where id = $1::uuid";
 
 /// TS `DELEGATION_SILENCE_SEC` — 담당 글 하나가 기한을 이만큼 뒤로 민다.
@@ -378,6 +381,9 @@ pub(crate) struct Origin<'a> {
     /// P3c — 사람 세션 REST 글이고 글 승인 입구가 켜졌다: 선택 카드 글 답(TS `answerAskFromMessage`)을 Rust 가 커밋 뒤에 한다.
     /// [`TS_THREAD_SQL`] 의 ask 갈래를 끈다(TS `parseAskPick` 과 같은 판정을 Rust 가 하므로 넓게 넘길 까닭이 없다).
     pub(crate) chat_ask_rust: bool,
+    /// TS `planAutoStamp`(계획판 자동 진행 깨움) — 서버만 찍는다. `system` 글에만 위임 키(`mandate_id`)와 principal 을 같은 tx 에서
+    /// 적는다(그 사람이 직접 부른 턴과 같은 키를 잇는다). `(mandate, principal)`. 라우트 입력에서는 켜지 않는다.
+    pub(crate) plan_auto_stamp: Option<(Option<&'a str>, &'a str)>,
     /// P3c — 이 글이 카드 답이 될 수 있다(`parseAskPick` 이 Some). tx 안 [`ask_reply_close::close_by_reply`] 를 건너뛴다 —
     /// 부르는 쪽이 커밋 뒤 TS 라우트 순서(카드 답 → `inbox.updated` → `closeAsksByReply`)로 닫는다. 먼저 닫으면 카드가 `replied` 가 돼 답이 안 된다.
     pub(crate) close_asks_after_commit: bool,
@@ -1277,6 +1283,15 @@ pub(crate) async fn post_tx(
         }
         _ => None,
     };
+    // TS `planAutoStamp` — 시스템 글에만, 커밋 앞 같은 tx 에서.
+    if let (true, Some((mandate, principal))) = (origin.system, origin.plan_auto_stamp) {
+        sqlx::query(PLAN_AUTO_STAMP_SQL)
+            .bind(&id)
+            .bind(mandate)
+            .bind(principal)
+            .execute(&mut *tx)
+            .await?;
+    }
     // TS `beforeCommit` — 위임을 닫은 뒤, 커밋 앞. 거절이면 롤백, 지나면 같은 tx 에서 행을 다시 읽는다.
     if let Some(hook) = origin.before_commit {
         if let Some(rej) = hook.run(&mut tx, &id, &notified_set).await? {
