@@ -213,7 +213,12 @@ enum Written<'c> {
 }
 
 /// 계정 잠금 → 상한 → 감시 → 구독자. 커밋은 호출부가 한다 — 그 전 오류는 거래째 버려진다(아무것도 안 쓰임).
-async fn write<'c>(pool: &'c PgPool, me: &str, a: &Args) -> Result<Written<'c>, sqlx::Error> {
+async fn write<'c>(
+    pool: &'c PgPool,
+    me: &str,
+    a: &Args,
+    source: &str,
+) -> Result<Written<'c>, sqlx::Error> {
     let s = sql();
     let mut tx = pool.begin().await?;
     sqlx::query(s.lock.as_str())
@@ -251,7 +256,7 @@ async fn write<'c>(pool: &'c PgPool, me: &str, a: &Args) -> Result<Written<'c>, 
         .bind(&a.channel)
         .bind(&a.thread)
         .bind(a.delegation.as_deref())
-        .bind("manual")
+        .bind(source)
         .execute(&mut *tx)
         .await?;
     Ok(Written::Ready {
@@ -275,7 +280,7 @@ pub async fn answer(pool: &PgPool, me: &Account, args: &Value) -> Option<String>
         Pre::Refuse(r) => return Some(r),
         Pre::Go => {}
     }
-    match write(pool, &me.id, &a).await.ok()? {
+    match write(pool, &me.id, &a, "manual").await.ok()? {
         Written::TooMany => Some(denied("too_many")),
         Written::Ready {
             tx,
@@ -292,6 +297,55 @@ pub async fn answer(pool: &PgPool, me: &Account, args: &Value) -> Option<String>
                 created,
                 &crate::core::msg_post::iso_ms(exp_ms),
             )))
+        }
+    }
+}
+
+/// TS `autoWatchOnQueued` — 머지 래퍼가 `queued` 를 보고했을 때 머지한 에이전트 이름으로 그 머지 스레드에 `until: merged` 감시를
+/// 건다(`source: merge_queue`). 스위치 판정은 호출부(`merge_checks`)가 한다. TS `createWatch(…, { skipGrant: true })` 처럼 grant 는
+/// 다시 보지 않는다(방금 N1 관문이 봤다) — 모양(저장소·head·번호)과 채널 멤버·스레드 머리, 계정 상한만 본다.
+/// `Ok(Some(id))` 면 감시를 걸었다, `Ok(None)` 이면 TS 가 `{ ok: false }` 로 아무것도 안 쓰는 갈래(bad_request·forbidden·too_many)다.
+/// 오류는 호출부가 삼킨다(TS 의 `.catch(() => null)` — 실패해도 보고는 남는다).
+pub async fn auto_watch_on_queued(
+    pool: &PgPool,
+    agent: &str,
+    repo: &str,
+    number: i64,
+    head: &str,
+    channel: &str,
+    thread: &str,
+) -> Result<Option<String>, sqlx::Error> {
+    let repo = repo.trim().to_lowercase();
+    let head_ok = head.len() == 40 && head.bytes().all(|c| matches!(c, b'0'..=b'9' | b'a'..=b'f'));
+    let Ok(number) = i32::try_from(number) else {
+        return Ok(None);
+    };
+    if !repo_ok(&repo) || !head_ok || number <= 0 {
+        return Ok(None);
+    }
+    let a = Args {
+        repo,
+        number,
+        head: head.to_owned(),
+        until: "merged",
+        channel: channel.to_owned(),
+        thread: thread.to_owned(),
+        delegation: None,
+    };
+    let member = sqlx::query(sql().member.as_str())
+        .bind(&a.channel)
+        .bind(agent)
+        .bind(&a.thread)
+        .fetch_optional(pool)
+        .await?;
+    if member.is_none() {
+        return Ok(None);
+    }
+    match write(pool, agent, &a, "merge_queue").await? {
+        Written::TooMany => Ok(None),
+        Written::Ready { tx, id, .. } => {
+            tx.commit().await?;
+            Ok(Some(id))
         }
     }
 }

@@ -12530,14 +12530,14 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             const prevEnforce = process.env.HARKROOM_MANDATE_ENFORCE;
             const kids: ChildProcess[] = [];
             const deadPort = await freePort();
-            const deadFront = async (enforce: string) => {
+            const deadFront = async (enforce: string, extra: Record<string, string> = {}) => {
               for (let attempt = 0; ; attempt += 1) {
                 const port = await freePort();
                 try {
                   const fd = await startFront(bin, {
                     UPSTREAM_URL: `http://127.0.0.1:${deadPort}`, DATABASE_URL: db.uri, PORT: String(port), HARKROOM_FRONT_TS_ROUTES: '',
                     DATABASE_WRITE_URL: writeUrl.toString(), TRUST_PROXY: TRUST.join(','), CORS_ORIGINS: CORS, HARKROOM_CORE: 'rust',
-                    ...GROUP_A_ENV, HARKROOM_MANDATE_ENFORCE: enforce,
+                    ...GROUP_A_ENV, HARKROOM_MANDATE_ENFORCE: enforce, ...extra,
                   });
                   kids.push(fd.child);
                   const until = Date.now() + 10_000;
@@ -12701,6 +12701,64 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                 const u = await mcSide(dUnset.url, fx, 1);
                 expect(u.rs[0]!.status, `스위치 모름: ${label} → TS 로 넘긴다`).toBe(502);
                 expect(u.effects, `스위치 모름: ${label} — 아무것도 적지 않는다`).toEqual({ audit: [], denials: [], used: null });
+              }
+              // 13b) POST /agent/merge-results `queued`(TS `reportMerge` + `autoWatchOnQueued`). 쪽마다 새 임대로 TS 판정(merge-checks)을 지난 뒤
+              // 같은 `queued` 보고를 보내 응답·시스템 줄·감사·감시(`pr_watch`·구독자 `source`)를 견준다. Rust 앞단은 닿지 않는 upstream 이라
+              // 같은 결과가 곧 Rust 가 직접 적었다는 증명이다. 위임 v2 스위치: TS 는 요청 때 env, 앞단은 기동 때 값. 모르는 앞단은 TS 로(502).
+              delete process.env.HARKROOM_MANDATE_ENFORCE;
+              const prevV2 = process.env.HARKROOM_DELEGATION_V2;
+              try {
+                const MR = '/agent/merge-results';
+                const QREPO = 'izagood/s55mc-ok';
+                const dQ = { '1': await deadFront('off', { HARKROOM_DELEGATION_V2: '1' }), '0': await deadFront('off', { HARKROOM_DELEGATION_V2: '0' }) };
+                const dQUnset = await deadFront('off', { HARKROOM_DELEGATION_V2: '' });
+                for (const d of Object.values(dQ)) {
+                  for (const off of ['merge results write off', 'mcp pr.watch core off']) expect(d.log(), off).not.toContain(off);
+                }
+                const qSide = async (base: string) => {
+                  const x = await turn(QREPO);
+                  const chk = await fetch(`${tsUrl}${MC}`, { method: 'POST', headers: { ...x.headers, 'content-type': J, 'x-forwarded-for': XFF }, body: JSON.stringify(x.body) });
+                  expect(chk.status, await chk.clone().text()).toBe(200);
+                  const leaseId = (x.body as { leaseId: string }).leaseId;
+                  const root = (await db.pool.query<{ t: string }>(`select thread_root_id::text as t from secret_turn_lease where id = $1`, [leaseId])).rows[0]!.t;
+                  const mark = (await db.pool.query<{ a: string }>(`select coalesce(max(id), 0)::text as a from audit_log`)).rows[0]!.a;
+                  const res = await fetch(`${base}${MR}`, { method: 'POST', headers: { ...x.headers, 'content-type': J, 'x-forwarded-for': XFF },
+                    body: JSON.stringify({ ...(x.body as Record<string, unknown>), result: 'queued' }) });
+                  const text = await res.text();
+                  let json: unknown = text;
+                  try { json = JSON.parse(text); } catch { /* 502 는 맨글자다 */ }
+                  const lines = (await db.pool.query(
+                    `select author_id, body, kind, meta from message where thread_root_id = $1 and kind = 'system' order by created_at`, [root])).rows;
+                  const audit = (await db.pool.query(
+                    `select action, actor_id, target, detail from audit_log where id > $1 and actor_id = $2 order by id`, [mark, mc.accountId])).rows;
+                  const watches = (await db.pool.query(
+                    `select w.repo, w.number, w.head, w.until, w.state, w.expires_at > now() + interval '5 hours' as ttl6h,
+                            s.account_id, s.channel_id, s.thread_root_id = $2::uuid as same_thread, s.delegation_id, s.source
+                       from pr_watch w join pr_watch_subscriber s on s.watch_id = w.id where s.account_id = $1 order by w.repo`, [mc.accountId, root])).rows;
+                  await db.pool.query(`delete from pr_watch where repo = $1`, [QREPO]);
+                  return { r: { status: res.status, json }, effects: { lines, audit, watches } };
+                };
+                for (const v2 of ['1', '0'] as const) {
+                  process.env.HARKROOM_DELEGATION_V2 = v2;
+                  const a = await qSide(tsUrl);
+                  const b = await qSide(dQ[v2].url);
+                  expect(norm(b.r), `queued v2=${v2} — Rust 가 직접 답한다(upstream 없음)`).toEqual(norm(a.r));
+                  expect(norm(b.effects), `queued v2=${v2} 부작용`).toEqual(norm(a.effects));
+                  expect(a.r.status, JSON.stringify(a.r.json)).toBe(201);
+                  expect(a.effects.lines).toHaveLength(1);
+                  expect(a.effects.lines[0]).toMatchObject({ kind: 'system', meta: { merge: { result: 'queued' } } });
+                  expect((a.effects.audit as Array<{ action: string }>).map((r) => r.action)).toEqual(['repo.merge.queued']);
+                  expect(norm(a.effects.watches), `v2=${v2} 감시`).toEqual(v2 === '1'
+                    ? [{ repo: QREPO, number: 7, head: SHA40, until: 'merged', state: 'open', ttl6h: true, account_id: '<mc>', channel_id: '<ch>',
+                      same_thread: true, delegation_id: null, source: 'merge_queue' }]
+                    : []);
+                }
+                // 스위치를 모르는 앞단 — `queued` 보고는 아무것도 적지 않고 TS 로 넘긴다(502).
+                const u = await qSide(dQUnset.url);
+                expect(u.r.status, '스위치 모름: queued → TS 로 넘긴다').toBe(502);
+                expect(u.effects, '스위치 모름: queued — 아무것도 적지 않는다').toEqual({ lines: [], audit: [], watches: [] });
+              } finally {
+                if (prevV2 === undefined) delete process.env.HARKROOM_DELEGATION_V2; else process.env.HARKROOM_DELEGATION_V2 = prevV2;
               }
             } finally {
               for (const k of kids) k.kill('SIGTERM');
