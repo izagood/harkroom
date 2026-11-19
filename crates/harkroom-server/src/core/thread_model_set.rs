@@ -48,20 +48,20 @@ pub const THREAD_MODEL_SET_PRIVILEGES: &[(&str, &str)] = &[
 ];
 
 /// TS `MODEL_ID_MAX`·`EFFORT_MAX`.
-const MODEL_ID_MAX: usize = 120;
-const EFFORT_MAX: usize = 32;
+pub(crate) const MODEL_ID_MAX: usize = 120;
+pub(crate) const EFFORT_MAX: usize = 32;
 const BODY_LIMIT: usize = 1024 * 1024;
 /// TS `SYSTEM_ACCOUNT_PLACEHOLDER`.
 const PLACEHOLDER: &str = "{account}";
 
-const ROOT_SQL: &str = "select 1 from message where id = $1::uuid and channel_id = $2::uuid \
+pub(crate) const ROOT_SQL: &str = "select 1 from message where id = $1::uuid and channel_id = $2::uuid \
      and thread_root_id is null and deleted_at is null";
-const AGENT_SQL: &str = "select a.kind, c.harness from account a left join agent_config c on c.account_id = a.id \
+pub(crate) const AGENT_SQL: &str = "select a.kind, c.harness from account a left join agent_config c on c.account_id = a.id \
       where a.id = $1::uuid and a.deleted_at is null";
 const CFG_SQL: &str = "select harness, model from agent_config where account_id = $1::uuid";
-const CLEAR_SQL: &str =
+pub(crate) const CLEAR_SQL: &str =
     "delete from thread_agent_model where thread_root_id = $1::uuid and agent_id = $2::uuid";
-const UPSERT_SQL: &str = "insert into thread_agent_model (thread_root_id, agent_id, harness, model, effort, set_by, set_by_kind) \
+pub(crate) const UPSERT_SQL: &str = "insert into thread_agent_model (thread_root_id, agent_id, harness, model, effort, set_by, set_by_kind) \
      values ($1::uuid, $2::uuid, $3, $4, $5, $6::uuid, 'human') \
      on conflict (thread_root_id, agent_id) do update set \
        harness = excluded.harness, model = excluded.model, effort = excluded.effort, \
@@ -484,7 +484,20 @@ pub(crate) async fn announce_agent_pick(
     agent: &str,
     axes: Option<&(Option<String>, Option<String>)>,
 ) -> sqlx::Result<()> {
-    announce_by(st, channel, root, actor, agent, axes, true).await?;
+    announce_pick(st, channel, root, actor, agent, axes, true).await
+}
+
+/// [`announce_agent_pick`] 의 두 갈래 — `by_agent` 가 거짓이면 사람 작성창 칩(REST 글의 `agentModels`, [`super::msg_post_models`]).
+pub(crate) async fn announce_pick(
+    st: &PostState,
+    channel: &str,
+    root: &str,
+    actor: &str,
+    agent: &str,
+    axes: Option<&(Option<String>, Option<String>)>,
+    by_agent: bool,
+) -> sqlx::Result<()> {
+    announce_by(st, channel, root, actor, agent, axes, by_agent).await?;
     let row: Option<String> = sqlx::query_scalar(ROW_SQL)
         .bind(root)
         .bind(agent)

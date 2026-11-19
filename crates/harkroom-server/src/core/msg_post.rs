@@ -397,13 +397,7 @@ pub(crate) trait BeforeCommit: std::fmt::Debug + Sync {
     ) -> BeforeCommitFuture<'a>;
 }
 
-/// 읽은 JSON 이 TS 몫인가 — 키만 보고 정한다(값이 틀렸으면 TS 가 400 을 준다).
-fn ts_keys(v: &Value) -> bool {
-    let Value::Object(o) = v else { return false };
-    o.contains_key("agentModels")
-}
-
-/// zod 스키마 + refine. `agentModels` 는 [`ts_keys`] 가 먼저 TS 로 보낸다. `threadRootId` 는 uuid 글자만(null 포함 그 밖은 400 —
+/// zod 스키마 + refine. `agentModels` 는 [`super::msg_post_models::parse`] 가 따로 본다. `threadRootId` 는 uuid 글자만(null 포함 그 밖은 400 —
 /// TS `z.string().uuid().optional()`).
 fn parse_post(v: &Value) -> Option<PostBody> {
     let Value::Object(o) = v else { return None };
@@ -1493,13 +1487,22 @@ fn json_response(status: StatusCode, row: String) -> Response {
 }
 
 /// `POST /channels/{id}/messages`.
+/// REST 글 줄의 상태 — 글 코어 + `agentModels` 를 Rust 가 맡을 수 있는가([`super::msg_post_models`]).
+pub struct RestState {
+    pub post: PostState,
+    /// 스레드 모델 지정 코어가 붙었는가(오퍼레이터 코어가 Rust 이고 지정 권한이 있다 — `main.rs` 의 `thread_model_set`).
+    /// 거짓이면 비지 않은 `agentModels` 글은 TS 로 넘긴다(하네스 목록을 능력 스냅숏으로만 볼 수 있다).
+    pub models: bool,
+}
+
 pub async fn post(
-    State(st): State<Arc<PostState>>,
+    State(rs): State<Arc<RestState>>,
     RequireAccount(me, auth): RequireAccount,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Path(id): Path<String>,
     req: Request,
 ) -> Response {
+    let st = &rs.post;
     let (parts, body) = req.into_parts();
     let bytes = match to_bytes(body, BODY_LIMIT).await {
         Ok(b) => b,
@@ -1519,7 +1522,7 @@ pub async fn post(
     // 사람은 세션 글만(사람 PAT 는 인증에서 401), 에이전트는 PAT·오퍼레이터 글(C1c-4a). 모델 지정 키 등은 판정하지 않고 넘긴다.
     let human_session = me.kind == "human" && auth.via == Some(Via::Session);
     let author_is_agent = me.kind == "agent";
-    if !(human_session || author_is_agent) || parsed.as_ref().is_some_and(ts_keys) {
+    if !(human_session || author_is_agent) {
         return to_ts(st.up.clone(), peer, parts, bytes).await;
     }
     if !is_uuid(&id) {
@@ -1528,6 +1531,17 @@ pub async fn post(
     let Some(input) = parsed.as_ref().and_then(parse_post) else {
         return bad();
     };
+    let Some(picks) = parsed
+        .as_ref()
+        .and_then(Value::as_object)
+        .and_then(super::msg_post_models::parse)
+    else {
+        return bad();
+    };
+    // 하네스 목록을 볼 수 없으면(오퍼레이터 코어가 TS) 고르기 글은 TS 몫이다 — 아직 아무것도 읽거나 쓰지 않았다.
+    if !picks.is_empty() && !rs.models {
+        return to_ts(st.up.clone(), peer, parts, bytes).await;
+    }
     if ts_guard(&input.body) {
         return to_ts(st.up.clone(), peer, parts, bytes).await;
     }
@@ -1559,6 +1573,25 @@ pub async fn post(
         }
         _ => {}
     }
+    // TS 와 같이 게이트 뒤, 글을 올리기 **전**에 거른다 — 올린 뒤 거절하면 글만 남고 지정이 빠진 채 기본값으로 턴이 돈다.
+    if !picks.is_empty() {
+        match super::msg_post_models::refuse(
+            st,
+            &me.kind,
+            &id,
+            input.thread_root.as_deref(),
+            &picks,
+        )
+        .await
+        {
+            Ok(None) => {}
+            Ok(Some(r)) => return r,
+            Err(e) => return internal(e),
+        }
+    }
+    let hook = (!picks.is_empty()).then(|| {
+        super::msg_post_models::RestPicks::new(&id, input.thread_root.as_deref(), &me.id, picks)
+    });
     // DM 은 받는 사람에게 `dm` 알림이 간다(C1c-3d 부터 Rust 가 넣는다 — [`dm_notify`]).
     let kind: Option<String> = match sqlx::query_scalar(sql().channel_kind.as_str())
         .bind(&id)
@@ -1579,7 +1612,7 @@ pub async fn post(
         .and_then(|v| v.to_str().ok())
         .map(str::to_owned);
     match post_in_tx(
-        &st,
+        st,
         &id,
         &me.id,
         author_is_agent,
@@ -1587,7 +1620,10 @@ pub async fn post(
         key.as_deref(),
         &audience,
         is_dm,
-        &Origin::default(),
+        &Origin {
+            before_commit: hook.as_ref().map(|h| h as &dyn BeforeCommit),
+            ..Origin::default()
+        },
     )
     .await
     {
@@ -1630,6 +1666,10 @@ pub async fn post(
                 )
                 .await;
             }
+            // TS 는 지정의 시스템 줄을 `message.created` 앞에 낸다 — Rust 는 커밋 뒤라 그 뒤다(지정 행 자체는 같은 tx 에 들어갔다).
+            if let Some(h) = &hook {
+                h.announce(st).await;
+            }
             // TS `queueLinkPreviewFetch` — 응답을 기다리게 하지 않는다(실패는 삼킨다).
             for u in preview_urls {
                 tokio::spawn(super::link_preview_fetch::queue_fetch(st.write.clone(), u));
@@ -1657,12 +1697,12 @@ pub async fn post(
 
 /// 코어 라우터에 합칠 줄 — `msg_edit.rs` 와 같은 길(인증은 `route_layer`, CORS 는 `layer`).
 pub fn routes(
-    st: PostState,
+    st: RestState,
     auth: crate::auth::AuthPools,
     cors: Arc<crate::cors::Cors>,
 ) -> crate::route_table::Routes<()> {
     use crate::route_table::Table;
-    let t = Table::<Arc<PostState>>::new()
+    let t = Table::<Arc<RestState>>::new()
         .post("/channels/{id}/messages", post)
         .map(|r| {
             r.route_layer(axum::middleware::from_fn_with_state(
@@ -1830,12 +1870,10 @@ mod tests {
         assert!(!ok(json!({ "body": "x", "alsoInChannel": "yes" })));
         assert!(!ok(json!({ "body": "a".repeat(8001) })));
         assert!(ok(json!({ "body": "a".repeat(8000), "extra": 1 })));
-        assert!(!ts_keys(&json!({ "body": "x", "threadRootId": "bad" })));
         assert!(!ok(json!({ "body": "x", "threadRootId": "bad" })));
         assert!(!ok(json!({ "body": "x", "threadRootId": null })));
         assert!(ok(
             json!({ "body": "x", "threadRootId": "0b6f8d2e-3c1a-4f5e-9a7b-1c2d3e4f5a6b" })
         ));
-        assert!(ts_keys(&json!({ "body": "x", "agentModels": [] })));
     }
 }

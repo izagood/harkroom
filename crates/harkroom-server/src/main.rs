@@ -3638,6 +3638,7 @@ async fn main() {
         }
         _ => None,
     };
+    let rest_models_ok = thread_model_set.is_some();
     // S5.4 TM3 — `GET /agents/{agentId}/model-options`: 오퍼레이터 코어 + 읽기 칸 권한.
     let agent_model_options = operator_on && {
         use harkroom_server::core::agent_model_options as mo;
@@ -5115,11 +5116,15 @@ async fn main() {
         });
         if let Some(write) = post_write {
             let post = harkroom_server::core::msg_post::routes(
-                harkroom_server::core::msg_post::PostState {
-                    read: state.pool.clone(),
-                    write,
-                    up: state.up.clone(),
-                    implicit_ok,
+                harkroom_server::core::msg_post::RestState {
+                    post: harkroom_server::core::msg_post::PostState {
+                        read: state.pool.clone(),
+                        write,
+                        up: state.up.clone(),
+                        implicit_ok,
+                    },
+                    // P3 — 작성창 칩(`agentModels`)은 스레드 모델 지정 코어가 붙었을 때만 Rust 가 맡는다.
+                    models: rest_models_ok,
                 },
                 auth.clone(),
                 state.cors.clone(),

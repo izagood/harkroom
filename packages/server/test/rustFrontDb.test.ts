@@ -4877,6 +4877,45 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           expect((await callX(rsUrl, 'DELETE', del(pubCh, root, botA), undefined, A)).status, '두 번째 풀기는 404').toBe(404);
           await db.pool.query(`delete from message where thread_root_id = $1 and kind = 'system'`, [root]);
         }
+        // P3 — 글 올리기의 작성창 칩(`agentModels`, `msg_post_models.rs`). 거절은 상태·코드를, 풀기는 글·시스템 줄·남은 행을 견준다.
+        // 이 앞단은 스레드 모델 지정 코어가 붙어 있어(위 TM 정하기 줄) 비지 않은 고르기도 Rust 가 맡는다.
+        {
+          const post = (ch: string) => `/channels/${ch}/messages`;
+          for (const [name, ch, body, token, want] of [
+            ['에이전트 → 403 human_only', pubCh, { body: 'p3', agentModels: [{ agentId: botA, model: null }] }, agent.pat, 403],
+            ['답글 머리 → 404 not_a_root', pubCh, { body: 'p3', threadRootId: reply, agentModels: [{ agentId: botA, model: null }] }, A, 404],
+            ['다른 채널 머리 → 404 not_a_root', pubCh, { body: 'p3', threadRootId: privRoot, agentModels: [{ agentId: botA, model: null }] }, A, 404],
+            ['모양 틀린 값 → 400 bad_model_value', pubCh, { body: 'p3', threadRootId: root, agentModels: [{ agentId: botA, model: '-x' }] }, A, 400],
+            ['agentId 아님 → 400', pubCh, { body: 'p3', agentModels: [{ agentId: 'x' }] }, A, 400],
+            ['9줄 → 400', pubCh, { body: 'p3', agentModels: Array(9).fill({ agentId: botA }) }, A, 400],
+          ] as const) {
+            const [x, y] = [await callX(tsUrl, 'POST', post(ch), body, token), await callX(rsUrl, 'POST', post(ch), body, token)];
+            expect({ status: y.status, code: y.code }, name).toEqual({ status: x.status, code: x.code });
+            expect(y.status, name).toBe(want);
+          }
+          expect(Number((await db.pool.query<{ n: string }>(`select count(*) as n from message where body = 'p3'`)).rows[0]!.n), '거절된 글은 남지 않는다').toBe(0);
+          // 풀기 — 두 서버가 같은 스레드에서 차례로 같은 행을 푼다. 본 글(사람 답글)과 시스템 줄이 같고 행이 지워진다.
+          const lines = async () => (await db.pool.query<{ body: string; kind: string; author_id: string; meta: Record<string, unknown> }>(
+            `select body, kind, author_id, meta from message where thread_root_id = $1 and body <> 'p3 clear' order by seq desc limit 1`, [root])).rows;
+          const row = async () => (await db.pool.query(`select 1 from thread_agent_model where thread_root_id = $1 and agent_id = $2`, [root, botB])).rowCount;
+          const clear = { body: 'p3 clear', threadRootId: root, agentModels: [{ agentId: botB, model: '  ', effort: null }] };
+          expect(await row(), '풀 행이 있다').toBe(1);
+          const tsPost = await callX(tsUrl, 'POST', post(pubCh), clear, A);
+          expect(tsPost.status).toBe(201);
+          const tsLines = await lines();
+          expect(await row(), 'TS 가 풀었다').toBe(0);
+          await tam(root, botB, 'claude-code', null, 'high', null, 'agent', '2 hours');
+          const rsPost = await callX(rsUrl, 'POST', post(pubCh), clear, A);
+          expect(rsPost.status).toBe(201);
+          expect(await row(), 'Rust 가 풀었다').toBe(0);
+          expect(await lines(), '시스템 줄이 TS 와 같다').toEqual(tsLines);
+          expect(tsLines[0]!.kind).toBe('system');
+          // 없던 것을 풀면 줄을 남기지 않는다.
+          const before = await lines();
+          expect((await callX(rsUrl, 'POST', post(pubCh), clear, A)).status).toBe(201);
+          expect(await lines(), '없던 지정 풀기 → 시스템 줄 없음').toEqual(before);
+          await db.pool.query(`delete from message where thread_root_id = $1 and (kind = 'system' or body = 'p3 clear')`, [root]);
+        }
         await db.pool.query('delete from thread_agent_model where thread_root_id = any($1)', [[root, reply, empty, gone, privRoot]]);
         await db.pool.query('delete from message where id = any($1)', [[reply, root, empty, gone, privRoot]]);
         await db.pool.query('delete from channel_member where channel_id = any($1)', [[pubCh, privCh]]);
@@ -8867,7 +8906,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           return { status: res.status, code: (json.error as { code?: string } | undefined)?.code, json, count: res.headers.get('x-harkroom-notified-count') };
         };
         // 8d22aaf3f 부터 URL 이 든 글은 Rust 가 올린다(링크 미리보기를 Rust 가 받는다).
-        const HANDED = ['TS: 승인 낱말', 'TS: 메시지 링크', 'TS: 모델 지정 키'];
+        // P3 부터 `agentModels` 키(빈 목록)도 Rust 가 맡는다.
+        const HANDED = ['TS: 승인 낱말', 'TS: 메시지 링크'];
         const run = async (base: string, sd: Side) => {
           const out: { step: string; status: number; code?: string; count: string | null; body: unknown; id?: string }[] = [];
           const step = async (name: string, path: string, body: unknown, token?: string, key?: string) => {
@@ -8898,7 +8938,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           // C1c-4a 부터 Rust 가 맡는다(자세한 대조는 아래 사람 답글 블록의 에이전트 장면).
           // 오늘 채널의 최상위에는 BOT 을 깨운 부름이 있어 사슬 안(TS 몫)이 된다 — 부름이 없는 채널에서.
           await step('에이전트(PAT)', mPath(agentCh), { body: '에이전트 글' }, agent.pat);
-          await step('TS: 모델 지정 키', mPath(todayId), { body: '모델', agentModels: [] });
+          await step('모델 지정 키(빈 목록)', mPath(todayId), { body: '모델', agentModels: [] });
           return out;
         };
         const tsOut = await run(tsUrl, T);
@@ -8918,7 +8958,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           .map((e) => shape(sd)(JSON.parse(JSON.stringify(e))));
         const idsOf = (o: typeof tsOut, handed: boolean) => o.filter((x) => x.status === 201 && HANDED.includes(x.step) === handed).map((x) => x.id!);
         const want = created(tsEvents, idsOf(tsOut, false), T);
-        expect(want.length, '맡은 글마다 message.created(C1c-3a 부터 스레드 답글, C1c-3d 부터 DM, C1c-4a 부터 에이전트 글, 8d22aaf3f 부터 URL 글 포함)').toBe(7);
+        expect(want.length, '맡은 글마다 message.created(C1c-3a 부터 스레드 답글, C1c-3d 부터 DM, C1c-4a 부터 에이전트 글, 8d22aaf3f 부터 URL 글, P3 부터 모델 지정 키 포함)').toBe(8);
         const until8 = Date.now() + 10_000;
         while (created(busEvents, idsOf(rsOut, false), R).length < want.length && Date.now() < until8) await new Promise((res) => setTimeout(res, 100));
         expect(created(busEvents, idsOf(rsOut, false), R), 'Rust 가 낸 message.created = TS').toEqual(want);
