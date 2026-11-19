@@ -1308,11 +1308,21 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
             ctx.claude_config_dir.clone(),
             self.home.clone(),
         );
+        // 턴 시작 때의 기록 길이 — 탐침은 꼬리가 아니라 이 자리부터 읽는다(입력 줄 뒤에 큰 요청 기록 줄이 붙는다).
+        let probe_from = crate::harness_errors::session_transcript_len(
+            probe_harness,
+            probe_session.as_deref(),
+            crate::harness_errors::TranscriptDirs {
+                config_dir: probe_config.as_deref(),
+                home: Some(probe_home.as_path()),
+            },
+        );
         let confirm_probe = move || {
             crate::harness_errors::session_transcript_grew_since(
                 probe_harness,
                 probe_session.as_deref(),
                 probe_since,
+                probe_from,
                 crate::harness_errors::TranscriptDirs {
                     config_dir: probe_config.as_deref(),
                     home: Some(probe_home.as_path()),

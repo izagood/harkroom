@@ -561,12 +561,14 @@ fn grew_since_needs_timed_user_line() {
         C,
         Some("s1"),
         since,
+        0,
         dirs(&t.0)
     ));
     assert!(session_transcript_grew_since(
         C,
         Some("s1"),
         ms("2026-10-09T10:00:00Z").unwrap(),
+        0,
         dirs(&t.0)
     ));
     // 판정 불가는 참, 파일 없음은 거짓
@@ -574,13 +576,92 @@ fn grew_since_needs_timed_user_line() {
         AgentHarness::Codex,
         Some("s1"),
         since,
+        0,
         dirs(&t.0)
     ));
-    assert!(session_transcript_grew_since(C, None, since, dirs(&t.0)));
+    assert!(session_transcript_grew_since(C, None, since, 0, dirs(&t.0)));
     assert!(!session_transcript_grew_since(
         C,
         Some("s9"),
         since,
+        0,
         dirs(&t.0)
     ));
+}
+
+/// 실측 모양(합성): 입력 줄 바로 뒤에 하네스가 꼬리 창(256KB)보다 큰 요청 기록 줄을 쓴다 — 꼬리만 보면 입력 줄이
+/// 창 밖으로 밀린다. 턴 시작 자리부터 읽으면 찾는다.
+#[test]
+fn grew_since_finds_user_line_before_huge_request_record() {
+    let t = TempDir::new();
+    let old = user("2026-10-09T09:00:00Z");
+    write_session(&t.0, "s1", &[old.clone(), String::new()]);
+    let from = session_transcript_len(C, Some("s1"), dirs(&t.0));
+    assert_eq!(from, old.len() as u64 + 1);
+    // 요청 기록 줄: 안에 `"user"` 낱말이 들어 있지만 사람 입력 줄이 아니다(300KB+).
+    let filler = "x".repeat(320 * 1024);
+    let request = json!({
+        "type": "request-snapshot",
+        "timestamp": "2026-10-09T10:00:01Z",
+        "body": {"messages": [{"role": "user", "content": filler}]}
+    })
+    .to_string();
+    assert!(request.len() as u64 > TAIL_BYTES);
+    write_session(
+        &t.0,
+        "s1",
+        &[old, user("2026-10-09T10:00:00Z"), request, String::new()],
+    );
+    let since = ms("2026-10-09T09:30:00Z").unwrap();
+    // 꼬리 창에는 입력 줄이 없다(옛 판정이 놓치던 자리).
+    let tail = read_transcript_tail("s1", dirs(&t.0)).unwrap();
+    assert!(records_since(&tail, Some(since)).is_empty());
+    assert!(session_transcript_grew_since(
+        C,
+        Some("s1"),
+        since,
+        from,
+        dirs(&t.0)
+    ));
+}
+
+/// 턴 시작 자리 뒤에 입력 줄이 없으면(요청 기록·메타 줄뿐) 거짓이다 — 앞 턴의 입력 줄은 증거가 아니다.
+#[test]
+fn grew_since_ignores_lines_before_turn_start_offset() {
+    let t = TempDir::new();
+    let prev = user("2026-10-09T10:00:00Z");
+    write_session(&t.0, "s1", &[prev.clone(), String::new()]);
+    let from = session_transcript_len(C, Some("s1"), dirs(&t.0));
+    write_session(
+        &t.0,
+        "s1",
+        &[
+            prev,
+            json!({"type": "user", "isMeta": true, "timestamp": "2026-10-09T10:00:05Z"})
+                .to_string(),
+            String::new(),
+        ],
+    );
+    let since = ms("2026-10-09T09:00:00Z").unwrap();
+    assert!(!session_transcript_grew_since(
+        C,
+        Some("s1"),
+        since,
+        from,
+        dirs(&t.0)
+    ));
+    // 파일이 턴 시작 자리보다 짧아졌으면 꼬리로 물러난다.
+    assert!(session_transcript_grew_since(
+        C,
+        Some("s1"),
+        since,
+        from + 10_000_000,
+        dirs(&t.0)
+    ));
+    // 없는 파일·못 읽는 하네스의 길이는 0.
+    assert_eq!(session_transcript_len(C, Some("s9"), dirs(&t.0)), 0);
+    assert_eq!(
+        session_transcript_len(AgentHarness::Codex, Some("s1"), dirs(&t.0)),
+        0
+    );
 }
