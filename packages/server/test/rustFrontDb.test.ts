@@ -8305,9 +8305,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect(JSON.stringify(tAud3), 'grant 를 쓰지 않는다(D1)').not.toContain('"grant.given"');
         expect(await audits3(R3)).toEqual(tAud3);
         const mgrants = (tag: string) => db.pool.query(
-          `select 1 from account_grant where account_id = $1 and capability = 'repo.merge' and scope like $2`, [agent.accountId, `repo:b3/${tag}-%`]);
-        expect((await mgrants('tside3')).rowCount, 'TS: merge grant 없음').toBe(0);
-        expect((await mgrants('rside3')).rowCount, 'Rust: merge grant 없음').toBe(0);
+          `select 1 from account_grant where account_id = $1 and scope like $2`, [agent.accountId, `%repo:b3/${tag}-%`]);
+        expect((await mgrants('tside3')).rowCount, 'TS: grant 없음(merge·tool 모두)').toBe(0);
+        expect((await mgrants('rside3')).rowCount, 'Rust: grant 없음(merge·tool 모두)').toBe(0);
         await db.pool.query(`drop trigger b3_line_boom on mandate_line`);
       }
       // S5.3 C3 — 위임장 있는 command `approve_once`·`approve_hour`(코어 `decide_approve.rs` + `mandate_line_write.rs` command 갈래).

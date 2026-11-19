@@ -734,7 +734,8 @@ pub async fn approve_write(
             (expires, expires_iso) = (Some(kept.0), Some(kept.1));
         }
         tool_scope = Some(target.clone());
-    } else if !turn {
+    } else if !turn && !line_only {
+        // merge 의 줄만 쓰는 갈래(line_only)는 grant 가 없다 — 여기로 떨어지면 `tool:<채널>:repo:…` grant 를 잘못 쓴다(P3 B3 CI).
         let Some(ch) = channel_id.as_deref() else {
             // 채널 없는 tool 요청은 없다(요청 길이 채널을 요구) — 꼴이 다르면 TS.
             return Ok(ApproveOutcome::HandToTs);
