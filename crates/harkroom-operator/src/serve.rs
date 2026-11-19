@@ -710,9 +710,12 @@ pub fn spawn_server_link(
         }
         let poll_runners = std::sync::Arc::clone(&state.runners);
         std::thread::spawn(move || {
+            // 채택·회수는 위 `adopt_orphans` 에서만 생긴다 — 다 끝나면 이 스레드도 끝낸다(영원히 2초마다 깨지 않는다).
             loop {
                 std::thread::sleep(Duration::from_secs(2));
-                poll_runners.poll_adopted();
+                if !poll_runners.poll_adopted() {
+                    break;
+                }
             }
         });
     }
