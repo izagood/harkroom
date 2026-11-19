@@ -4,7 +4,9 @@
 //! `HARKROOM_RUST_MIGRATE`(`1` 이면 기동 때 마이그레이션을 Rust 가 돌림, `only` 면 돌리고 서버로 뜨지 않고 끝남(성공 0·실패 1,
 //! 마이그레이션 Job 용 — 이때 `DATABASE_URL`·`UPSTREAM_URL` 은 없어도 된다), **기본 꺼짐** — S5.4 M1, `migrate.rs`) ·
 //! `DATABASE_MIGRATE_URL`(그때 쓰는 DDL 역할 — 스위치를 켰는데 없으면 기동하지 않는다).
-use harkroom_server::{migrate, proxy, routes, schema, write};
+//! `CLAIM_TOKEN_HASH`(호스팅 워크스페이스의 클레임 토큰 sha256 hex — 기동 때 `claim_token` 에 심는다, 틀린 형식이면 기동하지 않는다,
+//! `claim_seed.rs`).
+use harkroom_server::{claim_seed, migrate, proxy, routes, schema, write};
 use std::net::SocketAddr;
 
 #[tokio::main]
@@ -12,12 +14,35 @@ async fn main() {
     // S5.4 M1 — 켰을 때만 스키마 대조보다 먼저 마이그레이션을 돌린다. TS 실행기와 같은 잠금 키라 동시에 떠도 한쪽씩 돈다.
     // `only` 면 여기서 끝난다 — 그래서 서버 env(`UPSTREAM_URL`·`DATABASE_URL`)는 이 뒤에서 읽는다.
     let migrate_only = migrate::only(std::env::var("HARKROOM_RUST_MIGRATE").ok().as_deref());
+    // 클레임 토큰 해시(TS `seedClaimToken` 과 같은 규칙) — 형식부터 본다. 틀리면 아무것도 하기 전에 기동을 거절한다.
+    let claim = match claim_seed::parse(std::env::var("CLAIM_TOKEN_HASH").ok().as_deref()) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("front: refusing to start — {e}");
+            std::process::exit(1);
+        }
+    };
+    // 마이그레이션을 이 프로세스가 돌렸으면 그 DDL 역할로 바로 심는다(`only` Job 도 여기서 심고 끝난다). 아니면 쓰기 풀을 연 뒤 심는다.
+    let mut claim_seeded = false;
     match migrate::config(|n| std::env::var(n).ok()) {
         Ok(None) => {}
         Ok(Some(url)) => match migrate::run_when_reachable(&url, migrate::REACHABLE_DEADLINE).await
         {
             Ok(applied) => {
                 eprintln!("front: migrations applied: {}", applied.len());
+                if let Some(hash) = &claim {
+                    // DDL 역할 연결 하나 — 심고 바로 닫는다(서버 풀과 따로).
+                    let res = match sqlx::PgPool::connect(&url).await {
+                        Ok(p) => {
+                            let r = claim_seed::seed(&p, hash).await;
+                            p.close().await;
+                            r
+                        }
+                        Err(e) => Err(e),
+                    };
+                    seeded_or_exit(res);
+                    claim_seeded = true;
+                }
                 if migrate_only {
                     eprintln!("front: HARKROOM_RUST_MIGRATE=only — exiting without serving");
                     std::process::exit(0);
@@ -68,6 +93,9 @@ async fn main() {
         std::process::exit(1);
     }
     let write = open_write_pool().await;
+    if let (Some(hash), false) = (&claim, claim_seeded) {
+        seed_claim_with_write_pool(write.as_ref(), hash).await;
+    }
     // C5b — 서버 루프(예약 깨움). 주인이 `rust` 일 때만 실제로 돈다(`server_loop`, 기본 `ts`).
     if write.is_some() {
         spawn_loops().await;
@@ -5133,6 +5161,46 @@ async fn main() {
 
 /// 쓰기 풀에 Rust 가 맡을 길의 권한(GRANT)이 빠졌다. 기본은 예전대로 그 길을 TS 로 넘긴다(TS 운영에 영향 없음).
 /// `HARKROOM_REQUIRE_GRANTS=1` 이면 넘기지 않고 기동을 거절한다(exit 1) — 배포가 GRANT 를 덜 깐 것을 조용히 TS 로 덮지 않으려면 켠다.
+/// 클레임 토큰 해시를 심는다. 연결·넣기가 실패하면 기동을 거절한다(TS 도 기동 때 던진다) — 심기지 않은 채 뜨면
+/// 새 워크스페이스의 `POST /claim` 이 늘 404 가 되고, 그것이 주인이 가져가려 할 때까지 드러나지 않는다.
+fn seeded_or_exit(res: Result<bool, sqlx::Error>) {
+    match res {
+        Ok(true) => eprintln!("front: claim token seeded"),
+        Ok(false) => eprintln!("front: claim token already present — left as is"),
+        Err(e) => {
+            eprintln!(
+                "front: refusing to start — claim token seed failed ({})",
+                e.as_database_error()
+                    .and_then(|d| d.code().map(|c| c.into_owned()))
+                    .unwrap_or_else(|| "io".into())
+            );
+            std::process::exit(1);
+        }
+    }
+}
+
+/// 마이그레이션을 이 프로세스가 돌리지 않았으면 쓰기 풀로 심는다. 쓰기 풀이 없거나 [`claim_seed::CLAIM_SEED_PRIVILEGES`] 가
+/// 모자라면 심지 않고 크게 남긴다 — 그동안은 TS 가 기동 때 심는다(`HARKROOM_REQUIRE_GRANTS=1` 이면 기동 거절).
+async fn seed_claim_with_write_pool(write: Option<&sqlx::PgPool>, hash: &str) {
+    let Some(w) = write else {
+        eprintln!("front: claim token NOT seeded — no write pool (TS server still seeds it)");
+        return;
+    };
+    match write::missing_in(w, claim_seed::CLAIM_SEED_PRIVILEGES, &[]).await {
+        Ok(m) if m.is_empty() => seeded_or_exit(claim_seed::seed(w, hash).await),
+        Ok(m) => {
+            eprintln!("front: claim token NOT seeded — missing privileges {m:?}");
+            refuse_missing_grants(&m);
+        }
+        Err(e) => {
+            eprintln!(
+                "front: claim token NOT seeded — privilege check failed ({})",
+                e.as_database_error().map_or("io", |_| "db")
+            );
+        }
+    }
+}
+
 fn refuse_missing_grants(missing: &[String]) {
     if !require_grants(std::env::var("HARKROOM_REQUIRE_GRANTS").ok().as_deref()) {
         return;
