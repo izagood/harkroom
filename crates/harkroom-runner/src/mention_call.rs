@@ -163,6 +163,11 @@ pub fn run_mention_call<'a, L, S, H>(
         &launch.bundled,
     );
     let note_cause = target.mention_id.clone();
+    let log = i.log;
+    // 👀(받음): 멘션을 집은 **즉시** — 아래 준비(워크스페이스 해석)는 초 단위로 걸릴 수 있다(정본 `runMentionTurn` 머리).
+    crate::turn_reactions::mark_received(clients.mcp(), &target, log);
+    // 💬(진행 중): 이 함수가 끝날 때(정상·실패·패닉) 가드가 뗀다(정본 `finally` 의 removeReaction).
+    let _working = crate::turn_reactions::WorkingReaction::start(clients.mcp(), &target, log);
     let hooks = LinkHooks::new(
         clients.operator(),
         book,

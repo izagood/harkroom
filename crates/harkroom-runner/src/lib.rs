@@ -142,6 +142,7 @@ pub mod turn_probe_records;
 pub mod turn_probe_rest;
 pub mod turn_probe_sink;
 pub mod turn_probe_state;
+pub mod turn_reactions;
 pub mod turn_registry;
 pub mod turn_report;
 pub mod turn_rules;
