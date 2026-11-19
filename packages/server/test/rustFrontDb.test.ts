@@ -9741,7 +9741,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         const tsOut = await run(tsUrl, tsGet, tsGet);
         const rsOut = await run(rsUrl, () => busEvents, tsGet);
         // 어느 장면이 다른지 이름으로 먼저 — 큰 diff 는 장면 이름을 보여 주지 않는다.
-        const differs = tsOut.map((t, i) => (JSON.stringify(t) === JSON.stringify(rsOut[i]) ? null : (t as { name: string }).name)).filter(Boolean);
+        // 키 차례·undefined 칸은 toEqual 처럼 무시한다(JSON 글자 비교는 키 차례로 갈린다).
+        const differs = tsOut.filter((t, i) => { try { expect(rsOut[i]).toEqual(t); return false; } catch { return true; } }).map((t) => (t as { name: string }).name);
         expect(differs, 'TS 와 다른 장면').toEqual([]);
         expect(rsOut).toEqual(tsOut);
         // C1c-3d — 위임 스위치를 준 앞단(값마다 하나씩 띄운다)과 같은 값의 TS 를 견준다. 사람 글은 닫지도 깨우지도 않는다.
