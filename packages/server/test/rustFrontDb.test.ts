@@ -1598,6 +1598,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         ...OUTBOX_PRUNE_GRANTS.map((g) => `grant ${g} to ${rw}`),
         // S5.4 L1 — 위임 기한 스윕(`loops/delegation_deadline.rs::DELEGATION_DEADLINE_PRIVILEGES`). 없으면 「loop delegation.deadline off」.
         ...DELEGATION_DEADLINE_GRANTS.map((g) => `grant ${g} to ${rw}`),
+        // P5 — 스레드 상태 감시(`loops/thread_status.rs::THREAD_STATUS_PRIVILEGES`). 없으면 「loop thread.status off」.
+        ...THREAD_STATUS_GRANTS.map((g) => `grant ${g} to ${rw}`),
         // S5.3 C3b-3c — 권한 카드 거절(`decide_core::DENY_PRIVILEGES` + 잠금 함수 EXECUTE, 두 겹). 없으면 「permission deny core off」.
         `grant update (status, decided_at, decided_by, grant_expires_at, grant_mode) on permission_request to ${rw}`,
         `grant execute on function permission_decide_lock(uuid, uuid, uuid) to ${rw}`,
