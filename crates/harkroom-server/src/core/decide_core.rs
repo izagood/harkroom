@@ -546,7 +546,7 @@ pub struct Shape<'a> {
 /// - 허용 목록 방식: 아래에 적힌 꼴만 Rust, 나머지는 전부 TS(security ②-1·②-2).
 /// - `once`·글 승인·모르는 선택지는 처음부터 TS(거울은 S5.5 d 부터 버튼과 같다) — Rust 에서 반쯤 하다 넘기는 길은 없다. 위임장(`mandate_id`)은 tool 승인
 ///   (`approve`·`approve_mandate`·`approve_turn`, C1)과 command `approve_once`·`approve_hour`(C3)·deny(P3 B2)는 Rust.
-///   `approve_new_mandate`(tool)는 C2.
+///   `approve_new_mandate`(tool)는 C2, merge 는 P3 B3.
 /// - deny 는 kind 와 관계없이 Rust(머지 거절 카드의 deny 포함, grant 를 쓰지 않음). 같은 카드의 approve_once·approve 는 TS(②-6).
 /// - 승인은 `tool`→approve, `command`→approve_once·approve_hour 만. 소유자가 아닌 승인(asOwner=false)은 판정 뒤
 ///   [`after_verdict`] 가 TS 로 돌린다.
@@ -580,6 +580,9 @@ pub fn rust_takes(s: Shape<'_>) -> Option<Decision> {
         // 13d — 위임장 없는 merge 의 `approve_mandate` 는 TS 가 쓰기 없이 409 `mandate_unavailable`(D1) — Rust 가 같은 답을 한다.
         // 14d — 위임장이 있으면 grant 없이 그 위임장의 merge 줄 하나(줄이 실패하면 409 `mandate_line_failed`, 커밋 없음).
         (Decision::ApproveMandate, "merge") => true,
+        // P3 B3 — merge `approve_new_mandate`: 위임장이 있으면 `approve_mandate` 와 같고(grant 없이 줄 하나), 없으면 카드 스레드에
+        // 세운 뒤 줄 하나. 못 세우면 409 `mandate_unavailable` 로 끝난다 — 7일 승인으로 다시 하지 않는다(D1).
+        (Decision::ApproveNewMandate, "merge") => true,
         // S5.4 — tool 카드의 [이번 한 번](once 없음·거절 기록 없음)은 TS 가 쓰기 없이 409 `not_once` 로 돌려보낸다 — Rust 가 같은 답을 한다.
         (Decision::ApproveOnce, "tool") => !s.has_denial,
         // S5.4 11d — TS 가 쓰기 없이 409 `bad_decision` 으로 돌려보내는 꼴(위임장 없는 tool [이번 턴만], command 의 [이번 턴만]·

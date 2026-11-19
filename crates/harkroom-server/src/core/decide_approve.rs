@@ -488,9 +488,13 @@ pub async fn approve_write(
             .await?;
     let turn = decision == Decision::ApproveTurn;
     // 14d — TS D1: 위임장 있는 merge `approve_mandate` 는 grant 를 쓰지 않는다(줄이 실패하면 결정 전체를 되돌린다).
+    // P3 B3 — merge `approve_new_mandate` 도 같다(TS `writesStandingGrant`: merge 는 `approve` 만 grant). 위임장이 없으면 아래에서
+    // 세우고, 못 세우면 409 로 끝나므로 여기를 지나 쓰는 길에는 언제나 위임장이 있다.
     let line_only = locked.kind == "merge"
-        && decision == Decision::ApproveMandate
-        && locked.mandate_id.is_some();
+        && matches!(
+            decision,
+            Decision::ApproveMandate | Decision::ApproveNewMandate
+        );
     let (ttl, grant_mode, candidates) = match (locked.kind.as_str(), decision) {
         ("command", Decision::ApproveHour) => (COMMAND_GRANT_TTL, Some("hour"), ANSWER_HOUR),
         ("command", Decision::ApproveOnce) => (COMMAND_GRANT_TTL, Some("once"), ANSWER_ONCE),
@@ -510,7 +514,9 @@ pub async fn approve_write(
             ));
         }
         ("tool", Decision::ApproveMandate) => (TOOL_GRANT_TTL, None, ANSWER_TOOL_MANDATE),
-        ("tool", Decision::ApproveNewMandate) => (TOOL_GRANT_TTL, None, ANSWER_TOOL_NEW_MANDATE),
+        ("tool" | "merge", Decision::ApproveNewMandate) => {
+            (TOOL_GRANT_TTL, None, ANSWER_TOOL_NEW_MANDATE)
+        }
         // [이번 턴만] — grant 없이 줄 하나가 승인의 전부(기한 칸은 비운다, TS 와 같음).
         ("tool", Decision::ApproveTurn) => (COMMAND_GRANT_TTL, None, ANSWER_TOOL_TURN),
         // rust_takes 가 거른다 — 여기 오면 맡지 않는다(쓰기 전).
@@ -532,24 +538,18 @@ pub async fn approve_write(
     if new_mandate && !new_mandate_core_on() {
         return Ok(ApproveOutcome::HandToTs);
     }
-    // S5.4 13d — 거절 기록이 붙은 merge 카드의 7일 승인: TS 처럼 CI 거절이면 쓰기 없이 400 `ci_card_once_only`(security D4).
+    // S5.4 13d — 거절 기록이 붙은 merge 카드의 7일 승인: TS 처럼 CI 거절이면 400 `ci_card_once_only`(security D4, 커밋 없음).
     // `merge_denial.reason` 읽기 칸은 [`super::decide_merge_once::MERGE_ONCE_PRIVILEGES`] 에 있다 — 꺼져 있으면 쓰기 전에 TS.
-    if let (Some(denial_id), "merge") = (locked.denial_id.as_deref(), locked.kind.as_str()) {
-        if !super::decide_merge_once::merge_once_on() {
-            return Ok(ApproveOutcome::HandToTs);
+    // 사유 대조 자체는 TS 차례대로 위임장 세우기 뒤에 한다(P3 B3).
+    let merge_denial = match (locked.denial_id.as_deref(), locked.kind.as_str()) {
+        (Some(denial_id), "merge") => {
+            if !super::decide_merge_once::merge_once_on() {
+                return Ok(ApproveOutcome::HandToTs);
+            }
+            Some(denial_id)
         }
-        let reason: Option<(String,)> = sqlx::query_as(DENIAL_REASON)
-            .bind(denial_id)
-            .fetch_optional(&mut *conn)
-            .await?;
-        if reason.is_some_and(|(r,)| r == "ci_not_green") {
-            return Ok(refused(
-                400,
-                "ci_card_once_only",
-                super::merge_denial_grant::CI_ONCE,
-            ));
-        }
-    }
+        _ => None,
+    };
     let (now, now_iso, expires, expires_iso): (String, String, String, String) =
         sqlx::query_as(TIMES)
             .bind(ttl)
@@ -596,6 +596,21 @@ pub async fn approve_write(
         }
         mandate_id = Some(made.mandate_id.clone());
         created = made.inserted.then_some(made);
+    }
+    // TS 차례: 위임장 세우기(못 세우면 409 `mandate_unavailable`) 다음에 CI 거절 카드 확인 — 둘 다 걸리는 merge
+    // `approve_new_mandate` 는 `mandate_unavailable` 이 먼저다. 409/400 이면 커밋하지 않으므로 위에서 세운 위임장도 되돌아간다.
+    if let Some(denial_id) = merge_denial {
+        let reason: Option<(String,)> = sqlx::query_as(DENIAL_REASON)
+            .bind(denial_id)
+            .fetch_optional(&mut *conn)
+            .await?;
+        if reason.is_some_and(|(r,)| r == "ci_not_green") {
+            return Ok(refused(
+                400,
+                "ci_card_once_only",
+                super::merge_denial_grant::CI_ONCE,
+            ));
+        }
     }
 
     let mut command_grant_id: Option<String> = None;
@@ -1072,7 +1087,9 @@ pub async fn decide_approve(
     args: ApproveArgs<'_>,
 ) -> Result<ApproveOutcome, ApproveError> {
     let out = approve_once_shape(pool, args).await?;
-    // TS `decide`: [이 스레드로 위임장 만들고 더하기]인데 위임장을 세울 수 없으면 7일 승인으로 한 번 더 한다(merge 는 TS 라 여기 없음).
+    // TS `decide`: [이 스레드로 위임장 만들고 더하기]인데 위임장을 세울 수 없으면 7일 승인으로 한 번 더 한다.
+    // P3 B3 — merge 는 넘어가지 않는다(D1: 소유자의 7일 merge grant 는 모든 위임장에 상시 줄로 펼쳐진다). TS `isMergeRequest` 처럼
+    // 요청 줄의 kind 를 다시 읽는다(잠금 없음 — TS 도 결정 tx 밖에서 읽는다).
     if args.option == "approve_new_mandate"
         && matches!(
             &out,
@@ -1081,6 +1098,7 @@ pub async fn decide_approve(
                 ..
             }
         )
+        && !is_merge_request(pool, args.request_id).await?
     {
         return approve_once_shape(
             pool,
@@ -1092,6 +1110,17 @@ pub async fn decide_approve(
         .await;
     }
     Ok(out)
+}
+
+/// TS `isMergeRequest` — 요청 줄이 merge 인가(없으면 아니다). 잠그지 않는다.
+async fn is_merge_request(pool: &sqlx::PgPool, request_id: &str) -> Result<bool, ApproveError> {
+    let kind: Option<String> =
+        sqlx::query_scalar("select kind from permission_request where id = $1::uuid")
+            .bind(request_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| ApproveError::Lock(LockRetryError::Other(e)))?;
+    Ok(kind.as_deref() == Some("merge"))
 }
 
 async fn approve_once_shape(

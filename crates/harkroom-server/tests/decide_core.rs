@@ -82,6 +82,8 @@ fn who_takes_it() {
         ("approve_mandate", "tool", Decision::ApproveMandate),
         // C2 — 위임장 없는 approve_new_mandate(tool)는 Rust 가 카드 스레드에 위임장을 세운다.
         ("approve_new_mandate", "tool", Decision::ApproveNewMandate),
+        // P3 B3 — merge 도 카드 스레드에 위임장을 세운다(못 세우면 409 `mandate_unavailable`, 7일 승인으로 넘어가지 않음).
+        ("approve_new_mandate", "merge", Decision::ApproveNewMandate),
     ] {
         assert_eq!(rust_takes(shape(o, k)), Some(d), "{o}/{k}");
     }
@@ -90,7 +92,6 @@ fn who_takes_it() {
         ("approve", "command"),
         ("approve", "future_kind"),
         ("approve_once", "merge"),
-        ("approve_new_mandate", "merge"),
         ("approve_turn", "merge"),
         ("nope", "tool"),
     ] {
@@ -110,7 +111,7 @@ fn who_takes_it() {
     ] {
         assert_eq!(rust_takes(shape(o, k)), Some(d), "{o}/{k}");
     }
-    // C1·C2·C3 — 위임장이 있는 tool 승인 넷과 command once·hour 는 Rust. merge once·new_mandate 는 TS, deny 는 P3 B2 부터 Rust.
+    // C1·C2·C3 — 위임장이 있는 tool 승인 넷과 command once·hour 는 Rust. merge once 는 TS, deny 는 P3 B2·merge new_mandate 는 B3 부터 Rust.
     let m = |o, k| Shape {
         has_mandate: true,
         ..shape(o, k)
@@ -142,9 +143,12 @@ fn who_takes_it() {
         rust_takes(m("approve_mandate", "merge")),
         Some(Decision::ApproveMandate)
     );
-    for (o, k) in [("approve_once", "merge"), ("approve_new_mandate", "merge")] {
-        assert_eq!(rust_takes(m(o, k)), None, "{o}/{k}");
-    }
+    // P3 B3 — 위임장 있는 merge `approve_new_mandate` 는 `approve_mandate` 처럼 줄만(Rust).
+    assert_eq!(
+        rust_takes(m("approve_new_mandate", "merge")),
+        Some(Decision::ApproveNewMandate)
+    );
+    assert_eq!(rust_takes(m("approve_once", "merge")), None);
     // P3 B2 — 위임장 있는 카드의 거절은 kind 와 관계없이 Rust(TS 거절은 위임장을 건드리지 않는다).
     for k in ["tool", "command", "merge"] {
         assert_eq!(rust_takes(m("deny", k)), Some(Decision::Deny), "deny/{k}");

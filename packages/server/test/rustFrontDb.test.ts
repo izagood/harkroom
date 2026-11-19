@@ -8166,6 +8166,150 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect(await grants2('rside2', R2)).toEqual(tG);
         await db.pool.query(`drop trigger c2_line_boom on mandate_line`);
       }
+      // P3 B3 — merge 카드의 [이 스레드로 위임장 만들고 더하기](`approve_new_mandate`). TS 는 카드 스레드에 위임장을 세우거나 잇고
+      // grant 없이 그 위임장의 merge 줄 하나만 쓴다(D1 — 줄이 실패하면 409 `mandate_line_failed`, 위임장까지 되돌림). 못 세우면
+      // 409 `mandate_unavailable` 로 끝나고 7일 승인으로 다시 하지 않는다. CI 거절 기록 카드는 위임장 세우기 **뒤에** 400
+      // `ci_card_once_only` — 그래서 남의 머리 + CI 거절은 `mandate_unavailable` 이 먼저다. TS·Rust 에 각자의 카드로 돌려 견준다.
+      {
+        await db.pool.query(`create or replace function b3_line_boom() returns trigger language plpgsql as $$
+          begin if new.scope like '%boom%' then raise exception 'b3 line boom'; end if; return new; end $$`);
+        await db.pool.query(`create trigger b3_line_boom before insert on mandate_line for each row execute function b3_line_boom()`);
+        const H = { kind: 'human' };
+        const MOPT = ['approve_new_mandate', 'approve', 'deny'];
+        const mreq = async (repo: string, root: string, ci: boolean | null) => {
+          const denial = ci === null ? null : (await db.pool.query<{ id: string }>(
+            `insert into merge_denial (agent_id, scope, pr_number, head_sha, channel_id, thread_root_id, reason, failed_checks, expires_at, lease_id)
+             values ($1, $2, 7, $3, $4, $5, $6, $7::text[], now() + interval '1 hour', gen_random_uuid()) returning id::text`,
+            [agent.accountId, `repo:${repo}`, 'b'.repeat(40), todayId, root, ci ? 'ci_not_green' : 'not_granted', ci ? ['secrets'] : []])).rows[0]!.id;
+          const req = (await db.pool.query<{ id: string }>(
+            `insert into permission_request(agent_id, kind, target, reason, channel_id, thread_root_id, expires_at, denial_id)
+             values ($1, 'merge', $2, 'x', $3, $4, now() + interval '1 hour', $5) returning id::text`,
+            [agent.accountId, `repo:${repo}`, todayId, root, denial])).rows[0]!.id;
+          const card = await say(`@admin 머지 ${repo}`, {
+            root,
+            meta: {
+              kind: 'ask', ask: { prompt: '머지 허락할까요?', options: MOPT.map((id) => ({ id, label: id })), to: H },
+              permissionRequest: { requestId: req, status: 'pending' },
+            },
+          });
+          await db.pool.query(`update permission_request set card_message_id = $2 where id = $1`, [req, card]);
+          return { req, card };
+        };
+        const side3 = async (tag: string) => {
+          const ownRoot = await say(`${tag} 소유자 머리`, { author: admin.accountId });
+          const otherRoot = await say(`${tag} 남의 머리`, { author: member.accountId });
+          const existRoot = await say(`${tag} 위임장 있는 머리`, { author: admin.accountId });
+          const ciOwnRoot = await say(`${tag} CI 거절 소유자 머리`, { author: admin.accountId });
+          const ciOtherRoot = await say(`${tag} CI 거절 남의 머리`, { author: member.accountId });
+          const deniedRoot = await say(`${tag} 권한 거절 소유자 머리`, { author: admin.accountId });
+          const boomRoot = await say(`${tag} 줄 실패 머리`, { author: admin.accountId });
+          await db.pool.query(
+            `with m as (insert into mandate (owner_account_id, root_message_id, channel_id, thread_root_id) values ($1, $2, $3, $2) returning id)
+             update message set mandate_id = (select id from m) where id = $2`, [admin.accountId, existRoot, todayId]);
+          const own = await mreq(`b3/${tag}-own`, ownRoot, null);
+          const other = await mreq(`b3/${tag}-other`, otherRoot, null);
+          const exist = await mreq(`b3/${tag}-exist`, existRoot, null);
+          const ciOwn = await mreq(`b3/${tag}-ciown`, ciOwnRoot, true);
+          const ciOther = await mreq(`b3/${tag}-ciother`, ciOtherRoot, true);
+          const denied = await mreq(`b3/${tag}-denied`, deniedRoot, false);
+          const boom = await mreq(`b3/${tag}-boom`, boomRoot, null);
+          return {
+            ownRoot, otherRoot, existRoot, ciOwnRoot, ciOtherRoot, deniedRoot, boomRoot,
+            ownReq: own.req, ownCard: own.card, otherReq: other.req, otherCard: other.card, existReq: exist.req, existCard: exist.card,
+            ciOwnReq: ciOwn.req, ciOwnCard: ciOwn.card, ciOtherReq: ciOther.req, ciOtherCard: ciOther.card,
+            deniedReq: denied.req, deniedCard: denied.card, boomReq: boom.req, boomCard: boom.card,
+          };
+        };
+        type Side3 = Awaited<ReturnType<typeof side3>>;
+        const T3 = await side3('tside3');
+        const R3 = await side3('rside3');
+        const shape3 = async (sd: Side3) => {
+          const ml = new Map((await db.pool.query<{ id: string; root: string }>(
+            `select id::text, root_message_id::text as root from mandate where root_message_id = any($1::uuid[])`, [Object.values(sd)])).rows
+            .map((r) => [r.id, `M:${Object.entries(sd).find(([, v]) => v === r.root)![0].toUpperCase()}`]));
+          const go = (v: unknown): unknown => {
+            if (Array.isArray(v)) return v.map(go);
+            if (v && typeof v === 'object') {
+              const o: Record<string, unknown> = {};
+              for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+                o[k] = /At$/.test(k) ? (x === null ? null : typeof x)
+                  : k === 'seq' || k === 'threadRootId' || k === 'lineId' || k === 'until' ? typeof x : go(x);
+              }
+              return o;
+            }
+            if (typeof v === 'string') {
+              if (ml.has(v)) return ml.get(v);
+              for (const [k, id] of Object.entries(sd)) if (v === id) return k.toUpperCase();
+              if (v === agent.accountId) return 'AGENT';
+              if (v === admin.accountId) return 'ADMIN';
+              if (v === member.accountId) return 'MEMBER';
+              return v.replace(/[tr]side3/g, 'SIDE');
+            }
+            return v;
+          };
+          return go;
+        };
+        const ansP = (m: string) => `/channels/${todayId}/messages/${m}/ask-answer`;
+        const run3 = async (base: string, sd: Side3) => {
+          const out: { step: string; status: number; code?: string; body: unknown }[] = [];
+          for (const [name, card] of [
+            ['소유자 머리 → 새 위임장·merge 줄(grant 없음)', sd.ownCard],
+            ['남의 머리 → 409 mandate_unavailable(7일 승인으로 넘어가지 않음)', sd.otherCard],
+            ['머리에 위임장 있음 → 잇고 줄', sd.existCard],
+            ['CI 거절 + 소유자 머리 → 400 ci_card_once_only(세운 위임장 되돌림)', sd.ciOwnCard],
+            ['CI 거절 + 남의 머리 → mandate_unavailable 이 먼저', sd.ciOtherCard],
+            ['권한 거절 기록 + 소유자 머리 → 새 위임장·줄', sd.deniedCard],
+            ['줄 INSERT 실패 → 409 mandate_line_failed(위임장까지 되돌림)', sd.boomCard],
+          ] as const) {
+            const r = await callX(base, 'POST', ansP(card), { optionId: 'approve_new_mandate' }, A);
+            out.push({ step: name, status: r.status, code: r.code, body: r.status === 200 ? (await shape3(sd))(r.json) : null });
+          }
+          return out;
+        };
+        const tsOut3 = await run3(tsUrl, T3);
+        const rsOut3 = await run3(rsUrl, R3);
+        expect(rsOut3).toEqual(tsOut3);
+        expect(tsOut3.map((o) => [o.status, o.code ?? null])).toEqual([
+          [200, null], [409, 'mandate_unavailable'], [200, null], [400, 'ci_card_once_only'],
+          [409, 'mandate_unavailable'], [200, null], [409, 'mandate_line_failed'],
+        ]);
+        const ids3 = (sd: Side3) => JSON.stringify(sd);
+        const reqs3 = async (sd: Side3) => (await shape3(sd))((await db.pool.query(
+          `select k, p.status, p.decided_by::text as by, p.mandate_id::text as mandate
+             from jsonb_each_text($1::jsonb) j(k, id) join permission_request p on p.id = j.id::uuid order by k`, [ids3(sd)])).rows);
+        expect(await reqs3(R3)).toEqual(await reqs3(T3));
+        const msgs3 = async (sd: Side3) => (await shape3(sd))((await db.pool.query(
+          `select k, m.mandate_id::text as mandate, m.meta->'permissionRequest' as pr, m.meta->'ask' as ask
+             from jsonb_each_text($1::jsonb) j(k, id) join message m on m.id = j.id::uuid order by k`, [ids3(sd)])).rows);
+        expect(await msgs3(R3)).toEqual(await msgs3(T3));
+        const mandates3 = async (sd: Side3) => ((await shape3(sd))((await db.pool.query(
+          `select id::text as id, owner_account_id::text as owner, delegator_account_id::text as delegator, ended_at is not null as ended
+             from mandate where root_message_id = any($1::uuid[]) order by root_message_id`, [Object.values(sd)])).rows) as { id: string }[])
+          .sort((a, b) => a.id.localeCompare(b.id));
+        const tM3 = await mandates3(T3);
+        expect(tM3.length, '위임장 셋(새로 own·denied + 있던 exist) — ciOwn·boom 은 되돌아감').toBe(3);
+        expect(await mandates3(R3)).toEqual(tM3);
+        const lines3 = async (sd: Side3) => (await shape3(sd))((await db.pool.query(
+          `select (select k from jsonb_each_text($1::jsonb) j(k, id) where j.id::uuid = l.request_id) as req,
+                  l.mandate_id::text as mandate, l.cap, l.scope, l.limits, l.agent_ids::text[] as agents, l.granted_by::text as by, l.via
+             from mandate_line l where l.request_id = any($2::uuid[]) order by 1`, [ids3(sd), Object.values(sd)])).rows);
+        const tL3 = await lines3(T3);
+        expect((tL3 as unknown[]).length, 'merge 줄 셋(own·exist·denied)').toBe(3);
+        expect(await lines3(R3)).toEqual(tL3);
+        const audits3 = async (sd: Side3) => ((await shape3(sd))((await db.pool.query(
+          `select action, actor_id::text as actor, target, detail from audit_log
+            where (action in ('permission.approved', 'grant.given', 'mandate.line.added', 'mandate.line.add_failed') and detail->>'requestId' = any($1::text[]))
+               or (action = 'mandate.created' and detail->>'rootMessageId' = any($1::text[]))`,
+          [Object.values(sd)])).rows) as unknown[]).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+        const tAud3 = await audits3(T3);
+        expect(JSON.stringify(tAud3), 'grant 를 쓰지 않는다(D1)').not.toContain('"grant.given"');
+        expect(await audits3(R3)).toEqual(tAud3);
+        const mgrants = (tag: string) => db.pool.query(
+          `select 1 from account_grant where account_id = $1 and capability = 'repo.merge' and scope like $2`, [agent.accountId, `repo:b3/${tag}-%`]);
+        expect((await mgrants('tside3')).rowCount, 'TS: merge grant 없음').toBe(0);
+        expect((await mgrants('rside3')).rowCount, 'Rust: merge grant 없음').toBe(0);
+        await db.pool.query(`drop trigger b3_line_boom on mandate_line`);
+      }
       // S5.3 C3 — 위임장 있는 command `approve_once`·`approve_hour`(코어 `decide_approve.rs` + `mandate_line_write.rs` command 갈래).
       // 1시간 command_grant 와 함께 그 위임장에 cap `command` 줄(기한 1시간, 「이번 한 번」은 uses 1). grant 를 썼으므로 줄이 실패해도
       // (끝난 위임장·줄 INSERT 실패) savepoint 로 줄만 되돌리고 결정은 남는다(TS 와 같음). grant.given 은 없고 grant.changed 만 있다.
