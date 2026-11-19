@@ -152,6 +152,7 @@ pub async fn rest_deny(
         actor_id: &me.id,
         bundle_message_id: None,
         mirror_message_id: None,
+        chat: None,
     };
     Taken::Done(match deny_then_answer(st, deny, args).await {
         Err(r) => r,
@@ -314,6 +315,7 @@ pub async fn answer_card_deny(
         actor_id: &me.id,
         bundle_message_id: None,
         mirror_message_id: t.mirror.as_deref(),
+        chat: None,
     };
     Taken::Done(match deny_then_answer(st, deny, args).await {
         Err(r) => r,
@@ -376,6 +378,7 @@ pub async fn answer_bundle_deny(
         actor_id: &me.id,
         bundle_message_id: Some(bundle),
         mirror_message_id: None,
+        chat: None,
     };
     Taken::Done(match deny_then_answer(st, deny, args).await {
         Err(r) => r,
@@ -534,6 +537,7 @@ pub async fn rest_approve(
         once,
         bundle_message_id: None,
         mirror_message_id: None,
+        chat: None,
     };
     Taken::Done(match approve_then_answer(st, pool, args).await {
         Err(r) => r,
@@ -631,6 +635,7 @@ pub async fn answer_card_approve(
         once: once.as_ref(),
         bundle_message_id: None,
         mirror_message_id: t.mirror.as_deref(),
+        chat: None,
     };
     Taken::Done(match approve_then_answer(st, pool, args).await {
         Err(r) => r,
@@ -698,6 +703,7 @@ pub async fn answer_bundle_approve(
         once: once.as_ref(),
         bundle_message_id: Some(bundle),
         mirror_message_id: None,
+        chat: None,
     };
     Taken::Done(match approve_then_answer(st, pool, args).await {
         Err(r) => r,

@@ -727,22 +727,39 @@ pub struct AuditDetail<'a> {
     pub bundle_message_id: Option<&'a str>,
     /// S5.4 14d — 거울 카드에서 온 결정이면 `via: 'mirror', mirrorMessageId`(TS 와 같은 칸). 묶음과 함께 오지 않는다.
     pub mirror_message_id: Option<&'a str>,
+    /// P3b-2 — 글 승인에서 온 결정이면 `via: 'chat', messageId, chatTarget?`(TS 와 같은 칸). 묶음·거울과 함께 오지 않는다.
+    pub chat: Option<ChatVia<'a>>,
 }
 
-/// S5.4 14d — 카드 meta 의 `decidedVia`(TS: chat·mirror·bundle 일 때만, button 은 없음).
+/// P3b-2 — 글 승인(`via: { kind: 'chat', messageId, target? }`, TS `DecideInput.chat`). 승인한 글과 어떻게 가리켰나(T1 링크·T2 카드 스레드·T3 맨 글).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChatVia<'a> {
+    pub message_id: &'a str,
+    pub target: Option<&'a str>,
+}
+
+/// S5.4 14d — 카드 meta 의 `decidedVia`(TS: chat·mirror·bundle 일 때만, button 은 없음). TS 는 `args.via` 를 그대로 싣는다.
 pub fn decided_via(
     bundle_message_id: Option<&str>,
     mirror_message_id: Option<&str>,
+    chat: Option<ChatVia<'_>>,
 ) -> Option<Value> {
-    match (bundle_message_id, mirror_message_id) {
-        (Some(b), _) => Some(serde_json::json!({ "kind": "bundle", "bundleMessageId": b })),
-        (None, Some(m)) => Some(serde_json::json!({ "kind": "mirror", "mirrorMessageId": m })),
-        (None, None) => None,
+    match (bundle_message_id, mirror_message_id, chat) {
+        (Some(b), _, _) => Some(serde_json::json!({ "kind": "bundle", "bundleMessageId": b })),
+        (None, Some(m), _) => Some(serde_json::json!({ "kind": "mirror", "mirrorMessageId": m })),
+        (None, None, Some(c)) => {
+            let mut v = serde_json::json!({ "kind": "chat", "messageId": c.message_id });
+            if let Some(t) = c.target {
+                v["target"] = serde_json::json!(t);
+            }
+            Some(v)
+        }
+        (None, None, None) => None,
     }
 }
 
 /// detail 에 나올 수 있는 칸 전부(TS 와 같은 이름). 시험이 이 밖의 칸이 없는지·TS 원문에 이 이름들이 있는지 본다.
-pub const AUDIT_DETAIL_KEYS: [&str; 12] = [
+pub const AUDIT_DETAIL_KEYS: [&str; 14] = [
     "requestId",
     "kind",
     "target",
@@ -755,6 +772,8 @@ pub const AUDIT_DETAIL_KEYS: [&str; 12] = [
     "via",
     "bundleMessageId",
     "mirrorMessageId",
+    "messageId",
+    "chatTarget",
 ];
 
 pub fn audit_detail(a: &AuditDetail<'_>) -> Value {
@@ -782,6 +801,12 @@ pub fn audit_detail(a: &AuditDetail<'_>) -> Value {
     } else if let Some(m) = a.mirror_message_id {
         o["via"] = serde_json::json!("mirror");
         o["mirrorMessageId"] = serde_json::json!(m);
+    } else if let Some(c) = a.chat {
+        o["via"] = serde_json::json!("chat");
+        o["messageId"] = serde_json::json!(c.message_id);
+        if let Some(t) = c.target {
+            o["chatTarget"] = serde_json::json!(t);
+        }
     } else {
         o["via"] = serde_json::json!("button");
     }
@@ -849,6 +874,8 @@ pub struct DenyArgs<'a> {
     /// S5.5 d — 거울 카드에서 왔으면 그 거울 글 id(`via: { kind: 'mirror' }`). 묶음과 함께 오지 않는다.
     /// 호출자가 [`is_genuine_permission_mirror`]·원본 채널 보기를 먼저 확인한다.
     pub mirror_message_id: Option<&'a str>,
+    /// P3b-2 — 글 승인에서 왔으면 그 글(`via: { kind: 'chat' }`).
+    pub chat: Option<ChatVia<'a>>,
 }
 
 /// 거절 입구가 끝낸 꼴.
@@ -942,7 +969,7 @@ pub async fn deny_write(
         let mut patch = serde_json::json!({
             "status": "denied", "decidedAt": now, "decidedBy": args.actor_id,
         });
-        if let Some(v) = decided_via(args.bundle_message_id, args.mirror_message_id) {
+        if let Some(v) = decided_via(args.bundle_message_id, args.mirror_message_id, args.chat) {
             patch["decidedVia"] = v;
         }
         patch["decidedByOwner"] = Value::Bool(as_owner);
@@ -963,6 +990,7 @@ pub async fn deny_write(
         grant_mode: None,
         bundle_message_id: args.bundle_message_id,
         mirror_message_id: args.mirror_message_id,
+        chat: args.chat,
     });
     sqlx::query(DENY_AUDIT)
         .bind(args.actor_id)
@@ -1019,7 +1047,7 @@ async fn deny_attempt(
         has_mandate: false,
         has_denial: false,
         has_once: false,
-        via_chat: false,
+        via_chat: args.chat.is_some(),
         via_mirror: args.mirror_message_id.is_some(),
     };
     let d = match recheck_locked(&agent, channel.as_deref(), locked.as_ref(), shape) {

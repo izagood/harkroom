@@ -253,6 +253,8 @@ pub struct ApproveArgs<'a> {
     pub bundle_message_id: Option<&'a str>,
     /// S5.5 d — 거울 카드에서 왔으면 그 거울 글 id(카드 meta `decidedVia`·감사·위임장 줄 `via: 'mirror'`).
     pub mirror_message_id: Option<&'a str>,
+    /// P3b-2 — 글 승인에서 왔으면 그 글(카드 meta `decidedVia`·감사·위임장 줄 `via: 'chat'`).
+    pub chat: Option<super::decide_core::ChatVia<'a>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -399,6 +401,8 @@ pub fn line_via(args: ApproveArgs<'_>) -> &'static str {
         "bundle"
     } else if args.mirror_message_id.is_some() {
         "mirror"
+    } else if args.chat.is_some() {
+        "chat"
     } else {
         "button"
     }
@@ -701,9 +705,11 @@ pub async fn approve_write(
         if let Some(id) = line.as_ref().and_then(|l| l.line_id()) {
             patch["lineId"] = json!(id);
         }
-        if let Some(v) =
-            super::decide_core::decided_via(args.bundle_message_id, args.mirror_message_id)
-        {
+        if let Some(v) = super::decide_core::decided_via(
+            args.bundle_message_id,
+            args.mirror_message_id,
+            args.chat,
+        ) {
             patch["decidedVia"] = v;
         }
         patch["decidedByOwner"] = Value::Bool(true);
@@ -724,6 +730,7 @@ pub async fn approve_write(
         grant_mode: grant_mode.zip(command_grant_id.as_deref()),
         bundle_message_id: args.bundle_message_id,
         mirror_message_id: args.mirror_message_id,
+        chat: args.chat,
     });
     sqlx::query(APPROVE_AUDIT)
         .bind(args.actor_id)
@@ -918,9 +925,11 @@ async fn merge_once_write(
         if let Some(id) = line.as_ref().and_then(|l| l.line_id()) {
             patch["lineId"] = json!(id);
         }
-        if let Some(v) =
-            super::decide_core::decided_via(args.bundle_message_id, args.mirror_message_id)
-        {
+        if let Some(v) = super::decide_core::decided_via(
+            args.bundle_message_id,
+            args.mirror_message_id,
+            args.chat,
+        ) {
             patch["decidedVia"] = v;
         }
         patch["decidedByOwner"] = Value::Bool(true);
@@ -957,6 +966,7 @@ async fn merge_once_write(
         grant_mode: None,
         bundle_message_id: args.bundle_message_id,
         mirror_message_id: args.mirror_message_id,
+        chat: args.chat,
     });
     sqlx::query(APPROVE_AUDIT)
         .bind(args.actor_id)
@@ -1013,7 +1023,7 @@ async fn approve_attempt(
         has_mandate: false,
         has_denial: false,
         has_once: args.has_once,
-        via_chat: false,
+        via_chat: args.chat.is_some(),
         via_mirror: args.mirror_message_id.is_some(),
     };
     let d = match recheck_locked(&agent, channel.as_deref(), locked.as_ref(), shape) {
@@ -1112,6 +1122,7 @@ mod tests {
             once: None,
             bundle_message_id: None,
             mirror_message_id: None,
+            chat: None,
         };
         assert_eq!(line_via(base), "button");
         let m = ApproveArgs {

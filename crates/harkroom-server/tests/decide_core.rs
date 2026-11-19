@@ -428,6 +428,7 @@ fn audit_detail_keys_match_ts_and_carry_no_secrets() {
         grant_mode: Some(("hour", "g")),
         bundle_message_id: Some("b"),
         mirror_message_id: None,
+        chat: None,
     });
     let keys: Vec<&str> = full
         .as_object()
@@ -438,8 +439,8 @@ fn audit_detail_keys_match_ts_and_carry_no_secrets() {
     for k in &keys {
         assert!(AUDIT_DETAIL_KEYS.contains(k), "unexpected audit key {k}");
     }
-    // bundle 과 mirror 는 함께 오지 않는다 — mirrorMessageId 하나만 빠진다.
-    assert_eq!(keys.len() + 1, AUDIT_DETAIL_KEYS.len());
+    // bundle·mirror·chat 은 함께 오지 않는다 — mirrorMessageId·messageId·chatTarget 셋이 빠진다.
+    assert_eq!(keys.len() + 3, AUDIT_DETAIL_KEYS.len());
     for bad in [
         "reason",
         "warnings",
@@ -462,6 +463,7 @@ fn audit_detail_keys_match_ts_and_carry_no_secrets() {
         grant_mode: None,
         bundle_message_id: None,
         mirror_message_id: None,
+        chat: None,
     });
     // 14d — 거울에서 온 결정: TS `{ via: 'mirror', mirrorMessageId }`.
     let mirror = audit_detail(&AuditDetail {
@@ -475,6 +477,7 @@ fn audit_detail_keys_match_ts_and_carry_no_secrets() {
         grant_mode: None,
         bundle_message_id: None,
         mirror_message_id: Some("m"),
+        chat: None,
     });
     assert_eq!(
         mirror,
@@ -484,14 +487,61 @@ fn audit_detail_keys_match_ts_and_carry_no_secrets() {
         TS_PERMISSION_REQUESTS
             .contains("{ via: 'mirror', mirrorMessageId: args.via.mirrorMessageId }")
     );
-    use harkroom_server::core::decide_core::decided_via;
-    assert_eq!(decided_via(None, None), None);
+    // P3b-2 — 글 승인에서 온 결정: TS `{ via: 'chat', messageId, chatTarget? }`, 카드 meta `decidedVia` 는 `args.via` 그대로.
+    use harkroom_server::core::decide_core::ChatVia;
+    let chat = audit_detail(&AuditDetail {
+        request_id: "r",
+        kind: "tool",
+        target: "Bash(ls:*)",
+        channel_id: None,
+        as_owner: true,
+        thread_root_id: None,
+        grant_expires_at: None,
+        grant_mode: None,
+        bundle_message_id: None,
+        mirror_message_id: None,
+        chat: Some(ChatVia {
+            message_id: "g",
+            target: Some("T2"),
+        }),
+    });
     assert_eq!(
-        decided_via(None, Some("m")),
+        chat,
+        serde_json::json!({"requestId": "r", "kind": "tool", "target": "Bash(ls:*)", "channelId": null, "via": "chat", "messageId": "g", "chatTarget": "T2"})
+    );
+    assert!(TS_PERMISSION_REQUESTS.contains(
+        "{ via: args.via.kind, messageId: args.via.messageId, ...(args.via.target ? { chatTarget: args.via.target } : {}) }"
+    ));
+    use harkroom_server::core::decide_core::decided_via;
+    assert_eq!(
+        decided_via(
+            None,
+            None,
+            Some(ChatVia {
+                message_id: "g",
+                target: Some("T1")
+            })
+        ),
+        Some(serde_json::json!({"kind": "chat", "messageId": "g", "target": "T1"}))
+    );
+    assert_eq!(
+        decided_via(
+            None,
+            None,
+            Some(ChatVia {
+                message_id: "g",
+                target: None
+            })
+        ),
+        Some(serde_json::json!({"kind": "chat", "messageId": "g"}))
+    );
+    assert_eq!(decided_via(None, None, None), None);
+    assert_eq!(
+        decided_via(None, Some("m"), None),
         Some(serde_json::json!({"kind": "mirror", "mirrorMessageId": "m"}))
     );
     assert_eq!(
-        decided_via(Some("b"), None),
+        decided_via(Some("b"), None, None),
         Some(serde_json::json!({"kind": "bundle", "bundleMessageId": "b"}))
     );
     assert_eq!(
