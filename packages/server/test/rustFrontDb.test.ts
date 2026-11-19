@@ -11016,6 +11016,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                   ['⑧ 준 범위보다 넓다', (s) => ({ ...base, to: `gd-${s}-w`, pathPrefix: '/other' })],
                   ['⑨ 단계가 깊다', (s) => ({ ...base, to: `gd-${s}-d`, delegateDepth: 1 })],
                   ['⑩ 자기 자신', () => ({ ...base, to: bot3.accountId })],
+                  // P6-3 — ASCII 밖 경로는 Rust 가 답한다(받는 쪽이 없어 거기서 멈춘다) · JS `\s` 인 U+3000 은 경로 모양 거절.
+                  ['⑪ ASCII 밖 경로', (s) => ({ ...base, to: `gd-${s}-u`, pathPrefix: '/repos/모델' })],
+                  ['⑫ 전각 빈칸', (s) => ({ ...base, to: `gd-${s}-sp`, pathPrefix: '/repos/a\u3000b' })],
                 ];
                 const gdNorm = (t: string) => t.replace(/gd-[tr]-/g, 'gd-x-');
                 const run = async (side: 't' | 'r') => {
@@ -11041,6 +11044,28 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                      from audit_log where action = 'grant.delegate.denied' and target = 'gd-conn2' and detail->>'to' like $1 and id > $2::bigint order by detail->>'to'`,
                   [`gd-${s}-%`, gdFloor])).rows;
                 expect(await gdAudit('r')).toEqual(await gdAudit('t'));
+                // P6-3 — 준 쪽 범위 끝에 URL 짓기가 바꿀 글자(ASCII 밖)가 있으면 TS 는 wire 가 접두 밖이라 `parent_invalid`(path_not_allowed).
+                {
+                  const setPrefix = (p: string) => db.pool.query(
+                    `update account_grant set limits = jsonb_build_object('methods', '["GET"]'::jsonb, 'pathPrefix', $3::text)
+                      where account_id = $1 and scope = $2`, [bot3.accountId, `connector:${gdConn2}`, p]);
+                  await setPrefix('/저장소');
+                  try {
+                    const one = async (side: 't' | 'r') => {
+                      const r = await mcpCall(side === 't' ? tsUrl : v2Url, bot3.pat, 'grant.delegate',
+                        { ...base, pathPrefix: '/저장소/x', to: `gd-${side}-wire` }, 35);
+                      return { status: r.status, type: r.type, core: r.core, text: gdNorm(r.text) };
+                    };
+                    const t = await one('t');
+                    const r = await one('r');
+                    expect(t.core, 'wire 바뀜 — TS').toBeNull();
+                    expect(r.core, 'wire 바뀜 — 누가 답했나').toBe('mcp');
+                    expect({ ...r, core: null }).toEqual({ ...t, core: null });
+                    expect(t.text).toContain('path_not_allowed');
+                  } finally {
+                    await setPrefix('/repos');
+                  }
+                }
                 // 새 위임 — 원인 없는 턴이면 TS 도 늘 대기 줄이고 시스템 줄이 없다. Rust 가 줄·감사·이벤트를 쓴다.
                 // 받는 쪽은 루트 사람(admin)이 소유한 에이전트 둘(TS·Rust 각각). 원인이 확인된 턴(시스템 줄)은 아직 TS 몫이다.
                 const gdTargets: Record<'t' | 'r', string> = { t: '', r: '' };

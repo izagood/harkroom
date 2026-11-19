@@ -9,9 +9,10 @@
 //! 그때 TS 는 늘 대기(`pending_approval`)이고 시스템 줄을 쓰지 않는다. 줄 upsert·`grant.delegate.pending` 감사·`grant.changed`
 //! 이벤트를 **한 트랜잭션**에 쓴다.
 //!
-//! - **TS 로 넘기는 것**(`None`): zod 가 받지 않을 인자 · `%`·ASCII 밖 글자·URL 짓기가 바꿀 글자가 든 경로 ·
+//! - **TS 로 넘기는 것**(`None`): zod 가 받지 않을 인자 · `%` 가 든 경로(`%2F` 두 번 재기) ·
 //!   낯선 limits 모양 · 원인이 확인된 새 위임(즉시 유효 판정·시스템 줄 — `postMessage` 의 부름·알림) · uuid 가 아닌 원인 ·
 //!   DB 오류 · 감사 줄 INSERT 실패. 넘기기 전에 Rust 가 쓴 것은 없다(감사 줄은 거절 답과 함께, 새 위임은 롤백 뒤 넘긴다).
+//!   ASCII 밖 글자·URL 짓기가 바꿀 글자가 든 경로는 Rust 가 답한다(P6-3 — 준 쪽 사슬 판정은 TS 처럼 `path_not_allowed`).
 //! - 쓰기 칸은 [`GRANT_DELEGATE_PRIVILEGES`] 뿐이다.
 use super::tools::err;
 use crate::auth::Account;
@@ -166,19 +167,31 @@ fn connector_ok(s: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'_' || *c == b'-')
 }
 
-/// TS `safePath` 중 `%` 가 없는 ASCII 경로만 — 그 밖(`%`·ASCII 밖 글자)은 `None` 으로 TS 에 맡긴다.
+/// JS 정규식 `\s` 와 같은 글자인가(ECMAScript WhiteSpace + LineTerminator). Rust `char::is_whitespace` 와 다르다
+/// (U+0085 는 JS `\s` 가 아니고 U+FEFF 는 맞다).
+fn js_space(c: char) -> bool {
+    matches!(
+        c,
+        '\t' | '\n' | '\u{0b}' | '\u{0c}' | '\r' | ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'
+            ..='\u{200a}'
+                | '\u{2028}'
+                | '\u{2029}'
+                | '\u{202f}'
+                | '\u{205f}'
+                | '\u{3000}'
+                | '\u{feff}'
+    )
+}
+
+/// TS `safePath` 중 `%` 가 없는 경로만 — `%` 가 든 경로(`%2F` 두 번 재기)는 `None` 으로 TS 에 맡긴다.
 pub(crate) fn safe_path_plain(path: &str) -> Option<bool> {
-    if !path.is_ascii() || path.contains('%') {
+    if path.contains('%') {
         return None;
     }
     if !path.starts_with('/') || path.starts_with("//") {
         return Some(false);
     }
-    // JS `\s` 의 ASCII 몫: \t \n \v \f \r 와 빈칸.
-    if path
-        .bytes()
-        .any(|c| matches!(c, b'\\' | b'#' | b' ' | b'\t' | b'\n' | 0x0b | 0x0c | b'\r'))
-    {
+    if path.chars().any(|c| c == '\\' || c == '#' || js_space(c)) {
         return Some(false);
     }
     let p = path.split('?').next().unwrap_or("");
@@ -290,16 +303,19 @@ async fn live_chain(
     if !safe_path_plain(path)? {
         return Some(Err("bad_path"));
     }
-    // 실제로 보낼 경로가 입력과 같은 글자일 때만 옮긴다(그 밖은 URL 짓기를 TS 가 한다).
-    if !wire_is_identity(path) {
-        return None;
-    }
+    // 실제로 보낼 경로(`new URL(path, base)`)가 입력과 다른 글자면(ASCII 밖·`"<>`{}`·제어 글자 — 인코딩되거나 벗겨진다)
+    // TS 는 `pathCovered(wire, pathPrefix)` 에서 떨어진다: 여기의 `path` 가 곧 `pathPrefix` 이고 바뀐 글자가 그 안에 있으니
+    // wire 는 접두 안에 들 수 없다. `%` 없는 경로라 wire 의 `%XX` 는 `%2e`·`%5c`·`%25`·`%2f` 가 아니고 `safePath(wire)` 는 지난다.
+    let wire_changed = !wire_is_identity(path);
     let root = match chain_root(read, conn.1.as_ref(), scope, leaf_id).await? {
         Ok(r) => r,
         Err(c) => return Some(Err(c)),
     };
     if !conn.5.contains(method) {
         return Some(Err("method_not_allowed"));
+    }
+    if wire_changed {
+        return Some(Err("path_not_allowed"));
     }
     if conn.3 != "none" && !conn.4 {
         return Some(Err("no_secret"));
@@ -716,6 +732,13 @@ mod tests {
         assert_eq!(safe_path_plain("/a;b"), Some(false));
         assert_eq!(safe_path_plain("/a\x0bb"), Some(false));
         assert_eq!(safe_path_plain("/a%2fb"), None);
+        assert_eq!(safe_path_plain("/모델/x"), Some(true));
+        assert_eq!(safe_path_plain("/a\u{3000}b"), Some(false));
+        assert_eq!(safe_path_plain("/a\u{feff}b"), Some(false));
+        assert_eq!(safe_path_plain("/a\u{85}b"), Some(true));
+        assert!(path_covered_plain("/모델/x", "/모델"));
+        assert!(!wire_is_identity("/모델"));
+        assert!(!wire_is_identity("/a\x01"));
         assert!(path_covered_plain("/api/x", "/api"));
         assert!(path_covered_plain("/api", "/api"));
         assert!(!path_covered_plain("/apix", "/api"));
