@@ -10316,7 +10316,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
               // P6-2b — 대체한 옛 요청의 카드를 Rust 가 닫는다(permissionRequest 상태·ask 닫기·message.updated·거울). 묶음에 담긴 카드는 TS.
               pr({ kind: 'tool', rule: 'Bash(kubectl get pods:*)' }, true, 'permission.request 옛 요청에 카드 → 옛 카드 닫기', oldReq(true)),
               pr({ kind: 'tool', rule: 'Bash(kubectl get pods:*)' }, false, 'permission.request 옛 카드가 묶음에 → TS(묶음 줄 옮기기)', oldReq(true, true)),
-              pr({ kind: 'command', command: 'kubectl --context rc get pod' }, false, 'permission.request command → TS'),
+              // P6-2c — command 도 Rust. 오퍼레이터를 거치지 않으면 파일 해시가 없으니 kubectl·helm(늘 kubeconfig 를 읽는다)은 거절로 끝난다.
+              pr({ kind: 'command', command: 'kubectl --context rc get pod' }, true, 'permission.request command kubeconfig 없음 → needs_kubeconfig'),
+              pr({ kind: 'command', command: 'kubectl --kubeconfig /k/c --context rc get pod' }, true, 'permission.request command 파일 안 잼 → files_unmeasured'),
             ];
           })(),
           // C3b-2c-3 — `message.report`(planStepId 없는 것). 보고 meta 를 쓰고, 커밋 뒤 작성자의 예약을 접는다(같은 턴이 건 것은 남김).
@@ -11111,7 +11113,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                 await db.pool.query('delete from api_connector where id = $1', [gdConn2]);
               }
             }
-            // S5.4 — `permission.request` 거절 앞머리(`permission_request.rs`). 거절과 gh/git 머리 판정은 Rust 가 답한다(P6-2a). command 는 아직 TS.
+            // S5.4 — `permission.request` 거절 앞머리(`permission_request.rs`). 거절과 gh/git 머리 판정은 Rust 가 답한다(P6-2a). command 거절도 Rust(P6-2c).
             {
               const prCh = await freshCh();
               const prRoot = await ins({ ch: prCh, author: bot3.accountId, body: 'pr 앞머리' });
@@ -11134,6 +11136,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                 ['⑭ merge 모양 틀림', { ...at, kind: 'merge', repo: 'a/b/c' }, true],
                 ['⑮ gh api 쓰기(P6-2a 부터 Rust)', { ...at, kind: 'tool', rule: 'Bash(gh api -X POST repos/a/b)' }, true],
                 ['⑯ model 빈 글 → TS(zod)', { ...at, kind: 'tool', rule: 'Bash(*)', model: '' }, false],
+                // P6-2c — kind=command 도 Rust 가 받는다. 정확한 명령 거절, 파일을 읽는 명령인데 잰 해시가 없음(오퍼레이터를 안 거침).
+                ['⑰ command 머리 안 됨(P6-2c)', { ...at, kind: 'command', command: 'ls -l' }, true],
+                ['⑱ command 파일 안 잼(P6-2c)', { ...at, kind: 'command', command: 'kubectl --kubeconfig /k/c --context x get pods' }, true],
               ];
               const run = async (side: 't' | 'r') => {
                 const out: Record<string, unknown>[] = [];
@@ -11155,6 +11160,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
               expect(String(tsPr[1]!.text)).toContain('too_broad');
               expect(String(tsPr[3]!.text)).toContain('shell_syntax');
               expect(String(tsPr[12]!.text)).toContain('org_wide');
+              expect(String(tsPr[16]!.text)).toContain('unsupported_head');
+              expect(String(tsPr[17]!.text)).toContain('files_unmeasured');
               // 거절은 아무것도 쓰지 않는다 — 요청 줄·감사 줄이 없다.
               expect((await db.pool.query(`select count(*)::int as n from permission_request where channel_id = $1`, [prCh])).rows[0].n).toBe(0);
               expect((await db.pool.query(`select count(*)::int as n from audit_log where action = 'permission.requested' and detail->>'channelId' = $1`, [prCh])).rows[0].n).toBe(0);

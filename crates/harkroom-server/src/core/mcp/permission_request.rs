@@ -8,7 +8,7 @@
 //!
 //! **이 묶음은 아무것도 쓰지 않는다** — TS 도 이 거절들에서는 쓰지 않는다(감사 줄 없음). 그래서 쓰기 권한 표가 없고 읽기 풀로만 답한다.
 //!
-//! - **TS 로 넘기는 것**(`None`): zod 가 받지 않을 인자 · kind=command 전부(`openCommandRequest`) · 받아들여지는 규칙·저장소
+//! - **TS 로 넘기는 것**(`None`): zod 가 받지 않을 인자 · 받아들여지는 규칙·저장소·명령
 //!   (이미 있는 grant·기다리는 요청·하루 상한·요청 줄·카드 글은 TS) · 머리가 `gh`·`git` 인 Bash 규칙(`checkGh`·`checkGitPush`) ·
 //!   ASCII 밖 글자가 든 규칙·저장소(JS `trim`·`toLowerCase` 와 맞추지 않는다) · DB 오류.
 use super::tools::err;
@@ -653,6 +653,134 @@ fn accepted_target(a: &Args<'_>) -> Result<Option<Target>, &'static str> {
     }
 }
 
+// ── P6-2c: kind=command ─────────────────────────────────────────────────────────────────────────────────────────────
+
+/// TS `openCommandRequest` 의 「이미 있는 grant」 — 같은 스레드의 같은 명령, 쓰지 않은 1회짜리이거나 기한 안의 1시간짜리.
+const COMMAND_LIVE_SQL: &str = "select (extract(epoch from expires_at) * 1000)::bigint from command_grant \
+     where agent_id = $1::uuid and channel_id = $2::uuid and thread_root_id = $3::uuid and command = $4 \
+       and expires_at > $5::timestamptz and (not single_use or used_at is null) \
+     order by expires_at desc limit 1";
+
+/// TS `openCommandRequest` 의 `file_digests` 적기.
+const COMMAND_DIGESTS_SQL: &str =
+    "update permission_request set file_digests = $2::jsonb where id = $1::uuid";
+
+/// kind=command 에 더 읽는 칸.
+const COMMAND_READ_PRIVILEGES: &[(&str, &str)] = &[
+    ("command_grant.agent_id", "SELECT"),
+    ("command_grant.channel_id", "SELECT"),
+    ("command_grant.thread_root_id", "SELECT"),
+    ("command_grant.command", "SELECT"),
+    ("command_grant.expires_at", "SELECT"),
+    ("command_grant.single_use", "SELECT"),
+    ("command_grant.used_at", "SELECT"),
+];
+
+/// kind=command 에 더 쓰는 칸.
+const COMMAND_WRITE_PRIVILEGES: &[(&str, &str)] = &[
+    ("permission_request.id", "SELECT"),
+    ("permission_request.file_digests", "UPDATE"),
+];
+
+/// 받아들여진 명령: `(정규 명령, warnings, 맞춘 파일)`. `Err(답)` 은 거절, `Ok(None)` 은 TS 몫(ASCII 밖·Rust 가 글자를 모르는 거절 코드·
+/// 엄격 해독이 못 읽은 헤더).
+type AcceptedCommand = (
+    String,
+    Vec<&'static str>,
+    Vec<crate::core::permission_command::MatchedFile>,
+);
+fn accepted_command(
+    command: &str,
+    header: &crate::core::permission_command::Header,
+) -> Result<Option<AcceptedCommand>, String> {
+    use crate::core::permission_command::{Header, files_refusal_message, match_files};
+    use harkroom_proto::tool_rules::{ExactCommandVerdict, validate_exact_command};
+    if !command.is_ascii() {
+        return Ok(None);
+    }
+    let (cmd, warnings, want) = match validate_exact_command(command) {
+        ExactCommandVerdict::Refused(c) => {
+            let m = rule_message(c);
+            if m == rule_message("") {
+                return Ok(None);
+            }
+            return Err(err(c, m));
+        }
+        ExactCommandVerdict::Ok {
+            command,
+            warnings,
+            files,
+        } => (command, warnings, files),
+    };
+    let got = match header {
+        Header::ToTs => return Ok(None),
+        Header::Absent => None,
+        Header::Digests(d) => Some(d.as_slice()),
+    };
+    match match_files(&want, got) {
+        Ok(f) => Ok(Some((cmd, warnings, f))),
+        Err(c) => Err(err(c, files_refusal_message(c))),
+    }
+}
+
+/// TS `raisePermission` 의 `alreadyGranted` 답(kind=command).
+fn command_already_granted_result(expires_at: Option<&str>) -> String {
+    format!(
+        "{{\"alreadyGranted\":true,\"expiresAt\":{},\"message\":{}}}",
+        expires_at.map_or(Value::Null, Value::from),
+        Value::from("already granted in this thread — run exactly that command now")
+    )
+}
+
+/// TS `openCommandRequest` 의 `created.meta`. 요청 id 는 카드 tx 의 훅이 채운다.
+#[allow(clippy::too_many_arguments)]
+fn command_request_meta(
+    agent_id: &str,
+    owner: Option<&str>,
+    command: &str,
+    channel: &str,
+    thread: &str,
+    warnings: &[&str],
+    files: &[crate::core::permission_command::MatchedFile],
+    reason: &str,
+    requested_at: &str,
+    expires_at: &str,
+    mandate: Option<(&str, Value)>,
+) -> Value {
+    use crate::core::permission_card as pc;
+    use serde_json::json;
+    let mut m = serde_json::Map::new();
+    m.insert("requestId".into(), json!(""));
+    m.insert("agentId".into(), json!(agent_id));
+    m.insert("ownerAccountId".into(), json!(owner));
+    m.insert("kind".into(), json!("command"));
+    m.insert("target".into(), json!(command));
+    m.insert("channelId".into(), json!(channel));
+    m.insert("threadRootId".into(), json!(thread));
+    m.insert("warnings".into(), json!(warnings));
+    if let Some(l) = pc::body_warning_line(warnings) {
+        m.insert("bodyWarningLine".into(), json!(l));
+    }
+    if !files.is_empty() {
+        m.insert(
+            "files".into(),
+            Value::Array(files.iter().map(|f| f.meta()).collect()),
+        );
+    }
+    if let Some((id, chip)) = mandate {
+        m.insert("mandateId".into(), json!(id));
+        m.insert("mandate".into(), chip);
+    }
+    m.insert(
+        "line".into(),
+        crate::core::permission_command::card_line(command),
+    );
+    m.insert("reason".into(), json!(pc::one_line_reason(reason)));
+    m.insert("requestedAt".into(), json!(requested_at));
+    m.insert("expiresAt".into(), json!(expires_at));
+    Value::Object(m)
+}
+
 fn refusal(code: &'static str) -> String {
     match code {
         "org_wide" => err(
@@ -675,20 +803,39 @@ pub async fn accept(
     me: &Account,
     args: &Value,
     (cause, turn, operator): (Option<&str>, Option<&str>, bool),
+    command_files: &crate::core::permission_command::Header,
 ) -> Option<String> {
     use crate::core::msg_post::{iso_ms, now_ms};
     use crate::core::permission_card as pc;
+    use crate::core::permission_command as pcmd;
     let a = parse(args)?;
     let st = st?;
     if me.kind != "agent" {
         return None;
     }
-    let (target, cap, scope, warnings) = match accepted_target(&a) {
-        Ok(Some(t)) => t,
-        Ok(None) => return None,
-        Err(c) => return Some(refusal(c)),
+    // P6-2c: kind=command 는 정확한 명령 판정 → 파일 해시 맞추기(TS `openCommandRequest` 의 앞 두 걸음).
+    let mut files: Option<Vec<pcmd::MatchedFile>> = None;
+    let (target, cap, scope, warnings) = if a.kind == Kind::Command {
+        match accepted_command(a.command?, command_files) {
+            Ok(Some((cmd, w, f))) => {
+                files = Some(f);
+                (cmd, "command", String::new(), w)
+            }
+            Ok(None) => return None,
+            Err(answer) => return Some(answer),
+        }
+    } else {
+        match accepted_target(&a) {
+            Ok(Some(t)) => t,
+            Ok(None) => return None,
+            Err(c) => return Some(refusal(c)),
+        }
     };
-    if !crate::write::missing_in(read, ACCEPT_READ_PRIVILEGES, &[])
+    let mut read_privs = ACCEPT_READ_PRIVILEGES.to_vec();
+    if files.is_some() {
+        read_privs.extend_from_slice(COMMAND_READ_PRIVILEGES);
+    }
+    if !crate::write::missing_in(read, &read_privs, &[])
         .await
         .ok()?
         .is_empty()
@@ -696,6 +843,9 @@ pub async fn accept(
         return None;
     }
     let mut privs = pc::REQUEST_WRITE_PRIVILEGES.to_vec();
+    if files.is_some() {
+        privs.extend_from_slice(COMMAND_WRITE_PRIVILEGES);
+    }
     privs.extend_from_slice(pc::LINK_PUSH_PRIVILEGES);
     privs.extend_from_slice(super::message_ask::DENIAL_CARD_PATCH_PRIVILEGES);
     // P6-2b: 대체될 옛 카드가 있는지는 tx 안에서야 알므로 닫기 칸도 미리 본다.
@@ -725,25 +875,40 @@ pub async fn accept(
         }
         None => None,
     };
-    let live: Option<Option<i64>> = sqlx::query_scalar(LIVE_GRANT_SQL)
-        .bind(&me.id)
-        .bind(cap)
-        .bind(&scope)
-        .bind(&now_iso)
-        .fetch_optional(read)
-        .await
-        .ok()?;
-    if let Some(exp) = live {
-        return Some(super::respond::text_result(&already_granted_result(
-            exp.map(iso_ms).as_deref(),
-        )));
-    }
-    let kind = if a.kind == Kind::Tool {
-        "tool"
-    } else {
-        "merge"
-    };
     let thread = args.get("threadRootId")?.as_str()?;
+    let live: Option<Option<i64>> = if files.is_some() {
+        sqlx::query_scalar(COMMAND_LIVE_SQL)
+            .bind(&me.id)
+            .bind(a.channel_id)
+            .bind(thread)
+            .bind(&target)
+            .bind(&now_iso)
+            .fetch_optional(read)
+            .await
+            .ok()?
+    } else {
+        sqlx::query_scalar(LIVE_GRANT_SQL)
+            .bind(&me.id)
+            .bind(cap)
+            .bind(&scope)
+            .bind(&now_iso)
+            .fetch_optional(read)
+            .await
+            .ok()?
+    };
+    if let Some(exp) = live {
+        let exp = exp.map(iso_ms);
+        return Some(super::respond::text_result(&if files.is_some() {
+            command_already_granted_result(exp.as_deref())
+        } else {
+            already_granted_result(exp.as_deref())
+        }));
+    }
+    let kind = match a.kind {
+        Kind::Tool => "tool",
+        Kind::Merge => "merge",
+        Kind::Command => "command",
+    };
     let pending: Option<(String, Option<String>)> = sqlx::query_as(PENDING_SQL)
         .bind(&me.id)
         .bind(kind)
@@ -765,27 +930,58 @@ pub async fn accept(
         Some(m) => Some((m, card_mandate_meta(read, m, a.channel_id).await?)),
         None => None,
     };
-    let pr_meta = pc::plain_request_meta(
-        kind,
-        &me.id,
-        owner.as_deref(),
-        &target,
-        a.channel_id,
-        &warnings,
-        reason,
-        &now_iso,
-        &expires_iso,
-        chip,
-    );
-    let shown = pr_meta["target"].as_str()?.to_owned();
-    let card_body = pc::plain_card_body(
-        kind,
-        &shown,
-        &warnings,
-        &format!("@{}", me.handle),
-        pr_meta["reason"].as_str()?,
-    );
-    let meta = pc::plain_card_meta(pr_meta);
+    let (card_body, meta) = match &files {
+        Some(f) => {
+            let pr_meta = command_request_meta(
+                &me.id,
+                owner.as_deref(),
+                &target,
+                a.channel_id,
+                thread,
+                &warnings,
+                f,
+                reason,
+                &now_iso,
+                &expires_iso,
+                chip,
+            );
+            let body = pcmd::card_body(
+                &format!("@{}", me.handle),
+                &target,
+                &warnings,
+                f,
+                pr_meta["reason"].as_str()?,
+            );
+            let mut m = pc::merge_card_meta(pr_meta, false);
+            if let Some(Value::Object(ask)) = m.get_mut("ask") {
+                ask.insert("options".into(), pcmd::card_options());
+            }
+            (body, m)
+        }
+        None => {
+            let pr_meta = pc::plain_request_meta(
+                kind,
+                &me.id,
+                owner.as_deref(),
+                &target,
+                a.channel_id,
+                &warnings,
+                reason,
+                &now_iso,
+                &expires_iso,
+                chip,
+            );
+            let shown = pr_meta["target"].as_str()?.to_owned();
+            let body = pc::plain_card_body(
+                kind,
+                &shown,
+                &warnings,
+                &format!("@{}", me.handle),
+                pr_meta["reason"].as_str()?,
+            );
+            (body, pc::plain_card_meta(pr_meta))
+        }
+    };
     let mut sub = serde_json::Map::new();
     sub.insert("channelId".into(), Value::from(a.channel_id));
     sub.insert("body".into(), Value::from(card_body));
@@ -808,6 +1004,7 @@ pub async fn accept(
             expires: &expires_iso,
         },
         owner: owner.as_deref(),
+        file_digests: files.as_deref().map(pcmd::canonical_digests_json),
         request_id: std::sync::OnceLock::new(),
         closes_old: std::sync::OnceLock::new(),
     };
@@ -842,6 +1039,8 @@ pub async fn accept(
 struct RequestHook<'a> {
     req: crate::core::permission_card::NewRequest<'a>,
     owner: Option<&'a str>,
+    /// kind=command 면 요청 줄 `file_digests` 에 둘 꼴(TS `canonicalDigests`, 파일이 없어도 `[]`).
+    file_digests: Option<String>,
     request_id: std::sync::OnceLock<String>,
     /// 이 tx 에서 대체한 옛 요청에 카드가 붙어 있었나 — 커밋 뒤 [`close_superseded_cards`] 를 부를지.
     closes_old: std::sync::OnceLock<bool>,
@@ -867,6 +1066,13 @@ impl crate::core::msg_post::BeforeCommit for RequestHook<'_> {
                 Ok(id) => id,
                 Err(rej) => return Ok(Some(rej)),
             };
+            if let Some(d) = &self.file_digests {
+                sqlx::query(COMMAND_DIGESTS_SQL)
+                    .bind(&request_id)
+                    .bind(d)
+                    .execute(&mut **tx)
+                    .await?;
+            }
             let old: Vec<(String, String, String)> = sqlx::query_as(SUPERSEDED_OLD_SQL)
                 .bind(&request_id)
                 .fetch_all(&mut **tx)
@@ -910,6 +1116,45 @@ mod tests {
     use serde_json::json;
 
     const C: &str = "11111111-1111-1111-1111-111111111111";
+
+    #[test]
+    fn command_accept_shapes() {
+        use crate::core::permission_command::{Digest, Header};
+        const SHA: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let kc = "kubectl --kubeconfig /k/c --context x get pods";
+        // --kubeconfig 는 파일을 읽는다 — 잰 것이 없으면 files_unmeasured, 다른 경로면 files_mismatch(TS matchFileDigests).
+        let e = accepted_command(kc, &Header::Absent).unwrap_err();
+        assert!(e.contains("files_unmeasured"), "{e}");
+        let other = Header::Digests(vec![Digest {
+            path: "/k/x".into(),
+            sha256: SHA.into(),
+            size: 1,
+            preview: Some("p".into()),
+        }]);
+        assert!(
+            accepted_command(kc, &other)
+                .unwrap_err()
+                .contains("files_mismatch")
+        );
+        let same = Header::Digests(vec![Digest {
+            path: "/k/c".into(),
+            sha256: SHA.into(),
+            size: 1,
+            preview: Some("p".into()),
+        }]);
+        let (cmd, _, f) = accepted_command(kc, &same).unwrap().unwrap();
+        assert_eq!(cmd, kc);
+        assert_eq!(f.len(), 1);
+        // 정확한 명령 거절은 shared 글자 그대로.
+        assert!(
+            accepted_command("ls -l", &Header::Absent)
+                .unwrap_err()
+                .contains("unsupported_head")
+        );
+        // ASCII 밖·엄격 해독이 못 읽은 헤더는 TS.
+        assert_eq!(accepted_command("kubectl get ü", &Header::Absent), Ok(None));
+        assert_eq!(accepted_command(kc, &Header::ToTs), Ok(None));
+    }
 
     #[test]
     fn parse_matches_zod() {
