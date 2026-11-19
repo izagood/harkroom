@@ -9210,7 +9210,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         };
         // 8d22aaf3f 부터 URL 이 든 글은 Rust 가 올린다(링크 미리보기를 Rust 가 받는다).
         // P3 부터 `agentModels` 키(빈 목록)도 Rust 가 맡는다.
-        const HANDED = ['TS: 승인 낱말', 'TS: 메시지 링크'];
+        // P3b-2 부터 글 승인 낱말·메시지 링크 글도 Rust 가 맡는다(글 승인 판정까지 — T1·T2·T3 결정 대조는 글 승인 블록에서 따로 본다).
+        const HANDED: string[] = [];
         const run = async (base: string, sd: Side) => {
           const out: { step: string; status: number; code?: string; count: string | null; body: unknown; id?: string }[] = [];
           const step = async (name: string, path: string, body: unknown, token?: string, key?: string) => {
@@ -9231,8 +9232,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           await step('alsoInChannel 글자 → 400', mPath(todayId), { body: 'x', alsoInChannel: 'yes' });
           await step('비공개 비멤버 → 403', mPath(String(priv.id)), { body: 'x' }, member.token);
           await step('채널 uuid 아님 → 400', mPath('x'), { body: 'x' });
-          await step('TS: 승인 낱말', mPath(todayId), { body: '승인합니다' });
-          await step('TS: 메시지 링크', mPath(todayId), { body: `이것 harkroom://message/${sd.root}` });
+          await step('승인 낱말', mPath(todayId), { body: '승인합니다' });
+          await step('메시지 링크', mPath(todayId), { body: `이것 harkroom://message/${sd.root}` });
           await step('URL', mPath(todayId), { body: '자료 https://example.com/a' });
           // C1c-3a 부터 Rust 가 맡는다(자세한 대조는 아래 사람 답글 블록).
           await step('스레드 답글', mPath(todayId), { body: '답글', threadRootId: sd.root });
@@ -9253,7 +9254,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect(st(tsOut, '평범한 글').count).toBe('0');
         expect(st(tsOut, '재시도 키 다시 → 재생 200').count, '재생은 헤더 없음').toBeNull();
         expect(st(rsOut, '재시도 키 다시 → 재생 200').id, 'Rust 재생도 같은 글').toBe(st(rsOut, '재시도 키 첫 번').id);
-        expect(st(tsOut, 'TS: 승인 낱말').status).toBe(201);
+        expect(st(tsOut, '승인 낱말').status).toBe(201);
         expect((st(tsOut, '첨부 둘(고른 순서)').body as { attachments: { id: string }[] }).attachments.map((a) => a.id).sort()).toEqual(['ATT1', 'ATT2']);
         // 이벤트 — Rust 가 맡은 글은 outbox 에, 넘긴 글은 TS 에서. 모양·받는 사람이 TS 와 같다.
         const created = (evs: WorkspaceEvent[], ids: string[], sd: Side) => evs
@@ -9261,7 +9262,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           .map((e) => shape(sd)(JSON.parse(JSON.stringify(e))));
         const idsOf = (o: typeof tsOut, handed: boolean) => o.filter((x) => x.status === 201 && HANDED.includes(x.step) === handed).map((x) => x.id!);
         const want = created(tsEvents, idsOf(tsOut, false), T);
-        expect(want.length, '맡은 글마다 message.created(C1c-3a 부터 스레드 답글, C1c-3d 부터 DM, C1c-4a 부터 에이전트 글, 8d22aaf3f 부터 URL 글, P3 부터 모델 지정 키 포함)').toBe(8);
+        expect(want.length, '맡은 글마다 message.created(C1c-3a 부터 스레드 답글, C1c-3d 부터 DM, C1c-4a 부터 에이전트 글, 8d22aaf3f 부터 URL 글, P3 부터 모델 지정 키, P3b-2 부터 승인 낱말·메시지 링크 포함)').toBe(10);
         const until8 = Date.now() + 10_000;
         while (created(busEvents, idsOf(rsOut, false), R).length < want.length && Date.now() < until8) await new Promise((res) => setTimeout(res, 100));
         expect(created(busEvents, idsOf(rsOut, false), R), 'Rust 가 낸 message.created = TS').toEqual(want);
