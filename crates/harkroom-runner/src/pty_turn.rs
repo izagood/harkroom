@@ -464,7 +464,8 @@ impl PromptInjector {
 
     /// 정본 `nudge` — 삼켜진 Enter 를 화면(`unsentHint`)으로 보고 개행만 다시 친다. 본문은 다시 보내지 않는다.
     fn nudge(&mut self, now: u64, out: &mut Vec<Action>) {
-        let screen = strip_ansi(&self.tail_text());
+        // 화면은 마감이 됐을 때만 만든다 — on_tick 은 PTY 사건마다 불리므로 미리 만들면 턴 내내 헛일이 된다.
+        let tail = &self.tail;
         let submitted = self.submitted;
         let hint = self.opts.unsent_hint.as_ref();
         let probe_ms = self.opts.unsent_probe_ms;
@@ -483,6 +484,7 @@ impl PromptInjector {
         if !submitted {
             return; // 첫 Enter 가 아직이다 — 받아 들이는 중에 치면 버려진다.
         }
+        let screen = strip_ansi(&decode_tail_text(&tail.snapshot()));
         if !hint.is_some_and(|h| h.is_match(&screen)) {
             p.nudge_next = None; // 갔다 — 남은 시도를 태우지 않는다.
             return;
@@ -493,7 +495,7 @@ impl PromptInjector {
 
     /// 정본 `gateProbe` — 턴 **도중** 관문. 한 관문에 한 번만 부르고, 내려가면 다음 관문은 다시 센다.
     fn turn_gate_probe(&mut self, now: u64, hooks: &mut dyn PromptHooks, out: &mut Vec<Action>) {
-        let screen = self.tail_text();
+        let tail = &self.tail;
         let signal = self.opts.gate_signal;
         let period = self.opts.gate_probe_ms;
         let own = self.opts.turn_gate;
@@ -506,6 +508,7 @@ impl PromptInjector {
             return;
         }
         p.gate_next = Some(now + period);
+        let screen = decode_tail_text(&tail.snapshot());
         if signal {
             let n = hooks.gate_signal();
             if n > p.signals_seen {
@@ -533,14 +536,18 @@ impl PromptInjector {
 
     /// 정본 `confirmTimer`·`graceTimer` — 증거가 없으면 개행 한 번 더, 유예 뒤에도 없으면 부른다(부를 곳이 있을 때만).
     fn confirm(&mut self, now: u64, hooks: &mut dyn PromptHooks, out: &mut Vec<Action>) {
-        let Some(c) = self.opts.confirm.clone() else {
+        let Some(c) = self.opts.confirm.as_ref() else {
             return;
         };
         let attention = self.opts.attention;
-        let screen = self.tail_text();
+        let tail = &self.tail;
         let Some(p) = self.pasted.as_mut() else {
             return;
         };
+        if !p.confirm_at.is_some_and(|d| now >= d) && !p.grace_at.is_some_and(|d| now >= d) {
+            return;
+        }
+        let screen = decode_tail_text(&tail.snapshot());
         if p.confirm_at.is_some_and(|d| now >= d) {
             p.confirm_at = None;
             if !hooks.confirm_probe() {
