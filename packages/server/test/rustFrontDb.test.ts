@@ -1801,6 +1801,11 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant insert, update on thread_agent_model, thread_agent_pick_count to ${rw}`,
         // api checks 비밀 — access log 는 표 단위 INSERT 로 확인한다.
         `grant insert on secret_access_log to ${rw}`,
+        // P4-5 — 사람 계정 지우기(`account_delete.rs::ACCOUNT_DELETE_PRIVILEGES`). 없으면 「account delete core off」로 안전판(503)이 선다.
+        `grant update (deleted_at, disabled_at, handle, display_name, avatar_attachment_id, avatar_source_attachment_id, avatar_crop, login_id, password_hash) on account to ${rw}`,
+        `grant delete on session, push_device, api_connector, secret, attachment to ${rw}`,
+        `grant update (canceled_at) on scheduled_message to ${rw}`,
+        `grant update (deleted_at, enabled, ingress_token_hash, ingress_secret_enc) on automation to ${rw}`,
       ]) await db.pool.query(q);
       const writeUrl = new URL(db.uri);
       writeUrl.username = rw;

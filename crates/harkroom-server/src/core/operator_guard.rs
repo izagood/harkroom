@@ -3,6 +3,9 @@
 //! 그 줄들이 Rust 로 옮겨질 때까지, 오퍼레이터 코어가 켜진 동안은 이 줄들을 앞단에서 503 으로 막는다 — 부분만 된 쓰기
 //! (DB 는 바뀌고 오퍼레이터는 모름)를 남기지 않으려는 것이다. 옮긴 줄은 여기서 뺀다.
 //!
+//! P4-5 — `DELETE /accounts/me` 는 Rust 로 왔다(`account_delete`). 이 안전판은 그 줄의 쓰기 권한이 모자라 Rust 줄을
+//! 붙이지 못할 때만 대신 선다(`main.rs`).
+//!
 //! 인증·CORS 층은 다른 코어 줄과 같다(인증 안 된 요청은 401, 교차 출처 머리는 TS 와 같다 — `route_table` 대조).
 use axum::http::StatusCode;
 use axum::response::Response;

@@ -2368,6 +2368,29 @@ async fn main() {
         }
         _ => None,
     };
+    // P4-5 — 사람 계정 지우기(`DELETE /accounts/me`). `HARKROOM_CORE=rust`·첨부 저장소·쓰기 풀 권한이 다 있을 때만.
+    // 오퍼레이터 코어 블록 안에서만 붙인다(허브를 같이 써야 소켓을 끊는다) — 없으면 그 자리에 안전판(503)이 선다.
+    let account_delete_write = match (&core_mode, &state.write, &avatar_read) {
+        (harkroom_server::core::CoreMode::Rust, Some(w), Some(storage)) => {
+            use harkroom_server::core::account_delete as a;
+            match write::missing_in(w, a::ACCOUNT_DELETE_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some((w.clone(), storage.clone())),
+                Ok(m) => {
+                    eprintln!("front: account delete core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: account delete core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // S5.4 — 에이전트 지우기(`DELETE /accounts/agents/{id}`). 세 겹 잠금: `HARKROOM_CORE=rust`, 첨부 저장소, 쓰기 풀에 그 권한이 다 있을 때만.
     let agent_delete_write = match (&core_mode, &state.write, &avatar_read) {
         (harkroom_server::core::CoreMode::Rust, Some(w), Some(storage)) => {
@@ -5227,11 +5250,29 @@ async fn main() {
             core_routes.router = core_routes.router.merge(op.router);
             core_routes.http.extend(op.http);
             core_routes.sockets.extend(op.sockets);
-            // AC5 안전판 — TS 허브는 이제 비어 있으므로, 그 허브로 오퍼레이터에게 알리거나 소켓을 끊는 TS 줄은 옮겨질 때까지 503.
-            let guard =
-                harkroom_server::core::operator_guard::routes(auth.clone(), state.cors.clone());
-            core_routes.router = core_routes.router.merge(guard.router);
-            core_routes.http.extend(guard.http);
+            // P4-5 — `DELETE /accounts/me` 는 이 허브로 폐기한 오퍼레이터를 끊는다. 권한이 모자라면 AC5 안전판(503)이 대신 선다
+            // (TS 허브는 비어 있어 TS 줄로 돌리지 않는다).
+            if let Some((write, storage)) = account_delete_write {
+                let ad = harkroom_server::core::account_delete::routes(
+                    harkroom_server::core::account_delete::AccountDeleteState {
+                        write,
+                        storage,
+                        trust: state.trust.clone(),
+                        limiter: auth_limiter.clone(),
+                        op_hub: op_hub.clone(),
+                    },
+                    auth.clone(),
+                    state.cors.clone(),
+                );
+                core_routes.router = core_routes.router.merge(ad.router);
+                core_routes.http.extend(ad.http);
+                core_routes.sockets.extend(ad.sockets);
+            } else {
+                let guard =
+                    harkroom_server::core::operator_guard::routes(auth.clone(), state.cors.clone());
+                core_routes.router = core_routes.router.merge(guard.router);
+                core_routes.http.extend(guard.http);
+            }
             // C6c-3 — 에이전트 릴레이(`/agent-sessions*`·`/agent-attach`). 러너 소켓이 이 허브에 붙으므로 오퍼레이터와 **함께만** 옮긴다.
             {
                 use harkroom_server::core::{
