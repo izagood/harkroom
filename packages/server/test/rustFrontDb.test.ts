@@ -8437,11 +8437,11 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           [ids4(sd), [sd.pubReq, sd.liveReq, sd.privReq, sd.denyReq], sd.privCh, todayId])).rows);
         const tN4 = await notices4(T4) as { req: string; ch_kind: string; body: string }[];
         expect(tN4.map((n) => [n.req, n.ch_kind]), '공개·live 스레드 줄, 비공개는 스레드 줄 + DM').toEqual([
-          ['LIVEREQ', 'standard'], ['PRIVREQ', 'dm'], ['PRIVREQ', 'standard'], ['PUBREQ', 'standard'],
+          ['liveReq', 'standard'], ['privReq', 'dm'], ['privReq', 'standard'], ['pubReq', 'standard'],
         ]);
-        expect(tN4.find((n) => n.req === 'PUBREQ')!.body).toMatch(/ @admin$/);
-        expect(tN4.find((n) => n.req === 'PRIVREQ' && n.ch_kind === 'standard')!.body).not.toContain('@admin');
-        expect(tN4.find((n) => n.req === 'PRIVREQ' && n.ch_kind === 'dm')!.body).toMatch(/ @admin$/);
+        expect(tN4.find((n) => n.req === 'pubReq')!.body).toMatch(/ @admin$/);
+        expect(tN4.find((n) => n.req === 'privReq' && n.ch_kind === 'standard')!.body).not.toContain('@admin');
+        expect(tN4.find((n) => n.req === 'privReq' && n.ch_kind === 'dm')!.body).toMatch(/ @admin$/);
         expect(await notices4(R4)).toEqual(tN4);
         // DM — 에이전트·소유자 둘만인 DM 이 하나(Rust 쪽은 Rust 가 만들었다).
         const dms4 = async (sd: Side4) => (await db.pool.query<{ n: string }>(
