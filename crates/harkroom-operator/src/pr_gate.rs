@@ -1016,10 +1016,15 @@ fn is_login(s: &str) -> bool {
 
 impl GhTokens {
     pub fn token_for(&self, repo: &str) -> Result<GhToken, GhTokenFail> {
+        let (login, why) = self.login_for(repo)?;
+        self.token_for_login(&login, &why)
+    }
+
+    /// 이 저장소에 쓸 gh 계정과 그 까닭(`token_for_login` 의 `why`) — gh 를 부르지 않는다.
+    /// `token_for` 의 앞 절반이다. 같은 계정의 토큰을 여러 번 읽지 않으려는 쪽(PR 감시 폴러)이 따로 부른다.
+    pub fn login_for(&self, repo: &str) -> Result<(String, String), GhTokenFail> {
         match (self.gh_user_for)(repo) {
-            Some((login, scope)) if is_login(&login) => {
-                self.token_for_login(&login, &format!("set for {scope}"))
-            }
+            Some((login, scope)) if is_login(&login) => Ok((login, format!("set for {scope}"))),
             _ => Err(GhTokenFail {
                 code: "no_gh_user",
                 message: format!(

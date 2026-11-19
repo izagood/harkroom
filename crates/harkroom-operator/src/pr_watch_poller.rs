@@ -10,9 +10,10 @@ use crate::forward::{AGENT_HEADER, Transport};
 use crate::local_merge::gh_env;
 use crate::merge::is_repo;
 use crate::op_token::SharedToken;
-use crate::pr_gate::PrInspection;
+use crate::pr_gate::{GhToken, PrInspection};
 use crate::turn_pr_status::{TurnPrStatus, pick_pr_status};
 use serde_json::{Value, json};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -21,6 +22,10 @@ use std::time::Duration;
 pub const PR_WATCH_POLL_MS: u64 = 60_000;
 /// 열린 감시 묻기 자리.
 pub const PR_WATCHES_DUE_PATH: &str = "/agent/pr-watches/due";
+
+/// 한 tick 동안 읽은 gh 토큰(login → 토큰). tick 이 끝나면 버린다 — 다음 tick 은 다시 읽는다.
+/// 성공한 것만 담는다(실패는 감시마다 다시 묻는다).
+type TickTokens = HashMap<String, GhToken>;
 
 /// 에이전트 자격의 서버 요청 — (agent id, method, path, JSON 본문) → (status, 본문). Err·status 0 은 닿지 못함.
 /// TS 의 `deps.forward(agentId, {type: 'http.forward', …})` 자리다.
@@ -109,7 +114,7 @@ impl PrWatchPoller {
     }
 
     /// TS `pollOne` — 감시 하나. 모양이 틀리면 조용히 넘기고, gh·보고 실패는 로그만.
-    fn poll_one(&self, agent_id: &str, w: &Value) {
+    fn poll_one(&self, agent_id: &str, w: &Value, tokens: &mut TickTokens) {
         let (Some(id), Some(repo), Some(n)) = (
             w.get("id").and_then(Value::as_str),
             w.get("repo").and_then(Value::as_str),
@@ -122,7 +127,16 @@ impl PrWatchPoller {
             return;
         }
         let number = n as u64;
-        let tok = match self.pr.tokens.token_for(repo) {
+        // 계정 고르기는 `GhTokens::token_for` 와 같다 — 같은 tick 에서 이미 읽은 계정이면 `gh auth token` 을 다시 띄우지 않는다.
+        let picked = self.pr.tokens.login_for(repo).and_then(|(login, why)| {
+            if let Some(t) = tokens.get(&login) {
+                return Ok(t.clone());
+            }
+            let t = self.pr.tokens.token_for_login(&login, &why)?;
+            tokens.insert(login, t.clone());
+            Ok(t)
+        });
+        let tok = match picked {
             Ok(t) => t,
             Err(f) => {
                 (self.log)(&format!(
@@ -157,6 +171,7 @@ impl PrWatchPoller {
     /// TS `tick` — 에이전트마다 due 를 묻고 감시마다 읽어 보고한다. 어떤 실패도 밖으로 내지 않는다.
     /// (TS 의 `running` 겹침 막기는 `start` 의 한 스레드가 차례로 부르므로 따로 두지 않는다.)
     pub fn tick(&self) {
+        let mut tokens = TickTokens::new();
         for agent_id in (self.agent_ids)() {
             let watches = match self.http(&agent_id, "GET", PR_WATCHES_DUE_PATH, None) {
                 Some((200, v)) => match v.get("watches") {
@@ -167,7 +182,7 @@ impl PrWatchPoller {
             };
             for w in &watches {
                 let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    self.poll_one(&agent_id, w)
+                    self.poll_one(&agent_id, w, &mut tokens)
                 }));
                 if let Err(e) = r {
                     let id = w.get("id").map_or("undefined".to_string(), |v| match v {
@@ -351,6 +366,88 @@ mod tests {
                 .iter()
                 .any(|c| c.contains(&format!("pr view 7 -R {REPO}")))
         );
+    }
+
+    /// 같은 계정의 토큰은 tick 하나에 한 번만 읽는다 — 감시·에이전트가 여럿이어도. 다음 tick 은 다시 읽는다.
+    #[test]
+    fn gh_token_is_read_once_per_login_per_tick() {
+        let mut t = setup(
+            json!([
+                {"id": "w1", "repo": REPO, "number": 7},
+                {"id": "w2", "repo": REPO, "number": 8},
+                {"id": "w3", "repo": "example-org/other-repo", "number": 9},
+            ]),
+            false,
+        );
+        t.poller.agent_ids = Arc::new(|| vec!["a1".to_string(), "a2".to_string()]);
+        let count = |t: &T, head: &str| {
+            t.execs
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|c| c.starts_with(head))
+                .count()
+        };
+        t.poller.tick();
+        assert_eq!(count(&t, "auth token -u alice"), 1);
+        assert_eq!(count(&t, "pr view"), 6, "감시마다 PR 은 그대로 읽는다");
+        assert_eq!(
+            t.forwards
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|f| f.1 == "POST")
+                .count(),
+            6
+        );
+        t.poller.tick();
+        assert_eq!(
+            count(&t, "auth token -u alice"),
+            2,
+            "tick 을 넘겨 쥐지 않는다"
+        );
+    }
+
+    /// 토큰을 못 읽으면 담아 두지 않는다 — 감시마다 다시 묻고 감시마다 기록한다(전과 같다).
+    #[test]
+    fn gh_token_failure_is_not_cached() {
+        let mut t = setup(
+            json!([
+                {"id": "w1", "repo": REPO, "number": 7},
+                {"id": "w2", "repo": REPO, "number": 8},
+                {"id": "w3", "repo": "other-org/repo", "number": 9},
+            ]),
+            false,
+        );
+        let execs = t.execs.clone();
+        t.poller.pr.tokens.exec =
+            Arc::new(move |_f: &str, args: &[String], _e: &[(String, String)]| {
+                execs.lock().unwrap().push(args.join(" "));
+                res(1, "", "no oauth token found for alice")
+            });
+        t.poller.tick();
+        let auth = t
+            .execs
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|c| c.starts_with("auth token"))
+            .count();
+        assert_eq!(auth, 2);
+        let logs = t.logs.lock().unwrap();
+        assert_eq!(
+            logs.iter()
+                .filter(|l| l.contains("gh 계정 없음(gh_user_not_logged_in)"))
+                .count(),
+            2
+        );
+        assert_eq!(
+            logs.iter()
+                .filter(|l| l.contains("gh 계정 없음(no_gh_user)"))
+                .count(),
+            1
+        );
+        assert!(!t.forwards.lock().unwrap().iter().any(|f| f.1 == "POST"));
     }
 
     #[test]
