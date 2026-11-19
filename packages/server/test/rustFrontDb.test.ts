@@ -11208,6 +11208,11 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
               ['delegate 접속한 담당 → 글·의무·부름', async () => ({ args: { to: ['C3B2C4DEL'], body: '맡아 줘', deadlineSec: 900, model: 'claude-opus-5' } })],
               ['delegate 본문 멘션 → mention 부름을 위임 부름으로', async () => ({ args: { to: ['c3b2c4del'], body: '@c3b2c4del 맡아 줘' } })],
               ['delegate 접속 안 한 담당 섞임 → unreachable', async () => ({ args: { to: ['c3b2c4off', 'c3b2c4del'], body: '둘이 맡아 줘' } })],
+              // P6-5b — `to` 에 같은 담당이 두 번(대소문자만 다름). 접속 안 한 담당이 겹치면 unreachable 에 두 번 실린다(Rust).
+              ['delegate 같은 이름 둘 · 접속 안 함 → unreachable 둘', async () => ({ args: { to: ['c3b2c4off', 'C3B2C4OFF'], body: '맡아 줘' } })],
+              ['delegate 접속한 담당 + 접속 안 한 같은 이름 둘 → 글·의무 하나', async () => ({ args: { to: ['c3b2c4del', 'c3b2c4off', 'C3B2C4OFF'], body: '맡아 줘' } })],
+              // 접속한 담당이 겹치면 TS 는 글을 올린 뒤 의무 행 기본 키에 걸려 delegation_failed — Rust 는 TS 로 넘긴다.
+              ['delegate 접속한 같은 이름 둘 → TS delegation_failed', async () => ({ args: { to: ['c3b2c4del', 'C3B2C4DEL'], body: '맡아 줘' } })],
               ['delegate 앞 의무(같은 담당) → v1 은 대체', async (ch, root) => {
                 const d = (await db.pool.query<{ id: string }>(
                   `insert into team_delegation (message_id, lead_account_id, channel_id, thread_root_id, deadline_at)
@@ -11272,6 +11277,15 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
               ? [[{ to: 'DEL4', outcome: 'closed', why: 'superseded' }], [{ to: 'DEL4', outcome: null, why: null }]]
               : [[{ to: 'DEL4', outcome: null, why: null }], [{ to: 'DEL4', outcome: null, why: null }]]);
             if (v1) expect(w('delegate 앞 의무(같은 담당) → v1 은 대체').deleg[0]).toMatchObject({ notified: true });
+            expect(w('delegate 같은 이름 둘 · 접속 안 함 → unreachable 둘').body).toEqual({ delegated: [], unreachable: ['c3b2c4off', 'C3B2C4OFF'], message: null });
+            expect(w('delegate 접속한 담당 + 접속 안 한 같은 이름 둘 → 글·의무 하나').body).toMatchObject({ delegated: ['c3b2c4del'], unreachable: ['c3b2c4off', 'C3B2C4OFF'] });
+            expect(w('delegate 접속한 담당 + 접속 안 한 같은 이름 둘 → 글·의무 하나').deleg.map((d) => d.items)).toEqual([[{ to: 'DEL4', outcome: null, why: null }]]);
+            expect(w('delegate 접속한 같은 이름 둘 → TS delegation_failed').body).toMatchObject({ error: { code: 'delegation_failed' } });
+            expect(w('delegate 접속한 같은 이름 둘 → TS delegation_failed').deleg).toEqual([]);
+            for (const n of ['delegate 같은 이름 둘 · 접속 안 함 → unreachable 둘', 'delegate 접속한 담당 + 접속 안 한 같은 이름 둘 → 글·의무 하나']) {
+              expect((rsW as { name: string; rust: boolean }[]).find((x) => x.name === n)!.rust, n).toBe(true);
+            }
+            expect((rsW as { name: string; rust: boolean }[]).find((x) => x.name === 'delegate 접속한 같은 이름 둘 → TS delegation_failed')!.rust).toBe(false);
             expect(w('delegate 사슬 상한 → chain_limit(아무것도 안 씀)').body).toMatchObject({ error: { code: 'chain_limit' } });
             expect(w('delegate 사슬 상한 → chain_limit(아무것도 안 씀)').deleg).toEqual([]);
             type PW = WO & { planRow: { doc: { groups: { id: string; linkedRootId?: string }[] }; rev: number; links: string[] } | null };
