@@ -42,6 +42,12 @@ export interface ComposerTextBox {
   readonly selectionEnd: number;
   setSelectionRange(start: number, end: number): void;
   focus(): void;
+  /**
+   * 커서가 글의 **첫 줄(`up`)·마지막 줄(`down`)** 에 있는가 — ↑·↓ 입력 기록이 넘길 자리인지 본다.
+   * 고른 글이 있으면 거짓이다. 접혀 보이는 긴 줄은 **보이는 줄**로 잰다: 한 줄짜리 긴 글의 둘째 보이는 줄에서 ↑ 는
+   * 커서를 윗줄로 옮겨야지 기록을 꺼내면 안 된다. 배치를 잴 수 없으면(시험 환경) 글의 줄로만 잰다.
+   */
+  caretOnEdgeLine(edge: 'up' | 'down'): boolean;
 }
 
 /** 열쇠 처리기에 넘기는 것. React 의 KeyboardEvent 에서 `Composer` 가 쓰던 부분만 있다. */
@@ -55,6 +61,11 @@ export interface ComposerKeyEvent {
   isComposing: boolean;
   /** CodeMirror 가 조합 중이라고 보는가(`view.composing`) — Enter 기록(`lib/enterTrace`)용. */
   editorComposing: boolean;
+  /**
+   * 조합이 **방금**(`JUST_COMPOSED_MS` 안) 끝났는가. Safari 계열은 조합을 확정한 화살표 keydown 을 `isComposing: false` 로
+   * 보낸다 — 그 ↑ 는 한글을 마치고 커서를 옮기려던 것이지 기록을 꺼내려던 것이 아니다.
+   */
+  justComposed?: boolean;
   preventDefault(): void;
   currentTarget: ComposerTextBox;
 }
@@ -246,6 +257,9 @@ const liveMarks = ViewPlugin.fromClass(class {
   }
 }, { decorations: (v) => v.decorations });
 
+/** 조합이 끝난 뒤 이 시간 안의 화살표는 조합을 마친 열쇠로 본다(CodeMirror 의 조합 끝 유예와 같은 100ms). */
+export const JUST_COMPOSED_MS = 100;
+
 export const ComposerEditor = forwardRef<ComposerTextBox, Props>(function ComposerEditor(props, ref) {
   const host = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -257,6 +271,8 @@ export const ComposerEditor = forwardRef<ComposerTextBox, Props>(function Compos
   // 편집기를 만든 확장 묶음. 자리가 바뀌어 상태를 새로 짤 때(`historyKey`) 같은 것을 다시 쓴다.
   const extRef = useRef<Extension[]>([]);
   const lastHistoryKey = useRef(props.historyKey);
+  // 마지막으로 조합이 끝난 때(`justComposed`). 0 이면 아직 없다.
+  const lastCompositionEnd = useRef(0);
 
   const box = useRef<ComposerTextBox>({
     get value() { return viewRef.current?.state.doc.toString() ?? ''; },
@@ -269,6 +285,22 @@ export const ComposerEditor = forwardRef<ComposerTextBox, Props>(function Compos
       v.dispatch({ selection: { anchor: Math.min(start, len), head: Math.min(end, len) }, scrollIntoView: true });
     },
     focus() { viewRef.current?.focus(); },
+    caretOnEdgeLine(edge) {
+      const v = viewRef.current;
+      if (!v) return false;
+      const { main } = v.state.selection;
+      if (!main.empty) return false;
+      const doc = v.state.doc;
+      const line = doc.lineAt(main.head).number;
+      if (edge === 'up' ? line !== 1 : line !== doc.lines) return false;
+      try {
+        const here = v.coordsAtPos(main.head);
+        const end = v.coordsAtPos(edge === 'up' ? 0 : doc.length);
+        // 줄 높이의 절반보다 많이 떨어졌으면 접힌 다른 보이는 줄이다.
+        if (here && end && Math.abs(here.top - end.top) > (here.bottom - here.top) / 2) return false;
+      } catch { /* 배치를 못 재면 글의 줄로만 판정한다 */ }
+      return true;
+    },
   });
   useImperativeHandle(ref, () => box.current, []);
 
@@ -278,7 +310,8 @@ export const ComposerEditor = forwardRef<ComposerTextBox, Props>(function Compos
     if (!handler) return false;
     handler({
       key: e.key, code: e.code, shiftKey: e.shiftKey, metaKey: e.metaKey, ctrlKey: e.ctrlKey,
-      altKey: e.altKey, isComposing: e.isComposing, editorComposing: viewRef.current?.composing ?? false,
+      altKey: e.altKey, isComposing: e.isComposing || e.key === 'Process', editorComposing: viewRef.current?.composing ?? false,
+      justComposed: Date.now() - lastCompositionEnd.current < JUST_COMPOSED_MS,
       preventDefault: () => e.preventDefault(),
       currentTarget: box.current,
     });
@@ -430,7 +463,10 @@ export const ComposerEditor = forwardRef<ComposerTextBox, Props>(function Compos
       if (pendingEnter) { clearTimeout(pendingEnter.timer); pendingEnter = null; }
       routeEnter(k);
     };
-    const onCompositionEnd = () => { if (pendingEnter) setTimeout(flushPendingEnter, 0); };
+    const onCompositionEnd = () => {
+      lastCompositionEnd.current = Date.now();
+      if (pendingEnter) setTimeout(flushPendingEnter, 0);
+    };
     const onBeforeInput = (e: InputEvent) => {
       if (pendingEnter?.kind === 'enter' && (e.inputType === 'insertParagraph' || e.inputType === 'insertLineBreak')) e.preventDefault();
     };

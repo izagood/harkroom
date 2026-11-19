@@ -17,9 +17,10 @@ import {
 } from '../lib/attachmentUploads';
 import {
   mentionQueryAt, applyMention, withStickyMentions, keepMentioned, bodyRecipients,
-  stickyKeyOf, stickyNameOf,
+  stickyKeyOf, stickyNameOf, bodyAsHandles,
   type MentionQuery,
 } from '../lib/mention';
+import { sentHistory, stepHistory, type HistoryWalk } from '../lib/inputHistory';
 import { composerToolbarStorage, undoSendStorage } from '../lib/prefs';
 // 붙여넣기가 누구를 부르는지 · 인용으로 바꾸는 방법. 판정은 서버가 쓰는 것과 같은
 // 함수 하나(`mentionedHandles`)에 얹혀 있다 — 그 파일의 주석이 근거다.
@@ -1366,6 +1367,41 @@ export function Composer({
     isComposing: e.isComposing, editorComposing: e.editorComposing,
     docLen: e.currentTarget.value.length, draftLen: draft.length, listOpen: open, offline, focus: focusKind(),
   });
+  /** ↑·↓ 입력 기록을 걷는 중이면 그 자리(`lib/inputHistory`). 사람이 글을 고치거나 자리를 옮기면 저절로 끝난다. */
+  const historyWalk = useRef<HistoryWalk | null>(null);
+  /**
+   * ↑ 로 내가 이 채널에 보낸 글을 최근 것부터 꺼내고, ↓ 로 되돌아와 끝에서 쓰던 초안을 되살린다(셸 history).
+   *
+   * 넘기는 때: 꾸밈 열쇠 없이, 조합 중이 아니고(한글 입력 — 그 ↑ 는 입력기의 것이다), 커서가 첫 줄(↑)·마지막 줄(↓)에 있을 때.
+   * 여러 줄 글 안에서는 평소처럼 줄을 옮긴다. 멘션 목록이 열려 있으면 그 목록이 먼저 먹는다(위 `open` 갈래).
+   * 범위는 채널이다 — 스레드 입력창도 그 채널의 내 글을 걷는다(`sentHistory` 주석).
+   */
+  const walkHistory = (e: ComposerKeyEvent): boolean => {
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return false;
+    if (e.shiftKey || e.metaKey || e.ctrlKey || e.altKey) return false;
+    if (e.isComposing || e.editorComposing || e.justComposed) return false;
+    const historyChannel = autoMentionChannelId ?? channelId;
+    if (!historyChannel) return false;
+    const box = e.currentTarget;
+    const up = e.key === 'ArrowUp';
+    if (!box.caretOnEdgeLine(up ? 'up' : 'down')) return false;
+    const s = useActiveStore.getState();
+    const entries = sentHistory(s.messages[historyChannel], s.me?.id, (body) => bodyAsHandles(body, s.accounts, s.groups, s.teams ?? NO_TEAMS));
+    const step = stepHistory(historyWalk.current, up ? 'older' : 'newer', scopeKey, box.value, entries);
+    if (step.kind === 'pass') return false;
+    e.preventDefault();
+    if (step.kind === 'stay') return true;
+    historyWalk.current = step.walk;
+    // 커서는 글 끝 — 이어서 ↑ 를 누르면 여러 줄 글은 줄을 거슬러 오르고, 첫 줄에서 다음 기록으로 간다.
+    // 새 글이 편집기에 들어간 뒤에 둔다(`pendingCaret` 효과). 글이 같으면 그 효과가 안 돌므로 바로 둔다.
+    const end = step.text.length;
+    if (step.text === box.value) box.setSelectionRange(end, end);
+    else pendingCaret.current = end;
+    setDraftLocal(step.text);
+    recompute(step.text, end);
+    return true;
+  };
+
   const onKeyDown = (e: ComposerKeyEvent) => {
     // ☺·⌄ 메뉴는 누를 때 편집기 포커스를 뺏지 않으므로(고른 범위를 지키려고) Escape 는 메뉴가 아니라
     // 여기로 온다. 메뉴의 onKeyDown 만 믿으면 열린 메뉴가 Escape 로 닫히지 않는다.
@@ -1400,6 +1436,7 @@ export function Composer({
         return;
       }
     }
+    if (walkHistory(e)) return;
     /*
       ⌘E / Ctrl+E — 고른 글을 코드로 감싸거나, 이미 코드면 벗긴다.
 
