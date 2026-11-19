@@ -849,7 +849,7 @@ pub async fn answer_plain(
         None => return None,
     };
     let olds = supersedes_list(o);
-    if !olds.is_empty() && !supersede_ready(read, st, &olds).await? {
+    if !olds.is_empty() && !supersede_ready(st).await? {
         return None;
     }
     let plan_step = o.get("planStepId").and_then(Value::as_str);
@@ -1298,37 +1298,14 @@ async fn plan_step_ready(st: &crate::core::msg_post::PostState) -> Option<bool> 
     Some(missing.is_empty())
 }
 
-/// TS `bundlesHolding` — 옛 카드를 줄로 담은 묶음이 있는가. 있으면 TS `carryBundleItem`(새 카드를 묶음 줄로 옮기기)이 필요한데
-/// 그 쓰기는 아직 TS 몫이라 넘긴다.
-const SUPERSEDE_BUNDLED_SQL: &str = "select exists(select 1 from message
-      where meta->>'kind' = 'askBundle' and deleted_at is null
-        and meta->'askBundle'->'items' @> jsonb_build_array(jsonb_build_object('rootId', $1::text)))";
-
-/// 대신하기를 Rust 가 맡을 수 있나 — 쓰기 풀에 C3b-1 [`ASK_PRIVILEGES`](글 `meta` UPDATE·inbox·outbox)가 다 있고, 어느 옛 카드도
-/// 묶음에 담겨 있지 않을 때만. 아니면 `Some(false)`(→ TS), DB 오류는 `None`(→ TS).
-async fn supersede_ready(
-    read: &PgPool,
-    st: &crate::core::msg_post::PostState,
-    olds: &[&str],
-) -> Option<bool> {
+/// 대신하기를 Rust 가 맡을 수 있나 — 쓰기 풀에 C3b-1 [`ASK_PRIVILEGES`](글 `meta` UPDATE·inbox·outbox)가 다 있을 때만.
+/// 아니면 `Some(false)`(→ TS), DB 오류는 `None`(→ TS). 옛 카드가 묶음에 담겨 있어도(P6-4b) 묶음 줄 옮기기는 같은 권한으로 Rust 가 한다.
+async fn supersede_ready(st: &crate::core::msg_post::PostState) -> Option<bool> {
     use crate::core::ask::{ASK_PRIVILEGES, ASK_SEQUENCE_PRIVILEGES};
     let missing = crate::write::missing_in(&st.write, ASK_PRIVILEGES, ASK_SEQUENCE_PRIVILEGES)
         .await
         .ok()?;
-    if !missing.is_empty() {
-        return Some(false);
-    }
-    for old in olds {
-        let bundled: bool = sqlx::query_scalar(SUPERSEDE_BUNDLED_SQL)
-            .bind(old)
-            .fetch_one(read)
-            .await
-            .ok()?;
-        if bundled {
-            return Some(false);
-        }
-    }
-    Some(true)
+    Some(missing.is_empty())
 }
 
 /// TS `supersedeAsk` 의 닫기 문장 그대로 — 열렸거나 글 답으로 닫힌 것만 `superseded` 로 닫는다.
@@ -1348,7 +1325,8 @@ pub const SUPERSEDE_ASK_SQL: &str = "update message
       returning id::text";
 
 /// TS `supersedeAsk` — 옛 카드를 닫고, `message.updated` 를 알리고, 거울을 따라 닫는다(`syncAskMirrors`, [`crate::core::ask_sync`]).
-/// 새 카드는 이미 섰으므로 실패는 기록만 한다. 묶음 옮기기(`carryBundleItem`)는 [`supersede_ready`] 가 묶음 없는 카드만 골라 필요 없다.
+/// 새 카드는 이미 섰으므로 실패는 기록만 한다. 옛 카드를 담은 묶음에는 새 카드를 줄로 옮긴다(`carryBundleItem`,
+/// [`crate::core::ask_bundle_add::carry_bundle_item`]) — TS 처럼 그 실패는 삼키고 거울 닫기로 간다.
 pub(super) async fn supersede_ask(write: &PgPool, old: &str, new_id: &str, actor: &str) {
     let r: Result<(), sqlx::Error> = async {
         let mut conn = write.acquire().await?;
@@ -1362,6 +1340,10 @@ pub(super) async fn supersede_ask(write: &PgPool, old: &str, new_id: &str, actor
             return Ok(());
         }
         crate::core::ask_sync::announce_updated(&mut conn, old).await?;
+        if let Err(e) = crate::core::ask_bundle_add::carry_bundle_item(&mut conn, old, new_id).await
+        {
+            eprintln!("message.ask: carry bundle item {old} -> {new_id} failed: {e}");
+        }
         crate::core::ask_sync::sync_ask_mirrors(&mut conn, "message.ask supersedes", old).await
     }
     .await;
@@ -1728,7 +1710,6 @@ mod tests {
         ] {
             assert!(SUPERSEDE_ASK_SQL.contains(frag), "{frag}");
         }
-        assert!(SUPERSEDE_BUNDLED_SQL.contains("'askBundle'"));
     }
 
     #[test]

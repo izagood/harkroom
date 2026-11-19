@@ -460,6 +460,69 @@ pub async fn add(
     })
 }
 
+/// TS `bundlesHolding` — 이 원본을 줄로 담은(지우지 않은) 묶음 카드들.
+pub const BUNDLES_HOLDING_SQL: &str = "select id::text from message
+      where meta->>'kind' = 'askBundle'
+        and deleted_at is null
+        and meta->'askBundle'->'items' @> jsonb_build_array(jsonb_build_object('rootId', $1::text))";
+
+/// TS `carryBundleItem` 의 묶음 줄 더하기 — 이미 담겼거나 상한이면 쓰지 않는다.
+pub const CARRY_BUNDLE_ITEM_SQL: &str = "update message
+            set meta = jsonb_set(meta::jsonb, '{askBundle,items}', (meta->'askBundle'->'items') || jsonb_build_array($2::jsonb))
+          where id = $1::uuid
+            and not (meta->'askBundle'->'items' @> jsonb_build_array(jsonb_build_object('rootId', $3::text)))
+            and jsonb_array_length(meta->'askBundle'->'items') < $4
+          returning id::text";
+
+/// TS `carryBundleItem` — 대신된 옛 카드를 담은 묶음마다 새 카드를 줄로 더하고 `message.updated` 를 알린다.
+/// 새 카드의 줄 사본을 같은 글자로 낼 수 없으면(프롬프트 200 UTF-16 경계가 서로게이트 쌍 가운데) 아무것도 쓰지 않는다 —
+/// TS 도 그 경우 짝 없는 서로게이트가 jsonb 에서 거절돼 첫 쓰기에서 던지고 삼키므로 결과가 같다.
+/// TS 처럼 오류는 부르는 쪽이 기록만 한다(옛 카드의 닫힘은 이미 기록됐다).
+pub async fn carry_bundle_item(
+    conn: &mut sqlx::PgConnection,
+    old: &str,
+    new_id: &str,
+) -> sqlx::Result<()> {
+    let bundles: Vec<String> = sqlx::query_scalar(BUNDLES_HOLDING_SQL)
+        .bind(old)
+        .fetch_all(&mut *conn)
+        .await?;
+    if bundles.is_empty() {
+        return Ok(());
+    }
+    let row: Option<RootRow> = sqlx::query_as(sql().item_root.as_str())
+        .bind(new_id)
+        .fetch_optional(&mut *conn)
+        .await?;
+    let Some((meta, body, channel, thread_root, author)) = row else {
+        return Ok(());
+    };
+    let Ok(Some(item)) = item_from(
+        new_id,
+        &meta,
+        &body,
+        &channel,
+        thread_root.as_deref(),
+        author.as_deref(),
+    ) else {
+        return Ok(());
+    };
+    let item = item.to_string();
+    for bundle in &bundles {
+        let updated: Option<String> = sqlx::query_scalar(CARRY_BUNDLE_ITEM_SQL)
+            .bind(bundle)
+            .bind(&item)
+            .bind(new_id)
+            .bind(ASK_BUNDLE_MAX_ITEMS as i32)
+            .fetch_optional(&mut *conn)
+            .await?;
+        if let Some(id) = updated {
+            announce_updated(&mut *conn, &id).await?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -488,6 +551,21 @@ mod tests {
         assert!(msgs.contains(
             r"const firstLine = row.body.replace(/<@[0-9a-f-]{36}>\s*/g, '').split('\n').map((l) => l.trim()).find((l) => l !== '') ?? '';"
         ));
+    }
+
+    #[test]
+    fn carry_follows_ts_source() {
+        let msgs = include_str!("../../../../packages/server/src/services/messages.ts");
+        for frag in [
+            "set meta = jsonb_set(meta::jsonb, '{askBundle,items}', (meta->'askBundle'->'items') || jsonb_build_array($2::jsonb))",
+            "and not (meta->'askBundle'->'items' @> jsonb_build_array(jsonb_build_object('rootId', $3::text)))",
+            "and jsonb_array_length(meta->'askBundle'->'items') < $4",
+            "and meta->'askBundle'->'items' @> jsonb_build_array(jsonb_build_object('rootId', $1::text))`,",
+        ] {
+            assert!(msgs.contains(frag), "{frag}");
+        }
+        assert!(CARRY_BUNDLE_ITEM_SQL.contains("< $4"));
+        assert!(BUNDLES_HOLDING_SQL.contains("deleted_at is null"));
     }
 
     #[test]
