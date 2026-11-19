@@ -22,7 +22,8 @@ use super::decide_core::{
     may_decide_for_locked, recheck_locked, retry_lock_once,
 };
 use super::mandate_card_thread::{
-    MANDATE_CREATED_AUDIT, Made, card_stamp_sql, mandate_for_card_thread, request_stamp_sql,
+    MANDATE_CREATED_AUDIT, Made, card_stamp_sql, mandate_delegator, mandate_for_card_thread,
+    request_stamp_sql,
 };
 use super::mandate_line_write::{LINE_AUDIT, LineArgs, LineKind, add_line_from_request};
 use super::msg_read::is_uuid;
@@ -386,6 +387,39 @@ pub const UPSERT_MERGE_GRANT: &str = "insert into account_grant (account_id, cap
      on conflict (account_id, capability, scope) do update \
        set granted_by = excluded.granted_by, granted_at = now(), expires_at = excluded.expires_at, allow_agent_cause = false";
 
+/// P3 B4b — 소유자가 아닌 사람의 7일 승인 upsert(TS 와 같은 `where`): **살아 있는** grant 는 덮지 않는다(security 9 — 재승인으로
+/// 기한을 늘리거나 소유자의 grant 를 제 이름으로 바꾸지 않는다). 덮지 않았으면 줄이 돌아오지 않는다. $5 결정 시각.
+pub const UPSERT_TOOL_GRANT_BY_USER: &str = "insert into account_grant (account_id, capability, scope, granted_by, expires_at, allow_agent_cause) \
+     values ($1::uuid, 'tool.allow', $2, $3::uuid, $4::timestamptz, false) \
+     on conflict (account_id, capability, scope) do update \
+       set granted_by = excluded.granted_by, granted_at = now(), expires_at = excluded.expires_at, allow_agent_cause = false \
+       where account_grant.expires_at is not null and account_grant.expires_at <= $5::timestamptz \
+     returning 1";
+/// [`UPSERT_TOOL_GRANT_BY_USER`] 의 merge 판(capability 만 다르다).
+pub const UPSERT_MERGE_GRANT_BY_USER: &str = "insert into account_grant (account_id, capability, scope, granted_by, expires_at, allow_agent_cause) \
+     values ($1::uuid, 'repo.merge', $2, $3::uuid, $4::timestamptz, false) \
+     on conflict (account_id, capability, scope) do update \
+       set granted_by = excluded.granted_by, granted_at = now(), expires_at = excluded.expires_at, allow_agent_cause = false \
+       where account_grant.expires_at is not null and account_grant.expires_at <= $5::timestamptz \
+     returning 1";
+/// 덮지 않은 grant 의 기한 — 카드·요청 줄·줄 기한에 그 값을 쓴다(TS 와 같음, 기한 없는 grant 면 새 기한을 그대로 둔다).
+pub const KEPT_GRANT_EXPIRES: &str = "select expires_at::text, \
+     to_char(expires_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') \
+     from account_grant where account_id = $1::uuid and capability = $2 and scope = $3";
+/// TS `decidePermissionRequest` 의 `agentOwner`(소유자가 아닌 사람이 위임장을 세울 때 그 주인).
+pub const AGENT_OWNER_SQL: &str =
+    "select owner_account_id::text from agent_config where account_id = $1::uuid";
+/// P3 B4 — 소유자가 아닌 사람의 승인 쓰기 칸(소유자 길에 더해). 덮지 않기 `where`·`returning`·기한 다시 읽기가 `account_grant` 를 읽는다.
+pub const NON_OWNER_APPROVE_PRIVILEGES: &[(&str, &str)] = &[
+    ("account_grant.account_id", "SELECT"),
+    ("account_grant.capability", "SELECT"),
+    ("account_grant.scope", "SELECT"),
+    ("account_grant.expires_at", "SELECT"),
+    ("agent_config.owner_account_id", "SELECT"),
+];
+/// P3 B4 — 소유자가 아닌 사람의 승인을 Rust 가 쓰는가. 소유자 알림 줄(B4e)이 붙기 전에는 거짓 — 쓰기 전에 TS 로 넘긴다(지금과 같음).
+pub const NON_OWNER_APPROVE_WIRED: bool = false;
+
 pub const APPROVE_UPDATE_REQUEST: &str = "update permission_request set status = 'granted', decided_at = $3::timestamptz, \
      decided_by = $2::uuid, grant_expires_at = $4::timestamptz, grant_mode = $5 where id = $1::uuid";
 pub const APPROVE_UPDATE_CARD: &str = super::decide_core::DENY_UPDATE_CARD;
@@ -463,10 +497,29 @@ pub async fn approve_write(
     {
         return Ok(refused(409, "bad_decision", BAD_DECISION_COMMAND_MANDATE));
     }
-    // S5.4 12e — 소유자가 아닌 사람은 TS 가 그 사람이 맡긴 위임장이 아니면 위임장을 지운 뒤에 [이번 턴만]을 본다 — 위임장이 있으면 TS.
-    if !as_owner && decision == Decision::ApproveTurn && locked.mandate_id.is_some() {
-        return Ok(ApproveOutcome::HandToTs);
-    }
+    // P3 B4a(C-3·D2) — 소유자가 아닌 사람의 승인은 **그 사람이 맡긴** 위임장에만 줄을 적는다. 소유자·남이 맡긴 위임장이면 위임장이
+    // 없는 것으로 친다(TS 와 같은 자리: [이번 턴만]·merge 위임장 대조보다 먼저). B4e 전에는 [이번 턴만]이면 지금처럼 TS.
+    let narrowed: LockedRequest;
+    let locked = match locked.mandate_id.as_deref() {
+        Some(_) if !as_owner && !NON_OWNER_APPROVE_WIRED => {
+            if decision == Decision::ApproveTurn {
+                return Ok(ApproveOutcome::HandToTs);
+            }
+            locked
+        }
+        Some(m) if !as_owner => {
+            if mandate_delegator(conn, m).await?.as_deref() == Some(args.actor_id) {
+                locked
+            } else {
+                narrowed = LockedRequest {
+                    mandate_id: None,
+                    ..locked.clone()
+                };
+                &narrowed
+            }
+        }
+        _ => locked,
+    };
     if decision == Decision::ApproveTurn
         && (locked.kind != "tool"
             || locked.mandate_id.is_none()
@@ -477,8 +530,8 @@ pub async fn approve_write(
     if decision == Decision::ApproveHour && locked.kind != "command" {
         return Ok(refused(409, "bad_decision", BAD_DECISION_HOUR));
     }
-    // S5.4 12e — 소유자가 아닌 사람의 승인은 쓰기 없는 거절(위)까지만 Rust. 쓰는 길(그 사람 이름 grant·소유자 알림 글)은 TS.
-    if !as_owner {
+    // S5.4 12e — 소유자가 아닌 사람의 승인은 쓰기 없는 거절(위)까지만 Rust. 쓰는 길은 소유자 알림 줄(B4e)이 붙을 때까지 TS.
+    if !as_owner && !NON_OWNER_APPROVE_WIRED {
         return Ok(ApproveOutcome::HandToTs);
     }
     let (target, channel_id, thread_root_id): (String, Option<String>, Option<String>) =
@@ -556,7 +609,7 @@ pub async fn approve_write(
             .fetch_one(&mut *conn)
             .await?;
     // grant 를 쓰는 갈래만 기한이 있다(TS `grantExpiresAt`).
-    let (expires, expires_iso) = if turn {
+    let (mut expires, mut expires_iso) = if turn {
         (None, None)
     } else {
         (Some(expires), Some(expires_iso))
@@ -566,7 +619,20 @@ pub async fn approve_write(
     // 한 번 더 한다. 세웠으면 요청 줄·카드 글(이 요청의 에이전트가 쓴 것만)에 키를 적는다(TS 와 같은 차례: grant 보다 먼저).
     let mut mandate_id = locked.mandate_id.clone();
     let mut created: Option<Made> = None;
-    if new_mandate {
+    // P3 B4a — 위임장의 주인은 언제나 에이전트 소유자다. 소유자가 아닌 사람이 세우면 그 사람이 맡긴 사람이고, 소유자가 없는 에이전트면
+    // 세우지 않는다(TS `agentOwner` 없음 — tool 은 아래 그 사람 이름의 grant, merge 는 409 `mandate_unavailable`).
+    let mandate_owner: Option<String> = if !new_mandate {
+        None
+    } else if as_owner {
+        Some(args.actor_id.to_owned())
+    } else {
+        sqlx::query_scalar::<_, Option<String>>(AGENT_OWNER_SQL)
+            .bind(args.agent_id)
+            .fetch_optional(&mut *conn)
+            .await?
+            .flatten()
+    };
+    if let Some(owner) = mandate_owner.as_deref() {
         let (Some(ch), Some(root)) = (channel_id.as_deref(), thread_root_id.as_deref()) else {
             return Ok(refused(
                 409,
@@ -574,7 +640,9 @@ pub async fn approve_write(
                 MANDATE_UNAVAILABLE_MESSAGE,
             ));
         };
-        let Some(made) = mandate_for_card_thread(conn, args.actor_id, ch, root, &now).await? else {
+        let Some(made) =
+            mandate_for_card_thread(conn, owner, args.actor_id, ch, root, &now).await?
+        else {
             return Ok(refused(
                 409,
                 "mandate_unavailable",
@@ -596,6 +664,14 @@ pub async fn approve_write(
         }
         mandate_id = Some(made.mandate_id.clone());
         created = made.inserted.then_some(made);
+    }
+    // TS D1·C-3(D2): merge 는 위임장 없이 7일 승인으로 넘어가지 않는다 — 소유자 없는 에이전트라 세우지 못한 경우(위 갈래를 건너뜀).
+    if line_only && mandate_id.is_none() {
+        return Ok(refused(
+            409,
+            "mandate_unavailable",
+            MERGE_NO_MANDATE_MESSAGE,
+        ));
     }
     // TS 차례: 위임장 세우기(못 세우면 409 `mandate_unavailable`) 다음에 CI 거절 카드 확인 — 둘 다 걸리는 merge
     // `approve_new_mandate` 는 `mandate_unavailable` 이 먼저다. 409/400 이면 커밋하지 않으므로 위에서 세운 위임장도 되돌아간다.
@@ -636,13 +712,27 @@ pub async fn approve_write(
         command_grant_id = Some(id);
     } else if locked.kind == "merge" && !line_only {
         // TS: capability `repo.merge`, scope 는 저장한 꼴(`repo:owner/name`) 그대로.
-        sqlx::query(UPSERT_MERGE_GRANT)
-            .bind(args.agent_id)
-            .bind(&target)
-            .bind(args.actor_id)
-            .bind(expires.as_deref())
-            .execute(&mut *conn)
-            .await?;
+        if as_owner {
+            sqlx::query(UPSERT_MERGE_GRANT)
+                .bind(args.agent_id)
+                .bind(&target)
+                .bind(args.actor_id)
+                .bind(expires.as_deref())
+                .execute(&mut *conn)
+                .await?;
+        } else if let Some(kept) = upsert_grant_by_user(
+            conn,
+            UPSERT_MERGE_GRANT_BY_USER,
+            "repo.merge",
+            &target,
+            args,
+            expires.as_deref(),
+            &now,
+        )
+        .await?
+        {
+            (expires, expires_iso) = (Some(kept.0), Some(kept.1));
+        }
         tool_scope = Some(target.clone());
     } else if !turn {
         let Some(ch) = channel_id.as_deref() else {
@@ -650,13 +740,27 @@ pub async fn approve_write(
             return Ok(ApproveOutcome::HandToTs);
         };
         let scope = format!("tool:{ch}:{target}");
-        sqlx::query(UPSERT_TOOL_GRANT)
-            .bind(args.agent_id)
-            .bind(&scope)
-            .bind(args.actor_id)
-            .bind(expires.as_deref())
-            .execute(&mut *conn)
-            .await?;
+        if as_owner {
+            sqlx::query(UPSERT_TOOL_GRANT)
+                .bind(args.agent_id)
+                .bind(&scope)
+                .bind(args.actor_id)
+                .bind(expires.as_deref())
+                .execute(&mut *conn)
+                .await?;
+        } else if let Some(kept) = upsert_grant_by_user(
+            conn,
+            UPSERT_TOOL_GRANT_BY_USER,
+            "tool.allow",
+            &scope,
+            args,
+            expires.as_deref(),
+            &now,
+        )
+        .await?
+        {
+            (expires, expires_iso) = (Some(kept.0), Some(kept.1));
+        }
         tool_scope = Some(scope);
     }
     // C1 — 위임장이 있으면 그 위임장에 줄 하나(TS `addLineFromRequest`, savepoint). [이번 턴만]은 줄이 승인의 전부라 실패하면
@@ -727,7 +831,7 @@ pub async fn approve_write(
         ) {
             patch["decidedVia"] = v;
         }
-        patch["decidedByOwner"] = Value::Bool(true);
+        patch["decidedByOwner"] = Value::Bool(as_owner);
         sqlx::query(APPROVE_UPDATE_CARD)
             .bind(card)
             .bind(patch.to_string())
@@ -739,7 +843,7 @@ pub async fn approve_write(
         kind: locked.kind.as_str(),
         target: target.as_str(),
         channel_id: channel_id.as_deref(),
-        as_owner: true,
+        as_owner,
         thread_root_id: thread_root_id.as_deref(),
         grant_expires_at: expires_iso.as_deref(),
         grant_mode: grant_mode.zip(command_grant_id.as_deref()),
@@ -803,6 +907,40 @@ pub async fn approve_write(
         grant_expires_at: expires_iso,
         grant_mode,
         answer_candidates: candidates,
+    })
+}
+
+/// P3 B4b — 소유자가 아닌 사람의 7일 grant(TS `kept` 갈래). 살아 있는 grant 를 덮지 않았으면 그 grant 의 기한(`timestamptz` 글자,
+/// ISO)을 돌려준다 — 호출자가 카드·요청 줄·줄 기한에 쓴다. 기한 없는 grant 면 `None`(TS 와 같이 새 기한을 그대로 둔다).
+async fn upsert_grant_by_user(
+    conn: &mut PgConnection,
+    sql: &'static str,
+    capability: &str,
+    scope: &str,
+    args: ApproveArgs<'_>,
+    expires: Option<&str>,
+    now: &str,
+) -> sqlx::Result<Option<(String, String)>> {
+    let wrote: Option<i32> = sqlx::query_scalar(sql)
+        .bind(args.agent_id)
+        .bind(scope)
+        .bind(args.actor_id)
+        .bind(expires)
+        .bind(now)
+        .fetch_optional(&mut *conn)
+        .await?;
+    if wrote.is_some() {
+        return Ok(None);
+    }
+    let kept: Option<(Option<String>, Option<String>)> = sqlx::query_as(KEPT_GRANT_EXPIRES)
+        .bind(args.agent_id)
+        .bind(capability)
+        .bind(scope)
+        .fetch_optional(&mut *conn)
+        .await?;
+    Ok(match kept {
+        Some((Some(e), Some(iso))) => Some((e, iso)),
+        _ => None,
     })
 }
 
