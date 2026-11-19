@@ -41,7 +41,7 @@ pub fn human_session(me: &Account, auth: &Auth) -> bool {
 
 /// 거절 코어 한 번 + 커밋 뒤 카드 답. `Err` 는 곧 응답(internal)이다.
 #[allow(clippy::result_large_err)] // 거절이 곧 axum 응답이다(CI clippy 1.99).
-async fn deny_then_answer(
+pub(crate) async fn deny_then_answer(
     st: &AskState,
     deny: &PgPool,
     args: DenyArgs<'_>,
@@ -463,7 +463,7 @@ async fn pick_answer(
 
 /// 승인 코어 한 번 + 커밋 뒤 카드 답. `Err` 는 곧 응답(internal)이다.
 #[allow(clippy::result_large_err)]
-async fn approve_then_answer(
+pub(crate) async fn approve_then_answer(
     st: &AskState,
     pool: &PgPool,
     args: ApproveArgs<'_>,
