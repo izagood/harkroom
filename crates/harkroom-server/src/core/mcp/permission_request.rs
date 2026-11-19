@@ -406,12 +406,172 @@ pub(crate) const PENDING_SQL: &str = "select id::text, card_message_id::text fro
        and status = 'pending' and expires_at > $6::timestamptz \
      order by created_at desc limit 1";
 
-/// 새 요청이 대체할 옛 요청([`crate::core::permission_card::SUPERSEDE_OLDER_SQL`] 의 `denialPr` 없는 갈래) 중 카드가 붙은 것이 있나 —
-/// 있으면 TS `closeSupersededCards`(옛 카드 닫기·묶음 잇기·거울) 몫이라 TS 로 넘긴다.
-pub(crate) const SUPERSEDES_CARD_SQL: &str = "select exists(select 1 from permission_request \
-     where agent_id = $1::uuid and kind = $2 and target = $3 and channel_id = $4::uuid and thread_root_id = $5::uuid \
-       and superseded_by is null and card_message_id is not null \
-       and (status = 'expired' or (status = 'pending' and expires_at <= $6::timestamptz)))";
+/// TS `bundlesHolding` — 그 카드를 줄로 담은 묶음이 있나(`message_ask` 의 같은 판정). P6-2b: 새 요청이 **같은 tx 에서** 대체한
+/// 옛 요청([`SUPERSEDED_OLD_SQL`])의 카드마다 본다 — 하나라도 묶음에 담겨 있으면(TS `carryBundleItem` — 새 카드를 묶음 줄로 옮기기)
+/// tx 를 되돌리고 TS 로 넘긴다. tx 밖에서 미리 읽으면 그 사이 만료된 옛 요청의 카드를 놓친다(security 지적 ①).
+const CARD_BUNDLED_SQL: &str = "select exists(select 1 from message
+      where meta->>'kind' = 'askBundle' and deleted_at is null
+        and meta->'askBundle'->'items' @> jsonb_build_array(jsonb_build_object('rootId', $1::text)))";
+
+/// TS `closeSupersededCards` 의 옛 요청 읽기.
+pub(crate) const SUPERSEDED_OLD_SQL: &str = "select id::text, status, card_message_id::text from permission_request \
+     where superseded_by = $1::uuid and card_message_id is not null";
+
+/// TS `closeSupersededCards` — 대체된(대기였던) 요청 카드의 `permissionRequest` 상태 칸.
+pub(crate) const SUPERSEDED_PR_META_SQL: &str = "update message set meta = jsonb_set(meta, '{permissionRequest}', (meta->'permissionRequest') || $2::jsonb) \
+     where id = $1::uuid and meta ? 'permissionRequest'";
+
+/// TS `closeSupersededCards` — 아직 열린 옛 카드를 `superseded` 로 닫는다.
+pub(crate) const SUPERSEDED_ASK_CLOSE_SQL: &str = "update message set meta = jsonb_set(meta, '{ask}', (meta->'ask') || $2::jsonb) \
+     where id = $1::uuid and meta ? 'ask' and meta->'ask'->>'closedAt' is null and meta->'ask'->'answeredWith' is null \
+     returning id::text";
+
+/// 옛 카드 닫기에 더 쓰는 쓰기 풀 칸(글 `meta` UPDATE·outbox·거울 맞추기 inbox).
+pub(crate) const SUPERSEDE_CARD_PRIVILEGES: &[(&str, &str)] = &[
+    ("permission_request.id", "SELECT"),
+    ("permission_request.status", "SELECT"),
+    ("permission_request.card_message_id", "SELECT"),
+    ("permission_request.superseded_by", "SELECT"),
+    ("message.meta", "SELECT"),
+    ("message.deleted_at", "SELECT"),
+    ("message.meta", "UPDATE"),
+    ("inbox", "INSERT"),
+    ("event_outbox", "INSERT"),
+];
+
+/// TS `closeSupersededCards` — 새 카드가 커밋된 뒤 부른다. 대기였다가 대체된 요청은 카드의 `permissionRequest` 에 상태를 적고,
+/// 열린 옛 카드는 `superseded`(대신한 새 카드 id)로 닫는다. 바뀐 카드마다 `message.updated`, 닫힌 카드는 거울도 맞춘다.
+/// TS 처럼 새 카드는 이미 섰으므로 실패는 기록만 한다.
+async fn close_superseded_cards(write: &PgPool, new_request: &str, new_card: &str) {
+    use crate::core::ask_sync::{announce_updated, sync_ask_mirrors};
+    let r: Result<(), sqlx::Error> = async {
+        let mut conn = write.acquire().await?;
+        let old: Vec<(String, String, String)> = sqlx::query_as(SUPERSEDED_OLD_SQL)
+            .bind(new_request)
+            .fetch_all(&mut *conn)
+            .await?;
+        let at = crate::core::msg_post::iso_ms(crate::core::msg_post::now_ms());
+        for (_, status, card) in &old {
+            if status == "superseded" {
+                sqlx::query(SUPERSEDED_PR_META_SQL)
+                    .bind(card)
+                    .bind(
+                        serde_json::json!({ "status": "superseded", "supersededBy": new_request, "decidedAt": at })
+                            .to_string(),
+                    )
+                    .execute(&mut *conn)
+                    .await?;
+            }
+            let closed: Option<String> = sqlx::query_scalar(SUPERSEDED_ASK_CLOSE_SQL)
+                .bind(card)
+                .bind(
+                    serde_json::json!({ "closedAt": at, "closedReason": "superseded", "supersededBy": new_card })
+                        .to_string(),
+                )
+                .fetch_optional(&mut *conn)
+                .await?;
+            if closed.is_none() && status != "superseded" {
+                continue;
+            }
+            announce_updated(&mut conn, card).await?;
+            if closed.is_some() {
+                sync_ask_mirrors(&mut conn, "permission.request supersedes", card).await?;
+            }
+        }
+        Ok(())
+    }
+    .await;
+    if let Err(e) = r {
+        eprintln!("permission.request: supersede follow-up failed: {e}");
+    }
+}
+
+/// TS `cardMandateMeta` 의 위임장 읽기(시작 시각은 ms).
+pub(crate) const MANDATE_CHIP_SQL: &str = "select channel_id::text, owner_account_id::text, \
+       (extract(epoch from created_at) * 1000)::bigint from mandate where id = $1::uuid";
+
+/// TS `mandateChipName` 의 읽기 — 그 스레드 머리의 작업 항목 제목(위임 소유자 것), 위임 머리 글 본문.
+pub(crate) const MANDATE_CHIP_NAME_SQL: &str = "select (select w.title from work_item w \
+              where w.thread_root_id = d.thread_root_id and w.owner_account_id = d.owner_account_id \
+              order by w.updated_at desc limit 1) as title, \
+            m.body \
+       from mandate d left join message m on m.id = d.root_message_id and m.deleted_at is null \
+      where d.id = $1::uuid";
+
+/// 위임장 칩 이름의 길이(TS `MANDATE_NAME_MAX`).
+const MANDATE_NAME_MAX: usize = 40;
+
+/// JS `\s`(ECMAScript WhiteSpace + LineTerminator).
+const JS_SPACE_CLASS: &str = r"[\t\n\x0B\x0C\r \u{A0}\u{1680}\u{2000}-\u{200A}\u{2028}\u{2029}\u{202F}\u{205F}\u{3000}\u{FEFF}]";
+
+/// TS `stripMentions` — `<@uuid>` 와 (맨 앞·빈칸 뒤) `@이름` 을 빈칸으로 → `oneLineReason`.
+fn strip_mentions(body: &str) -> String {
+    use std::sync::OnceLock;
+    static TOKEN: OnceLock<regex::Regex> = OnceLock::new();
+    static HANDLE: OnceLock<regex::Regex> = OnceLock::new();
+    let token = TOKEN.get_or_init(|| regex::Regex::new(r"(?i)<@[0-9a-f-]{36}>").unwrap());
+    let handle = HANDLE.get_or_init(|| {
+        regex::Regex::new(&format!(r"(?:^|{JS_SPACE_CLASS})@[A-Za-z0-9_.\-]+")).unwrap()
+    });
+    let s = token.replace_all(body, " ");
+    let s = handle.replace_all(&s, " ");
+    crate::core::permission_card::one_line_reason(&s)
+}
+
+/// TS `clip` — trim 뒤 코드 포인트 40개 넘으면 잘라 `…`.
+fn clip(s: &str) -> String {
+    let t = s.trim_matches(crate::core::permission_card::js_space);
+    if t.chars().count() > MANDATE_NAME_MAX {
+        format!("{}…", t.chars().take(MANDATE_NAME_MAX).collect::<String>())
+    } else {
+        t.to_owned()
+    }
+}
+
+/// TS `mandateChipName` 의 순수 부분.
+fn chip_name(title: Option<&str>, body: Option<&str>) -> Option<String> {
+    use crate::core::permission_card::{js_space, one_line_reason};
+    if let Some(t) = title.filter(|t| !t.trim_matches(js_space).is_empty()) {
+        return Some(clip(&one_line_reason(t)));
+    }
+    Some(clip(&strip_mentions(body.unwrap_or("")))).filter(|s| !s.is_empty())
+}
+
+/// TS `cardMandateMeta` — 위임장 칩. 이름은 위임장 뿌리 채널을 카드 채널의 청중이 다 볼 때만(security F1). 못 읽으면 `None`(→ TS).
+async fn card_mandate_meta(read: &PgPool, mandate: &str, card_channel: &str) -> Option<Value> {
+    use crate::core::msg_post::iso_ms;
+    let row: Option<(String, String, i64)> = sqlx::query_as(MANDATE_CHIP_SQL)
+        .bind(mandate)
+        .fetch_optional(read)
+        .await
+        .ok()?;
+    let Some((channel, owner, started)) = row else {
+        return Some(serde_json::json!({ "id": mandate, "name": "" }));
+    };
+    let same = channel == card_channel;
+    let sees = same || {
+        let ra = crate::core::audience::audience_for(read, &channel)
+            .await
+            .ok()?;
+        let ma = crate::core::audience::audience_for(read, card_channel)
+            .await
+            .ok()?;
+        super::message_ask::audience_sees_root(same, &ra, &ma)
+    };
+    let name = if sees {
+        let r: Option<(Option<String>, Option<String>)> = sqlx::query_as(MANDATE_CHIP_NAME_SQL)
+            .bind(mandate)
+            .fetch_optional(read)
+            .await
+            .ok()?;
+        r.and_then(|(t, b)| chip_name(t.as_deref(), b.as_deref()))
+    } else {
+        None
+    };
+    Some(serde_json::json!({
+        "id": mandate, "name": name.unwrap_or_default(), "ownerId": owner, "startedAt": iso_ms(started),
+    }))
+}
 
 /// 이 갈래의 읽기 풀 칸.
 pub(crate) const ACCEPT_READ_PRIVILEGES: &[(&str, &str)] = &[
@@ -506,8 +666,9 @@ fn refusal(code: &'static str) -> String {
 
 /// P6-2a — [`answer`] 가 `None`(받아들여지는 tool·merge 요청)일 때 TS `raisePermission`·`openPermissionRequest` 를 대신한다:
 /// 이미 있는 grant → `alreadyGranted` / 기다리는 요청 → `existing` / 그 밖은 하루 상한 → 요청 줄 → 감사 → 카드 글 → 잇기 → 푸시를
-/// **카드 글과 같은 tx** 로. `None`(→ TS): kind=command · ASCII 밖 · 위임 있는 턴(카드 위임장 칸) · 대체할 옛 요청에 카드가 붙음
-/// (옛 카드 닫기) · 쓰기/읽기 칸 없음 · 글 올리기 풀 없음 · DB 오류.
+/// **카드 글과 같은 tx** 로, 커밋 뒤 대체된 옛 카드 닫기(P6-2b). 위임 있는 턴이면 요청 줄에 `mandate_id`, 카드에 위임장 칩·[이 위임장 동안]
+/// 선택지(P6-2b). `None`(→ TS): kind=command · ASCII 밖 · 같은 tx 에서 대체한 옛 카드가 묶음에 담김(묶음 줄 옮기기) · 쓰기/읽기 칸 없음 ·
+/// 글 올리기 풀 없음 · DB 오류.
 pub async fn accept(
     read: &PgPool,
     st: Option<&crate::core::msg_post::PostState>,
@@ -537,7 +698,9 @@ pub async fn accept(
     let mut privs = pc::REQUEST_WRITE_PRIVILEGES.to_vec();
     privs.extend_from_slice(pc::LINK_PUSH_PRIVILEGES);
     privs.extend_from_slice(super::message_ask::DENIAL_CARD_PATCH_PRIVILEGES);
-    if !crate::write::missing_in(&st.write, &privs, &[])
+    // P6-2b: 대체될 옛 카드가 있는지는 tx 안에서야 알므로 닫기 칸도 미리 본다.
+    privs.extend_from_slice(SUPERSEDE_CARD_PRIVILEGES);
+    if !crate::write::missing_in(&st.write, &privs, crate::core::ask::ASK_SEQUENCE_PRIVILEGES)
         .await
         .ok()?
         .is_empty()
@@ -552,17 +715,16 @@ pub async fn accept(
     let owner = owner?; // `not_agent` 는 [`answer`] 가 답했다.
     let now = now_ms();
     let (now_iso, expires_iso) = (iso_ms(now), iso_ms(now + pc::PERMISSION_REQUEST_TTL_MS));
-    // W4: 위임 있는 턴의 요청(`mandateId`·카드 위임장 칸)은 TS(P6-2b).
-    if let Some(c) = cause.filter(|_| operator) {
-        let mut conn = st.write.acquire().await.ok()?;
-        if crate::core::cause_link::mandate_for_agent_post(&mut conn, &me.id, c, now, iso_ms)
-            .await
-            .ok()?
-            .is_some()
-        {
-            return None;
+    // W4(P6-2b): 요청을 낸 턴의 위임 — 그 원인으로 받은 살아 있는 턴 임대의 것(TS `mandateForAgentPost`). 오퍼레이터를 거치지 않은 부름이면 없다.
+    let mandate: Option<String> = match cause.filter(|_| operator) {
+        Some(c) => {
+            let mut conn = st.write.acquire().await.ok()?;
+            crate::core::cause_link::mandate_for_agent_post(&mut conn, &me.id, c, now, iso_ms)
+                .await
+                .ok()?
         }
-    }
+        None => None,
+    };
     let live: Option<Option<i64>> = sqlx::query_scalar(LIVE_GRANT_SQL)
         .bind(&me.id)
         .bind(cap)
@@ -598,20 +760,11 @@ pub async fn accept(
             card.as_deref(),
         )));
     }
-    let carded: bool = sqlx::query_scalar(SUPERSEDES_CARD_SQL)
-        .bind(&me.id)
-        .bind(kind)
-        .bind(&target)
-        .bind(a.channel_id)
-        .bind(thread)
-        .bind(&now_iso)
-        .fetch_one(read)
-        .await
-        .ok()?;
-    if carded {
-        return None;
-    }
     let reason = args.get("reason")?.as_str()?;
+    let chip = match mandate.as_deref() {
+        Some(m) => Some((m, card_mandate_meta(read, m, a.channel_id).await?)),
+        None => None,
+    };
     let pr_meta = pc::plain_request_meta(
         kind,
         &me.id,
@@ -622,6 +775,7 @@ pub async fn accept(
         reason,
         &now_iso,
         &expires_iso,
+        chip,
     );
     let shown = pr_meta["target"].as_str()?.to_owned();
     let card_body = pc::plain_card_body(
@@ -649,11 +803,13 @@ pub async fn accept(
             channel: a.channel_id,
             thread,
             denial: None,
+            mandate: mandate.as_deref(),
             now: &now_iso,
             expires: &expires_iso,
         },
         owner: owner.as_deref(),
         request_id: std::sync::OnceLock::new(),
+        closes_old: std::sync::OnceLock::new(),
     };
     let posted = super::msg_post::post_card(
         st,
@@ -671,6 +827,9 @@ pub async fn accept(
         Err(answer) => return Some(answer),
     };
     let request_id = hook.request_id.get()?;
+    if hook.closes_old.get() == Some(&true) {
+        close_superseded_cards(&st.write, request_id, &card_id).await;
+    }
     Some(super::respond::text_result(&pc::created_result(
         request_id,
         &card_id,
@@ -684,6 +843,13 @@ struct RequestHook<'a> {
     req: crate::core::permission_card::NewRequest<'a>,
     owner: Option<&'a str>,
     request_id: std::sync::OnceLock<String>,
+    /// 이 tx 에서 대체한 옛 요청에 카드가 붙어 있었나 — 커밋 뒤 [`close_superseded_cards`] 를 부를지.
+    closes_old: std::sync::OnceLock<bool>,
+}
+
+/// 대체한 옛 카드가 묶음에 담겨 있다 — 훅이 이 오류로 tx 를 되돌리면 `post_card` 가 `None`(→ TS)을 낸다.
+fn bundled_to_ts() -> sqlx::Error {
+    sqlx::Error::Protocol("permission.request: superseded card is in an askBundle → TS".into())
 }
 
 impl crate::core::msg_post::BeforeCommit for RequestHook<'_> {
@@ -701,6 +867,20 @@ impl crate::core::msg_post::BeforeCommit for RequestHook<'_> {
                 Ok(id) => id,
                 Err(rej) => return Ok(Some(rej)),
             };
+            let old: Vec<(String, String, String)> = sqlx::query_as(SUPERSEDED_OLD_SQL)
+                .bind(&request_id)
+                .fetch_all(&mut **tx)
+                .await?;
+            for (_, _, card) in &old {
+                let bundled: bool = sqlx::query_scalar(CARD_BUNDLED_SQL)
+                    .bind(card)
+                    .fetch_one(&mut **tx)
+                    .await?;
+                if bundled {
+                    return Err(bundled_to_ts());
+                }
+            }
+            let _ = self.closes_old.set(!old.is_empty());
             sqlx::query(DENIAL_CARD_PATCH_SQL)
                 .bind(message_id)
                 .bind(&request_id)
@@ -837,5 +1017,115 @@ mod tests {
         }
         assert!(shared.contains("const SHELL_SYNTAX = /[;&|`<>\\n\\r]|\\$\\(|\\$\\{/;"));
         assert!(shared.contains("const BODY_CHARS = /^[A-Za-z0-9 _./@=:+%-]+$/;"));
+    }
+
+    /// P6-2b: 옛 카드 닫기 문장이 TS `closeSupersededCards` 의 조건을 그대로 갖는다(답·닫힘 있는 카드는 건드리지 않음).
+    #[test]
+    fn supersede_close_sql_follows_ts() {
+        assert!(
+            SUPERSEDED_OLD_SQL.contains("superseded_by = $1::uuid and card_message_id is not null")
+        );
+        assert!(SUPERSEDED_PR_META_SQL.contains("meta ? 'permissionRequest'"));
+        assert!(SUPERSEDED_ASK_CLOSE_SQL.contains("meta->'ask'->>'closedAt' is null"));
+        assert!(SUPERSEDED_ASK_CLOSE_SQL.contains("meta->'ask'->'answeredWith' is null"));
+        assert!(SUPERSEDE_CARD_PRIVILEGES.contains(&("message.meta", "UPDATE")));
+        assert!(SUPERSEDE_CARD_PRIVILEGES.contains(&("message.deleted_at", "SELECT")));
+    }
+
+    /// P6-2b: TS `stripMentions`·`clip`·`mandateChipName` 의 순수 부분.
+    #[test]
+    fn mandate_chip_name_like_ts() {
+        let u = "0188b1f6-f69d-44af-8c27-bcfb63b1469C";
+        assert_eq!(
+            strip_mentions(&format!("<@{u}> 배포 @harkroom 봐 줘")),
+            "배포 봐 줘"
+        );
+        assert_eq!(strip_mentions("a@b.c 메일"), "a@b.c 메일");
+        assert_eq!(strip_mentions("@a @b 끝"), "끝");
+        assert_eq!(strip_mentions("@a@b 끝"), "@b 끝");
+        assert_eq!(strip_mentions("x\u{3000}@a y"), "x y");
+        assert_eq!(chip_name(Some("  "), Some("@a 본문")), Some("본문".into()));
+        assert_eq!(
+            chip_name(Some("작업 `제목`"), Some("b")),
+            Some("작업 제목".into())
+        );
+        assert_eq!(chip_name(None, Some("@a")), None);
+        assert_eq!(chip_name(None, None), None);
+        let long = "가".repeat(41);
+        assert_eq!(
+            chip_name(None, Some(&long)),
+            Some(format!("{}…", "가".repeat(40)))
+        );
+        assert_eq!(
+            chip_name(None, Some(&"가".repeat(40))),
+            Some("가".repeat(40))
+        );
+    }
+
+    /// P6-2b: 위임 있는 턴의 카드 — 선택지·줄·meta 칸이 TS `permissionCardOptions`·`cardLine`·`openPermissionRequest` 와 같다.
+    #[test]
+    fn mandate_card_follows_ts() {
+        use crate::core::permission_card as pc;
+        let chip =
+            json!({ "id": C, "name": "n", "ownerId": C, "startedAt": "2026-01-01T00:00:00.000Z" });
+        let m = pc::plain_request_meta(
+            "tool",
+            C,
+            Some(C),
+            "Bash(ls)",
+            C,
+            &[],
+            "r",
+            "t0",
+            "t1",
+            Some((C, chip.clone())),
+        );
+        assert_eq!(m["mandateId"], json!(C));
+        assert_eq!(m["mandate"], chip);
+        assert_eq!(
+            m["line"]["limits"],
+            json!({ "approve_mandate": { "untilMs": 604_800_000 }, "approve_turn": { "turn": true } })
+        );
+        let card = pc::plain_card_meta(m);
+        let ids: Vec<&str> = card["ask"]["options"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|o| o["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, ["approve_mandate", "approve_turn", "deny"]);
+        let mm = pc::plain_request_meta(
+            "merge",
+            C,
+            Some(C),
+            "repo:a/b",
+            C,
+            &[],
+            "r",
+            "t0",
+            "t1",
+            Some((C, chip)),
+        );
+        assert_eq!(
+            mm["line"]["limits"],
+            json!({ "approve_mandate": { "untilMs": 604_800_000 } })
+        );
+        let card = pc::plain_card_meta(mm);
+        let ids: Vec<&str> = card["ask"]["options"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|o| o["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, ["approve_mandate", "deny"]);
+        let plain =
+            pc::plain_request_meta("tool", C, None, "Bash(ls)", C, &[], "r", "t0", "t1", None);
+        assert!(plain.get("mandateId").is_none() && plain.get("mandate").is_none());
+        let card = pc::plain_card_meta(plain);
+        assert_eq!(
+            card["ask"]["options"][0]["id"],
+            json!("approve_new_mandate")
+        );
+        assert_eq!(card["ask"]["options"].as_array().unwrap().len(), 2);
     }
 }

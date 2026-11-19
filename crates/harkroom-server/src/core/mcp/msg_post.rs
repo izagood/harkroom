@@ -724,7 +724,10 @@ pub(super) async fn post_card(
         wake: false,
         no_mentions: false,
         before_commit,
-        service_call: false,
+        // TS 권한 카드(`permissionRequests.ts`)는 서비스 `postMessage` 를 바로 부른다 — 라우트 몫인 글로 카드 고르기
+        // (`applyChatApproval`)가 없다. 꺼 두면 스레드에 열린 옛 카드(대체될 권한 카드 등)가 있을 때 [`TS_THREAD_SQL`] 의
+        // ask 갈래가 참이 돼 까닭 없이 TS 로 넘어간다(P6-2b bus-e2e 「옛 요청에 카드 → 옛 카드 닫기」).
+        service_call: true,
         chain_depth: None,
     };
     let out = msg_post::post_in_tx(

@@ -10291,7 +10291,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                 if (prep) await prep(ch, head);
                 return { tool: 'permission.request', args: { channelId: ch, threadRootId: head, reason: '빌드에\n필요 `x`', ...args }, via: viaPat };
               }, rust];
-            const oldReq = (card: boolean) => async (ch: string, head: string) => {
+            const oldReq = (card: boolean, bundled = false) => async (ch: string, head: string) => {
               const req = (await db.pool.query<{ id: string }>(
                 `insert into permission_request(agent_id, kind, target, reason, channel_id, thread_root_id, expires_at, created_at)
                  values ($1, 'tool', 'Bash(kubectl get pods:*)', 'x', $2, $3, now() - interval '1 minute', now() - interval '2 hours') returning id::text`,
@@ -10299,6 +10299,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
               if (card) {
                 const c = await ins({ ch, root: head, author: bot3.accountId, body: '옛 카드', meta: { kind: 'ask', ask: { options: AD, to: { kind: 'human' } }, permissionRequest: { requestId: req, status: 'pending' } } });
                 await db.pool.query(`update permission_request set card_message_id = $2 where id = $1`, [req, c]);
+                if (bundled) await ins({ ch, author: member.accountId, body: '묶음', meta: { kind: 'askBundle', askBundle: { items: [{ rootId: c }] } } });
               }
             };
             return [
@@ -10312,7 +10313,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                    values ($1, 'tool', 'Bash(kubectl get pods:*)', 'x', $2, $3, now() + interval '1 hour')`, [bot3.accountId, ch, head]);
               }),
               pr({ kind: 'tool', rule: 'Bash(kubectl get pods:*)' }, true, 'permission.request 기한 지난 옛 요청(카드 없음) 대체', oldReq(false)),
-              pr({ kind: 'tool', rule: 'Bash(kubectl get pods:*)' }, false, 'permission.request 옛 요청에 카드 → TS(옛 카드 닫기)', oldReq(true)),
+              // P6-2b — 대체한 옛 요청의 카드를 Rust 가 닫는다(permissionRequest 상태·ask 닫기·message.updated·거울). 묶음에 담긴 카드는 TS.
+              pr({ kind: 'tool', rule: 'Bash(kubectl get pods:*)' }, true, 'permission.request 옛 요청에 카드 → 옛 카드 닫기', oldReq(true)),
+              pr({ kind: 'tool', rule: 'Bash(kubectl get pods:*)' }, false, 'permission.request 옛 카드가 묶음에 → TS(묶음 줄 옮기기)', oldReq(true, true)),
               pr({ kind: 'command', command: 'kubectl --context rc get pod' }, false, 'permission.request command → TS'),
             ];
           })(),
@@ -10437,7 +10440,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         };
         const tsOut = await run(tsUrl);
         const rsOut = await run(rsUrl);
-        expect(rsOut).toEqual(tsOut);
+        // 장면마다 이름을 달아 비교한다 — 통째 비교는 어긋난 장면 이름을 diff 문맥 밖으로 밀어낸다.
+        expect(rsOut.map((x) => (x as { name: string }).name)).toEqual(tsOut.map((x) => (x as { name: string }).name));
+        for (let i = 0; i < tsOut.length; i++) expect(rsOut[i], `장면 ${(tsOut[i] as { name: string }).name}`).toEqual(tsOut[i]);
         // 대조가 「둘 다 아무것도 안 적음」으로 같아지지 않게 TS 쪽 값을 못 박는다.
         type O = { name: string; body: { message?: { meta?: Record<string, unknown> }; error?: { code: string } }; row: Record<string, unknown>[] | null };
         const by = (n: string) => (tsOut as O[]).find((x) => x.name === n)!;
