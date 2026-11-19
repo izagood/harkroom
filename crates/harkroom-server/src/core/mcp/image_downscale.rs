@@ -35,12 +35,17 @@ impl Drop for Slot {
 
 /// 자리가 없으면 `None` — 호출부는 원본을 읽지 말고 `busy` 로 답한다.
 pub fn try_slot() -> Option<Slot> {
-    PENDING
-        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
-            (n < MAX_PENDING).then_some(n + 1)
-        })
-        .ok()
-        .map(|_| Slot(()))
+    // `fetch_update` 는 새 Rust 에서 deprecated(`try_update`) — 어느 판에서나 같은 compare_exchange 반복으로 쓴다.
+    let mut n = PENDING.load(Ordering::Acquire);
+    loop {
+        if n >= MAX_PENDING {
+            return None;
+        }
+        match PENDING.compare_exchange_weak(n, n + 1, Ordering::AcqRel, Ordering::Acquire) {
+            Ok(_) => return Some(Slot(())),
+            Err(now) => n = now,
+        }
+    }
 }
 
 #[derive(Debug)]
