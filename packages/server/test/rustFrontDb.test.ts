@@ -10024,7 +10024,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect(p3('P3c: T1 링크 + 없는 번호 → 거절 줄').lines.map((l) => l.ca.reason)).toEqual(['askNoMatch']);
         const once = p3('P3c: 물어본 에이전트를 부르며 고름 → 깨움 한 번');
         expect(once.asks[0]).toMatchObject({ answered: 'a', via: 'chat', inbox: [] });
-        expect(once.inbox).toEqual([{ who: 'BOT2', reason: 'mention' }]);
+        // 머리는 MEM 의 글이라 MEM 은 thread_reply 로 받는다 — BOT2 는 부름 하나뿐(답 깨움 없음).
+        expect(once.inbox).toEqual([{ who: 'BOT2', reason: 'mention' }, { who: 'MEM', reason: 'thread_reply' }]);
         for (const r of saved) await db.pool.query(`update agent_config set invoke_scope = $2 where account_id = $1`, [r.id, r.scope]);
       }
 
