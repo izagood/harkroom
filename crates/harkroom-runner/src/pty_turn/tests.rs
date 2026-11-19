@@ -600,6 +600,63 @@ fn confirm_does_not_resend_on_gate_screen_and_calls_human() {
     );
 }
 
+/// 일하는 화면(입력칸도 확인 창도 아님)에서는 기록에 증거가 없어도 개행을 다시 치지 않고 **사람도 부르지 않는다**.
+/// 정본은 화면을 보지 않고 부른다(다른 동작 — 오탐: 하네스가 일하는 중인데 관문 통지가 나갔다).
+#[test]
+fn confirm_does_not_call_human_on_working_screen() {
+    let mut o = opts("x");
+    o.attention = true;
+    o.gate_probe_ms = 60_000;
+    o.confirm = Some(ConfirmDelivery {
+        within_ms: 3_000,
+        resend_grace_ms: None,
+    });
+    let mut m = PromptInjector::new(o);
+    let mut h = Hooks::default();
+    m.on_data(0, READY, &mut h);
+    run(&mut m, &mut h, 1, 300);
+    // 제출 뒤 하네스가 일하는 화면을 그린다 — 꼬리(2KB)에서 입력칸이 밀려난다.
+    let working = format!("{}\r\nThinking… (esc to interrupt)\r\n", "·".repeat(2_048));
+    m.on_data(1_000, working.as_bytes(), &mut h);
+    let acts = run(&mut m, &mut h, 301, 6_000);
+    let w = writes(&acts);
+    assert!(
+        !w.iter().any(|(t, s)| *t >= 3_300 && s == "\r"),
+        "일하는 화면에는 개행을 다시 치지 않는다: {w:?}"
+    );
+    assert!(
+        !acts.iter().any(|(_, a)| matches!(a, Action::Attention(..))),
+        "일하는 화면에서는 사람을 부르지 않는다"
+    );
+}
+
+/// 유예 사이에 확인 창이 뜨면 유예 뒤에 사람을 부른다(명령 하나의 관문으로).
+#[test]
+fn confirm_calls_human_when_gate_shows_during_grace() {
+    let mut o = opts("x");
+    o.attention = true;
+    o.gate_probe_ms = 60_000;
+    o.confirm = Some(ConfirmDelivery {
+        within_ms: 3_000,
+        resend_grace_ms: None,
+    });
+    let mut m = PromptInjector::new(o);
+    let mut h = Hooks::default();
+    m.on_data(0, READY, &mut h);
+    run(&mut m, &mut h, 1, 300);
+    let mut acts = run(&mut m, &mut h, 301, 3_500);
+    m.on_data(3_600, GATE, &mut h);
+    acts.extend(run(&mut m, &mut h, 3_601, 6_000));
+    let calls: Vec<_> = acts
+        .iter()
+        .filter_map(|(t, a)| match a {
+            Action::Attention(_, k) => Some((*t, *k)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(calls, vec![(4_300, AttentionKind::Gate)]);
+}
+
 /// T4e: 입력칸도 확인 창도 아닌 화면이면 재전송하지 않는다.
 #[test]
 fn resend_decision_reads_the_screen() {

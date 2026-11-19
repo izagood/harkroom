@@ -535,6 +535,7 @@ impl PromptInjector {
     }
 
     /// 정본 `confirmTimer`·`graceTimer` — 증거가 없으면 개행 한 번 더, 유예 뒤에도 없으면 부른다(부를 곳이 있을 때만).
+    /// 유예 뒤에는 화면이 입력칸이거나 확인 창일 때만 부른다 — 일하는 화면은 부르지 않는다.
     fn confirm(&mut self, now: u64, hooks: &mut dyn PromptHooks, out: &mut Vec<Action>) {
         let Some(c) = self.opts.confirm.as_ref() else {
             return;
@@ -591,8 +592,32 @@ impl PromptInjector {
         }
         if p.grace_at.is_some_and(|d| now >= d) {
             p.grace_at = None;
-            if !hooks.confirm_probe() && attention {
-                out.push(Action::Attention(screen, AttentionKind::Startup));
+            if !hooks.confirm_probe() {
+                // **화면이 무엇인지 보고 부른다**(정본과 다름). 입력칸도 확인 창도 아닌 화면은 하네스가 이미 일하는
+                // 화면이다 — 기록에서 증거를 못 찾았을 뿐 물을 것이 없으니 사람을 부르지 않는다(오탐: 부르면 긴급 알림이
+                // 나가고 계정에 관문 표식이 선다). 입력칸 그대로면 넣은 것이 안 들어간 것이고, 확인 창이면 사람 몫이다.
+                match resend_decision(
+                    &screen,
+                    self.opts.ready_pattern.as_ref(),
+                    self.opts.gate_pattern.as_ref(),
+                    self.opts.unsent_hint.as_ref(),
+                ) {
+                    Resend::Gate => {
+                        if attention {
+                            out.push(Action::Attention(screen, AttentionKind::Gate));
+                        }
+                    }
+                    Resend::Input => {
+                        if attention {
+                            out.push(Action::Attention(screen, AttentionKind::Startup));
+                        }
+                    }
+                    Resend::Unknown => {
+                        eprintln!(
+                            "[pty] 유예 뒤에도 기록에 입력 줄이 없지만 화면이 입력칸도 확인 창도 아니다 — 사람을 부르지 않는다"
+                        );
+                    }
+                }
             }
         }
     }
