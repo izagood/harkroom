@@ -500,7 +500,7 @@ fn neutral_mirror_render(root: &str, meta: &Value, handle: Option<&str>) -> Opti
 }
 
 /// TS `mirrorAudienceSeesRoot` — 거울 채널의 받는 사람이 모두 원본 채널도 보는가.
-fn audience_sees_root(
+pub(crate) fn audience_sees_root(
     same: bool,
     root: &crate::core::audience::Audience,
     mirror: &crate::core::audience::Audience,
@@ -1252,6 +1252,7 @@ impl crate::core::msg_post::BeforeCommit for DenialRequestHook<'_> {
                     channel: self.channel,
                     thread: self.thread,
                     denial: Some((self.denial, self.number)),
+                    mandate: None,
                     now: self.now,
                     expires: self.expires,
                 },

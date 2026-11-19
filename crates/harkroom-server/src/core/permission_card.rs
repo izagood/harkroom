@@ -39,7 +39,7 @@ impl Once {
     }
 }
 
-fn js_space(c: char) -> bool {
+pub(crate) fn js_space(c: char) -> bool {
     crate::core::cause_link::js_trim_char(c)
 }
 
@@ -108,6 +108,18 @@ pub fn merge_card_options(ci_once: bool, mandate: bool) -> Value {
         json!({ "id": "approve_new_mandate", "label": "이 스레드로 위임장 만들고 더하기", "recommended": true })
     };
     json!([standing, deny])
+}
+
+/// TS `permissionCardOptions(kind, { mandate })`(거절 아님, tool·merge) — tool 은 위임장이 있으면 보조 [이번 턴만](t1).
+pub fn plain_card_options(kind: &str, mandate: bool) -> Value {
+    if kind == "tool" && mandate {
+        return json!([
+            { "id": "approve_mandate", "label": "이 위임장 동안", "recommended": true },
+            { "id": "approve_turn", "label": "이번 턴만" },
+            { "id": "deny", "label": "거절" },
+        ]);
+    }
+    merge_card_options(false, mandate)
 }
 
 /// TS `cardLine('merge', target, once, hasMandate)` — `target` 은 저장한 꼴(`repo:owner/name`).
@@ -244,7 +256,7 @@ pub const REQUEST_COUNT_SQL: &str = "select count(*)::bigint from permission_req
 /// TS `openPermissionRequest` 의 요청 줄(tool·merge · 위임 없음). 거절에서 오지 않은 요청은 `denial_id` 가 null.
 pub const REQUEST_INSERT_SQL: &str = "insert into permission_request \
      (agent_id, kind, target, reason, warnings, channel_id, thread_root_id, created_at, expires_at, denial_id, mandate_id) \
-     values ($1::uuid, $2, $3, $4, $5::text[], $6::uuid, $7::uuid, $8::timestamptz, $9::timestamptz, $10::uuid, null) \
+     values ($1::uuid, $2, $3, $4, $5::text[], $6::uuid, $7::uuid, $8::timestamptz, $9::timestamptz, $10::uuid, $11::uuid) \
      returning id::text";
 
 /// TS `supersedeOlderRequests`(거절 카드 — `denialPr` 가 있다: 같은 PR 의 카드만, 살아 있는 pending 도 대체).
@@ -320,6 +332,8 @@ pub struct NewRequest<'a> {
     pub thread: &'a str,
     /// 거절에서 온 머지 요청이면 그 기록 id 와 PR 번호.
     pub denial: Option<(&'a str, i64)>,
+    /// 요청을 낸 턴의 위임(W4, P6-2b) — 없으면 null.
+    pub mandate: Option<&'a str>,
     pub now: &'a str,
     pub expires: &'a str,
 }
@@ -349,6 +363,7 @@ pub async fn open_request(
         .bind(r.now)
         .bind(r.expires)
         .bind(r.denial.map(|d| d.0))
+        .bind(r.mandate)
         .fetch_one(&mut *tx)
         .await?;
     sqlx::query(SUPERSEDE_OLDER_SQL)
@@ -410,8 +425,12 @@ pub fn body_warning_line(warnings: &[&str]) -> Option<String> {
     (!heads.is_empty()).then(|| format!("⚠ {}", heads.join(" · ")))
 }
 
-/// TS `cardLine('tool', rule, undefined, false)`.
-pub fn tool_card_line(rule: &str) -> Value {
+/// TS `cardLine('tool', rule, undefined, hasMandate)` — 위임장이 있으면 `approve_mandate` 와 [이번 턴만]의 `approve_turn`.
+pub fn tool_card_line(rule: &str, has_mandate: bool) -> Value {
+    if has_mandate {
+        return json!({ "cap": "tool", "scope": rule, "limits": {
+            "approve_mandate": { "untilMs": PERMISSION_GRANT_TTL_MS }, "approve_turn": { "turn": true } } });
+    }
     json!({ "cap": "tool", "scope": rule, "limits": { "approve_new_mandate": { "untilMs": PERMISSION_GRANT_TTL_MS } } })
 }
 
@@ -449,8 +468,10 @@ pub fn plain_request_meta(
     reason: &str,
     requested_at: &str,
     expires_at: &str,
+    mandate: Option<(&str, Value)>,
 ) -> Value {
     let tool = kind == "tool";
+    let has_mandate = mandate.is_some();
     let short = if tool {
         target
     } else {
@@ -471,14 +492,18 @@ pub fn plain_request_meta(
         m.insert("bodyWarningLine".into(), json!(l));
     }
     m.insert("reason".into(), json!(one_line_reason(reason)));
+    if let Some((id, chip)) = mandate {
+        m.insert("mandateId".into(), json!(id));
+        m.insert("mandate".into(), chip);
+    }
     if tool {
-        m.insert("line".into(), tool_card_line(target));
+        m.insert("line".into(), tool_card_line(target, has_mandate));
         m.insert(
             "bodyTargetLine".into(),
             json!(format!("명령 허용 `{short}`")),
         );
     } else {
-        m.insert("line".into(), merge_card_line(target, None, false));
+        m.insert("line".into(), merge_card_line(target, None, has_mandate));
         if let Some(l) = merge_body_target_line(short, None) {
             m.insert("bodyTargetLine".into(), json!(l));
         }
@@ -488,9 +513,18 @@ pub fn plain_request_meta(
     Value::Object(m)
 }
 
-/// 거절에서 오지 않은 카드 글의 ask meta(TS `raisePermission`, tool·merge · 위임 없음).
+/// 거절에서 오지 않은 카드 글의 ask meta(TS `raisePermission`, tool·merge). 위임 있는 턴이면 선택지가 [이 위임장 동안] 꼴.
 pub fn plain_card_meta(permission_request: Value) -> Map<String, Value> {
-    merge_card_meta(permission_request, false)
+    let kind = permission_request["kind"]
+        .as_str()
+        .unwrap_or("tool")
+        .to_owned();
+    let mandate = permission_request.get("mandateId").is_some();
+    let mut m = merge_card_meta(permission_request, false);
+    if let Some(Value::Object(ask)) = m.get_mut("ask") {
+        ask.insert("options".into(), plain_card_options(&kind, mandate));
+    }
+    m
 }
 
 /// TS `too_many` 거절 글.
