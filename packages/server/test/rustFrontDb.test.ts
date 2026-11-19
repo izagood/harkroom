@@ -3258,12 +3258,14 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           // 가군 스위치를 주지 않은 앞단 — 스위치마다 「모름 → TS」로 기동한다(값을 준 앞단은 이 줄을 남기지 않는다).
           const UNSET_LINES = [
             'front: principal-invoke posts to TS — HARKROOM_PRINCIPAL_INVOKE unset',
-            'front: agent calls under delegation v2 to TS — HARKROOM_DELEGATION_IMPLICIT unset',
+            // 위임 v2 값이 없으면 암묵 위임 줄 대신 v2 스위치 자체를 알린다(암묵 위임은 v2 가 켜졌을 때만 뜻이 있다).
+            'front: delegation posts and inbox to TS — HARKROOM_DELEGATION_V2 unset',
             'front: attachment upload to TS — ATTACHMENT_MAX_BYTES unset',
             'front: background list to TS — HARKROOM_BACKGROUND_ENABLED unset',
             'front: invite mail (issue with email, resend) to TS — mail env unset',
           ];
           for (const line of UNSET_LINES) expect(fN.log(), line).toContain(line);
+          expect(fN.log()).not.toContain('HARKROOM_DELEGATION_IMPLICIT unset');
           expect(fN.log()).not.toContain('"POST /uploads"');
           expect(fN.log()).not.toContain('"GET /accounts/agents/{id}/background"');
           for (const line of UNSET_LINES.slice(0, 1).concat(UNSET_LINES.slice(2, 4))) expect(f.log(), line).not.toContain(line);

@@ -1724,10 +1724,18 @@ async fn main() {
         if unset("HARKROOM_PRINCIPAL_INVOKE") {
             eprintln!("front: principal-invoke posts to TS — HARKROOM_PRINCIPAL_INVOKE unset");
         }
-        if unset("HARKROOM_DELEGATION_IMPLICIT") {
-            eprintln!(
+        // 암묵 위임은 위임 v2 가 켜졌을 때만 뜻이 있다 — v2 가 꺼졌으면(off) 그 줄은 거짓 경고다.
+        // v2 값이 없을 때는 그 스위치 자체를 알린다(위임 글·인박스가 그것 때문에 TS 로 간다).
+        match harkroom_server::loops::delegation_deadline::v2_switch(
+            std::env::var("HARKROOM_DELEGATION_V2").ok().as_deref(),
+        ) {
+            Some(true) if unset("HARKROOM_DELEGATION_IMPLICIT") => eprintln!(
                 "front: agent calls under delegation v2 to TS — HARKROOM_DELEGATION_IMPLICIT unset"
-            );
+            ),
+            None => {
+                eprintln!("front: delegation posts and inbox to TS — HARKROOM_DELEGATION_V2 unset")
+            }
+            _ => {}
         }
         if std::env::var("ATTACHMENT_MAX_BYTES").is_err() {
             eprintln!("front: attachment upload to TS — ATTACHMENT_MAX_BYTES unset");
