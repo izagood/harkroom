@@ -684,6 +684,101 @@ pub(super) async fn post_card(
     st: &PostState,
     me: &Account,
     sub: &Value,
+    meta: Map<String, Value>,
+    cause: Option<&str>,
+    turn: Option<&str>,
+    operator: bool,
+    before_commit: Option<&dyn msg_post::BeforeCommit>,
+) -> Option<Result<(String, Vec<String>), String>> {
+    Some(
+        match post_service(st, me, sub, meta, cause, turn, operator, before_commit).await? {
+            Ok((row, notified)) => Ok((
+                serde_json::from_str::<Value>(&row)
+                    .ok()?
+                    .get("id")?
+                    .as_str()?
+                    .to_owned(),
+                notified,
+            )),
+            Err(e) => Err(e),
+        },
+    )
+}
+
+/// P6-4e — MCP `message.askBundle` 의 새 묶음(`bundleId` 없음). TS `upsertAskBundle` 의 새 묶음 갈래 + 핸들러:
+/// 가시성 → 줄 준비(거울 검사) → `postMessage`(서비스 호출, meta `{...모델 신고, kind: 'askBundle', askBundle: { items }}`)
+/// → 커밋 뒤 담긴 원본 알림·묶음 푸시([`crate::core::ask_bundle_add::after_new`]) → `postedResult`.
+/// 넘길 원본(권한 거울)·같은 글자를 못 내는 사본·재생·쓰기 전 DB 오류는 `None`(→ TS). `bundle` 은 묶음 권한 풀
+/// (`ASK_BUNDLE_ADD_PRIVILEGES`) — 커밋 뒤 알림·푸시를 거기서 쓴다.
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn answer_bundle_new(
+    st: &PostState,
+    bundle: &sqlx::PgPool,
+    me: &Account,
+    args: &Value,
+    cause: Option<&str>,
+    turn: Option<&str>,
+    operator: bool,
+) -> Option<String> {
+    use crate::core::ask_bundle_add::{Added, after_new, parse_args, prepare_new, refusal_json};
+    let a = parse_args(args)?;
+    if a.bundle.is_some() {
+        return None;
+    }
+    let items = match prepare_new(&st.read, &me.id, &a).await.ok()? {
+        Ok(items) => items,
+        Err(Added::Forbidden) => return Some(err("forbidden", "not a member of this dm channel")),
+        Err(Added::Refused(code, root)) => {
+            return Some(super::respond::text_result(&refusal_json(
+                code,
+                root.as_deref(),
+            )));
+        }
+        Err(Added::Handoff | Added::Bundle(_)) => return None,
+    };
+    let mut sub = Map::new();
+    for k in ["channelId", "threadRootId", "body", "model"] {
+        if let Some(v) = args.get(k) {
+            sub.insert(k.into(), v.clone());
+        }
+    }
+    let mut meta = Map::new();
+    meta.insert("kind".into(), Value::from("askBundle"));
+    meta.insert("askBundle".into(), serde_json::json!({ "items": items }));
+    let (row, notified) = match post_service(
+        st,
+        me,
+        &Value::Object(sub),
+        meta,
+        cause,
+        turn,
+        operator,
+        None,
+    )
+    .await?
+    {
+        Ok(v) => v,
+        Err(e) => return Some(e),
+    };
+    let id = serde_json::from_str::<Value>(&row)
+        .ok()
+        .and_then(|v| v.get("id").and_then(Value::as_str).map(str::to_owned));
+    // 다름(기록): TS 는 알림·푸시 DB 오류를 도구 오류로 던진다. Rust 는 묶음 글이 이미 섰으므로 기록만 하고 글 답을 낸다.
+    if let Some(id) = id
+        && let Err(e) = after_new(bundle, &me.id, a.channel, &id, &a.roots, &notified, cause).await
+    {
+        eprintln!("message.askBundle: announce/push for {id} failed: {e}");
+    }
+    posted_result(&row, &notified, "")
+}
+
+/// 서비스 `postMessage` 를 바로 부르는 카드 글(권한 카드·묶음 카드) — 커밋된 글(JSON)과 `notified`. 거절은 `Err(답)`,
+/// 재생·TS 로 넘길 꼴·DB 오류는 `None`(→ TS).
+#[allow(clippy::too_many_arguments)]
+async fn post_service(
+    st: &PostState,
+    me: &Account,
+    sub: &Value,
     mut meta: Map<String, Value>,
     cause: Option<&str>,
     turn: Option<&str>,
@@ -724,7 +819,7 @@ pub(super) async fn post_card(
         wake: false,
         no_mentions: false,
         before_commit,
-        // TS 권한 카드(`permissionRequests.ts`)는 서비스 `postMessage` 를 바로 부른다 — 라우트 몫인 글로 카드 고르기
+        // TS 권한 카드(`permissionRequests.ts`)·묶음 카드(`askBundles.ts`)는 서비스 `postMessage` 를 바로 부른다 — 라우트 몫인 글로 카드 고르기
         // (`applyChatApproval`)가 없다. 꺼 두면 스레드에 열린 옛 카드(대체될 권한 카드 등)가 있을 때 [`TS_THREAD_SQL`] 의
         // ask 갈래가 참이 돼 까닭 없이 TS 로 넘어간다(P6-2b bus-e2e 「옛 요청에 카드 → 옛 카드 닫기」).
         service_call: true,
@@ -751,14 +846,7 @@ pub(super) async fn post_card(
             "bad_attachment",
             "attachments must be your own, unused uploads",
         ))),
-        Outcome::Posted { row, notified, .. } => {
-            let id = serde_json::from_str::<Value>(&row)
-                .ok()?
-                .get("id")?
-                .as_str()?
-                .to_owned();
-            Some(Ok((id, notified)))
-        }
+        Outcome::Posted { row, notified, .. } => Some(Ok((row, notified))),
     }
 }
 

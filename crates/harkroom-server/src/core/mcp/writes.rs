@@ -395,24 +395,14 @@ async fn bundle_add(
     args: &Value,
     cause: Option<&str>,
 ) -> Option<String> {
-    use crate::core::ask_bundle_add::{Added, add, parse_args, refusal_message};
+    use crate::core::ask_bundle_add::{Added, add, parse_args, refusal_json};
     let a = parse_args(args)?;
+    // 새 묶음은 글 올리기 풀로([`super::msg_post::answer_bundle_new`]) — 여기 왔으면 그 풀이 없다는 뜻이라 TS.
+    a.bundle?;
     match add(read, write, me, &a, cause).await {
         Ok(Added::Handoff) => None,
         Ok(Added::Forbidden) => Some(err("forbidden", "not a member of this dm channel")),
-        Ok(Added::Refused(code, root)) => Some(ok_text(&match root {
-            Some(r) => format!(
-                "{{\"error\":{{\"code\":{},\"message\":{},\"rootId\":{}}}}}",
-                Value::from(code),
-                Value::from(refusal_message(code)),
-                Value::from(r)
-            ),
-            None => format!(
-                "{{\"error\":{{\"code\":{},\"message\":{}}}}}",
-                Value::from(code),
-                Value::from(refusal_message(code))
-            ),
-        })),
+        Ok(Added::Refused(code, root)) => Some(ok_text(&refusal_json(code, root.as_deref()))),
         Ok(Added::Bundle(row)) => Some(ok_text(&format!(
             "{{\"message\":{},\"updated\":true}}",
             super::respond::minify(&row)

@@ -2,7 +2,8 @@
 //! `upsertAskBundle`(있던 묶음 갈래)·`prepareItems`, `messages.ts` 의 `checkAskMirror`·`askBundleItemFor`·`gateAwaitingAccount`,
 //! `push/pushJobs.ts` 의 `enqueueBundlePush`, `mcpPlugin.ts` 의 묶음 푸시를 옮긴다.
 //!
-//! - **새 묶음 세우기**(`bundleId` 없음)는 에이전트 글 쓰기(`postMessage`)라 TS 에 남는다 — `None`(C1c-4 뒤).
+//! - **새 묶음 세우기**(`bundleId` 없음, P6-4e)는 판정([`prepare_new`])과 커밋 뒤 알림·푸시([`after_new`])만 여기 있고, 글 쓰기는
+//!   `mcp::msg_post::answer_bundle_new` 가 서비스 `postMessage` 와 같은 길로 한다.
 //! - **담을 수 있는 원본**은 TS `checkAskMirror` 와 같다: 원본이 있고, **부른 에이전트가 그 채널을 볼 수 있고**, 거울이 아니고,
 //!   사람 앞이고, 열려 있어야 한다. 하나라도 거절이면 아무것도 담지 않는다(`rootId` 를 실어 거절).
 //! - 줄의 사본(물음·선택지·`link`)은 **서버가 원본 meta 에서 만든다**. 에이전트가 주는 것은 원본 id 뿐이다 — 권한 요청·머지 거절
@@ -86,7 +87,8 @@ pub enum Added {
 pub struct Args<'a> {
     pub channel: &'a str,
     pub thread_root: &'a str,
-    pub bundle: &'a str,
+    /// 없으면 새 묶음(P6-4e — [`crate::core::mcp`] `msg_post::answer_bundle_new`).
+    pub bundle: Option<&'a str>,
     pub roots: Vec<&'a str>,
 }
 
@@ -94,7 +96,7 @@ fn utf16_in(s: &str, lo: usize, hi: usize) -> bool {
     (lo..=hi).contains(&s.encode_utf16().count())
 }
 
-/// zod 입력 스키마 그대로 받는 것만. `bundleId` 가 없으면(새 묶음) None — TS 가 답한다. 모양이 틀려도 None(TS 의 검증 오류).
+/// zod 입력 스키마 그대로 받는 것만. `bundleId` 는 없을 수 있다(새 묶음). 모양이 틀리면 None(TS 의 검증 오류).
 pub fn parse_args(args: &Value) -> Option<Args<'_>> {
     let o = args.as_object()?;
     let id = |k: &str| o.get(k)?.as_str().filter(|s| is_uuid(s));
@@ -126,7 +128,10 @@ pub fn parse_args(args: &Value) -> Option<Args<'_>> {
     Some(Args {
         channel: id("channelId")?,
         thread_root: id("threadRootId")?,
-        bundle: id("bundleId")?,
+        bundle: match o.get("bundleId") {
+            None => None,
+            Some(_) => Some(id("bundleId")?),
+        },
         roots,
     })
 }
@@ -343,6 +348,7 @@ async fn check(
     read: &PgPool,
     me: &str,
     a: &Args<'_>,
+    bundle: &str,
 ) -> sqlx::Result<Result<(Vec<Value>, Vec<String>), Added>> {
     use Added::{Forbidden, Handoff, Refused};
     if !channel_visible(read, me, a.channel).await? {
@@ -352,7 +358,7 @@ async fn check(
         return Ok(Err(Handoff));
     }
     let row: Option<BundleRow> = sqlx::query_as(sql().read.as_str())
-        .bind(a.bundle)
+        .bind(bundle)
         .fetch_optional(read)
         .await?;
     let Some((meta, channel, thread_root, author, id)) = row else {
@@ -414,14 +420,17 @@ pub async fn add(
     a: &Args<'_>,
     cause: Option<&str>,
 ) -> sqlx::Result<Added> {
-    let (items, added) = match check(read, &me.id, a).await {
+    let Some(bundle) = a.bundle else {
+        return Ok(Added::Handoff);
+    };
+    let (items, added) = match check(read, &me.id, a, bundle).await {
         Ok(Ok(v)) => v,
         Ok(Err(r)) => return Ok(r),
         Err(_) => return Ok(Added::Handoff),
     };
     let mut tx = write.begin().await?;
     let updated: Option<String> = sqlx::query_scalar(sql().update.as_str())
-        .bind(a.bundle)
+        .bind(bundle)
         .bind(Value::Array(items).to_string())
         .fetch_optional(&mut *tx)
         .await?;
@@ -523,6 +532,82 @@ pub async fn carry_bundle_item(
     Ok(())
 }
 
+/// 거절 답의 JSON(TS `{ error: { code, message, rootId? } }`).
+pub fn refusal_json(code: &'static str, root: Option<&str>) -> String {
+    match root {
+        Some(r) => format!(
+            "{{\"error\":{{\"code\":{},\"message\":{},\"rootId\":{}}}}}",
+            Value::from(code),
+            Value::from(refusal_message(code)),
+            Value::from(r)
+        ),
+        None => format!(
+            "{{\"error\":{{\"code\":{},\"message\":{}}}}}",
+            Value::from(code),
+            Value::from(refusal_message(code))
+        ),
+    }
+}
+
+/// P6-4e — 새 묶음(`bundleId` 없음)의 쓰기 전 판정. TS 차례 그대로: 채널 가시성(`forbidden`) → `prepareItems`(줄마다 거울 검사)
+/// → `bundle_full`. 넘길 원본(권한 거울)·같은 글자를 못 내는 사본은 `Err(Handoff)`. 읽기 풀만 쓴다.
+pub async fn prepare_new(
+    read: &PgPool,
+    me: &str,
+    a: &Args<'_>,
+) -> sqlx::Result<Result<Vec<Value>, Added>> {
+    use Added::{Forbidden, Handoff, Refused};
+    if !channel_visible(read, me, a.channel).await? {
+        return Ok(Err(Forbidden));
+    }
+    if any_ts_only(read, &a.roots).await? {
+        return Ok(Err(Handoff));
+    }
+    let items = match prepare(read, me, &a.roots).await? {
+        Prepared::Items(i) => i,
+        Prepared::Refused(c, r) => return Ok(Err(Refused(c, Some(r)))),
+        Prepared::Handoff => return Ok(Err(Handoff)),
+    };
+    if items.len() > ASK_BUNDLE_MAX_ITEMS {
+        return Ok(Err(Refused("bundle_full", None)));
+    }
+    Ok(Ok(items))
+}
+
+/// P6-4e — 새 묶음 글이 커밋된 **뒤**(TS 도 `postMessage` 뒤): 담긴 원본마다 `message.updated`(TS `announceBundledRoots`),
+/// 그 턴의 차례 주인이 이 글로 inbox 를 받지 않았으면 묶음 푸시(TS `pushBundle(message.id, notified)`). 한 tx.
+pub async fn after_new(
+    write: &PgPool,
+    me: &str,
+    channel: &str,
+    bundle_id: &str,
+    roots: &[&str],
+    notified: &[String],
+    cause: Option<&str>,
+) -> sqlx::Result<()> {
+    let mut tx = write.begin().await?;
+    for id in roots {
+        announce_updated(&mut tx, id).await?;
+    }
+    if let Some(cause) = cause {
+        let awaiting: Option<String> = sqlx::query_scalar(sql().gate.as_str())
+            .bind(me)
+            .bind(cause)
+            .bind(channel)
+            .fetch_optional(&mut *tx)
+            .await?;
+        if let Some(awaiting) = awaiting.filter(|a| !notified.iter().any(|n| n == a)) {
+            sqlx::query(sql().push.as_str())
+                .bind(&awaiting)
+                .bind(bundle_id)
+                .bind(BUNDLE_PUSH_WINDOW_SEC)
+                .execute(&mut *tx)
+                .await?;
+        }
+    }
+    tx.commit().await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -612,7 +697,10 @@ mod tests {
         assert_eq!(a.roots.len(), 1, "중복은 한 번");
         let mut no_bundle = ok.clone();
         no_bundle.as_object_mut().unwrap().remove("bundleId");
-        assert!(parse_args(&no_bundle).is_none(), "새 묶음은 TS");
+        assert!(
+            parse_args(&no_bundle).is_some_and(|a| a.bundle.is_none()),
+            "새 묶음은 bundle 없이"
+        );
         for (k, v) in [
             ("body", json!("")),
             ("items", json!([])),
