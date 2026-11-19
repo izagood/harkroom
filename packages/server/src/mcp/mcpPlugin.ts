@@ -1445,7 +1445,8 @@ function buildMcpServer(
       what: z.string().min(1).max(500).optional(),
       reason: z.string().min(1).max(1000).optional(),
       retryable: z.boolean(),
-      // 기계가 읽는 실패 갈래(FailureMeta 주석). 러너가 스레드 지정 모델 거절·계정 관문 때 싣는다.
+      // 기계가 읽는 실패 갈래(FailureMeta 주석). 러너가 스레드 지정 모델 거절·계정 관문·주입 미확인 때 싣는다.
+      // `inject_unconfirmed` 는 표지만 남는다 — 관문이 아니라 차례 주인·순번이 붙지 않는다(아래 `gate`).
       code: z.enum(FAILURE_CODES).optional(),
       /** `provider_lane` 때만 — 허용 목록의 까닭 코드(`PROVIDER_LANE_FAILURE_CODES`). 목록 밖은 입력에서 거절된다. */
       laneCode: z.enum(PROVIDER_LANE_FAILURE_CODES).optional(),

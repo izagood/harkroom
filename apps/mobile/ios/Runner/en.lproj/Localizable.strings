@@ -6,6 +6,7 @@
 "PUSH_REASON_ASK_OPTIONS" = "Waiting for your decision · %@ options";
 "PUSH_REASON_FAIL" = "Couldn't finish the task";
 "PUSH_REASON_GATE" = "Sign-in needed";
+"PUSH_REASON_CHECK" = "Couldn't confirm the prompt went in. Check the terminal";
 "PUSH_REASON_DONE" = "Finished the task";
 "PUSH_REASON_REPLIES" = "New replies to read";
 
@@ -15,5 +16,6 @@
 "PUSH_SUB_ASK" = "Decision · @%@";
 "PUSH_SUB_FAIL" = "Failed · @%@";
 "PUSH_SUB_GATE" = "Sign-in needed · @%@";
+"PUSH_SUB_CHECK" = "Check terminal · @%@";
 "PUSH_SUB_DONE" = "Done · @%@";
 "PUSH_SUB_REPLIES" = "%1$@ replies · @%2$@";

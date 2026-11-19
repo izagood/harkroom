@@ -6,6 +6,7 @@
 "PUSH_REASON_ASK_OPTIONS" = "결정을 기다려요 · 선택지 %@개";
 "PUSH_REASON_FAIL" = "작업을 끝내지 못했어요";
 "PUSH_REASON_GATE" = "로그인이 필요해요";
+"PUSH_REASON_CHECK" = "프롬프트가 들어갔는지 확인하지 못했어요. 터미널을 확인해 주세요";
 "PUSH_REASON_DONE" = "작업을 마쳤어요";
 "PUSH_REASON_REPLIES" = "새 답을 확인해 보세요";
 
@@ -15,5 +16,6 @@
 "PUSH_SUB_ASK" = "결정 · @%@";
 "PUSH_SUB_FAIL" = "실패 · @%@";
 "PUSH_SUB_GATE" = "로그인 필요 · @%@";
+"PUSH_SUB_CHECK" = "터미널 확인 · @%@";
 "PUSH_SUB_DONE" = "완료 · @%@";
 "PUSH_SUB_REPLIES" = "답 %1$@ · @%2$@";
