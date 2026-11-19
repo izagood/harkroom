@@ -10440,7 +10440,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         };
         const tsOut = await run(tsUrl);
         const rsOut = await run(rsUrl);
-        expect(rsOut).toEqual(tsOut);
+        // 장면마다 이름을 달아 비교한다 — 통째 비교는 어긋난 장면 이름을 diff 문맥 밖으로 밀어낸다.
+        expect(rsOut.map((x) => (x as { name: string }).name)).toEqual(tsOut.map((x) => (x as { name: string }).name));
+        for (let i = 0; i < tsOut.length; i++) expect(rsOut[i], `장면 ${(tsOut[i] as { name: string }).name}`).toEqual(tsOut[i]);
         // 대조가 「둘 다 아무것도 안 적음」으로 같아지지 않게 TS 쪽 값을 못 박는다.
         type O = { name: string; body: { message?: { meta?: Record<string, unknown> }; error?: { code: string } }; row: Record<string, unknown>[] | null };
         const by = (n: string) => (tsOut as O[]).find((x) => x.name === n)!;
