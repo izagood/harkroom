@@ -1751,7 +1751,13 @@ pub async fn post(
                     rs.chat.as_ref(),
                     super::chat_approval_apply::posted_from_row(&row),
                 ) {
-                    super::chat_approval_apply::apply(ask, st, &msg, &input.body, &me.id).await;
+                    // TS `applyChatApproval(pool, message)` 는 **저장된** 본문을 읽는다 — 멘션이 id 토큰(`<@id>`)으로 바뀐 뒤라
+                    // 「@bot2 A 로」의 멘션이 판정에서 빠진다. 받은 본문을 그대로 넘기면 `@bot2 a 로` 가 이름과 안 맞아 답이 안 된다.
+                    let stored = serde_json::from_str::<Value>(&row)
+                        .ok()
+                        .and_then(|v| v.get("body").and_then(Value::as_str).map(str::to_owned))
+                        .unwrap_or_else(|| input.body.clone());
+                    super::chat_approval_apply::apply(ask, st, &msg, &stored, &me.id).await;
                 }
                 if let Err(e) = emit_inbox_updated(&st.write, &notified).await {
                     eprintln!("front: deferred inbox.updated failed ({e})");
