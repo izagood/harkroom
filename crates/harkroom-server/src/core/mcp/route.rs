@@ -326,7 +326,19 @@ pub async fn handle(
     if let Some(r) = serve_pre(&up, ci, &parts.headers, &bytes, served, &tools, &pre).await {
         return r;
     }
-    proxy::forward(State(up), ci, Request::from_parts(parts, Body::from(bytes))).await
+    // TS 가 꺼졌거나 닿지 않으면(앞단 프록시의 502) 맨 502 대신 JSON-RPC 꼴로 답한다([`super::ts_down`]).
+    let res = proxy::forward(
+        State(up),
+        ci,
+        Request::from_parts(parts, Body::from(bytes.clone())),
+    )
+    .await;
+    if res.status() == StatusCode::BAD_GATEWAY
+        && let Some(r) = super::ts_down::reply(&bytes)
+    {
+        return r;
+    }
+    res
 }
 
 /// P2b — 도구 부르기가 아닌 본문(`initialize`·`ping`·`tools/list`·알림·그것들만 든 배치)을 Rust 가 답한다([`super::lifecycle`]).
