@@ -12551,13 +12551,17 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             type McFx = { body: unknown; headers: Record<string, string>; line?: string };
             let seq = 0;
             /** 사람(소유자) 글로 띄운 턴의 임대. `pat` 이면 사람 세션 글이 아니라 위임장이 없다. `line` 이면 그 위임장에 merge 줄을 적는다. */
-            const turn = async (repo: string, o: { pat?: boolean; line?: { uses?: number }; token?: string } = {}): Promise<McFx> => {
+            /** `author` 면 그 계정(다른 에이전트)의 글로 띄운다(사람 턴 아님). `lease` 면 임대를 끝내거나 만료시킨 뒤 보낸다. */
+            const turn = async (repo: string, o: { pat?: boolean; line?: { uses?: number }; token?: string; author?: string; lease?: 'ended' | 'expired' } = {}): Promise<McFx> => {
               seq += 1;
-              const posted = await postMessage(db.pool, { channelId: todayId, authorId: admin.accountId, body: `@s55mc 머지 ${seq}`, threadRootId: null, authVia: o.pat ? 'pat' : 'session' });
+              const posted = await postMessage(db.pool, { channelId: todayId, authorId: o.author ?? admin.accountId, body: `@s55mc 머지 ${seq}`, threadRootId: null,
+                authVia: o.author ? 'operator' : o.pat ? 'pat' : 'session' });
               const root = (posted as { message: { id: string } }).message.id;
               const lr = await app.inject({ method: 'POST', url: '/agent/turn-leases', headers: vM, payload: { causeMessageId: root } });
               expect(lr.statusCode, lr.body).toBe(200);
               const l = (lr.json() as { lease: { id: string; token: string } }).lease;
+              if (o.lease === 'ended') await db.pool.query(`update secret_turn_lease set ended_at = now() where id = $1`, [l.id]);
+              if (o.lease === 'expired') await db.pool.query(`update secret_turn_lease set expires_at = now() - interval '1 second' where id = $1`, [l.id]);
               let line: string | undefined;
               if (o.line) {
                 const mandate = (await db.pool.query<{ m: string | null }>(`select mandate_id::text as m from message where id = $1`, [root])).rows[0]!.m;
@@ -12569,9 +12573,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
               }
               return { body: { leaseId: l.id, token: o.token ?? l.token, repo, number: 7, headSha: SHA40 }, headers: vM, ...(line ? { line } : {}) };
             };
-            const grant = (repo: string) => db.pool.query(
-              `insert into account_grant (account_id, capability, scope, granted_by, expires_at) values ($1, 'repo.merge', $2, $3, now() + interval '7 days')`,
-              [mc.accountId, `repo:${repo}`, admin.accountId]);
+            const grant = (repo: string, allowAgentCause = false) => db.pool.query(
+              `insert into account_grant (account_id, capability, scope, granted_by, expires_at, allow_agent_cause) values ($1, 'repo.merge', $2, $3, now() + interval '7 days', $4)`,
+              [mc.accountId, `repo:${repo}`, admin.accountId, allowAgentCause]);
             const mcSide = async (base: string, fx: () => Promise<McFx>, times: number) => {
               const x = await fx();
               const mark = (await db.pool.query<{ a: string }>(`select coalesce(max(id), 0)::text as a from audit_log`)).rows[0]!.a;
@@ -12642,6 +12646,31 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
               expect(lo.a.effects.used, '꺼졌으면 줄을 쓰지 않는다').toBe(0);
               expect(lo.a.effects.audit).toMatchObject(expect.arrayContaining([
                 expect.objectContaining({ action: 'mandate.shadow', detail: expect.objectContaining({ enforced: 'chain', mandateVerdict: 'allowed' }) })]));
+              // 스위치 꺼짐 — 머리 주석(`merge_checks.rs`)의 나머지 갈래: 저장소 이름 틀림(bad_repo)·끝난/만료 임대(lease_invalid)·ghUser 모양 틀림(400),
+              // 사람 턴이 아닌 경우(다른 에이전트 글) — grant 없음은 카드 없는 not_granted, grant 있고 사슬 끊김은 카드용 cause_not_human,
+              // `allow_agent_cause` grant 는 사슬을 보지 않고 허락.
+              const br = await mcPair('merge off 저장소 이름 틀림 → 400 bad_repo', 'off', () => turn('noslash'));
+              expect([br.a.rs[0]!.status, code(br)]).toEqual([400, 'bad_repo']);
+              for (const ls of ['ended', 'expired'] as const) {
+                const x = await mcPair(`merge off ${ls} 임대 → 403 lease_invalid`, 'off', () => turn('izagood/s55mc-ok', { lease: ls }));
+                expect([x.a.rs[0]!.status, code(x)]).toEqual([403, 'lease_invalid']);
+              }
+              const gu = await mcPair('merge off ghUser 모양 틀림 → 400', 'off', async () => {
+                const x = await turn('izagood/s55mc-ok');
+                return { ...x, body: { ...(x.body as Record<string, unknown>), ghUser: '-bad' } };
+              });
+              expect(gu.a.rs[0]!.status).toBe(400);
+              const an = await mcPair('merge off 에이전트 턴 + grant 없음 → not_granted(카드 없음)', 'off', () => turn('izagood/s55mc-none', { author: ac2.accountId }));
+              expect([an.a.rs[0]!.status, code(an)]).toEqual([403, 'not_granted']);
+              expect((an.a.rs[0]!.json as { error: { denialId?: string } }).error.denialId, '에이전트 턴은 카드를 만들지 못한다').toBeUndefined();
+              expect(an.a.effects.denials).toEqual([]);
+              const ch = await mcPair('merge off 에이전트 턴 + grant · 사슬 끊김 → cause_not_human', 'off', () => turn('izagood/s55mc-ok', { author: ac2.accountId }));
+              expect([ch.a.rs[0]!.status, code(ch)]).toEqual([403, 'cause_not_human']);
+              expect(ch.a.effects.denials).toMatchObject([{ reason: 'cause_not_human', scope: 'repo:izagood/s55mc-ok' }]);
+              await grant('izagood/s55mc-agent', true);
+              const aa = await mcPair('merge off 에이전트 턴 + allow_agent_cause grant → 허락', 'off', () => turn('izagood/s55mc-agent', { author: ac2.accountId }));
+              expect(aa.a.rs[0]!.status, JSON.stringify(aa.a.rs)).toBe(200);
+              expect(aa.a.rs[0]!.json).toMatchObject({ allowed: true });
               // 스위치 켜짐 — 위임 판정. 줄이 맞으면 허락(줄을 쓴다), 1회 줄은 두 번째에 거절, 줄이 없으면 `no_mandate_line` + 거절 기록,
               // 위임장 없는 턴(PAT 글)은 grant 가 있어도 거절, 위임장 있는 턴의 7일 grant 는 standing 줄로 허락.
               const st = await mcPair('merge on 줄 있음 → 허락', 'on', () => turn('izagood/s55mc-line', { line: {} }));

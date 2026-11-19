@@ -137,10 +137,7 @@ fn merge_matches(line: &LineFacts<'_>, a: &MergeAction<'_>) -> bool {
     {
         return false;
     }
-    if a.ci_override && limit(l, "ciOverride") != Some(&Value::Bool(true)) {
-        return false;
-    }
-    true
+    !a.ci_override || limit(l, "ciOverride") == Some(&Value::Bool(true))
 }
 
 /// TS `lineMatches` (cap `merge`).
