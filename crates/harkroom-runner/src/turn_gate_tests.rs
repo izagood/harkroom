@@ -315,3 +315,49 @@ fn debug_hides_account_label() {
         assert!(!s.contains("pool-a-acct1"), "{s}");
     }
 }
+
+/// 주입 미확인(화면이 입력칸 그대로)은 확인 창이 보인 관문이 아니다 — 계정 표식·원장(하네스 접기)·감시를 건드리지 않고,
+/// 통지는 `account_gate` 가 아닌 코드로, 「답하면 이어진다」 없이 나간다.
+#[test]
+fn unconfirmed_never_marks_or_folds_and_uses_its_own_code() {
+    let mut ledger = AttentionLedger::default();
+    // 같은 계정에서 이미 다른 턴이 사람을 기다린다 — 턴 시작 관문이었다면 이 턴은 접힌다.
+    assert!(ledger.claim("pool-a-acct1", "other"));
+    let mut io = FakeIo {
+        ledger: Some(ledger),
+        can_watch: true,
+        ..FakeIo::default()
+    };
+    let (mut end, mut gate) = (live(), GateState::default());
+    call_human(
+        &mut end,
+        &mut gate,
+        &ctx(),
+        "> 넣은 글",
+        AttentionKind::Unconfirmed,
+        &mut io,
+    );
+    assert!(end.awaiting_human);
+    assert_eq!(io.marks, 0, "계정 표식을 세우지 않는다");
+    assert_eq!(io.reclaims, 0, "하네스를 접지 않는다");
+    assert_eq!((gate.requeue, gate.held.clone(), io.arms), (None, None, 0));
+    assert_eq!(
+        io.ledger.as_ref().unwrap().holder("pool-a-acct1"),
+        Some("other")
+    );
+    let f = &io.fails[0];
+    assert_eq!(f.code, Some("inject_unconfirmed"));
+    assert_eq!(
+        (
+            f.mention_id.clone(),
+            f.claude_pool_rank,
+            f.claude_account_rank
+        ),
+        (None, None, None)
+    );
+    assert!(!f.body.contains("답하면"), "{}", f.body);
+    assert!(!f.reason.contains("답하면"));
+    assert!(f.body.ends_with("계정: 풀 2 · 계정 1)"), "{}", f.body);
+    assert_eq!(io.attention.len(), 1, "화면은 앱으로 간다");
+    assert!(io.logs[0].contains("unconfirmed"));
+}

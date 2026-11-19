@@ -344,7 +344,7 @@ fn confirm_resends_newline_then_calls_after_grace() {
     assert_eq!(w[1], (3_300, "\r".to_string()));
     let calls: Vec<_> = acts
         .iter()
-        .filter(|(_, a)| matches!(a, Action::Attention(_, AttentionKind::Startup)))
+        .filter(|(_, a)| matches!(a, Action::Attention(_, AttentionKind::Unconfirmed)))
         .map(|(t, _)| *t)
         .collect();
     // 유예 기본값 round(3000/3)=1,000.

@@ -6,6 +6,18 @@
 //! 물러나기 차례: 시그널·원격 종료 요청 → 폴 멈춤(`PollLoop::stop`) → 인박스 놓음 알림 → drain(턴 시한 + 5분까지만) →
 //! 도는 턴에 물러남 표지(SIGTERM) → 10초 유예 → 남은 PTY 그룹에 SIGKILL → 남은 임대 장부 놓기(박동 멈춤·기록 가리기·끝 알림) → 링크 닫기.
 
+/// 이 crate 의 `eprintln!` — 모든 로그 줄 앞에 시각(UTC)과, 걸려 있으면 세션 표지를 붙인다(`harkroom_proto::log_line`).
+/// 줄 본문은 그대로다. (lib 의 것과 같다 — 매크로는 crate 를 넘지 않는다.)
+macro_rules! eprintln {
+    ($($arg:tt)*) => {
+        ::std::eprintln!(
+            "{}{}",
+            ::harkroom_proto::log_line::head(),
+            ::std::format_args!($($arg)*)
+        )
+    };
+}
+
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};

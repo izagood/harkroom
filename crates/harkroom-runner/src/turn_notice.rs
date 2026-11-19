@@ -373,6 +373,32 @@ pub fn gate_notice(ranks: GateRanks) -> String {
     )
 }
 
+/// 주입 미확인 통지 본문 — **물음이 없다.** 「답하면 이어진다」고 쓰지 않는다(답할 것이 없다): 프롬프트가 들어갔는지
+/// 러너가 확인하지 못했고 화면은 입력칸 그대로다. 화면은 싣지 않는다([`gate_notice`] 와 같다).
+pub fn unconfirmed_notice(ranks: GateRanks) -> String {
+    format!(
+        "(프롬프트가 하네스에 들어갔는지 확인하지 못했습니다 — 화면에 물음은 없습니다. 이 스레드의 터미널을 열어 입력칸에 글이 남아 있으면 Enter 를 눌러 주세요. 턴이 이미 돌고 있으면 할 일이 없습니다. 계정: {})",
+        gate_rank_label(ranks)
+    )
+}
+
+/// 주입 미확인의 `message.fail` 코드 — 계정 관문(`account_gate`)과 가른다(알림·차례 표시가 다르다).
+pub const INJECT_UNCONFIRMED_CODE: &str = "inject_unconfirmed";
+
+/// 주입 미확인 통지 한 장 — 계정 표식 칸(멘션·순번)은 싣지 않는다(계정 관문이 아니다).
+pub fn unconfirmed_fail(ranks: GateRanks) -> GateFail {
+    GateFail {
+        body: unconfirmed_notice(ranks),
+        what: "프롬프트가 하네스에 들어갔는지 확인하지 못했다",
+        reason: "화면에 물음은 없다 — 입력칸에 글이 남아 있으면 그 터미널에서 Enter 를 누른다",
+        retryable: false,
+        code: Some(INJECT_UNCONFIRMED_CODE),
+        mention_id: None,
+        claude_pool_rank: None,
+        claude_account_rank: None,
+    }
+}
+
 /// 관문이 선 계정의 **순번**(칩 ②, 2026-11-12). 계정·풀 이름은 사람 이름일 수 있어 서버 글에 싣지 않는다(#1039).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct GateRanks {

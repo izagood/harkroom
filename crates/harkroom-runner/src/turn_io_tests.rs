@@ -386,3 +386,46 @@ fn gate_watch_callback_sees_ended_after_settle() {
         "settle 뒤 감시 콜백은 끝났음을 본다"
     );
 }
+
+#[test]
+fn gate_ranks_maps_lane_ranks_and_keeps_names_out() {
+    use crate::turn_notice::{GateAccountRank, gate_rank_label};
+    // (계정, 풀) — 모름 · 기본 로그인 · 풀 순서 안 · 풀 순서 밖.
+    assert_eq!(gate_rank_label(gate_ranks((None, Some(2)))), "모름");
+    assert_eq!(
+        gate_rank_label(gate_ranks((Some(None), None))),
+        "기본 로그인"
+    );
+    assert_eq!(
+        gate_rank_label(gate_ranks((Some(Some(1)), Some(2)))),
+        "풀 2 · 계정 1"
+    );
+    assert_eq!(gate_rank_label(gate_ranks((Some(Some(3)), None))), "계정 3");
+    assert_eq!(
+        gate_ranks((Some(None), Some(4))).pool,
+        None,
+        "기본 로그인에는 풀 순번이 없다"
+    );
+    assert_eq!(
+        attention_ranks(gate_ranks((Some(Some(1)), Some(2)))),
+        (Some(2), Some(Some(1)))
+    );
+    assert_eq!(gate_ranks((None, None)).account, GateAccountRank::Unknown);
+}
+
+#[test]
+fn without_new_code_strips_only_the_unconfirmed_code() {
+    let ranks = crate::turn_notice::GateRanks::default();
+    let new = gate_fail_opts(&crate::turn_notice::unconfirmed_fail(ranks));
+    assert_eq!(new.code.as_deref(), Some("inject_unconfirmed"));
+    let plain = without_new_code(&new).expect("새 코드는 빼고 다시 보낸다");
+    assert_eq!(plain.code, None);
+    assert_eq!(
+        (plain.what, plain.reason, plain.retryable),
+        (new.what, new.reason, new.retryable)
+    );
+    // 옛 서버도 아는 코드는 다시 보내지 않는다.
+    let gate = gate_fail_opts(&crate::turn_notice::gate_fail(ranks, true, "m1"));
+    assert_eq!(without_new_code(&gate), None);
+    assert_eq!(without_new_code(&FailOpts::default()), None);
+}

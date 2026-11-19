@@ -20,6 +20,7 @@
 
 pub use serde_json::Value;
 
+pub mod log_line;
 pub mod tool_rules;
 
 /// `null` 이 올 수도 있는 **선택** 필드(`x?: T | null`)를 왕복에서 지키는 꼴 — 없음(`None`)과 `null`(`Some(None)`)을 가른다.

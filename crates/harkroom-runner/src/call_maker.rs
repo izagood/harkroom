@@ -489,15 +489,17 @@ where
             let (gate_mcp, gate_channel, gate_anchor) =
                 (clients.mcp(), gate_channel.clone(), gate_anchor.clone());
             p.post_gate_fail = Some(Box::new(move |f| {
-                gate_mcp
-                    .fail(
-                        &gate_channel,
-                        &f.body,
-                        gate_anchor.as_deref(),
-                        &crate::turn_io::gate_fail_opts(f),
-                    )
-                    .map(|_| ())
-                    .map_err(|e| e.message)
+                let opts = crate::turn_io::gate_fail_opts(f);
+                let sent = gate_mcp.fail(&gate_channel, &f.body, gate_anchor.as_deref(), &opts);
+                // 새 코드(주입 미확인)를 모르는 옛 서버는 입력 검증에서 거절한다 — 그때는 코드 없이 한 번 더 남긴다
+                // (통지가 통째로 사라지는 것보다 보통 실패 글이 낫다).
+                let sent = match (sent, crate::turn_io::without_new_code(&opts)) {
+                    (Err(_), Some(plain)) => {
+                        gate_mcp.fail(&gate_channel, &f.body, gate_anchor.as_deref(), &plain)
+                    }
+                    (r, _) => r,
+                };
+                sent.map(|_| ()).map_err(|e| e.message)
             }));
             // 기억 recall(정본 `searchMemory(q, RECALL_MAX_ITEMS + 3, o)`)·실은 recall 세기(`memory.recalled`) — 이 에이전트 묶음으로만.
             let mcp = clients.mcp();

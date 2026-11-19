@@ -1308,6 +1308,10 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
             ctx.claude_config_dir.clone(),
             self.home.clone(),
         );
+        // 이 시도가 도는 동안 이 스레드의 로그 줄에 세션 표지를 건다(세션을 아직 모르면 스레드 열쇠).
+        let _log_scope = harkroom_proto::log_line::scope(Some(
+            ctx.session_id.as_deref().unwrap_or(self.key.as_str()),
+        ));
         // 턴 시작 때의 기록 길이 — 탐침은 꼬리가 아니라 이 자리부터 읽는다(입력 줄 뒤에 큰 요청 기록 줄이 붙는다).
         let probe_from = crate::harness_errors::session_transcript_len(
             probe_harness,
@@ -1337,14 +1341,19 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
                 .name
                 .clone()
                 .unwrap_or_else(|| "(기본)".to_string()),
-            ranks: crate::turn_notice::GateRanks {
-                pool: None,
-                account: if c.account.config_dir.is_none() {
-                    crate::turn_notice::GateAccountRank::DefaultLogin
-                } else {
-                    crate::turn_notice::GateAccountRank::Unknown
-                },
-            },
+            // 이 시도의 계정을 계정 축에서 다시 찾아 순번을 싣는다(턴 줄 칩과 같은 `account_ranks`) — 이름은 싣지 않는다.
+            ranks: crate::turn_io::gate_ranks(ranks_of(
+                &self.lane,
+                match (&c.account.name, &c.account.config_dir) {
+                    (Some(name), Some(dir)) => Some(ClaudeAccount {
+                        name: name.clone(),
+                        config_dir: dir.clone(),
+                        pool: c.account.pool.clone(),
+                    }),
+                    _ => None,
+                }
+                .as_ref(),
+            )),
             mention_id: c.cause.clone(),
             session_key: ctx.session_id.clone().unwrap_or_else(|| self.key.clone()),
         };
