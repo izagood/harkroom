@@ -524,6 +524,12 @@ async fn pre_admit(
     if admit_refused(tool, pre, headers) {
         return Ok(None);
     }
+    // 키링이 없는 가드: 이 에이전트에게 걸린 비밀이 없으면 검사할 것이 없다(TS 가드도 찾지 못한다). 있으면 키링이 있는 쪽(TS)에 묻는다.
+    if let Some(g) = pre.leak.filter(|g| !g.is_on())
+        && g.has_needles(pre.agent_id).await.map_err(|_| ())?
+    {
+        return Err(());
+    }
     if let Some(g) = pre.leak.filter(|g| g.is_on()) {
         // TS 는 `arguments ?? {}` 를 본다 — null 이면 글이 없다.
         let texts = crate::secrets::leak::collect_strings(args);

@@ -1546,20 +1546,21 @@ async fn main() {
     // 에이전트 업로드의 비밀 값 검사(`core/leak_guard.rs`) — 권한·키 env 가 다 맞을 때만. 아니면 에이전트 업로드는 TS.
     // MCP `artifact.publish` 새 안 게시가 쓸 첨부 저장소 — 업로드 줄과 같은 잠금(권한·저장소·상한)을 지났을 때만.
     let artifact_storage = attachment_upload.as_ref().map(|(_, s, _)| s.clone());
-    let agent_upload_leak = match &attachment_upload {
+    // `/mcp` 입장 확인은 키링이 없는 가드도 받는다 — 그 에이전트에게 걸린 비밀이 없으면 검사할 것이 없으므로 Rust 가 끝까지 답하고,
+    // 걸린 비밀이 있으면 TS `/mcp/admit` 에 묻는다(`core/mcp/route.rs` `pre_admit`). 업로드는 지금처럼 키링이 있을 때만.
+    let leak_guard_any = match &attachment_upload {
         Some((write, _, _)) => {
             use harkroom_server::core::leak_guard as lg;
             match write::missing_in(write, &lg::privileges(), lg::LEAK_GUARD_SEQUENCES).await {
                 Ok(m) if m.is_empty() => match lg::LeakGuard::load(write.clone()).await {
-                    Ok(g) => match g.into_active() {
-                        Some(g) => Some(std::sync::Arc::new(g)),
-                        None => {
+                    Ok(g) => {
+                        if !g.is_on() {
                             eprintln!(
-                                "front: agent upload leak guard off — no matching secret key"
+                                "front: agent upload leak guard off — no matching secret key (mcp admits locally only for agents without granted secrets)"
                             );
-                            None
                         }
-                    },
+                        Some(std::sync::Arc::new(g))
+                    }
                     Err(e) => {
                         eprintln!("front: agent upload leak guard off — secret keys: {e}");
                         None
@@ -1581,6 +1582,7 @@ async fn main() {
         }
         None => None,
     };
+    let agent_upload_leak = leak_guard_any.clone().filter(|g| g.is_on());
     // S5.4 CT1 — 채널에 팀 넣기(`POST /channels/{id}/teams/{teamId}/add`). 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 그 칸 권한이 다 있을 때만.
     let channel_team_add = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -5333,7 +5335,7 @@ async fn main() {
                 post: mcp_post,
                 relay_moved: operator_on,
                 relay: relay_cell.clone(),
-                leak: agent_upload_leak,
+                leak: leak_guard_any,
                 presence: presence_cell.clone(),
                 switches: harkroom_server::core::mcp::route::AdmitSwitches::from_env(),
             },
@@ -5447,11 +5449,17 @@ async fn main() {
         .copied()
         .filter(|m| !(dm_core_on && m.key == "GET /dms"))
         .collect();
+    let cors_all = state.cors.clone();
     let app = routes::router(state, &moved, &ts);
     let app = match core_router {
         Some(c) => c.merge(app),
         None => app,
     };
+    // 모든 경로의 CORS 프리플라이트를 앞단이 답한다(옮긴 줄 옆의 TS 메서드·TS 에만 있는 경로 포함) — TS 를 끄면 남을 OPTIONS 길을 닫는다.
+    let app = app.layer(axum::middleware::from_fn_with_state(
+        cors_all,
+        harkroom_server::cors::preflight_layer,
+    ));
     let listener = tokio::net::TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], port)))
         .await
         .expect("bind");

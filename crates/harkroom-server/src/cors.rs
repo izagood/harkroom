@@ -130,41 +130,60 @@ fn add_common(cors: &Cors, req_origin: Option<&str>, h: &mut HeaderMap) {
     set(h, header::ACCESS_CONTROL_EXPOSE_HEADERS, &values().exposed);
 }
 
-/// 층: `axum::middleware::from_fn_with_state(Arc<Cors>, cors::layer)`. 인증 층보다 **바깥**에 건다(401·403 에도 실리게).
-pub async fn layer(State(cors): State<Arc<Cors>>, req: Request, next: Next) -> Response {
-    let origin = req
+/// 프리플라이트(`OPTIONS`) 답 — [`layer`] 와 [`preflight_layer`] 가 같이 쓴다.
+fn preflight(cors: &Cors, req: &Request, origin: Option<&str>) -> Response {
+    let has_acrm = req
         .headers()
+        .contains_key(header::ACCESS_CONTROL_REQUEST_METHOD);
+    let mut res = if origin.is_none() || !has_acrm {
+        let mut r = Response::new(Body::from("Invalid Preflight Request"));
+        *r.status_mut() = StatusCode::BAD_REQUEST;
+        r.headers_mut().insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("text/plain; charset=utf-8"),
+        );
+        r
+    } else {
+        let mut r = Response::new(Body::empty());
+        *r.status_mut() = StatusCode::NO_CONTENT;
+        let h = r.headers_mut();
+        set(h, header::ACCESS_CONTROL_ALLOW_METHODS, &values().methods);
+        set(h, header::ACCESS_CONTROL_ALLOW_HEADERS, &values().allowed);
+        set(h, header::ACCESS_CONTROL_MAX_AGE, &values().max_age);
+        h.insert(header::CONTENT_LENGTH, HeaderValue::from_static("0"));
+        r
+    };
+    add_common(cors, origin, res.headers_mut());
+    res
+}
+
+fn origin_of(req: &Request) -> Option<String> {
+    req.headers()
         .get(header::ORIGIN)
         .and_then(|v| v.to_str().ok())
-        .map(str::to_owned);
+        .map(str::to_owned)
+}
+
+/// 층: `axum::middleware::from_fn_with_state(Arc<Cors>, cors::layer)`. 인증 층보다 **바깥**에 건다(401·403 에도 실리게).
+pub async fn layer(State(cors): State<Arc<Cors>>, req: Request, next: Next) -> Response {
+    let origin = origin_of(&req);
     if req.method() == Method::OPTIONS {
-        let has_acrm = req
-            .headers()
-            .contains_key(header::ACCESS_CONTROL_REQUEST_METHOD);
-        let mut res = if origin.is_none() || !has_acrm {
-            let mut r = Response::new(Body::from("Invalid Preflight Request"));
-            *r.status_mut() = StatusCode::BAD_REQUEST;
-            r.headers_mut().insert(
-                header::CONTENT_TYPE,
-                HeaderValue::from_static("text/plain; charset=utf-8"),
-            );
-            r
-        } else {
-            let mut r = Response::new(Body::empty());
-            *r.status_mut() = StatusCode::NO_CONTENT;
-            let h = r.headers_mut();
-            set(h, header::ACCESS_CONTROL_ALLOW_METHODS, &values().methods);
-            set(h, header::ACCESS_CONTROL_ALLOW_HEADERS, &values().allowed);
-            set(h, header::ACCESS_CONTROL_MAX_AGE, &values().max_age);
-            h.insert(header::CONTENT_LENGTH, HeaderValue::from_static("0"));
-            r
-        };
-        add_common(&cors, origin.as_deref(), res.headers_mut());
-        return res;
+        return preflight(&cors, &req, origin.as_deref());
     }
     let mut res = next.run(req).await;
     add_common(&cors, origin.as_deref(), res.headers_mut());
     res
+}
+
+/// 앞단 전체에 거는 층 — **모든 경로**의 `OPTIONS` 를 앞단이 답한다(TS 로 넘기지 않는다). TS 의 `@fastify/cors` 는 전역 등록이라
+/// 경로마다 다른 프리플라이트가 없다 — 그래서 경로를 가리지 않고 [`layer`] 와 같은 답을 낸다. 본 요청은 손대지 않는다
+/// (옮긴 줄은 [`layer`] 가, TS 로 넘기는 응답은 TS 가 이미 머리를 붙인다).
+pub async fn preflight_layer(State(cors): State<Arc<Cors>>, req: Request, next: Next) -> Response {
+    if req.method() == Method::OPTIONS {
+        let origin = origin_of(&req);
+        return preflight(&cors, &req, origin.as_deref());
+    }
+    next.run(req).await
 }
 
 #[cfg(test)]
@@ -217,5 +236,55 @@ mod tests {
         assert_eq!(values().methods, "GET, POST, PUT, PATCH, DELETE");
         assert!(values().exposed.contains("retry-after"));
         assert_eq!(values().max_age, "600");
+    }
+
+    /// 앞단 전체 층: 어느 경로든(TS 로 넘길 fallback 포함) `OPTIONS` 를 앞단이 답하고, 본 요청은 그대로 지나간다.
+    #[tokio::test]
+    async fn preflight_layer_answers_every_path() {
+        use tower_service::Service;
+        let cors = Arc::new(Cors::from_env_value(Some("tauri://localhost")));
+        let mut app = axum::Router::new()
+            .fallback(|| async { StatusCode::IM_A_TEAPOT })
+            .layer(axum::middleware::from_fn_with_state(cors, preflight_layer));
+        let pre = axum::http::Request::builder()
+            .method(Method::OPTIONS)
+            .uri("/threads/x/plan")
+            .header(header::ORIGIN, "tauri://localhost")
+            .header(header::ACCESS_CONTROL_REQUEST_METHOD, "PUT")
+            .body(Body::empty())
+            .unwrap();
+        let r = app.call(pre).await.unwrap();
+        assert_eq!(r.status(), StatusCode::NO_CONTENT);
+        assert_eq!(
+            r.headers()
+                .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                .unwrap(),
+            "tauri://localhost"
+        );
+        assert!(
+            r.headers()
+                .contains_key(header::ACCESS_CONTROL_ALLOW_METHODS)
+        );
+        let bad = axum::http::Request::builder()
+            .method(Method::OPTIONS)
+            .uri("/accounts/x/avatar")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(
+            app.call(bad).await.unwrap().status(),
+            StatusCode::BAD_REQUEST
+        );
+        let get = axum::http::Request::builder()
+            .uri("/anything")
+            .header(header::ORIGIN, "tauri://localhost")
+            .body(Body::empty())
+            .unwrap();
+        let r = app.call(get).await.unwrap();
+        assert_eq!(r.status(), StatusCode::IM_A_TEAPOT);
+        // 본 요청 머리는 이 층이 붙이지 않는다(TS 가 붙인 머리와 겹치지 않게).
+        assert!(
+            !r.headers()
+                .contains_key(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+        );
     }
 }

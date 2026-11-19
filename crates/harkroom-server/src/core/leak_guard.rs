@@ -57,6 +57,12 @@ const NEEDLES_SQL: &str = "select q.id::text, q.name, q.kind, q.version::int8, q
        join secret_version v on v.secret_id = s.id and v.revoked_at is null and v.sealed is not null \
       where g.agent_id = $1::uuid) q";
 
+/// [`NEEDLES_SQL`] 의 행이 있는가만.
+const HAS_NEEDLES_SQL: &str = "select exists (select 1 \
+       from secret_grant g join secret s on s.id = g.secret_id \
+       join secret_version v on v.secret_id = s.id and v.revoked_at is null and v.sealed is not null \
+      where g.agent_id = $1::uuid)";
+
 const RECORD_SQL: &str = "insert into secret_access_log (secret_id, secret_name, agent_id, operator_id, result, reason) \
      values ($1::uuid, $2, $3::uuid, $4::uuid, 'denied', 'leak_blocked')";
 
@@ -86,6 +92,15 @@ impl LeakGuard {
 
     pub fn is_on(&self) -> bool {
         self.keyring.is_some()
+    }
+
+    /// 이 에이전트에게 grant 로 걸린, 아직 살아 있는 봉인 값이 하나라도 있는가 — [`NEEDLES_SQL`] 과 같은 조건(값은 읽지 않는다).
+    /// 키링이 없는 가드에서 쓴다: 없으면 무엇을 검사해도 찾을 것이 없다(TS 가드도 같은 결과).
+    pub async fn has_needles(&self, agent_id: &str) -> sqlx::Result<bool> {
+        sqlx::query_scalar(HAS_NEEDLES_SQL)
+            .bind(agent_id)
+            .fetch_one(&self.pool)
+            .await
     }
 
     /// 키링이 있을 때만 가드를 돌려준다. 키 env 가 없어 꺼진 가드를 쥐면 에이전트 업로드가 비밀 값 검사 없이 Rust 에서 저장되므로,
@@ -218,6 +233,9 @@ mod tests {
         assert!(norm(ts).contains(&norm(inner)));
         assert!(ts.contains("'denied', 'leak_blocked'"));
         assert!(ts.contains("action: 'secret.leak.blocked'"));
+        // 키링 없는 가드의 「걸린 비밀이 있나」는 같은 from·where 를 본다.
+        let from_where = &inner[inner.find("from").unwrap()..];
+        assert!(norm(HAS_NEEDLES_SQL).contains(&norm(from_where)));
     }
 
     /// 키 env 가 없어 꺼진 가드는 쥐지 않는다 → 에이전트 업로드는 TS 가 받는다(security #2353 막음 #1).
