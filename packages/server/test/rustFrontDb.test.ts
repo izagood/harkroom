@@ -148,6 +148,12 @@ const DELEGATION_DEADLINE_GRANTS = [
   'usage on sequence event_outbox_id_seq',
 ];
 
+const HOOK_DEBOUNCE_GRANTS = [
+  'update (enabled, next_at, paused_reason, updated_at) on automation',
+  'insert (automation_id, event_key, trigger_kind, payload, not_before, initiated_by, cause_message_id, chain_depth) on automation_run',
+  'update (payload) on automation_run',
+];
+
 async function operatorWriteRole(db: { pool: pg.Pool; uri: string }, grants: readonly string[] = OPERATOR_GRANTS): Promise<string> {
   const rw = `op_rw_${Math.random().toString(36).slice(2, 10)}`;
   await db.pool.query(`create role ${rw} login password '${rw}' nosuperuser nocreatedb nocreaterole nobypassrls connection limit 8`);
@@ -160,7 +166,7 @@ async function operatorWriteRole(db: { pool: pg.Pool; uri: string }, grants: rea
 }
 
 describe.skipIf(!ON)('Rust 앞단 DB 대조 시험 — 실제 스키마로', () => {
-  for (const name of ['auth', 'perm', 'operator', 'loops', 'wake', 'outbox_listener', 'retention', 'mandate_idle', 'permission_expire', 'bg', 'bg_produce', 'outbox_prune', 'push_loop', 'turn_lease', 'inbox_list', 'decide_core_db', 'relay_live', 'turn_settle', 'turn_cancel', 'health', 'scheduled', 'stale', 'migrate', 'delegation_deadline', 'automation_grant', 'claim_seed', 'automation_sweep']) {
+  for (const name of ['auth', 'perm', 'operator', 'loops', 'wake', 'outbox_listener', 'retention', 'mandate_idle', 'permission_expire', 'bg', 'bg_produce', 'outbox_prune', 'push_loop', 'turn_lease', 'inbox_list', 'decide_core_db', 'relay_live', 'turn_settle', 'turn_cancel', 'health', 'scheduled', 'stale', 'migrate', 'delegation_deadline', 'automation_grant', 'claim_seed', 'automation_sweep', 'hook_debounce']) {
     it(`tests/${name}.rs`, async () => {
       const db = await startTestDb();
       try {
@@ -189,6 +195,8 @@ describe.skipIf(!ON)('Rust 앞단 DB 대조 시험 — 실제 스키마로', () 
         if (name === 'delegation_deadline') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db, DELEGATION_DEADLINE_GRANTS);
         // 클레임 토큰 심기도 `CLAIM_SEED_PRIVILEGES` 만 가진 역할로.
         if (name === 'claim_seed') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db, CLAIM_SEED_GRANTS);
+        // P5-3 — hook 디바운스 모으기도 hook 쓰기 권한(`automation_hooks::write_privileges`)만 가진 역할로.
+        if (name === 'hook_debounce') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db, HOOK_DEBOUNCE_GRANTS);
         const r = await cargo(['test', '--test', name, '--', '--nocapture'], env);
         expect(r.code, r.out).toBe(0);
         // DB 가 없어 건너뛴 것을 통과로 읽지 않는다.
