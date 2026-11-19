@@ -479,10 +479,22 @@ pub async fn approve_write(
     }
     // S5.4 — 머지 거절 카드의 [이번 한 번](rust_takes 가 거절 기록 있음·위임장 없음·카드 once 있음만 들인다).
     if decision == Decision::ApproveOnce && locked.kind == "merge" {
-        if !as_owner {
+        // P3 B4c — 소유자가 아닌 사람의 [이번 한 번]은 gh 계정을 비운다(TS `decisions.ts` security F1). 비소유자 쓰기는 B4e 가 붙기
+        // 전까지 TS 로 넘긴다([`NON_OWNER_APPROVE_WIRED`]).
+        if !as_owner && !NON_OWNER_APPROVE_WIRED {
             return Ok(ApproveOutcome::HandToTs);
         }
-        return merge_once_write(conn, locked, args).await;
+        // TS 는 1회 승인 기록 뒤 C-3 대조로 위임장을 좁히고 그 위임장에 once 줄을 쓴다 — 대조는 읽기뿐이라 여기서 먼저 해도 같다.
+        if let (false, Some(m)) = (as_owner, locked.mandate_id.as_deref())
+            && mandate_delegator(conn, m).await?.as_deref() != Some(args.actor_id)
+        {
+            let narrowed = LockedRequest {
+                mandate_id: None,
+                ..locked.clone()
+            };
+            return merge_once_write(conn, &narrowed, args, as_owner).await;
+        }
+        return merge_once_write(conn, locked, args, as_owner).await;
     }
     // TS `decidePermissionRequest`: command 가 아닌 카드의 `approve_once` 는 머지 거절 카드 + once 일 때만 — 그 밖은 쓰기 없이 409.
     if decision == Decision::ApproveOnce && locked.kind != "command" {
@@ -951,12 +963,24 @@ async fn merge_once_write(
     conn: &mut PgConnection,
     locked: &LockedRequest,
     args: ApproveArgs<'_>,
+    as_owner: bool,
 ) -> sqlx::Result<ApproveOutcome> {
     use super::decide_merge_once as m;
     let (Some(once), Some(denial_id), true) =
         (args.once, locked.denial_id.as_deref(), m::merge_once_on())
     else {
         return Ok(ApproveOutcome::HandToTs);
+    };
+    // TS `decisions.ts`: `if (once && !verdict.asOwner) once = { ...once, ghUser: null }` — gh 계정 고르기는 소유자만(security F1).
+    let narrowed;
+    let once = if as_owner {
+        once
+    } else {
+        narrowed = m::Once {
+            gh_user: None,
+            ..once.clone()
+        };
+        &narrowed
     };
     let (now, now_iso, expires, expires_iso): (String, String, String, String) =
         sqlx::query_as(TIMES)
@@ -1087,7 +1111,7 @@ async fn merge_once_write(
         ) {
             patch["decidedVia"] = v;
         }
-        patch["decidedByOwner"] = Value::Bool(true);
+        patch["decidedByOwner"] = Value::Bool(as_owner);
         sqlx::query(APPROVE_UPDATE_CARD)
             .bind(card)
             .bind(patch.to_string())
@@ -1115,7 +1139,7 @@ async fn merge_once_write(
         kind: locked.kind.as_str(),
         target: target.as_str(),
         channel_id: channel_id.as_deref(),
-        as_owner: true,
+        as_owner,
         thread_root_id: thread_root_id.as_deref(),
         grant_expires_at: None,
         grant_mode: None,
