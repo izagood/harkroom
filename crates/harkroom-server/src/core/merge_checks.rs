@@ -6,8 +6,14 @@
 //! 1회 승인 없음·머지 grant 있음·사람 턴 또는 `allow_agent_cause`)도 Rust 가 `repo.merge.checked`·`mandate.shadow` 감사와 함께 답한다.
 //! 11차: [`MERGE_CHECKS_CARD_PRIVILEGES`] 까지 있으면 grant 없음(`not_granted` — 사람 턴이면 카드용 `merge_denial`·`denialId`, 아니면 카드 없이)도,
 //! 위임장 없는 끝난·만료 임대의 `lease_invalid`(그림자 포함)는 이른 거절 풀로 Rust 가 답한다. 12차: 카드 풀이 있으면 grant 는 있는데 사람 턴이 아닌 갈래(사슬 `causeChainRoot` — 통과면 `viaChain` 허락, 끊기면 `cause_not_human` 카드)도 Rust.
-//! 그 밖의 모양이 맞는 요청은 전부 TS 로 넘긴다 — 임대·사슬 판정(`checkMergeByChain`)·위임 판정·1회 승인 소모·`merge_denial`·카드·
-//! 그림자 감사(`mandate.shadow`)는 아직 TS 몫이다. 넘기는 쪽은 임대를 읽기만 하고 쓰지 않는다.
+//! P6-8 기준으로 판정 본체(1회 승인 소모·위임 판정·사슬·`merge_denial` 카드·그림자 감사)는 위 풀이 다 있으면 Rust 가 답한다.
+//! 아직 TS 로 넘기는 것은 다음뿐이다(넘기는 쪽은 임대를 읽기만 하고 쓰지 않는다):
+//! - 위임 스위치 env(`HARKROOM_MANDATE_ENFORCE`)를 모를 때, 또는 위 권한 풀(카드·승인·위임·enforce)이 모자랄 때.
+//! - 1회 승인 행이 보였다가 쓰기 풀 peek 에서 사라진 경합(TS 가 다시 판정한다).
+//! - 방어용 갈래: 임대 `channel_id`·`thread_root_id`, grant `granted_by` 가 null 인 행. 셋 다 스키마가 `not null` 이라
+//!   (086 `secret_turn_lease`, 055 `account_grant`) 실제로는 닿지 않는다 — sqlx 가 `Option` 으로 읽어서 남은 꼴이다.
+//! - `merge-results`: int4 를 넘는 PR 번호, `queued` 감시 쓰기 풀이 없을 때.
+//!
 //! 15a: 위임 스위치가 꺼졌고 [`super::mandate_line_match::MERGE_CHECKS_MANDATE_PRIVILEGES`] 가 있으면, 임대에 위임장이 있어도 위 갈래를 Rust 가 답하고
 //! 그림자는 `findLine` 결과(`mandateVerdict`·`lineId`·`lineVia`)를 적는다. 스위치가 켜진 판정(`consumeLine`·`no_mandate_line`)은
 //! S5.5 a 부터 [`super::mandate_line_match::MERGE_CHECKS_ENFORCE_PRIVILEGES`]·카드 권한까지 있으면 Rust 가 답한다(없으면 TS).
