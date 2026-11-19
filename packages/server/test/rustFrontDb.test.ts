@@ -4,6 +4,7 @@
 //
 // S5.2 P1 부터 **TS·Rust 대조 시험**(`tests/contrast.rs`)도 여기서 돈다: 같은 DB 에 TS 서버(buildServer)와 그것을 상류로 둔
 // 앞단 바이너리를 띄우고, 픽스처를 넣은 뒤 같은 요청을 두 쪽에 보내 답이 같은지 본다.
+import { refreshThreadStatus } from '../src/services/threadStatus.js';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { hashToken } from '../src/auth/tokens.js';
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -154,6 +155,13 @@ const HOOK_DEBOUNCE_GRANTS = [
   'update (payload) on automation_run',
 ];
 
+const THREAD_STATUS_GRANTS = [
+  'insert, delete on message_reaction',
+  'insert, update, delete on thread_status',
+  'insert on event_outbox',
+  'usage on sequence event_outbox_id_seq',
+];
+
 async function operatorWriteRole(db: { pool: pg.Pool; uri: string }, grants: readonly string[] = OPERATOR_GRANTS): Promise<string> {
   const rw = `op_rw_${Math.random().toString(36).slice(2, 10)}`;
   await db.pool.query(`create role ${rw} login password '${rw}' nosuperuser nocreatedb nocreaterole nobypassrls connection limit 8`);
@@ -166,7 +174,7 @@ async function operatorWriteRole(db: { pool: pg.Pool; uri: string }, grants: rea
 }
 
 describe.skipIf(!ON)('Rust 앞단 DB 대조 시험 — 실제 스키마로', () => {
-  for (const name of ['auth', 'perm', 'operator', 'loops', 'wake', 'outbox_listener', 'retention', 'mandate_idle', 'permission_expire', 'bg', 'bg_produce', 'outbox_prune', 'push_loop', 'turn_lease', 'inbox_list', 'decide_core_db', 'relay_live', 'turn_settle', 'turn_cancel', 'health', 'scheduled', 'stale', 'migrate', 'delegation_deadline', 'automation_grant', 'claim_seed', 'automation_sweep', 'hook_debounce']) {
+  for (const name of ['auth', 'perm', 'operator', 'loops', 'wake', 'outbox_listener', 'retention', 'mandate_idle', 'permission_expire', 'bg', 'bg_produce', 'outbox_prune', 'push_loop', 'turn_lease', 'inbox_list', 'decide_core_db', 'relay_live', 'turn_settle', 'turn_cancel', 'health', 'scheduled', 'stale', 'migrate', 'delegation_deadline', 'automation_grant', 'claim_seed', 'automation_sweep', 'hook_debounce', 'thread_status']) {
     it(`tests/${name}.rs`, async () => {
       const db = await startTestDb();
       try {
@@ -197,8 +205,19 @@ describe.skipIf(!ON)('Rust 앞단 DB 대조 시험 — 실제 스키마로', () 
         if (name === 'claim_seed') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db, CLAIM_SEED_GRANTS);
         // P5-3 — hook 디바운스 모으기도 hook 쓰기 권한(`automation_hooks::write_privileges`)만 가진 역할로.
         if (name === 'hook_debounce') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db, HOOK_DEBOUNCE_GRANTS);
+        // P5 — 스레드 상태 감시도 `THREAD_STATUS_PRIVILEGES` 만 가진 역할로.
+        if (name === 'thread_status') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db, THREAD_STATUS_GRANTS);
         const r = await cargo(['test', '--test', name, '--', '--nocapture'], env);
         expect(r.code, r.out).toBe(0);
+        // P5 — Rust 가 맞춘 스레드마다 TS `refreshThreadStatus` 를 돌려도 바꿀 것이 없어야 한다(같은 판정·같은 행·같은 리액션).
+        if (name === 'thread_status') {
+          const roots = await db.pool.query<{ id: string }>(
+            `select m.id from message m join channel c on c.id = m.channel_id where c.name = 'thread-status-rs' and m.thread_root_id is null`);
+          expect(roots.rowCount).toBeGreaterThan(1);
+          const live = new Set((await db.pool.query<{ id: string }>(
+            `select account_id as id from agent_presence where expires_at > now()`)).rows.map((x) => x.id));
+          for (const { id } of roots.rows) expect(await refreshThreadStatus(db.pool, id, live)).toBe('unchanged');
+        }
         // DB 가 없어 건너뛴 것을 통과로 읽지 않는다.
         expect(r.out, r.out).not.toContain('skip: HARKROOM_TEST_DATABASE_URL unset');
         expect(r.out).toMatch(/test result: ok\. [1-9]\d* passed/);
@@ -1589,6 +1608,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         ...DELEGATION_DEADLINE_GRANTS.map((g) => `grant ${g} to ${rw}`),
         // P5-3 — hook 디바운스 모으기(`automation_hooks.rs::DEBOUNCE_PRIVILEGES`). 없으면 hook 쓰기 길 전체가 TS 에 남는다.
         `grant update (payload) on automation_run to ${rw}`,
+        // P5 — 스레드 상태 감시(`loops/thread_status.rs::THREAD_STATUS_PRIVILEGES`). 없으면 「loop thread.status off」.
+        ...THREAD_STATUS_GRANTS.map((g) => `grant ${g} to ${rw}`),
         // S5.3 C3b-3c — 권한 카드 거절(`decide_core::DENY_PRIVILEGES` + 잠금 함수 EXECUTE, 두 겹). 없으면 「permission deny core off」.
         `grant update (status, decided_at, decided_by, grant_expires_at, grant_mode) on permission_request to ${rw}`,
         `grant execute on function permission_decide_lock(uuid, uuid, uuid) to ${rw}`,

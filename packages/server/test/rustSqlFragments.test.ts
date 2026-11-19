@@ -46,6 +46,7 @@ import { BUNDLE_PUSH_SQL } from '../src/services/push/pushJobs.js';
 import { ACCEPT_ROOT_SQL, BUNDLE_ITEMS_UPDATE_SQL, DECISION_CARD_SQL, IRREVERSIBLE_WORDS, READ_BUNDLE_SQL } from '../src/services/askBundles.js';
 import { CHILD_FACTS_AUDIENCE_SQL, PLAN_PROGRESS_PLANS_SQL } from '../src/services/threadPlan.js';
 import { displayBodySql } from '../src/services/systemBody.js';
+import { DELETE_THREAD_STATUS_SQL, PRESENCE_ROOTS_SQL, SYNC_STATUS_REACTION_SQL, THREAD_STATUS_FACTS_SQL, UPSERT_THREAD_STATUS_SQL } from '../src/services/threadStatus.js';
 import { BG_AGENT_ON_SQL, BG_DAILY_LOCK_SQL, BG_ENQUEUE_SQL, BG_EXISTS_SQL, BG_PAUSED_SQL, CLEANUP_CANDIDATES_SQL, DISTILL_CANDIDATES_SQL, ORGANIZE_CANDIDATES_SQL } from '../src/services/bgJobs.js';
 import { LIST_DELEGATIONS_GIVEN_SQL, LIST_DELEGATIONS_MINE_SQL } from '../src/services/apiDelegation.js';
 import { COMMAND_GRANTS_SQL, LIST_TOOL_RULES_SQL, MANDATE_AGENT_CHANNEL_SQL, MANDATE_TURN_LEASE_SQL, MATCH_COMMAND_GRANT_SQL, TOOL_ALLOWS_SQL, TOOL_REACH_SQL } from '../src/services/permissionRequests.js';
@@ -123,6 +124,12 @@ it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
     turn_lease_renew: TURN_LEASE_RENEW_SQL,
     turn_lease_consts: [LEASE_TTL_MS, LEASE_MAX_MS, LEASE_RENEW_MS, LEASE_INBOX_MAX_AGE_MS, LEASE_REISSUE_STALE_MS, LEASE_MAX_REISSUES].join(','),
     display_body_m: displayBodySql('m'),
+    // 스레드 상태 감시(`loops/thread_status.rs`, P5) — 문장 전체.
+    thread_status_facts: THREAD_STATUS_FACTS_SQL,
+    thread_status_sync_reaction: SYNC_STATUS_REACTION_SQL,
+    thread_status_upsert: UPSERT_THREAD_STATUS_SQL,
+    thread_status_delete: DELETE_THREAD_STATUS_SQL,
+    thread_status_presence_roots: PRESENCE_ROOTS_SQL,
     // 작업 항목(`workItems.ts::actorSeesItemSql`) — 주인이 아닌 쪽이 볼 수 있는 스레드인지, 별칭 ac·두째 인자.
     channel_visible_ac_p2uuid: channelVisibleSql('ac', '$2::uuid'),
     // 받는 사람 계산(`core/audience.rs`, S5.3 C1a) — 목록 이벤트 수신자(`channelListAudience`·`channelListLostAudience`)의 술어.

@@ -278,6 +278,31 @@ describe('스레드 상태 리액션', () => {
     expect(JSON.stringify(res.json())).not.toContain('MCP 인증 필요');
   });
 
+  it('주인(`server_loop` 의 thread.status)이 rust 면 TS 감시는 판정하지 않는다(P5) — ts 로 돌리면 다시 판정한다', async () => {
+    const presence = { online: () => [botId, bot2Id] } as unknown as Parameters<typeof startThreadStatusWatcher>[1];
+    const w = startThreadStatusWatcher(pool, presence, { debounceMs: 0 });
+    const { emitEvent } = await import('../src/events.js');
+    try {
+      await pool.query(`insert into server_loop(name, owner) values ('thread.status', 'rust')
+        on conflict (name) do update set owner = 'rust'`);
+      const id = await seed(adminId, '부탁');
+      await seed(botId, '시작', { root: id, kind: 'progress' });
+      const row = { id, threadRootId: null } as unknown as import('@harkroom/shared').MessageRow;
+      emitEvent({ type: 'message.updated', message: row, audience: 'all' });
+      await new Promise((r) => setTimeout(r, 10));
+      await w.flush();
+      expect(await rows(id)).toEqual([]);
+      await pool.query(`update server_loop set owner = 'ts' where name = 'thread.status'`);
+      emitEvent({ type: 'message.updated', message: row, audience: 'all' });
+      await new Promise((r) => setTimeout(r, 10));
+      await w.flush();
+      expect((await rows(id)).map((r) => r.emoji)).toEqual(['💬']);
+    } finally {
+      w.stop();
+      await pool.query(`delete from server_loop where name = 'thread.status'`);
+    }
+  });
+
   it('같은 루트의 판정은 겹쳐 돌지 않는다(#1030 N1) — 몰려온 요청이 끝나면 마지막 사실로 맞는다', async () => {
     const presence = { online: () => [botId, bot2Id] } as unknown as Parameters<typeof startThreadStatusWatcher>[1];
     let concurrent = 0; let peak = 0;

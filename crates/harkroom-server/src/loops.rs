@@ -19,6 +19,7 @@ pub mod push;
 pub mod retention;
 pub mod scheduled;
 pub mod stale;
+pub mod thread_status;
 pub mod wake;
 
 use sqlx::PgPool;
@@ -28,7 +29,7 @@ use std::future::Future;
 pub const LOOP_LOCK_CLASS: i32 = 0x4c4f_4f50;
 
 /// 루프 이름 — TS `LOOP_NAMES` 와 같아야 한다(`server_loop.name` 의 키).
-pub const LOOP_NAMES: [&str; 12] = [
+pub const LOOP_NAMES: [&str; 14] = [
     "wake",
     "delegation.deadline",
     "automation",
@@ -41,6 +42,9 @@ pub const LOOP_NAMES: [&str; 12] = [
     "stale",
     "bg.produce",
     "outbox.prune",
+    // 이벤트로 도는 감시(P5).
+    "thread.status",
+    "thread.plan",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
