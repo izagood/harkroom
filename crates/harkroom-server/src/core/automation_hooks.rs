@@ -9,12 +9,13 @@
 //! - github 의 `matchGithub` 거절 중 변수 없이 확정되는 것(`repo`·`event`·`not_a_branch`·push `branch`)은 여기서
 //!   `200 {status:'ignored', reason}` 으로 답한다([`github_ignored`]) — 트리거는 이미 읽던 `automation.trigger` 에서(새 GRANT 없음).
 //! - github 이 맞으면(쓰기 풀이 있을 때) 회차도 여기서 만든다(`github:<delivery>`, 상한은 200 `rate_limited`).
-//!   paths/change 글롭 필터도 여기서(`globToRegExp` 이식) — ASCII 아닌 경로·글롭, JS 강제 변환이 다를 수 있는 값은 TS 로.
-//! - **TS 로 넘기는 것**: 위에서 장담하지 못한 꼴과 회차 만들기(`enqueueRun` —
-//!   시간당 상한 일시정지)는 아직 TS 다(디바운스 모으기는 P5-3 부터 Rust — [`merge_into_gathering`]). 원문 바이트를 그대로 넘기므로 TS 가 같은 판정을 다시 한다.
-//!   예외: generic 은 쓰기 풀이 있으면 `genericVars`·`enqueueRun`(디바운스 모으기·시간당 상한 일시정지·429)을 여기서 한다 —
-//!   50 칸 넘는 본문·JS 와 문자열화가 다른 숫자는 TS 로 넘긴다.
-//!   `application/json` 이 아닌 content-type 도 fastify 파서 동작(415·문자열 본문)을 그대로 두려고 TS 로 넘긴다.
+//!   paths/change 글롭 필터도 여기서(`globToRegExp` 이식, UTF-16 매처 [`Glob`] — ASCII 아닌 경로·글롭 포함).
+//! - **TS 로 넘기는 것**: 위에서 장담하지 못한 꼴(utf-8 아닌 헤더·문자열 아닌 path·`commits` 안 null 등)과 쓰기 풀이 없을 때다.
+//!   원문 바이트를 그대로 넘기므로 TS 가 같은 판정을 다시 한다. 디바운스 모으기는 P5-3 부터 Rust([`merge_into_gathering`]).
+//!   generic 은 쓰기 풀이 있으면 `genericVars`·`enqueueRun`(디바운스 모으기·시간당 상한 일시정지·429)을 여기서 한다 —
+//!   P5 PR3b 부터 50 칸 넘는 본문(JS `Object.entries` 순서, [`js_entries`])·숫자(`String(number)`, [`js_number`])도 여기서.
+//! - content-type 은 fastify 5.12.1 실측대로([`hook_raw`]): json 은 원문, `text/plain` 은 본문을 버리고 `{}`,
+//!   그 밖은 빈 본문만 통과하고 내용이 있으면 415. 골든 `golden/hook_ingress.json`(TS 정본이 만든 것)과 대조한다.
 //! - 비밀(토큰 해시·봉인된 서명 키·열린 키)은 기록하지 않는다. [`IngressTarget`] 의 Debug 는 가린다.
 use crate::core::automation_ingress_verify::{verify_bearer, verify_github_signature};
 use crate::directory::{internal, json_err};
@@ -124,16 +125,38 @@ fn parse(raw: &[u8]) -> Option<Value> {
     if raw.is_empty() {
         return Some(Value::Object(Default::default()));
     }
-    serde_json::from_slice(raw).ok()
+    // TS 는 `raw.toString('utf8')` 뒤 `JSON.parse` — 깨진 UTF-8 바이트는 U+FFFD 로 바뀌어 받아진다.
+    serde_json::from_str(&String::from_utf8_lossy(raw)).ok()
 }
 
-/// content-type 이 있는데 `application/json` 이 아니면 fastify 의 다른 파서가 탄다 — 그대로 TS 에 맡긴다.
-fn non_json_content(h: &HeaderMap) -> bool {
-    h.get(header::CONTENT_TYPE).is_some_and(|v| {
-        let s = v.to_str().unwrap_or("");
-        let essence = s.split(';').next().unwrap_or("").trim();
-        !essence.eq_ignore_ascii_case("application/json")
-    })
+/// hooks 범위의 fastify 본문 규칙(fastify 5.12.1 실측, `buildServer.ts` 의 `*` 파서 + hooks 의 buffer JSON 파서).
+/// 돌려주는 것은 TS 의 `raw`(서명·`parse` 가 보는 바이트)다.
+/// - `application/json`(매개변수·대소문자·앞뒤 공백 무시): 원문 그대로.
+/// - `text/plain`: 본문은 문자열이 되어 `Buffer` 가 아니다 → `raw` 는 빈 바이트, `parse` 는 `{}`.
+/// - 그 밖(없음·빈 값 포함): 본문이 비면 빈 바이트, 내용이 있으면 라우트 앞에서 415 `bad_request`.
+#[allow(clippy::result_large_err)]
+fn hook_raw<'a>(h: &HeaderMap, bytes: &'a [u8]) -> Result<&'a [u8], Response> {
+    let media = h.get(header::CONTENT_TYPE).map(|v| {
+        v.to_str()
+            .map(|s| {
+                s.split(';')
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .to_ascii_lowercase()
+            })
+            .unwrap_or_else(|_| "\u{0}".into())
+    });
+    match media.as_deref() {
+        Some("application/json") => Ok(bytes),
+        Some("text/plain") => Ok(&[]),
+        _ if bytes.is_empty() => Ok(&[]),
+        _ => Err(json_err(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "bad_request",
+            "Unsupported Media Type",
+        )),
+    }
 }
 
 fn header_str<'a>(h: &'a HeaderMap, name: &str) -> Option<&'a str> {
@@ -191,10 +214,8 @@ pub(crate) fn match_github(
     let t_repo = trigger.get("repo")?.as_str()?;
     let t_event = trigger.get("event")?.as_str()?;
     let repo = jv(payload.get("repository").and_then(|r| r.get("full_name")))?;
-    if !repo.is_ascii() || !t_repo.is_ascii() {
-        return None;
-    }
-    if !repo.eq_ignore_ascii_case(t_repo) {
+    // JS `toLowerCase` 와 같은 유니코드 기본 소문자(끝 시그마 포함).
+    if repo.to_lowercase() != t_repo.to_lowercase() {
         return Some(Err("repo"));
     }
     let mut vars = serde_json::Map::new();
@@ -316,20 +337,13 @@ pub(crate) fn match_github(
         if t_event != "push" {
             return Some(Err("paths_need_push"));
         }
-        // JS 정규식(UTF-16 단위·`.` 의 줄 끝)과 어긋날 수 있는 경로는 TS 로.
-        if files.iter().any(|p| !p.is_ascii() || p.contains('\r')) {
-            return None;
-        }
         let globs: Vec<&str> = match trigger.get("paths") {
             Some(Value::Array(a)) if !a.is_empty() => {
                 a.iter().map(Value::as_str).collect::<Option<Vec<_>>>()?
             }
             _ => vec!["**"],
         };
-        let res = globs
-            .iter()
-            .map(|g| glob_regex(g))
-            .collect::<Option<Vec<_>>>()?;
+        let res = globs.iter().map(|g| Glob::new(g)).collect::<Vec<_>>();
         let change = match trigger.get("change") {
             Some(Value::String(c)) if !c.is_empty() && c != "any" => Some(c.as_str()),
             _ => None,
@@ -372,39 +386,76 @@ pub(crate) fn match_github(
     Some(Ok(vars))
 }
 
-/// TS `globToRegExp` — `**` 는 `/` 를 넘고(뒤 `/` 하나 먹음), `*` 는 한 칸 안, `?` 는 한 글자. ASCII 아닌 글롭은 TS 로.
-fn glob_regex(glob: &str) -> Option<regex::Regex> {
-    if !glob.is_ascii() {
-        return None;
-    }
-    let b: Vec<char> = glob.chars().collect();
-    let mut re = String::from("^");
-    let mut i = 0;
-    while i < b.len() {
-        let c = b[i];
-        if c == '*' {
-            if b.get(i + 1) == Some(&'*') {
-                re.push_str(".*");
-                i += 1;
-                if b.get(i + 1) == Some(&'/') {
+/// TS `globToRegExp` 가 만드는 JS 정규식(`u` 깃발 없음)을 그대로 흉내 낸다 — UTF-16 단위로 맞추고,
+/// `**`→`.*`(줄 끝 `\n`·`\r`·U+2028·U+2029 는 못 넘음, 뒤 `/` 하나 먹음), `*`→`[^/]*`, `?`→`[^/]`, 나머지는 글자 그대로.
+#[derive(Debug)]
+pub(crate) struct Glob(Vec<GlobTok>);
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum GlobTok {
+    Any,
+    Seg,
+    One,
+    Lit(u16),
+}
+
+impl Glob {
+    pub(crate) fn new(glob: &str) -> Self {
+        let u: Vec<u16> = glob.encode_utf16().collect();
+        let star = u16::from(b'*');
+        let mut t = Vec::new();
+        let mut i = 0;
+        while i < u.len() {
+            let c = u[i];
+            if c == star {
+                if u.get(i + 1) == Some(&star) {
+                    t.push(GlobTok::Any);
                     i += 1;
+                    if u.get(i + 1) == Some(&u16::from(b'/')) {
+                        i += 1;
+                    }
+                } else {
+                    t.push(GlobTok::Seg);
                 }
+            } else if c == u16::from(b'?') {
+                t.push(GlobTok::One);
             } else {
-                re.push_str("[^/]*");
+                t.push(GlobTok::Lit(c));
             }
-        } else if c == '?' {
-            re.push_str("[^/]");
-        } else if ".+^${}()|[]\\".contains(c) {
-            re.push('\\');
-            re.push(c);
-        } else {
-            // JS 는 그 밖의 글자를 그대로 둔다(`-`·`&` 등도 괄호 밖에선 글자다).
-            re.push_str(&regex::escape(&c.to_string()));
+            i += 1;
         }
-        i += 1;
+        Glob(t)
     }
-    re.push('$');
-    regex::Regex::new(&re).ok()
+
+    pub(crate) fn is_match(&self, s: &str) -> bool {
+        let u: Vec<u16> = s.encode_utf16().collect();
+        let slash = u16::from(b'/');
+        let line_end = |c: u16| matches!(c, 0x0a | 0x0d | 0x2028 | 0x2029);
+        // dp[j] — 토큰 앞 i 개가 글자 앞 j 개와 맞는가.
+        let mut dp = vec![false; u.len() + 1];
+        dp[0] = true;
+        for tok in &self.0 {
+            let mut nx = vec![false; u.len() + 1];
+            for j in 0..=u.len() {
+                match tok {
+                    GlobTok::Any | GlobTok::Seg => {
+                        let ok = |c: u16| {
+                            if *tok == GlobTok::Any {
+                                !line_end(c)
+                            } else {
+                                c != slash
+                            }
+                        };
+                        nx[j] = dp[j] || (j > 0 && nx[j - 1] && ok(u[j - 1]));
+                    }
+                    GlobTok::One => nx[j] = j > 0 && dp[j - 1] && u[j - 1] != slash,
+                    GlobTok::Lit(c) => nx[j] = j > 0 && dp[j - 1] && u[j - 1] == *c,
+                }
+            }
+            dp = nx;
+        }
+        dp[u.len()]
+    }
 }
 
 /// 쓰기 풀 권한 — `automation_run_now` 의 회차·일시정지 칸과 같다(새 GRANT 없음).
@@ -447,12 +498,150 @@ fn js_string(v: &Value) -> Option<String> {
     match v {
         Value::String(s) => Some(s.clone()),
         Value::Bool(b) => Some(b.to_string()),
-        // 정수는 JS 와 같다. 소수·지수 표기는 JS 와 다를 수 있다 — 부른 쪽이 TS 로 넘긴다.
-        Value::Number(n) if n.as_i64().is_some_and(|i| i.unsigned_abs() <= (1u64 << 53)) => {
-            Some(n.to_string())
-        }
+        Value::Number(n) => Some(js_number(n.as_f64()?)),
         _ => None,
     }
+}
+
+/// JS `Number.prototype.toString()`(ECMA-262 Number::toString, 기수 10). 자릿수는 Rust 의 가장 짧은 왕복 표기로 얻는다.
+pub(crate) fn js_number(v: f64) -> String {
+    if v.is_nan() {
+        return "NaN".into();
+    }
+    if v == 0.0 {
+        return "0".into();
+    }
+    if v.is_infinite() {
+        return if v > 0.0 { "Infinity" } else { "-Infinity" }.into();
+    }
+    let sign = if v < 0.0 { "-" } else { "" };
+    let e = format!("{:e}", v.abs());
+    let (mant, exp) = e.split_once('e').unwrap_or((&e, "0"));
+    let digits: String = mant.chars().filter(|c| *c != '.').collect();
+    let k = digits.len() as i64;
+    let n = exp.parse::<i64>().unwrap_or(0) + 1;
+    let body = if k <= n && n <= 21 {
+        format!("{digits}{}", "0".repeat((n - k) as usize))
+    } else if 0 < n && n <= 21 {
+        format!("{}.{}", &digits[..n as usize], &digits[n as usize..])
+    } else if -6 < n && n <= 0 {
+        format!("0.{}{digits}", "0".repeat((-n) as usize))
+    } else {
+        let es = if n > 0 { "+" } else { "-" };
+        let rest = if k > 1 {
+            format!(".{}", &digits[1..])
+        } else {
+            String::new()
+        };
+        format!("{}{rest}e{es}{}", &digits[..1], (n - 1).abs())
+    };
+    format!("{sign}{body}")
+}
+
+/// `JSON.parse` 한 맨 윗단 객체의 `Object.entries` 순서 — 배열 첨자 키(`0`..`2^32-2`)가 숫자 순으로 먼저,
+/// 나머지는 처음 나온 순서. 같은 키가 다시 오면 자리는 처음 것, 값은 마지막 것. 원문이 객체가 아니면 None.
+/// 부르기 전에 원문이 올바른 JSON 인지 이미 확인했다고 본다.
+pub(crate) fn js_entries(src: &str) -> Option<Vec<(String, Value)>> {
+    let b = src.as_bytes();
+    let ws = |i: &mut usize| {
+        while *i < b.len() && matches!(b[*i], b' ' | b'\t' | b'\n' | b'\r') {
+            *i += 1;
+        }
+    };
+    fn string_end(b: &[u8], mut i: usize) -> usize {
+        i += 1;
+        while i < b.len() {
+            match b[i] {
+                b'\\' => i += 2,
+                b'"' => return i + 1,
+                _ => i += 1,
+            }
+        }
+        i
+    }
+    fn value_end(b: &[u8], mut i: usize) -> usize {
+        match b.get(i) {
+            Some(b'"') => string_end(b, i),
+            Some(b'{' | b'[') => {
+                let mut depth = 0usize;
+                while i < b.len() {
+                    match b[i] {
+                        b'"' => {
+                            i = string_end(b, i);
+                            continue;
+                        }
+                        b'{' | b'[' => depth += 1,
+                        b'}' | b']' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                return i + 1;
+                            }
+                        }
+                        _ => {}
+                    }
+                    i += 1;
+                }
+                i
+            }
+            _ => {
+                while i < b.len()
+                    && !matches!(b[i], b',' | b'}' | b']' | b' ' | b'\t' | b'\n' | b'\r')
+                {
+                    i += 1;
+                }
+                i
+            }
+        }
+    }
+    let mut i = 0;
+    ws(&mut i);
+    if b.get(i) != Some(&b'{') {
+        return None;
+    }
+    i += 1;
+    let mut out: Vec<(String, Value)> = Vec::new();
+    let mut at: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    loop {
+        ws(&mut i);
+        if b.get(i) != Some(&b'"') {
+            break;
+        }
+        let ke = string_end(b, i);
+        let key: String = serde_json::from_str(src.get(i..ke)?).ok()?;
+        i = ke;
+        ws(&mut i);
+        i += 1; // ':'
+        ws(&mut i);
+        let ve = value_end(b, i);
+        let val: Value = serde_json::from_str(src.get(i..ve)?).ok()?;
+        i = ve;
+        match at.get(&key) {
+            Some(&p) => out[p].1 = val,
+            None => {
+                at.insert(key.clone(), out.len());
+                out.push((key, val));
+            }
+        }
+        ws(&mut i);
+        if b.get(i) == Some(&b',') {
+            i += 1;
+        } else {
+            break;
+        }
+    }
+    fn index(k: &str) -> Option<u32> {
+        let ok = k == "0"
+            || (!k.starts_with('0')
+                && !k.is_empty()
+                && k.len() <= 10
+                && k.bytes().all(|c| c.is_ascii_digit()));
+        let n: u64 = if ok { k.parse().ok()? } else { return None };
+        (n < u64::from(u32::MAX)).then_some(n as u32)
+    }
+    let (mut idx, rest): (Vec<_>, Vec<_>) = out.into_iter().partition(|(k, _)| index(k).is_some());
+    idx.sort_by_key(|(k, _)| index(k));
+    idx.extend(rest);
+    Some(idx)
 }
 
 fn valid_key(k: &str) -> bool {
@@ -461,11 +650,11 @@ fn valid_key(k: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-')
 }
 
-/// TS `genericVars`. 소수 숫자 값이 있으면 None(JS 숫자 문자열화와 맞출 수 없어 TS 로 넘긴다).
-pub(crate) fn generic_vars(body: &Value) -> Option<serde_json::Map<String, Value>> {
+/// TS `genericVars` — `entries` 는 [`js_entries`] 순서(객체가 아니면 빈 목록).
+pub(crate) fn generic_vars(entries: &[(String, Value)]) -> Option<serde_json::Map<String, Value>> {
     let mut vars = serde_json::Map::new();
-    if let Value::Object(o) = body {
-        for (k, v) in o.iter().take(50) {
+    {
+        for (k, v) in entries.iter().take(50) {
             if !valid_key(k) {
                 continue;
             }
@@ -488,13 +677,9 @@ async fn enqueue_generic(
     id: &str,
     kind: &str,
     idem: Option<&str>,
-    payload: &Value,
+    entries: &[(String, Value)],
 ) -> Result<Option<Response>, sqlx::Error> {
-    // serde_json 은 키 순서를 바꿀 수 있다(`slice(0, 50)` 이 달라진다) — 50 칸 넘는 본문은 TS 로.
-    if payload.as_object().is_some_and(|o| o.len() > 50) {
-        return Ok(None);
-    }
-    let Some(vars) = generic_vars(payload) else {
+    let Some(vars) = generic_vars(entries) else {
         return Ok(None);
     };
     let idem = idem.map(|k| {
@@ -713,9 +898,10 @@ async fn handle(
             Request::from_parts(parts, Body::from(bytes)),
         )
     };
-    if non_json_content(&parts.headers) {
-        return to_ts(parts, bytes).await;
-    }
+    let raw = match hook_raw(&parts.headers, &bytes) {
+        Ok(r) => r,
+        Err(r) => return r,
+    };
     if !crate::lists::is_zod_uuid(&id) {
         return hook_not_found();
     }
@@ -735,7 +921,7 @@ async fn handle(
             if !github_ok(
                 st.secret_box.as_ref(),
                 target.secret_enc.as_deref(),
-                &bytes,
+                raw,
                 sig,
             ) {
                 return json_err(
@@ -752,7 +938,7 @@ async fn handle(
                 )
                     .into_response();
             }
-            let Some(payload @ (Value::Object(_) | Value::Array(_))) = parse(&bytes) else {
+            let Some(payload @ (Value::Object(_) | Value::Array(_))) = parse(raw) else {
                 return json_err(StatusCode::BAD_REQUEST, "bad_json", "body is not JSON");
             };
             // 헤더가 utf-8 이 아니면 TS(latin1) 와 글자가 다를 수 있다 — 판정하지 않는다.
@@ -802,9 +988,11 @@ async fn handle(
             if !verify_bearer(target.token_hash.as_deref(), auth) {
                 return json_err(StatusCode::UNAUTHORIZED, "bad_key", "key does not match");
             }
-            let Some(payload) = parse(&bytes) else {
+            if parse(raw).is_none() {
                 return json_err(StatusCode::BAD_REQUEST, "bad_json", "body is not JSON");
-            };
+            }
+            // `Object.entries` 순서(배열 첨자 키 먼저, 나머지는 처음 나온 순서)는 원문에서 읽는다.
+            let entries = js_entries(&String::from_utf8_lossy(raw)).unwrap_or_default();
             if let Some(w) = &st.write {
                 let kind = if target.kind.as_deref() == Some("github") {
                     "github"
@@ -812,7 +1000,7 @@ async fn handle(
                     "webhook"
                 };
                 let idem = header_str(&parts.headers, "idempotency-key").filter(|s| !s.is_empty());
-                match enqueue_generic(w, &id, kind, idem, &payload).await {
+                match enqueue_generic(w, &id, kind, idem, &entries).await {
                     Ok(Some(r)) => return r,
                     Ok(None) => {}
                     Err(e) => return internal(e),
@@ -951,14 +1139,18 @@ mod tests {
         assert_eq!(neutralize("abcdef", 4), "abc…");
         assert_eq!(neutralize("😀😀", 3), "😀…");
         let v = generic_vars(
-            &serde_json::json!({"a": "x", "n": 3, "b": true, "o": {}, "bad key": "y"}),
+            &js_entries(r#"{"a": "x", "n": 3, "b": true, "o": {}, "bad key": "y"}"#).unwrap(),
         )
         .unwrap();
         assert_eq!(v.len(), 3);
         assert_eq!(v["payload.n"], "3");
-        assert!(generic_vars(&serde_json::json!({"f": 1.5})).is_none());
-        assert!(generic_vars(&serde_json::json!({"big": 12345678901234567890u64})).is_none());
-        assert!(generic_vars(&serde_json::json!([1])).unwrap().is_empty());
+        let g = |src: &str| generic_vars(&js_entries(src).unwrap_or_default()).unwrap();
+        assert_eq!(g(r#"{"f": 1.5}"#)["payload.f"], "1.5");
+        assert_eq!(
+            g(r#"{"big": 12345678901234567890}"#)["payload.big"],
+            "12345678901234567000"
+        );
+        assert!(g("[1]").is_empty());
     }
 
     #[test]
@@ -1002,11 +1194,8 @@ mod tests {
         let nulls = json!({ "repository": { "full_name": "acme/app" }, "ref": "refs/heads/dev", "commits": [null] });
         assert_eq!(github_ignored(&push, "push", &nulls), None, "TS throws");
         let num = json!({ "repository": { "full_name": 7.5 } });
-        assert_eq!(
-            github_ignored(&push, "push", &num),
-            None,
-            "JS float coercion"
-        );
+        // PR3b: `String(7.5)` 를 Rust 가 그대로 만든다 — TS 로 넘기지 않고 repo 로 거른다.
+        assert_eq!(github_ignored(&push, "push", &num), Some("repo"));
         let pr = json!({ "repo": "acme/app", "event": "pull_request.merged" });
         let open = json!({ "repository": { "full_name": "acme/app" }, "action": "closed", "pull_request": { "merged": false } });
         assert_eq!(github_ignored(&pr, "pull_request", &open), Some("event"));
@@ -1017,6 +1206,81 @@ mod tests {
         assert_eq!(github_ignored(&wf, "workflow_run", &req), Some("event"));
         let rel = json!({ "repo": "acme/app", "event": "release.published" });
         assert_eq!(github_ignored(&rel, "release", &req), Some("event"));
+    }
+
+    /// P5 PR3b — TS 가 만든 골든(`golden/hook_ingress.json`, `scripts/genRustHookIngressGolden.ts`)과 한 줄씩 같다:
+    /// generic 본문(`JSON.parse`→`genericVars`, 순서·50칸·`String(number)`·문자열 다듬기)과 paths 글롭(`globToRegExp`).
+    #[test]
+    fn hook_ingress_golden() {
+        let g: Value = serde_json::from_str(include_str!("../../golden/hook_ingress.json"))
+            .expect("golden/hook_ingress.json");
+        for c in g["generic"].as_array().unwrap() {
+            let raw = c["raw"].as_str().unwrap();
+            let got = parse(raw.as_bytes()).map(|_| {
+                let entries = js_entries(raw).unwrap_or_default();
+                generic_vars(&entries)
+                    .expect("js value")
+                    .into_iter()
+                    .map(|(k, v)| Value::Array(vec![Value::String(k), v]))
+                    .collect::<Vec<_>>()
+            });
+            let want = c["want"].as_array().cloned();
+            assert_eq!(got.is_some(), want.is_some(), "bad_json {raw}");
+            // 변수 표는 Map(키 순)이라 순서는 비교하지 않는다 — 어느 50칸을 고르는지는 내용이 갈라 준다.
+            let sorted = |v: Option<Vec<Value>>| {
+                let mut v = v.unwrap_or_default();
+                v.sort_by_key(|e| e[0].as_str().unwrap_or("").to_owned());
+                v
+            };
+            assert_eq!(
+                sorted(got),
+                sorted(want),
+                "{}",
+                raw.chars().take(80).collect::<String>()
+            );
+        }
+        for c in g["glob"].as_array().unwrap() {
+            let (gl, p) = (c["glob"].as_str().unwrap(), c["path"].as_str().unwrap());
+            assert_eq!(
+                Glob::new(gl).is_match(p),
+                c["want"].as_bool().unwrap(),
+                "{gl:?} ~ {p:?}"
+            );
+        }
+    }
+
+    /// fastify 5.12.1 실측(hooks 범위) — json 은 매개변수·대소문자·앞뒤 공백 무시, text/plain 은 빈 바이트, 그 밖은 빈 본문만.
+    #[test]
+    fn hook_raw_like_fastify() {
+        let h = |ct: Option<&str>| {
+            let mut m = HeaderMap::new();
+            if let Some(ct) = ct {
+                m.insert(header::CONTENT_TYPE, ct.parse().unwrap());
+            }
+            m
+        };
+        let body = b"{\"a\":1}".as_slice();
+        for ct in [
+            "application/json",
+            "Application/JSON; charset=utf-8",
+            " application/json ",
+        ] {
+            assert_eq!(hook_raw(&h(Some(ct)), body).ok(), Some(body), "{ct}");
+        }
+        assert_eq!(
+            hook_raw(&h(Some("text/plain; charset=utf-8")), body).ok(),
+            Some(&[][..])
+        );
+        for ct in [
+            None,
+            Some("application/x-www-form-urlencoded"),
+            Some("text/html"),
+            Some("  "),
+        ] {
+            assert_eq!(hook_raw(&h(ct), b"").ok(), Some(&[][..]), "{ct:?} empty");
+            let r = hook_raw(&h(ct), body).expect_err("415");
+            assert_eq!(r.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE, "{ct:?}");
+        }
     }
 
     #[test]
@@ -1041,9 +1305,15 @@ mod tests {
         assert_eq!(v["files"], "b.rs\na.rs");
         assert_eq!(v["files.modified"], "b.rs\na.rs");
         assert_eq!(v["files.added"], "");
-        assert!(glob_regex("**/x.ts").unwrap().is_match("x.ts"));
-        assert!(glob_regex("a/**/b?.c").unwrap().is_match("a/q/r/b1.c"));
-        assert!(!glob_regex("a/*.c").unwrap().is_match("a/q/b.c"));
+        assert!(Glob::new("**/x.ts").is_match("x.ts"));
+        assert!(Glob::new("a/**/b?.c").is_match("a/q/r/b1.c"));
+        assert!(!Glob::new("a/*.c").is_match("a/q/b.c"));
+        // UTF-16 단위: `?` 는 서로게이트 하나만 먹는다 · `**` 는 줄 끝을 못 넘고 `*` 는 넘는다.
+        assert!(!Glob::new("?").is_match("😀"));
+        assert!(Glob::new("??").is_match("😀"));
+        assert!(Glob::new("문서/*.md").is_match("문서/가.md"));
+        assert!(!Glob::new("**").is_match("a\nb"));
+        assert!(Glob::new("*").is_match("a\nb"));
         let rel = json!({ "repo": "acme/app", "event": "release.published", "branch": "main" });
         let rp = json!({ "repository": { "full_name": "acme/app" }, "action": "published" });
         assert_eq!(github_ignored(&rel, "release", &rp), Some("branch"));

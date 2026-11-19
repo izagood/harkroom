@@ -1,0 +1,1530 @@
+{
+ "generic": [
+  {
+   "raw": "",
+   "want": []
+  },
+  {
+   "raw": "{}",
+   "want": []
+  },
+  {
+   "raw": "[]",
+   "want": []
+  },
+  {
+   "raw": "[1,2]",
+   "want": []
+  },
+  {
+   "raw": "\"str\"",
+   "want": []
+  },
+  {
+   "raw": "null",
+   "want": []
+  },
+  {
+   "raw": "123",
+   "want": []
+  },
+  {
+   "raw": "true",
+   "want": []
+  },
+  {
+   "raw": "{",
+   "want": null
+  },
+  {
+   "raw": "{\"a\":1,}",
+   "want": null
+  },
+  {
+   "raw": " {\"a\":1} ",
+   "want": [
+    [
+     "payload.a",
+     "1"
+    ]
+   ]
+  },
+  {
+   "raw": "\n{\"a\":\"x\"}\t",
+   "want": [
+    [
+     "payload.a",
+     "x"
+    ]
+   ]
+  },
+  {
+   "raw": "{\"a\":1,\"b\":\"x\",\"c\":true,\"d\":false,\"e\":null,\"f\":{\"g\":1},\"h\":[1]}",
+   "want": [
+    [
+     "payload.a",
+     "1"
+    ],
+    [
+     "payload.b",
+     "x"
+    ],
+    [
+     "payload.c",
+     "true"
+    ],
+    [
+     "payload.d",
+     "false"
+    ]
+   ]
+  },
+  {
+   "raw": "{\"b\":1,\"2\":2,\"1\":3,\"a\":4,\"0\":5}",
+   "want": [
+    [
+     "payload.0",
+     "5"
+    ],
+    [
+     "payload.1",
+     "3"
+    ],
+    [
+     "payload.2",
+     "2"
+    ],
+    [
+     "payload.b",
+     "1"
+    ],
+    [
+     "payload.a",
+     "4"
+    ]
+   ]
+  },
+  {
+   "raw": "{\"4294967294\":1,\"4294967295\":2,\"01\":3,\"-1\":4,\"1.0\":5,\"10\":6,\"9\":7}",
+   "want": [
+    [
+     "payload.9",
+     "7"
+    ],
+    [
+     "payload.10",
+     "6"
+    ],
+    [
+     "payload.4294967294",
+     "1"
+    ],
+    [
+     "payload.4294967295",
+     "2"
+    ],
+    [
+     "payload.01",
+     "3"
+    ],
+    [
+     "payload.-1",
+     "4"
+    ],
+    [
+     "payload.1.0",
+     "5"
+    ]
+   ]
+  },
+  {
+   "raw": "{\"a\":1,\"b\":2,\"a\":3}",
+   "want": [
+    [
+     "payload.a",
+     "3"
+    ],
+    [
+     "payload.b",
+     "2"
+    ]
+   ]
+  },
+  {
+   "raw": "{\"a\":{\"x\":1},\"b\":2,\"a\":\"s\"}",
+   "want": [
+    [
+     "payload.a",
+     "s"
+    ],
+    [
+     "payload.b",
+     "2"
+    ]
+   ]
+  },
+  {
+   "raw": "{\"a\":\"s\",\"a\":{\"x\":1}}",
+   "want": []
+  },
+  {
+   "raw": "{\"k0\":0,\"k1\":1,\"k2\":2,\"k3\":3,\"k4\":4,\"k5\":5,\"k6\":6,\"k7\":7,\"k8\":8,\"k9\":9,\"k10\":10,\"k11\":11,\"k12\":12,\"k13\":13,\"k14\":14,\"k15\":15,\"k16\":16,\"k17\":17,\"k18\":18,\"k19\":19,\"k20\":20,\"k21\":21,\"k22\":22,\"k23\":23,\"k24\":24,\"k25\":25,\"k26\":26,\"k27\":27,\"k28\":28,\"k29\":29,\"k30\":30,\"k31\":31,\"k32\":32,\"k33\":33,\"k34\":34,\"k35\":35,\"k36\":36,\"k37\":37,\"k38\":38,\"k39\":39,\"k40\":40,\"k41\":41,\"k42\":42,\"k43\":43,\"k44\":44,\"k45\":45,\"k46\":46,\"k47\":47,\"k48\":48,\"k49\":49,\"k50\":50}",
+   "want": [
+    [
+     "payload.k0",
+     "0"
+    ],
+    [
+     "payload.k1",
+     "1"
+    ],
+    [
+     "payload.k2",
+     "2"
+    ],
+    [
+     "payload.k3",
+     "3"
+    ],
+    [
+     "payload.k4",
+     "4"
+    ],
+    [
+     "payload.k5",
+     "5"
+    ],
+    [
+     "payload.k6",
+     "6"
+    ],
+    [
+     "payload.k7",
+     "7"
+    ],
+    [
+     "payload.k8",
+     "8"
+    ],
+    [
+     "payload.k9",
+     "9"
+    ],
+    [
+     "payload.k10",
+     "10"
+    ],
+    [
+     "payload.k11",
+     "11"
+    ],
+    [
+     "payload.k12",
+     "12"
+    ],
+    [
+     "payload.k13",
+     "13"
+    ],
+    [
+     "payload.k14",
+     "14"
+    ],
+    [
+     "payload.k15",
+     "15"
+    ],
+    [
+     "payload.k16",
+     "16"
+    ],
+    [
+     "payload.k17",
+     "17"
+    ],
+    [
+     "payload.k18",
+     "18"
+    ],
+    [
+     "payload.k19",
+     "19"
+    ],
+    [
+     "payload.k20",
+     "20"
+    ],
+    [
+     "payload.k21",
+     "21"
+    ],
+    [
+     "payload.k22",
+     "22"
+    ],
+    [
+     "payload.k23",
+     "23"
+    ],
+    [
+     "payload.k24",
+     "24"
+    ],
+    [
+     "payload.k25",
+     "25"
+    ],
+    [
+     "payload.k26",
+     "26"
+    ],
+    [
+     "payload.k27",
+     "27"
+    ],
+    [
+     "payload.k28",
+     "28"
+    ],
+    [
+     "payload.k29",
+     "29"
+    ],
+    [
+     "payload.k30",
+     "30"
+    ],
+    [
+     "payload.k31",
+     "31"
+    ],
+    [
+     "payload.k32",
+     "32"
+    ],
+    [
+     "payload.k33",
+     "33"
+    ],
+    [
+     "payload.k34",
+     "34"
+    ],
+    [
+     "payload.k35",
+     "35"
+    ],
+    [
+     "payload.k36",
+     "36"
+    ],
+    [
+     "payload.k37",
+     "37"
+    ],
+    [
+     "payload.k38",
+     "38"
+    ],
+    [
+     "payload.k39",
+     "39"
+    ],
+    [
+     "payload.k40",
+     "40"
+    ],
+    [
+     "payload.k41",
+     "41"
+    ],
+    [
+     "payload.k42",
+     "42"
+    ],
+    [
+     "payload.k43",
+     "43"
+    ],
+    [
+     "payload.k44",
+     "44"
+    ],
+    [
+     "payload.k45",
+     "45"
+    ],
+    [
+     "payload.k46",
+     "46"
+    ],
+    [
+     "payload.k47",
+     "47"
+    ],
+    [
+     "payload.k48",
+     "48"
+    ],
+    [
+     "payload.k49",
+     "49"
+    ]
+   ]
+  },
+  {
+   "raw": "{\"bad key\":0,\"k1\":1,\"k2\":2,\"k3\":3,\"k4\":4,\"k5\":5,\"k6\":6,\"k7\":7,\"k8\":8,\"k9\":9,\"k10\":10,\"k11\":11,\"k12\":12,\"k13\":13,\"k14\":14,\"k15\":15,\"k16\":16,\"k17\":17,\"k18\":18,\"k19\":19,\"k20\":20,\"k21\":21,\"k22\":22,\"k23\":23,\"k24\":24,\"k25\":25,\"k26\":26,\"k27\":27,\"k28\":28,\"k29\":29,\"k30\":30,\"k31\":31,\"k32\":32,\"k33\":33,\"k34\":34,\"k35\":35,\"k36\":36,\"k37\":37,\"k38\":38,\"k39\":39,\"k40\":40,\"k41\":41,\"k42\":42,\"k43\":43,\"k44\":44,\"k45\":45,\"k46\":46,\"k47\":47,\"k48\":48,\"k49\":49,\"k50\":50}",
+   "want": [
+    [
+     "payload.k1",
+     "1"
+    ],
+    [
+     "payload.k2",
+     "2"
+    ],
+    [
+     "payload.k3",
+     "3"
+    ],
+    [
+     "payload.k4",
+     "4"
+    ],
+    [
+     "payload.k5",
+     "5"
+    ],
+    [
+     "payload.k6",
+     "6"
+    ],
+    [
+     "payload.k7",
+     "7"
+    ],
+    [
+     "payload.k8",
+     "8"
+    ],
+    [
+     "payload.k9",
+     "9"
+    ],
+    [
+     "payload.k10",
+     "10"
+    ],
+    [
+     "payload.k11",
+     "11"
+    ],
+    [
+     "payload.k12",
+     "12"
+    ],
+    [
+     "payload.k13",
+     "13"
+    ],
+    [
+     "payload.k14",
+     "14"
+    ],
+    [
+     "payload.k15",
+     "15"
+    ],
+    [
+     "payload.k16",
+     "16"
+    ],
+    [
+     "payload.k17",
+     "17"
+    ],
+    [
+     "payload.k18",
+     "18"
+    ],
+    [
+     "payload.k19",
+     "19"
+    ],
+    [
+     "payload.k20",
+     "20"
+    ],
+    [
+     "payload.k21",
+     "21"
+    ],
+    [
+     "payload.k22",
+     "22"
+    ],
+    [
+     "payload.k23",
+     "23"
+    ],
+    [
+     "payload.k24",
+     "24"
+    ],
+    [
+     "payload.k25",
+     "25"
+    ],
+    [
+     "payload.k26",
+     "26"
+    ],
+    [
+     "payload.k27",
+     "27"
+    ],
+    [
+     "payload.k28",
+     "28"
+    ],
+    [
+     "payload.k29",
+     "29"
+    ],
+    [
+     "payload.k30",
+     "30"
+    ],
+    [
+     "payload.k31",
+     "31"
+    ],
+    [
+     "payload.k32",
+     "32"
+    ],
+    [
+     "payload.k33",
+     "33"
+    ],
+    [
+     "payload.k34",
+     "34"
+    ],
+    [
+     "payload.k35",
+     "35"
+    ],
+    [
+     "payload.k36",
+     "36"
+    ],
+    [
+     "payload.k37",
+     "37"
+    ],
+    [
+     "payload.k38",
+     "38"
+    ],
+    [
+     "payload.k39",
+     "39"
+    ],
+    [
+     "payload.k40",
+     "40"
+    ],
+    [
+     "payload.k41",
+     "41"
+    ],
+    [
+     "payload.k42",
+     "42"
+    ],
+    [
+     "payload.k43",
+     "43"
+    ],
+    [
+     "payload.k44",
+     "44"
+    ],
+    [
+     "payload.k45",
+     "45"
+    ],
+    [
+     "payload.k46",
+     "46"
+    ],
+    [
+     "payload.k47",
+     "47"
+    ],
+    [
+     "payload.k48",
+     "48"
+    ],
+    [
+     "payload.k49",
+     "49"
+    ]
+   ]
+  },
+  {
+   "raw": "{\"k0\":{},\"k1\":{},\"k2\":{},\"k3\":3,\"k4\":4,\"k5\":5,\"k6\":6,\"k7\":7,\"k8\":8,\"k9\":9,\"k10\":10,\"k11\":11,\"k12\":12,\"k13\":13,\"k14\":14,\"k15\":15,\"k16\":16,\"k17\":17,\"k18\":18,\"k19\":19,\"k20\":20,\"k21\":21,\"k22\":22,\"k23\":23,\"k24\":24,\"k25\":25,\"k26\":26,\"k27\":27,\"k28\":28,\"k29\":29,\"k30\":30,\"k31\":31,\"k32\":32,\"k33\":33,\"k34\":34,\"k35\":35,\"k36\":36,\"k37\":37,\"k38\":38,\"k39\":39,\"k40\":40,\"k41\":41,\"k42\":42,\"k43\":43,\"k44\":44,\"k45\":45,\"k46\":46,\"k47\":47,\"k48\":48,\"k49\":49,\"k50\":50}",
+   "want": [
+    [
+     "payload.k3",
+     "3"
+    ],
+    [
+     "payload.k4",
+     "4"
+    ],
+    [
+     "payload.k5",
+     "5"
+    ],
+    [
+     "payload.k6",
+     "6"
+    ],
+    [
+     "payload.k7",
+     "7"
+    ],
+    [
+     "payload.k8",
+     "8"
+    ],
+    [
+     "payload.k9",
+     "9"
+    ],
+    [
+     "payload.k10",
+     "10"
+    ],
+    [
+     "payload.k11",
+     "11"
+    ],
+    [
+     "payload.k12",
+     "12"
+    ],
+    [
+     "payload.k13",
+     "13"
+    ],
+    [
+     "payload.k14",
+     "14"
+    ],
+    [
+     "payload.k15",
+     "15"
+    ],
+    [
+     "payload.k16",
+     "16"
+    ],
+    [
+     "payload.k17",
+     "17"
+    ],
+    [
+     "payload.k18",
+     "18"
+    ],
+    [
+     "payload.k19",
+     "19"
+    ],
+    [
+     "payload.k20",
+     "20"
+    ],
+    [
+     "payload.k21",
+     "21"
+    ],
+    [
+     "payload.k22",
+     "22"
+    ],
+    [
+     "payload.k23",
+     "23"
+    ],
+    [
+     "payload.k24",
+     "24"
+    ],
+    [
+     "payload.k25",
+     "25"
+    ],
+    [
+     "payload.k26",
+     "26"
+    ],
+    [
+     "payload.k27",
+     "27"
+    ],
+    [
+     "payload.k28",
+     "28"
+    ],
+    [
+     "payload.k29",
+     "29"
+    ],
+    [
+     "payload.k30",
+     "30"
+    ],
+    [
+     "payload.k31",
+     "31"
+    ],
+    [
+     "payload.k32",
+     "32"
+    ],
+    [
+     "payload.k33",
+     "33"
+    ],
+    [
+     "payload.k34",
+     "34"
+    ],
+    [
+     "payload.k35",
+     "35"
+    ],
+    [
+     "payload.k36",
+     "36"
+    ],
+    [
+     "payload.k37",
+     "37"
+    ],
+    [
+     "payload.k38",
+     "38"
+    ],
+    [
+     "payload.k39",
+     "39"
+    ],
+    [
+     "payload.k40",
+     "40"
+    ],
+    [
+     "payload.k41",
+     "41"
+    ],
+    [
+     "payload.k42",
+     "42"
+    ],
+    [
+     "payload.k43",
+     "43"
+    ],
+    [
+     "payload.k44",
+     "44"
+    ],
+    [
+     "payload.k45",
+     "45"
+    ],
+    [
+     "payload.k46",
+     "46"
+    ],
+    [
+     "payload.k47",
+     "47"
+    ],
+    [
+     "payload.k48",
+     "48"
+    ],
+    [
+     "payload.k49",
+     "49"
+    ]
+   ]
+  },
+  {
+   "raw": "{\"60\":0,\"59\":1,\"58\":2,\"57\":3,\"56\":4,\"55\":5,\"54\":6,\"53\":7,\"52\":8,\"51\":9,\"50\":10,\"49\":11,\"48\":12,\"47\":13,\"46\":14,\"45\":15,\"44\":16,\"43\":17,\"42\":18,\"41\":19,\"40\":20,\"39\":21,\"38\":22,\"37\":23,\"36\":24,\"35\":25,\"34\":26,\"33\":27,\"32\":28,\"31\":29,\"30\":30,\"29\":31,\"28\":32,\"27\":33,\"26\":34,\"25\":35,\"24\":36,\"23\":37,\"22\":38,\"21\":39,\"20\":40,\"19\":41,\"18\":42,\"17\":43,\"16\":44,\"15\":45,\"14\":46,\"13\":47,\"12\":48,\"11\":49,\"10\":50,\"9\":51,\"8\":52,\"7\":53,\"6\":54,\"5\":55,\"4\":56,\"3\":57,\"2\":58,\"1\":59}",
+   "want": [
+    [
+     "payload.1",
+     "59"
+    ],
+    [
+     "payload.2",
+     "58"
+    ],
+    [
+     "payload.3",
+     "57"
+    ],
+    [
+     "payload.4",
+     "56"
+    ],
+    [
+     "payload.5",
+     "55"
+    ],
+    [
+     "payload.6",
+     "54"
+    ],
+    [
+     "payload.7",
+     "53"
+    ],
+    [
+     "payload.8",
+     "52"
+    ],
+    [
+     "payload.9",
+     "51"
+    ],
+    [
+     "payload.10",
+     "50"
+    ],
+    [
+     "payload.11",
+     "49"
+    ],
+    [
+     "payload.12",
+     "48"
+    ],
+    [
+     "payload.13",
+     "47"
+    ],
+    [
+     "payload.14",
+     "46"
+    ],
+    [
+     "payload.15",
+     "45"
+    ],
+    [
+     "payload.16",
+     "44"
+    ],
+    [
+     "payload.17",
+     "43"
+    ],
+    [
+     "payload.18",
+     "42"
+    ],
+    [
+     "payload.19",
+     "41"
+    ],
+    [
+     "payload.20",
+     "40"
+    ],
+    [
+     "payload.21",
+     "39"
+    ],
+    [
+     "payload.22",
+     "38"
+    ],
+    [
+     "payload.23",
+     "37"
+    ],
+    [
+     "payload.24",
+     "36"
+    ],
+    [
+     "payload.25",
+     "35"
+    ],
+    [
+     "payload.26",
+     "34"
+    ],
+    [
+     "payload.27",
+     "33"
+    ],
+    [
+     "payload.28",
+     "32"
+    ],
+    [
+     "payload.29",
+     "31"
+    ],
+    [
+     "payload.30",
+     "30"
+    ],
+    [
+     "payload.31",
+     "29"
+    ],
+    [
+     "payload.32",
+     "28"
+    ],
+    [
+     "payload.33",
+     "27"
+    ],
+    [
+     "payload.34",
+     "26"
+    ],
+    [
+     "payload.35",
+     "25"
+    ],
+    [
+     "payload.36",
+     "24"
+    ],
+    [
+     "payload.37",
+     "23"
+    ],
+    [
+     "payload.38",
+     "22"
+    ],
+    [
+     "payload.39",
+     "21"
+    ],
+    [
+     "payload.40",
+     "20"
+    ],
+    [
+     "payload.41",
+     "19"
+    ],
+    [
+     "payload.42",
+     "18"
+    ],
+    [
+     "payload.43",
+     "17"
+    ],
+    [
+     "payload.44",
+     "16"
+    ],
+    [
+     "payload.45",
+     "15"
+    ],
+    [
+     "payload.46",
+     "14"
+    ],
+    [
+     "payload.47",
+     "13"
+    ],
+    [
+     "payload.48",
+     "12"
+    ],
+    [
+     "payload.49",
+     "11"
+    ],
+    [
+     "payload.50",
+     "10"
+    ]
+   ]
+  },
+  {
+   "raw": "{\"z0\":0,\"z1\":1,\"2\":2,\"3\":3,\"4\":4,\"5\":5,\"6\":6,\"7\":7,\"8\":8,\"9\":9,\"10\":10,\"11\":11,\"12\":12,\"13\":13,\"14\":14,\"15\":15,\"16\":16,\"17\":17,\"18\":18,\"19\":19,\"20\":20,\"21\":21,\"22\":22,\"23\":23,\"24\":24,\"25\":25,\"26\":26,\"27\":27,\"28\":28,\"29\":29,\"30\":30,\"31\":31,\"32\":32,\"33\":33,\"34\":34,\"35\":35,\"36\":36,\"37\":37,\"38\":38,\"39\":39,\"40\":40,\"41\":41,\"42\":42,\"43\":43,\"44\":44,\"45\":45,\"46\":46,\"47\":47,\"48\":48,\"49\":49,\"50\":50,\"51\":51}",
+   "want": [
+    [
+     "payload.2",
+     "2"
+    ],
+    [
+     "payload.3",
+     "3"
+    ],
+    [
+     "payload.4",
+     "4"
+    ],
+    [
+     "payload.5",
+     "5"
+    ],
+    [
+     "payload.6",
+     "6"
+    ],
+    [
+     "payload.7",
+     "7"
+    ],
+    [
+     "payload.8",
+     "8"
+    ],
+    [
+     "payload.9",
+     "9"
+    ],
+    [
+     "payload.10",
+     "10"
+    ],
+    [
+     "payload.11",
+     "11"
+    ],
+    [
+     "payload.12",
+     "12"
+    ],
+    [
+     "payload.13",
+     "13"
+    ],
+    [
+     "payload.14",
+     "14"
+    ],
+    [
+     "payload.15",
+     "15"
+    ],
+    [
+     "payload.16",
+     "16"
+    ],
+    [
+     "payload.17",
+     "17"
+    ],
+    [
+     "payload.18",
+     "18"
+    ],
+    [
+     "payload.19",
+     "19"
+    ],
+    [
+     "payload.20",
+     "20"
+    ],
+    [
+     "payload.21",
+     "21"
+    ],
+    [
+     "payload.22",
+     "22"
+    ],
+    [
+     "payload.23",
+     "23"
+    ],
+    [
+     "payload.24",
+     "24"
+    ],
+    [
+     "payload.25",
+     "25"
+    ],
+    [
+     "payload.26",
+     "26"
+    ],
+    [
+     "payload.27",
+     "27"
+    ],
+    [
+     "payload.28",
+     "28"
+    ],
+    [
+     "payload.29",
+     "29"
+    ],
+    [
+     "payload.30",
+     "30"
+    ],
+    [
+     "payload.31",
+     "31"
+    ],
+    [
+     "payload.32",
+     "32"
+    ],
+    [
+     "payload.33",
+     "33"
+    ],
+    [
+     "payload.34",
+     "34"
+    ],
+    [
+     "payload.35",
+     "35"
+    ],
+    [
+     "payload.36",
+     "36"
+    ],
+    [
+     "payload.37",
+     "37"
+    ],
+    [
+     "payload.38",
+     "38"
+    ],
+    [
+     "payload.39",
+     "39"
+    ],
+    [
+     "payload.40",
+     "40"
+    ],
+    [
+     "payload.41",
+     "41"
+    ],
+    [
+     "payload.42",
+     "42"
+    ],
+    [
+     "payload.43",
+     "43"
+    ],
+    [
+     "payload.44",
+     "44"
+    ],
+    [
+     "payload.45",
+     "45"
+    ],
+    [
+     "payload.46",
+     "46"
+    ],
+    [
+     "payload.47",
+     "47"
+    ],
+    [
+     "payload.48",
+     "48"
+    ],
+    [
+     "payload.49",
+     "49"
+    ],
+    [
+     "payload.50",
+     "50"
+    ],
+    [
+     "payload.51",
+     "51"
+    ]
+   ]
+  },
+  {
+   "raw": "{\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\":1,\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\":2,\"a.b-c_d\":3,\"가\":4,\"é\":5,\"\":6,\"a b\":7,\"\\u0041\":8}",
+   "want": [
+    [
+     "payload.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "1"
+    ],
+    [
+     "payload.a.b-c_d",
+     "3"
+    ],
+    [
+     "payload.A",
+     "8"
+    ]
+   ]
+  },
+  {
+   "raw": "{\"n0\":0,\"n1\":-0,\"n2\":1,\"n3\":100,\"n4\":1E2,\"n5\":1e21,\"n6\":1e20,\"n7\":123456789012345678901,\"n8\":9007199254740993,\"n9\":0.1,\"n10\":0.000001,\"n11\":1e-7,\"n12\":1.5e-7,\"n13\":1.5e300,\"n14\":5e-324,\"n15\":2.2250738585072014e-308,\"n16\":0.30000000000000004,\"n17\":-12.5,\"n18\":1.7976931348623157e308,\"n19\":4.35,\"n20\":123.456e10}",
+   "want": [
+    [
+     "payload.n0",
+     "0"
+    ],
+    [
+     "payload.n1",
+     "0"
+    ],
+    [
+     "payload.n2",
+     "1"
+    ],
+    [
+     "payload.n3",
+     "100"
+    ],
+    [
+     "payload.n4",
+     "100"
+    ],
+    [
+     "payload.n5",
+     "1e+21"
+    ],
+    [
+     "payload.n6",
+     "100000000000000000000"
+    ],
+    [
+     "payload.n7",
+     "123456789012345680000"
+    ],
+    [
+     "payload.n8",
+     "9007199254740992"
+    ],
+    [
+     "payload.n9",
+     "0.1"
+    ],
+    [
+     "payload.n10",
+     "0.000001"
+    ],
+    [
+     "payload.n11",
+     "1e-7"
+    ],
+    [
+     "payload.n12",
+     "1.5e-7"
+    ],
+    [
+     "payload.n13",
+     "1.5e+300"
+    ],
+    [
+     "payload.n14",
+     "5e-324"
+    ],
+    [
+     "payload.n15",
+     "2.2250738585072014e-308"
+    ],
+    [
+     "payload.n16",
+     "0.30000000000000004"
+    ],
+    [
+     "payload.n17",
+     "-12.5"
+    ],
+    [
+     "payload.n18",
+     "1.7976931348623157e+308"
+    ],
+    [
+     "payload.n19",
+     "4.35"
+    ],
+    [
+     "payload.n20",
+     "1234560000000"
+    ]
+   ]
+  },
+  {
+   "raw": "{\"s\":\"a\\nb\\r\\nc\",\"m\":\"@forge hi <@x>\",\"u\":\"\\u0040x\",\"e\":\"😀가\",\"t\":\"\\ud83d\\ude00\"}",
+   "want": [
+    [
+     "payload.s",
+     "a b c"
+    ],
+    [
+     "payload.m",
+     "@​forge hi <​@​x>"
+    ],
+    [
+     "payload.u",
+     "@​x"
+    ],
+    [
+     "payload.e",
+     "😀가"
+    ],
+    [
+     "payload.t",
+     "😀"
+    ]
+   ]
+  },
+  {
+   "raw": "{\"long\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"ok\":\"yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\",\"emo\":\"x😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\"}",
+   "want": [
+    [
+     "payload.long",
+     "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…"
+    ],
+    [
+     "payload.ok",
+     "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+    ],
+    [
+     "payload.emo",
+     "x😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀…"
+    ]
+   ]
+  }
+ ],
+ "glob": [
+  {
+   "glob": "src/**",
+   "path": "src/a/b.ts",
+   "want": true
+  },
+  {
+   "glob": "src/**",
+   "path": "src",
+   "want": false
+  },
+  {
+   "glob": "src/**",
+   "path": "src/",
+   "want": true
+  },
+  {
+   "glob": "**/x.ts",
+   "path": "x.ts",
+   "want": true
+  },
+  {
+   "glob": "**/x.ts",
+   "path": "a/b/x.ts",
+   "want": true
+  },
+  {
+   "glob": "**/",
+   "path": "a/",
+   "want": true
+  },
+  {
+   "glob": "**/*",
+   "path": "a/b",
+   "want": true
+  },
+  {
+   "glob": "a/**/b?.c",
+   "path": "a/q/r/b1.c",
+   "want": true
+  },
+  {
+   "glob": "a/*.c",
+   "path": "a/q/b.c",
+   "want": false
+  },
+  {
+   "glob": "a/*.c",
+   "path": "a/.c",
+   "want": true
+  },
+  {
+   "glob": "src/**/*.rs",
+   "path": "src/main.rs",
+   "want": true
+  },
+  {
+   "glob": "?",
+   "path": "😀",
+   "want": false
+  },
+  {
+   "glob": "??",
+   "path": "😀",
+   "want": true
+  },
+  {
+   "glob": "?",
+   "path": "가",
+   "want": true
+  },
+  {
+   "glob": "문서/*.md",
+   "path": "문서/가.md",
+   "want": true
+  },
+  {
+   "glob": "문서/**",
+   "path": "문서/a/b",
+   "want": true
+  },
+  {
+   "glob": "é",
+   "path": "é",
+   "want": true
+  },
+  {
+   "glob": "é",
+   "path": "é",
+   "want": false
+  },
+  {
+   "glob": "**",
+   "path": "a\nb",
+   "want": false
+  },
+  {
+   "glob": "*",
+   "path": "a\nb",
+   "want": true
+  },
+  {
+   "glob": "**",
+   "path": "a b",
+   "want": false
+  },
+  {
+   "glob": "**",
+   "path": "a\rb",
+   "want": false
+  },
+  {
+   "glob": "?",
+   "path": "\n",
+   "want": true
+  },
+  {
+   "glob": "a.b",
+   "path": "axb",
+   "want": false
+  },
+  {
+   "glob": "a.b",
+   "path": "a.b",
+   "want": true
+  },
+  {
+   "glob": "[x]",
+   "path": "[x]",
+   "want": true
+  },
+  {
+   "glob": "[x]",
+   "path": "x",
+   "want": false
+  },
+  {
+   "glob": "(a|b)",
+   "path": "(a|b)",
+   "want": true
+  },
+  {
+   "glob": "a+",
+   "path": "aa",
+   "want": false
+  },
+  {
+   "glob": "a+",
+   "path": "a+",
+   "want": true
+  },
+  {
+   "glob": "*.TS",
+   "path": "a.ts",
+   "want": false
+  },
+  {
+   "glob": "\\d",
+   "path": "\\d",
+   "want": true
+  },
+  {
+   "glob": "a$",
+   "path": "a$",
+   "want": true
+  },
+  {
+   "glob": "^a",
+   "path": "^a",
+   "want": true
+  },
+  {
+   "glob": "{a}",
+   "path": "{a}",
+   "want": true
+  },
+  {
+   "glob": "***",
+   "path": "a/b",
+   "want": true
+  },
+  {
+   "glob": "*/**",
+   "path": "a",
+   "want": false
+  },
+  {
+   "glob": "",
+   "path": "",
+   "want": true
+  },
+  {
+   "glob": "",
+   "path": "a",
+   "want": false
+  },
+  {
+   "glob": "Ａ",
+   "path": "ａ",
+   "want": false
+  }
+ ]
+}
