@@ -73,16 +73,29 @@ impl LinkOptions {
 
 type Pending = std::sync::mpsc::Sender<RunnerLinkResponse>;
 
+/// 기다리는 요청의 종류 — 끊겼을 때 어떤 꼴의 `status: 0` 으로 풀지만 알면 된다(본문은 들고 있지 않는다).
+#[derive(Clone, Copy)]
+enum ReqKind {
+    Mcp,
+    Http,
+}
+
 #[derive(Default)]
 struct State {
-    writer: Option<UnixStream>,
-    pending: HashMap<String, (RunnerLinkRequest, Pending)>,
+    /// `writer` 에 소켓이 있다 — `writer` 잠금을 쥔 채로만 바꾼다(둘이 어긋나 보이지 않게).
+    connected: bool,
+    pending: HashMap<String, (ReqKind, Pending)>,
     poll_stopped: Option<(Vec<i64>, Vec<i64>)>,
     stopped: bool,
 }
 
 pub struct LinkClient {
     opts: LinkOptions,
+    /// 보내는 쪽 잠금. 소켓에 쓰는 동안 쥔다 — 줄이 섞이지 않고 보낸 순서가 선 위 순서다.
+    /// 오퍼레이터가 늦게 읽으면 여기서 오래 선다. 그래서 읽기 루프가 만지는 것(`state`)과 나눈다.
+    /// 잠금 순서: `writer` → `state`. `state` 를 쥔 채 `writer` 를 잡지 않는다.
+    writer: Mutex<Option<UnixStream>>,
+    /// 짧게만 쥔다(쓰기·콜백을 이 안에서 하지 않는다).
     state: Mutex<State>,
     /// 붙음·멈춤이 바뀔 때 깨운다(`when_connected`·재접속 대기).
     changed: Condvar,
@@ -101,24 +114,18 @@ pub enum LinkRequest {
     },
 }
 
-fn down_response(req: &RunnerLinkRequest, message: &str) -> RunnerLinkResponse {
-    match req {
-        RunnerLinkRequest::McpRequest { id, .. } => RunnerLinkResponse::McpError {
-            id: id.clone(),
+fn down_response(kind: ReqKind, id: &str, message: &str) -> RunnerLinkResponse {
+    match kind {
+        ReqKind::Mcp => RunnerLinkResponse::McpError {
+            id: id.to_string(),
             status: 0,
             message: message.to_string(),
         },
-        RunnerLinkRequest::HttpForward { id, .. } => RunnerLinkResponse::HttpResponse {
-            id: id.clone(),
+        ReqKind::Http => RunnerLinkResponse::HttpResponse {
+            id: id.to_string(),
             status: 0,
             body: message.to_string(),
         },
-    }
-}
-
-fn req_id(req: &RunnerLinkRequest) -> &str {
-    match req {
-        RunnerLinkRequest::McpRequest { id, .. } | RunnerLinkRequest::HttpForward { id, .. } => id,
     }
 }
 
@@ -184,6 +191,7 @@ impl LinkClient {
     pub fn new(opts: LinkOptions) -> Arc<Self> {
         Arc::new(LinkClient {
             opts,
+            writer: Mutex::new(None),
             state: Mutex::new(State::default()),
             changed: Condvar::new(),
         })
@@ -200,9 +208,11 @@ impl LinkClient {
 
     /// 더 붙지 않는다. 열린 소켓도 닫는다.
     pub fn stop(&self) {
+        let mut w = self.writer.lock().unwrap();
         let mut st = self.state.lock().unwrap();
         st.stopped = true;
-        if let Some(w) = st.writer.take() {
+        st.connected = false;
+        if let Some(w) = w.take() {
             let _ = w.shutdown(std::net::Shutdown::Both);
         }
         self.changed.notify_all();
@@ -215,14 +225,14 @@ impl LinkClient {
     }
 
     pub fn connected(&self) -> bool {
-        self.state.lock().unwrap().writer.is_some()
+        self.state.lock().unwrap().connected
     }
 
     /// 붙을 때까지 기다린다. 시간 안에 못 붙으면 false(던지지 않는다).
     pub fn when_connected(&self, timeout: Duration) -> bool {
         let deadline = Instant::now() + timeout;
         let mut st = self.state.lock().unwrap();
-        while st.writer.is_none() {
+        while !st.connected {
             let now = Instant::now();
             if now >= deadline {
                 return false;
@@ -232,20 +242,20 @@ impl LinkClient {
         true
     }
 
-    fn send_line(st: &mut State, line: &str) -> bool {
-        let Some(w) = st.writer.as_mut() else {
+    /// 한 줄을 쓴다(`writer` 잠금을 쥔 쪽이 부른다). 줄과 개행을 한 번의 `write_all` 로 낸다.
+    fn send_line(writer: &mut Option<UnixStream>, mut line: String) -> bool {
+        let Some(w) = writer.as_mut() else {
             return false;
         };
-        let mut bytes = Vec::with_capacity(line.len() + 1);
-        bytes.extend_from_slice(line.as_bytes());
-        bytes.push(b'\n');
-        w.write_all(&bytes).is_ok()
+        line.push('\n');
+        w.write_all(line.as_bytes()).is_ok()
     }
 
     /// 프레임 하나를 보낸다(통지·릴레이 프레임). 링크가 없으면 버린다 — 재접속의 announce 가 복구한다.
     pub fn send_frame(&self, frame: &Value) {
-        let mut st = self.state.lock().unwrap();
-        let _ = Self::send_line(&mut st, &frame.to_string());
+        let line = frame.to_string();
+        let mut w = self.writer.lock().unwrap();
+        let _ = Self::send_line(&mut w, line);
     }
 
     fn send_notice(&self, notice: &RunnerLinkNotice) {
@@ -255,64 +265,76 @@ impl LinkClient {
     /// 오퍼레이터에게 요청 하나. 답이 올 때까지 막는다. 링크가 없으면 즉시 `status: 0`.
     pub fn request(&self, req: LinkRequest) -> RunnerLinkResponse {
         let id = random_uuid();
-        let req = match req {
-            LinkRequest::Mcp { payload } => RunnerLinkRequest::McpRequest {
-                id,
-                payload,
-                cause: None,
-                cwd: None,
-                turn_id: None,
-                command_files: None,
-            },
+        let (kind, req) = match req {
+            LinkRequest::Mcp { payload } => (
+                ReqKind::Mcp,
+                RunnerLinkRequest::McpRequest {
+                    id: id.clone(),
+                    payload,
+                    cause: None,
+                    cwd: None,
+                    turn_id: None,
+                    command_files: None,
+                },
+            ),
             LinkRequest::Http {
                 method,
                 path,
                 body,
                 content_type,
-            } => RunnerLinkRequest::HttpForward {
-                id,
-                method,
-                path,
-                body,
-                body_base64: None,
-                content_type,
-            },
+            } => (
+                ReqKind::Http,
+                RunnerLinkRequest::HttpForward {
+                    id: id.clone(),
+                    method,
+                    path,
+                    body,
+                    body_base64: None,
+                    content_type,
+                },
+            ),
         };
         let (tx, rx) = std::sync::mpsc::channel();
         {
-            let mut st = self.state.lock().unwrap();
-            if st.writer.is_none() {
-                return down_response(&req, LINK_DOWN_MESSAGE);
+            // `writer` 잠금을 쥔 동안에는 `on_close`·`on_open` 이 끼어들지 못한다 — 등록과 보내기가 한 연결 안에서 일어난다.
+            let mut w = self.writer.lock().unwrap();
+            if w.is_none() {
+                return down_response(kind, &id, LINK_DOWN_MESSAGE);
             }
             let line = serde_json::to_string(&req).expect("request");
-            st.pending
-                .insert(req_id(&req).to_string(), (req.clone(), tx));
-            if !Self::send_line(&mut st, &line) {
-                st.pending.remove(req_id(&req));
-                return down_response(&req, LINK_DOWN_MESSAGE);
+            drop(req);
+            self.state
+                .lock()
+                .unwrap()
+                .pending
+                .insert(id.clone(), (kind, tx));
+            if !Self::send_line(&mut w, line) {
+                self.state.lock().unwrap().pending.remove(&id);
+                return down_response(kind, &id, LINK_DOWN_MESSAGE);
             }
         }
         // 링크가 끊기면 run 이 pending 을 전부 down 으로 푼다 — 그래서 여기는 시한 없이 기다려도 된다.
         rx.recv()
-            .unwrap_or_else(|_| down_response(&req, LINK_DOWN_MESSAGE))
+            .unwrap_or_else(|_| down_response(kind, &id, LINK_DOWN_MESSAGE))
     }
 
     /// 폴 루프를 빠져나왔다. **끈끈하다** — 재접속마다 다시 보낸다.
     pub fn notify_poll_stopped(&self, holding: &[i64], done: &[i64]) {
-        let mut st = self.state.lock().unwrap();
-        st.poll_stopped = Some((holding.to_vec(), done.to_vec()));
-        Self::send_poll_stopped(&mut st);
+        // `writer` 를 먼저 쥔다 — 적어 두기와 보내기 사이에 `on_open` 이 끼면 같은 통지가 두 번 나간다.
+        let mut w = self.writer.lock().unwrap();
+        self.state.lock().unwrap().poll_stopped = Some((holding.to_vec(), done.to_vec()));
+        self.send_poll_stopped(&mut w);
     }
 
-    fn send_poll_stopped(st: &mut State) {
-        let Some((holding, done)) = st.poll_stopped.clone() else {
+    fn send_poll_stopped(&self, writer: &mut Option<UnixStream>) {
+        let Some((holding, done)) = self.state.lock().unwrap().poll_stopped.clone() else {
             return;
         };
         let n = RunnerLinkNotice::PollStopped {
             holding,
             done: if done.is_empty() { None } else { Some(done) },
         };
-        let _ = Self::send_line(st, &serde_json::to_string(&n).expect("notice"));
+        let _ = Self::send_line(writer, serde_json::to_string(&n).expect("notice"));
     }
 
     /// 끈끈하지 않다 — 링크가 없거나 이름이 없으면 버린다.
@@ -360,11 +382,13 @@ impl LinkClient {
     }
 
     fn on_open(&self, stream: UnixStream) -> bool {
-        let mut st = self.state.lock().unwrap();
-        if st.stopped {
+        // 첫 줄들(hello → announce → pollStopped → providerLane.mode)이 다 나갈 때까지 `writer` 를 쥔다 —
+        // 그 사이 다른 프레임이 끼지 못하고, `connected` 는 다 나간 뒤에야 참이 된다.
+        let mut w = self.writer.lock().unwrap();
+        if self.state.lock().unwrap().stopped {
             return false;
         }
-        st.writer = Some(stream);
+        *w = Some(stream);
         let hello = RunnerHello {
             ty: Default::default(),
             version: RUNNER_LINK_PROTOCOL_VERSION,
@@ -374,16 +398,17 @@ impl LinkClient {
             turn_key: None,
             kind: None::<RunnerLinkKind>,
         };
-        let _ = Self::send_line(&mut st, &serde_json::to_string(&hello).expect("hello"));
+        let _ = Self::send_line(&mut w, serde_json::to_string(&hello).expect("hello"));
         let announce = json!({ "type": "announce", "sessions": (self.opts.announce_sessions)(), "caps": RUNNER_CAPS });
-        let _ = Self::send_line(&mut st, &announce.to_string());
-        Self::send_poll_stopped(&mut st);
+        let _ = Self::send_line(&mut w, announce.to_string());
+        self.send_poll_stopped(&mut w);
         if let Some(on) = self.opts.provider_lane {
             let n = RunnerLinkNotice::ProviderLaneMode { on };
-            let _ = Self::send_line(&mut st, &serde_json::to_string(&n).expect("notice"));
+            let _ = Self::send_line(&mut w, serde_json::to_string(&n).expect("notice"));
         }
+        self.state.lock().unwrap().connected = true;
         self.changed.notify_all();
-        drop(st);
+        drop(w);
         (self.opts.on_link_open)();
         true
     }
@@ -427,16 +452,19 @@ impl LinkClient {
 
     /// 끊긴 뒤 처리. 다시 붙을지(그리고 얼마나 기다릴지)를 돌려준다.
     fn on_close(&self, reason: Option<&str>) {
-        let mut st = self.state.lock().unwrap();
-        st.writer = None;
         let msg = match reason {
             Some(r) => format!("{LINK_DOWN_MESSAGE} ({r})"),
             None => LINK_DOWN_MESSAGE.to_string(),
         };
-        for (_, (req, tx)) in st.pending.drain() {
-            let _ = tx.send(down_response(&req, &msg));
+        let mut w = self.writer.lock().unwrap();
+        *w = None;
+        let mut st = self.state.lock().unwrap();
+        st.connected = false;
+        for (id, (kind, tx)) in st.pending.drain() {
+            let _ = tx.send(down_response(kind, &id, &msg));
         }
         drop(st);
+        drop(w);
         (self.opts.on_link_down)();
     }
 

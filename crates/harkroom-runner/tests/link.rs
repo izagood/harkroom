@@ -297,3 +297,80 @@ fn relay_sessions_wired_into_link_announce_output_replay() {
     assert_eq!(cancels.load(Ordering::SeqCst), 0);
     let _ = std::fs::remove_file(&path);
 }
+
+/// 쓰기가 막혀 있어도(오퍼레이터가 소켓을 안 읽는다) 이미 보낸 요청의 응답은 배달되고 `connected` 도 답한다 —
+/// 쓰기 잠금과 대기 요청 표가 다른 잠금이어야 한다.
+#[test]
+fn response_is_delivered_while_a_writer_is_blocked() {
+    let path = sock_path("hol");
+    let listener = UnixListener::bind(&path).unwrap();
+    let link = LinkClient::new(opts(&path));
+    link.start();
+    let (s, _) = listener.accept().unwrap();
+    let mut r = BufReader::new(s.try_clone().unwrap());
+    assert_eq!(read_json(&mut r)["type"], "hello");
+    assert_eq!(read_json(&mut r)["type"], "announce");
+    assert!(link.when_connected(Duration::from_secs(2)));
+
+    let l2 = Arc::clone(&link);
+    let req = std::thread::spawn(move || {
+        l2.request(LinkRequest::Mcp {
+            payload: json!({"jsonrpc":"2.0","id":1,"method":"ping"}),
+        })
+    });
+    let id = read_json(&mut r)["id"].as_str().unwrap().to_string();
+
+    // 이제 오퍼레이터가 읽기를 멈춘다. 소켓 버퍼가 찰 때까지 프레임을 밀어 넣어 쓰기 하나를 막는다.
+    let sent = Arc::new(AtomicU32::new(0));
+    let (l3, sent2) = (Arc::clone(&link), Arc::clone(&sent));
+    let flood = std::thread::spawn(move || {
+        let frame = json!({"type":"output","sessionId":"x","data":"A".repeat(64 * 1024)});
+        for _ in 0..512 {
+            l3.send_frame(&frame);
+            sent2.fetch_add(1, Ordering::SeqCst);
+        }
+    });
+    let mut last = u32::MAX;
+    for _ in 0..200 {
+        std::thread::sleep(Duration::from_millis(50));
+        let now = sent.load(Ordering::SeqCst);
+        if now == last {
+            break;
+        }
+        last = now;
+    }
+    assert!(last < 512, "쓰기가 막히지 않았다 — 시험 전제가 깨졌다");
+
+    let mut w = s.try_clone().unwrap();
+    writeln!(
+        w,
+        "{}",
+        json!({"type":"mcp.response","id":id,"messages":[{"ok":1}]})
+    )
+    .unwrap();
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(req.join().unwrap());
+    });
+    match rx.recv_timeout(Duration::from_secs(5)) {
+        Ok(RunnerLinkResponse::McpResponse { messages, .. }) => {
+            assert_eq!(messages, vec![json!({"ok":1})])
+        }
+        other => panic!("막힌 쓰기 뒤에서 응답이 배달되지 않았다: {other:?}"),
+    }
+    let l4 = Arc::clone(&link);
+    let (ctx, crx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = ctx.send(l4.connected());
+    });
+    assert_eq!(crx.recv_timeout(Duration::from_secs(5)), Ok(true));
+
+    // 오퍼레이터가 다시 읽으면 막혔던 프레임이 순서대로, 줄이 섞이지 않고 다 온다.
+    for _ in 0..512 {
+        let f = read_json(&mut r);
+        assert_eq!(f["type"], "output");
+        assert_eq!(f["data"].as_str().unwrap().len(), 64 * 1024);
+    }
+    flood.join().unwrap();
+    link.stop();
+}
