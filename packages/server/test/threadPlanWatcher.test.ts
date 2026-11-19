@@ -116,6 +116,26 @@ describe('자동 갱신', () => {
     expect((await getThreadPlan(pool, r))!.rev).toBe(rev);
   });
 
+  it('주인(`server_loop` 의 thread.plan)이 rust 면 TS 감시는 손대지 않는다(P5) — ts 로 돌리면 다시 돈다', async () => {
+    const r = await root();
+    await setThreadPlan(pool, { rootId: r, doc: doc(), actor: { accountId: admin.accountId } });
+    const rev = (await getThreadPlan(pool, r))!.rev;
+    try {
+      await pool.query(`insert into server_loop(name, owner) values ('thread.plan', 'rust')
+        on conflict (name) do update set owner = 'rust'`);
+      await mergeLine(r, 'merged');
+      await settle();
+      expect(await stepState(r, 's1')).toBe('active');
+      expect((await getThreadPlan(pool, r))!.rev).toBe(rev);
+      expect(await readyLines(r)).toEqual([]);
+      await pool.query(`update server_loop set owner = 'ts' where name = 'thread.plan'`);
+      await mergeLine(r, 'merged');
+      await until(async () => (await stepState(r, 's1')) === 'done');
+    } finally {
+      await pool.query(`delete from server_loop where name = 'thread.plan'`);
+    }
+  });
+
   it('카드 답 → 그 카드를 단 blocked 단계 active', async () => {
     const r = await root();
     const card = '00000000-0000-4000-8000-0000000000aa';

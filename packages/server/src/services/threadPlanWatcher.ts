@@ -24,6 +24,7 @@ import { getThreadPlan, linkedFor, writeThreadPlan, type ThreadPlanRow } from '.
 import { postMessage } from './messages.js';
 import { systemI18n } from './systemI18n.js';
 import { wakePlanAuto } from './threadPlanAuto.js';
+import { loopOwner } from './loopGate.js';
 
 type Unchanged = { code: 'unchanged' };
 
@@ -115,9 +116,16 @@ export function startThreadPlanWatcher(
   /** 루트마다 일감 큐를 두고 한 번에 하나만 돈다(threadStatus N1 과 같은 이유 — 낡은 판이 나중에 써지지 않게). */
   const queues = new Map<string, Promise<void>>();
   const inflight = new Set<Promise<void>>();
+  /**
+   * 주인 문지기(P5) — `server_loop` 의 `thread.plan` 주인이 `ts` 일 때만 돈다(줄이 없으면 `ts`). Rust 감시
+   * (`loops/thread_plan.rs`)로 주인을 넘기면 두 서버가 같은 ready 줄·자동 진행을 두 번 내지 않게 한다. 주인을 못 읽으면 건너뛴다.
+   */
+  const gated = (job: () => Promise<void>) => async () => {
+    if ((await loopOwner(pool, 'thread.plan')) === 'ts') await job();
+  };
   const enqueue = (rootId: string, job: () => Promise<void>) => {
     const prev = queues.get(rootId) ?? Promise.resolve();
-    const p = prev.then(job).catch(onError).finally(() => {
+    const p = prev.then(gated(job)).catch(onError).finally(() => {
       inflight.delete(p);
       if (queues.get(rootId) === p) queues.delete(rootId);
     });

@@ -196,8 +196,8 @@ pub(crate) fn github_ignored(
     match_github(trigger, event, payload)?.err()
 }
 
-/// TS `matchGithub`. `Some(Ok(vars))` 맞음, `Some(Err(reason))` 거절(`200 ignored`), `None` 은 JS 와 같은 답을 장담할 수 없는
-/// 꼴(문자열·정수 아닌 값·ASCII 아닌 저장소 이름·TS 가 던질 본문·paths/change 글롭 필터) — TS 로 넘긴다.
+/// TS `matchGithub`. `Some(Ok(vars))` 맞음, `Some(Err(reason))` 거절(`200 ignored`) — 단 TS 가 던질 본문은
+/// `Some(Err(BAD_PAYLOAD))`(400 `bad_json`, P5 PR3c). `None` 은 그 밖에 JS 와 같은 답을 장담할 수 없는 꼴 — TS 로 넘긴다.
 pub(crate) fn match_github(
     trigger: &Value,
     event: &str,

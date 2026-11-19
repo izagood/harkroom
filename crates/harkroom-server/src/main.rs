@@ -5776,24 +5776,71 @@ async fn spawn_loops() {
         Ok(m) => eprintln!("front: loop stale off — missing privileges {m:?}"),
         Err(e) => eprintln!("front: loop stale off — privilege check failed: {e}"),
     }
-    // P5 — 스레드 상태 이모지 감시. 이벤트로 돈다 — 루프 전용 허브를 outbox LISTEN(전용 연결 하나)으로 채운다.
-    // 문지기 이름 `thread.status` — 주인이 rust 일 때만 판정한다(줄이 없으면 TS 가 판정한다).
-    match write::missing_in(
+    // P5 — 스레드 상태 이모지 감시·계획판 감시. 둘 다 이벤트로 돈다 — 루프 전용 허브 하나를 outbox LISTEN(전용 연결 하나)으로 채운다.
+    // 문지기 이름 `thread.status`·`thread.plan` — 주인이 rust 일 때만 판정한다(줄이 없으면 TS 가 판정한다).
+    let status_on = match write::missing_in(
         &pool,
         harkroom_server::loops::thread_status::THREAD_STATUS_PRIVILEGES,
         harkroom_server::loops::thread_status::THREAD_STATUS_SEQUENCE_PRIVILEGES,
     )
     .await
     {
-        Ok(m) if m.is_empty() => {
+        Ok(m) if m.is_empty() => true,
+        Ok(m) => {
+            eprintln!("front: loop thread.status off — missing privileges {m:?}");
+            false
+        }
+        Err(e) => {
+            eprintln!("front: loop thread.status off — privilege check failed: {e}");
+            false
+        }
+    };
+    // 계획판 감시는 시스템 줄(머지 → done 뒤의 「▶ 시작할 수 있는 단계」·자동 진행 깨움)을 글 경로로 올린다 — 글 올리기 권한도 함께 본다.
+    let plan_on = match write::missing_in(
+        &pool,
+        &[
+            harkroom_server::core::msg_post::MESSAGE_POST_PRIVILEGES,
+            harkroom_server::loops::thread_plan::THREAD_PLAN_PRIVILEGES,
+        ]
+        .concat(),
+        harkroom_server::loops::thread_plan::THREAD_PLAN_SEQUENCE_PRIVILEGES,
+    )
+    .await
+    {
+        Ok(m) if m.is_empty() => true,
+        Ok(m) => {
+            eprintln!("front: loop thread.plan off — missing privileges {m:?}");
+            false
+        }
+        Err(e) => {
+            eprintln!("front: loop thread.plan off — privilege check failed: {e}");
+            false
+        }
+    };
+    if status_on || plan_on {
+        let hub = harkroom_server::core::events::Hub::new();
+        let status_events = status_on.then(|| hub.subscribe());
+        let plan_events = plan_on.then(|| hub.subscribe());
+        harkroom_server::core::events::spawn_outbox_listener(pool.clone(), url.clone(), hub);
+        if let Some(events) = status_events {
             eprintln!("front: loop thread.status on (runs only while server_loop owner is rust)");
-            let hub = harkroom_server::core::events::Hub::new();
-            let events = hub.subscribe();
-            harkroom_server::core::events::spawn_outbox_listener(pool.clone(), url.clone(), hub);
             harkroom_server::loops::thread_status::spawn(gate.clone(), pool.clone(), events);
         }
-        Ok(m) => eprintln!("front: loop thread.status off — missing privileges {m:?}"),
-        Err(e) => eprintln!("front: loop thread.status off — privilege check failed: {e}"),
+        if let Some(events) = plan_events {
+            eprintln!("front: loop thread.plan on (runs only while server_loop owner is rust)");
+            harkroom_server::loops::thread_plan::spawn(
+                gate.clone(),
+                harkroom_server::core::msg_post::PostState {
+                    read: pool.clone(),
+                    write: pool.clone(),
+                    up: harkroom_server::proxy::Upstream::new(
+                        &std::env::var("UPSTREAM_URL").unwrap_or_default(),
+                    ),
+                    implicit_ok: false,
+                },
+                events,
+            );
+        }
     }
     // C5c-3b-2 — 백그라운드 회차 생산(distill → cleanup → organize, 1시간에 한 번). 문지기 이름 `bg.produce` — 주인이 rust 일 때만 돈다.
     match write::missing_in(&pool, bg_produce::BG_PRODUCE_PRIVILEGES, &[]).await {
