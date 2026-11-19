@@ -101,6 +101,13 @@ pub trait Transport: Send + Sync {
     ) -> Result<HttpReply, String>;
 }
 
+/// 연결 하나의 입력·출력 버퍼 크기. ureq 기본값은 각각 128KB 인데, 롱폴(`inbox.poll`)이 러너마다 하나씩 걸려 있어
+/// 연결 수만큼 그대로 상주한다. 본문은 이 크기와 상관없이 조각으로 오간다 — 버퍼에 통째로 들어가야 하는 것은 헤더뿐이다.
+/// 입력은 ureq 의 응답 헤더 상한(64KB)에 맞춰 받는 헤더의 한도를 그대로 두고, 출력은 오퍼레이터가 짓는 요청 헤더
+/// (토큰·세션 id 몇 줄)가 넉넉히 들어가는 크기로 둔다.
+const FORWARD_INPUT_BUFFER_BYTES: usize = 64 * 1024;
+const FORWARD_OUTPUT_BUFFER_BYTES: usize = 16 * 1024;
+
 /// ureq 판. MCP 롱폴(`inbox.poll` 25초)을 넘기도록 넉넉히 둔다.
 pub struct UreqTransport {
     agent: ureq::Agent,
@@ -113,6 +120,8 @@ impl Default for UreqTransport {
                 ureq::Agent::config_builder()
                     .http_status_as_error(false)
                     .timeout_global(Some(Duration::from_secs(120)))
+                    .input_buffer_size(FORWARD_INPUT_BUFFER_BYTES)
+                    .output_buffer_size(FORWARD_OUTPUT_BUFFER_BYTES)
                     .build(),
             ),
         }

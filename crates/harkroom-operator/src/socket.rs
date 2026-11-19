@@ -1174,6 +1174,8 @@ fn serve_connection_in(state: &ServerState, mut stream: UnixStream, slot: Option
                     .collect();
                 let buffered = decoder.take_buffered();
                 drop(writer);
+                // 링크가 자기 읽기 버퍼를 따로 쥔다 — 이 접속이 사는 내내 64KB 를 둘씩 들고 있지 않게 여기서 놓는다.
+                drop(buf);
                 link.serve(stream, v, rest, buffered, move || drop(slot));
                 return;
             }

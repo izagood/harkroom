@@ -721,10 +721,12 @@ impl RunnerLinkServer {
             self.handle_line(&s, v);
         }
         let mut decoder = NdjsonDecoder::new(self.max_line_bytes);
-        let mut chunk = buffered;
+        // hello 와 한 청크로 온 머리부터 푼다. 그 뒤로는 읽기 버퍼를 그대로 디코더에 넘긴다(청크마다 복사하지 않는다).
+        let mut lines = decoder.push(&buffered);
+        drop(buffered);
         let mut buf = vec![0u8; 64 * 1024];
         'read: loop {
-            for line in decoder.push(&chunk) {
+            for line in lines {
                 match line {
                     Decoded::Ok(v) => self.handle_line(&s, v),
                     Decoded::Err(e)
@@ -742,7 +744,7 @@ impl RunnerLinkServer {
             }
             match reader.read(&mut buf) {
                 Ok(0) | Err(_) => break,
-                Ok(n) => chunk = buf[..n].to_vec(),
+                Ok(n) => lines = decoder.push(&buf[..n]),
             }
         }
         if s.kind == RunnerLinkKind::Relay {
