@@ -8,6 +8,10 @@
 //! - 저장소 하나가 실패하면 그 줄만 `error: "unreachable"` 이고 나머지는 선다.
 //! - 보고 있는 서버(URL)는 `GET /leases` 와 같은 규칙으로 푼다(`projection_config` → env `AVCS_BASE_URL`).
 //!
+//! TS 와 다른 것:
+//! - avcs 응답 하나에 [`RESPONSE_MAX_BYTES`] 상한을 둔다(넘으면 그 저장소만 `unreachable`). TS 는 상한이 없다.
+//! - 캐시 잠금은 커서를 읽을 때와 붙일 때만 쥔다 — avcs 호출 동안 다른 협업 요청을 막지 않는다.
+//!
 //! TS 로 넘기는 것(아무것도 읽기 전에):
 //! - URL 이 `http://` 가 아닐 때 — 이 크레이트의 avcs 클라이언트는 TLS 를 못 붙는다. Rust 가 답하면 TS 는 읽는 것을 `unreachable` 이라 한다.
 //! - 저장소가 둘 이상인데 이름에 `[a-z0-9/.-]` 밖의 글자가 있을 때 — TS 는 `localeCompare`(ICU)로 줄을 세우고 그 순서를 여기서 못 낸다.
@@ -42,6 +46,8 @@ pub const COLLAB_READ_PRIVILEGES: &[(&str, &str)] = &[
 ];
 
 const TIMEOUT: Duration = Duration::from_secs(30);
+/// avcs 응답 하나의 바이트 상한(TS 에는 없다). 로그 조각(`FETCH_CHUNK` 개)·환원 상태가 이보다 크면 그 저장소는 `unreachable`.
+pub const RESPONSE_MAX_BYTES: usize = 32 * 1024 * 1024;
 
 fn s(v: &Value) -> &str {
     v.as_str().unwrap_or("")
@@ -192,8 +198,8 @@ async fn http(
             .get("etag")
             .and_then(|v| v.to_str().ok())
             .map(str::to_owned);
-        let bytes = res
-            .into_body()
+        // 응답 크기 상한 — 넘으면 그 저장소만 `unreachable`(메모리를 avcs 응답 크기에 맡기지 않는다).
+        let bytes = http_body_util::Limited::new(res.into_body(), RESPONSE_MAX_BYTES)
             .collect()
             .await
             .map_err(|e| e.to_string())?
@@ -630,7 +636,8 @@ pub struct CollabState {
     pub read: PgPool,
     pub up: Upstream,
     client: Http,
-    /// 요청 하나가 읽는 동안 쥔다 — 같은 구간을 두 요청이 겹쳐 붙이지 않는다.
+    /// 커서·ETag 를 읽을 때와 결과를 붙일 때만 잠깐 쥔다 — avcs 호출 동안에는 놓는다(느린 avcs 뒤에 협업 요청이 줄 서지 않게).
+    /// 같은 구간을 두 요청이 겹쳐 붙이지 않도록, 붙일 때 커서가 읽은 때 그대로인지 본다([`read_repo`]).
     cache: Arc<tokio::sync::Mutex<Cache>>,
 }
 
@@ -647,28 +654,39 @@ impl CollabState {
 
 async fn read_repo(
     client: &Http,
-    cache: &mut Cache,
+    cache: &tokio::sync::Mutex<Cache>,
     base: &str,
     repo: &str,
     keys: &mut BTreeSet<String>,
 ) -> Result<(Value, Value), String> {
     let key = format!("{base} {repo} main");
-    let since = cache.logs.get(&key).map_or(0, |l| l.1);
+    // 1) 잠깐 쥐고 커서·ETag 만 읽는다.
+    let (since, cached) = {
+        let c = cache.lock().await;
+        (
+            c.logs.get(&key).map_or(0, |l| l.1),
+            c.reductions.get(&key).cloned().flatten(),
+        )
+    };
+    // 2) 잠금 없이 avcs 를 읽는다.
     let (entries, next) = fetch_since(client, base.trim_end_matches('/'), repo, since).await?;
-    let log = cache.logs.entry(key.clone()).or_default();
-    log.0.extend(entries);
-    log.1 = next;
-
-    let cached = cache.reductions.get(&key).cloned().flatten();
     let etag = cached.as_ref().and_then(|r| r.etag.clone());
-    let reduced =
-        match fetch_reduced(client, base.trim_end_matches('/'), repo, etag.as_deref()).await? {
-            ReducedRead::NotModified => cached,
-            ReducedRead::Missing => None,
-            ReducedRead::Got(r) => Some(*r),
-        };
-    cache.reductions.insert(key.clone(), reduced.clone());
-    let entries = &cache.logs[&key].0;
+    let fetched = fetch_reduced(client, base.trim_end_matches('/'), repo, etag.as_deref()).await?;
+    // 3) 다시 쥐고 붙인다. 그 사이 다른 요청이 커서를 옮겼으면 그쪽이 같은 구간을 이미 붙였다 — 이 조각은 버린다.
+    let mut c = cache.lock().await;
+    let log = c.logs.entry(key.clone()).or_default();
+    if log.1 == since {
+        log.0.extend(entries);
+        log.1 = next;
+    }
+    let reduced = match fetched {
+        // 304 — 그 사이 더 새 환원이 들어왔으면 그것을 쓴다.
+        ReducedRead::NotModified => c.reductions.get(&key).cloned().flatten().or(cached),
+        ReducedRead::Missing => None,
+        ReducedRead::Got(r) => Some(*r),
+    };
+    c.reductions.insert(key.clone(), reduced.clone());
+    let entries = &c.logs[&key].0;
     Ok(build(entries, reduced.as_ref(), keys))
 }
 
@@ -742,10 +760,9 @@ pub async fn proposals(
     let mut keys = BTreeSet::new();
     let mut repos = vec![];
     {
-        let mut cache = st.cache.lock().await;
         for (repo, channel_ids) in by_repo {
             let mut repo_keys = BTreeSet::new();
-            match read_repo(&st.client, &mut cache, &base, &repo, &mut repo_keys).await {
+            match read_repo(&st.client, &st.cache, &base, &repo, &mut repo_keys).await {
                 Ok((proposals, reduced_at)) => {
                     keys.extend(repo_keys);
                     repos.push(json!({
