@@ -5,6 +5,8 @@ name: Rust crates
 # `[workspace]` 가 생기면 그 crate 가 「작업 공간 밖」 오류로 깨진다). 정본(TS)이 쓴 골든을 읽는 시험이 여기서 돈다.
 on:
   pull_request:
+  # merge queue 의 임시 브랜치에서도 돈다(`ci.yml` 의 같은 줄 참고).
+  merge_group:
   push:
     branches: [main]
 
