@@ -115,8 +115,32 @@ function cases(name: string, root: Schema): { tool: string; args: unknown }[] {
     for (const j of junk(root, p, 0)) out.push({ tool: name, args: { ...base, [k]: j } });
     out.push({ tool: name, args: { [k]: null } }, { tool: name, args: { [k]: sample(root, p) } });
   }
+  out.push(...(EXTRA[name] ?? []).map((args) => ({ tool: name, args })));
   return out;
 }
+
+// 스키마에서 지어낸 꼴로는 닿지 않는 자리 — `automation.propose` 의 시간대는 JSON 스키마에 없는 `refine(isTimeZone)` 이라 지어낸
+// 값('a')이 늘 틀린 이름이다. Rust 는 이 판정을 직접 한다(`zod_gate::TZ_CHECKS`) — 받는 이름·`Intl` 만 아는 옛 이름·오프셋 꼴·
+// 대소문자·거절 이름과, `weekdays` 의 `.transform()`(더러우면 중단)을 여기서 굽는다.
+const AUTOMATION_BASE = { name: 'a', channelId: UUID, body: 'a' };
+const daily = (tz: unknown, time = '09:00') => ({ ...AUTOMATION_BASE, trigger: { kind: 'schedule', freq: 'daily', time, tz } });
+const weekly = (tz: unknown, weekdays: unknown) => ({ ...AUTOMATION_BASE, trigger: { kind: 'schedule', freq: 'weekly', weekdays, time: '09:00', tz } });
+const EXTRA: Record<string, unknown[]> = {
+  'automation.propose': [
+    ...['UTC', 'Asia/Seoul', 'asia/seoul', 'US/Eastern', 'Asia/Calcutta', 'JST', 'jst', 'PST', 'SystemV/EST5EDT', 'SystemV/EST5',
+      '+09:00', '-0330', '+09', 'Etc/GMT+9', 'GMT', 'Z',
+      'KST', 'EDT', 'UTC+9', 'Factory', 'Etc/Unknown', 'SystemV/', 'SystemV/EST', 'Asia/Seoul ', ' UTC', 'Asia/Nowhere', '+25:00', '9']
+      .flatMap((tz) => [daily(tz), daily(tz, 'x')]),
+    weekly('Asia/Seoul', [1, 1, 0]),
+    weekly('Asia/Seoul', []),
+    weekly('Asia/Seoul', [7]),
+    weekly('Asia/Seoul', [0, 1, 2, 3, 4, 5, 6, 0]),
+    weekly('Nowhere/X', [7]),
+    weekly('Nowhere/X', [1.5]),
+    { ...daily('Asia/Seoul'), name: '' },
+    { ...daily('Nowhere/X'), debounceSec: 1.5 },
+  ],
+};
 
 async function rustMcpZodGolden(): Promise<string> {
   const listed = JSON.parse(await mcpToolsListResult(true)) as { tools: { name: string; inputSchema: Schema }[] };
