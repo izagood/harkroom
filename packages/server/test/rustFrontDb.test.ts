@@ -5353,7 +5353,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           expect(answerers(false, zodRejects(tool, args)), `${name} — TS 가 답한다`).toContain(b.core);
         }
         // `thread.plan.item` 의 `auto` 칸(`core/mcp/plan_auto.rs`) — 자동 진행 켜기·끄기. TS·Rust 에 각자의 루트로 같은 순서를 돌려
-        // 답 글자·판 상태·시스템 줄을 견준다. 전부 Rust 가 답한다.
+        // 답 글자·판 상태·시스템 줄을 견준다. 사람 계정 한 걸음(앞단이 TS 로 보낸다)만 빼고 Rust 가 답한다.
         {
           expect(f.log()).not.toContain('mcp thread.plan.item auto core off');
           const autoOp = (await db.pool.query<{ id: string }>(
@@ -5411,7 +5411,11 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           const [T, R] = [await autoSide(tsUrl, 'T'), await autoSide(rsUrl, 'R')];
           const strip = (o: { name: string; text: string }) => ({ name: o.name, text: o.text });
           expect(R.out.map(strip)).toEqual(T.out.map(strip));
-          for (const o of R.out) expect(o.core, `${o.name} — Rust 가 답한다`).toBe('mcp');
+          // 앞단 MCP 는 에이전트만 받는다(route.rs) — 사람 계정은 TS 가 agents_only 로 답한다. Rust 의 같은 갈래는 단위 시험이 본다.
+          for (const o of R.out) {
+            if (o.name.startsWith('사람 계정')) expect(o.core, `${o.name} — TS 가 답한다`).not.toBe('mcp');
+            else expect(o.core, `${o.name} — Rust 가 답한다`).toBe('mcp');
+          }
           expect(R.snap).toEqual(T.snap);
           expect(R.snap).toMatchObject({ until: 's2', by: member.accountId, mandate: null, source: true, used: true, ms: true });
           expect(Object.keys(R.snap.range as Record<string, string>).sort(), '범위는 끝점과 그 앞 단계').toEqual(['s1', 's2']);
