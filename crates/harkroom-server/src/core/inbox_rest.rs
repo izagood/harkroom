@@ -147,9 +147,8 @@ async fn inbox(
     RequireAccount(me, _): RequireAccount,
     req: Request,
 ) -> Response {
-    let v2 = crate::core::msg_post::delegation_v2(
-        std::env::var("HARKROOM_DELEGATION_V2").ok().as_deref(),
-    );
+    let v2 =
+        crate::core::msg_post::delegation_v2(crate::env_once::get(&crate::env_once::DELEGATION_V2));
     let Some(q) = parse(req.uri().query()) else {
         // TS zod 오류와 같은 400 — 문구는 다르다(대조는 상태만 본다, `ask.rs` 와 같은 약속).
         return json_err(StatusCode::BAD_REQUEST, "invalid_request", "query: invalid");

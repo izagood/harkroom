@@ -264,3 +264,43 @@ fn avcs_connected_needs_configured_connected_and_fresh_poll() {
     assert!(!avcs_connected(false, true, Some(now), now));
     assert!(!avcs_connected(true, false, Some(now), now));
 }
+
+/// 요청 지표(s39 A) — `main.rs` 처럼 합친 라우터 바깥에 건 층이 경로 **틀**로 세고(원시 id 아님), 틀 밖은 `unmatched` 하나로.
+/// 응답 글자·status 는 그대로다.
+#[tokio::test]
+async fn request_metrics_label_by_route_template() {
+    let a = axum::Router::new().route(
+        "/s39a/{id}/x",
+        axum::routing::get(|| async { (StatusCode::CREATED, "made") }),
+    );
+    let b = axum::Router::new().route("/s39a-b", axum::routing::get(|| async { "b" }));
+    let app = a
+        .merge(b)
+        .fallback(|| async { (StatusCode::NOT_FOUND, "nf") })
+        .layer(axum::middleware::from_fn(
+            harkroom_server::http_metrics::observe,
+        ));
+    let base = format!("http://{}", serve(app).await);
+    let (s, _, t) = send(&base, Method::GET, "/s39a/secret-id-1/x", &[], "").await;
+    assert_eq!((s, t.as_str()), (StatusCode::CREATED, "made"));
+    send(&base, Method::GET, "/s39a/secret-id-2/x", &[], "").await;
+    send(&base, Method::GET, "/s39a-b", &[], "").await;
+    let (s, _, t) = send(&base, Method::GET, "/s39a-nope/secret-id-3", &[], "").await;
+    assert_eq!((s, t.as_str()), (StatusCode::NOT_FOUND, "nf"));
+    let mut out = String::new();
+    harkroom_server::http_metrics::render(&mut out);
+    assert!(
+        out.contains(
+            "harkroom_http_requests_total{method=\"GET\",route=\"/s39a/:id/x\",status=\"201\"} 2\n"
+        ),
+        "{out}"
+    );
+    assert!(
+        out.contains(
+            "harkroom_http_requests_total{method=\"GET\",route=\"/s39a-b\",status=\"200\"} 1\n"
+        ),
+        "{out}"
+    );
+    assert!(out.contains("route=\"unmatched\",status=\"404\""), "{out}");
+    assert!(!out.contains("secret-id"), "{out}");
+}

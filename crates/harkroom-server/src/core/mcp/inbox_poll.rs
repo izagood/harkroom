@@ -225,10 +225,9 @@ async fn fold_old_runner(
     leased: bool,
 ) -> Option<()> {
     // 접기는 v2 에서만 일어난다. 스위치를 모르면 줄이 있을 때 [`batch`] 가 TS 로 넘긴다 — 여기서는 건너뛴다.
-    let v2 = crate::core::msg_post::delegation_v2(
-        std::env::var("HARKROOM_DELEGATION_V2").ok().as_deref(),
-    )
-    .unwrap_or(false);
+    let v2 =
+        crate::core::msg_post::delegation_v2(crate::env_once::get(&crate::env_once::DELEGATION_V2))
+            .unwrap_or(false);
     if !folds_for(v2, args, version) {
         return Some(());
     }
@@ -572,9 +571,9 @@ async fn batch(
     leased: bool,
 ) -> Option<String> {
     // TS 는 스위치가 없으면 꺼짐으로 본다 — Rust 는 값이 없으면 모르니 TS 로(`msg_post::delegation_v2`).
-    let v2 = crate::core::msg_post::delegation_v2(
-        std::env::var("HARKROOM_DELEGATION_V2").ok().as_deref(),
-    )?;
+    let v2 = crate::core::msg_post::delegation_v2(crate::env_once::get(
+        &crate::env_once::DELEGATION_V2,
+    ))?;
     // 위에서 `v2=false` 로 읽었으니, 켜졌으면 위임 요약이 붙은 줄로 다시 읽는다.
     let rows = if v2 {
         list_inbox(pool, &me.id, unread(leased), true).await.ok()?

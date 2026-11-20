@@ -5459,6 +5459,10 @@ async fn main() {
         cors_all,
         harkroom_server::cors::preflight_layer,
     ));
+    // 요청 수·지연(s39 A) — 합친 뒤 맨 바깥에 한 번. `Router::layer` 는 경로마다 감싸므로 맞은 틀(`MatchedPath`)이 보인다.
+    let app = app.layer(axum::middleware::from_fn(
+        harkroom_server::http_metrics::observe,
+    ));
     let listener = tokio::net::TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], port)))
         .await
         .expect("bind");

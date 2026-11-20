@@ -524,8 +524,8 @@ impl AdmitSwitches {
 
     pub fn from_env() -> Self {
         Self::from_values(
-            std::env::var("HARKROOM_DELEGATION_V2").ok().as_deref(),
-            std::env::var("HARKROOM_BACKGROUND_ENABLED").ok().as_deref(),
+            crate::env_once::get(&crate::env_once::DELEGATION_V2),
+            crate::env_once::get(&crate::env_once::BACKGROUND_ENABLED),
         )
     }
 }
@@ -890,7 +890,7 @@ pub fn routes(
 mod tests {
     use super::*;
 
-    /// 넘김 로그는 인자 키 이름만 — 값은 싣지 않는다.
+    /// `-32602` 로그 줄은 SDK 인자 오류 꼴(머리로 시작·`isError:true` 로 끝)만 센다 — 본문에 같은 글자가 든 결과는 아니다.
     #[test]
     fn invalid_params_only_sdk_error_shape() {
         // zod 갈래·처리기가 내는 글자 그대로.
@@ -922,6 +922,7 @@ mod tests {
         )));
     }
 
+    /// 넘김 로그는 인자 키 이름만 — 값은 싣지 않는다.
     #[test]
     fn ts_arg_keys_names_only() {
         let call = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"message.read","arguments":{"channelId":"secret-a","since":"59958","threadRootId":"secret-b"}}}"#;

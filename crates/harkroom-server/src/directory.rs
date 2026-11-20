@@ -320,10 +320,8 @@ pub async fn leases(State(pool): State<PgPool>, _: RequireAccount) -> Response {
             Ok(v) => v.flatten(),
             Err(e) => return internal(e),
         };
-    let env = std::env::var("AVCS_BASE_URL")
-        .ok()
-        .filter(|v| !v.is_empty());
-    let Some(url) = crate::loops::projection::resolve_url(env.as_deref(), app.as_deref()) else {
+    let env = crate::env_once::get(&crate::env_once::AVCS_BASE_URL).filter(|v| !v.is_empty());
+    let Some(url) = crate::loops::projection::resolve_url(env, app.as_deref()) else {
         return json_ok(r#"{"leases":[]}"#.to_owned());
     };
     match one_json(&pool, LEASES, Some(&url)).await {

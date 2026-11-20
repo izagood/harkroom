@@ -738,7 +738,7 @@ async fn report_failed(
     // `queued` 는 위임 v2 스위치가 켜졌을 때 감시(TS `autoWatchOnQueued`)를 건다 — 스위치를 모르거나 감시 풀이 없으면 TS 로.
     let queued_watch = if g("result").as_deref() == Some("queued") {
         let v2 =
-            super::msg_post::delegation_v2(std::env::var("HARKROOM_DELEGATION_V2").ok().as_deref());
+            super::msg_post::delegation_v2(crate::env_once::get(&crate::env_once::DELEGATION_V2));
         match queued_watch_pool(v2, watch) {
             Ok(p) => p,
             Err(()) => return Ok(Report::ToTs),
