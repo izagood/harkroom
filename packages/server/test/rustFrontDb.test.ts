@@ -3360,9 +3360,11 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             'front: delegation posts and inbox to TS — HARKROOM_DELEGATION_V2 unset',
             'front: attachment upload to TS — ATTACHMENT_MAX_BYTES unset',
             'front: background list to TS — HARKROOM_BACKGROUND_ENABLED unset',
-            'front: invite mail (issue with email, resend) to TS — mail env unset',
           ];
           for (const line of UNSET_LINES) expect(fN.log(), line).toContain(line);
+          // 메일 env 는 「모름 → TS」가 아니다 — 없으면 TS 와 같이 메일을 끈다(409 `mail_disabled` 를 Rust 가 낸다).
+          expect(fN.log()).toContain('front: invite mail off (409 mail_disabled) — mail env unset');
+          expect(fN.log()).not.toContain('invite mail (issue with email, resend) to TS');
           expect(fN.log()).not.toContain('HARKROOM_DELEGATION_IMPLICIT unset');
           expect(fN.log()).not.toContain('"POST /uploads"');
           expect(fN.log()).not.toContain('"GET /accounts/agents/{id}/background"');
@@ -6542,7 +6544,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         await reset();
       }
 
-      // S5.4 AC4 — 초대 쓰기 두 줄(코어 `invites_write.rs`). email 이 실린 POST 는 Rust 가 TS 로 넘긴다(답이 같아야 한다).
+      // S5.4 AC4 — 초대 쓰기 두 줄(코어 `invites_write.rs`). 메일 env 가 없는 앞단은 email 이 실린 POST 에 TS 와 같은 409 를 낸다.
       // 답(새 id·토큰은 꼴만)·감사·저장된 해시가 토큰의 sha256 인지 본다. resend 는 TS 에 남는다.
       {
         for (const k of ['POST /invites', 'DELETE /invites/{id}']) expect(f.log(), k).toContain(`"${k}"`);
@@ -6579,9 +6581,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           await call('POST', '/invites', [], A); // 400
           await call('POST', '/invites', {}, M); // 403
           await call('POST', '/invites', {}, ''); // 401
-          await call('POST', '/invites', { email: 'ac4@example.test' }, A); // TS 가 판정(메일 꺼짐 409)
-          await call('POST', '/invites', { email: 'nope' }, A); // TS 가 판정(400)
-          await call('POST', `/invites/${mine[1]}/resend`, undefined, A); // 메일 설정 없는 앞단 → TS 가 판정(메일 꺼짐 409)
+          await call('POST', '/invites', { email: 'ac4@example.test' }, A); // 메일 꺼짐 409
+          await call('POST', '/invites', { email: 'nope' }, A); // 400
+          await call('POST', `/invites/${mine[1]}/resend`, undefined, A); // 메일 꺼짐 409
           await call('DELETE', `/invites/${mine[0]}`, undefined, A); // 204
           await call('DELETE', `/invites/${mine[0]}`, undefined, A); // 이미 취소 204
           await call('DELETE', `/invites/${used}`, undefined, A); // 409
@@ -6601,10 +6603,35 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect(y).toEqual(x);
         expect((y.slice(0, -1) as { status: number }[]).map((r) => r.status)).toEqual([
           201, 201, 201, 400, 400, 403, 401, 409, 400, 409, 204, 204, 409, 404, 400, 403, 401]);
-        // 가군(메일 설정) — 이 앞단에는 메일 env 가 없다. 주소가 실린 발급·다시 보내기의 409 `mail_disabled` 는 TS 만 내는 코드다
-        // (Rust 코어에는 그 답이 없다, d83818756) — 그 코드가 왔으면 TS 가 답한 것이다. 초대 행도 새로 생기지 않는다(감사 4건 그대로).
+        // 가군(메일 설정) — 이 앞단에는 메일 env 가 없다. 주소가 실린 발급·다시 보내기는 409 `mail_disabled`(본문 글자까지 TS 와 같다,
+        // 위 toEqual). 초대 행도 새로 생기지 않는다(감사 4건 그대로).
         expect((y as { path: string; json: unknown; code?: string }[]).filter((r) => r.code === 'mail_disabled').map((r) => r.path))
           .toEqual(['/invites', '/invites/N1/resend']);
+        // 그 409 를 낸 것이 Rust 인지 — TS 가 없는(위가 죽은) 앞단에서도 같은 답이 와야 한다. TS 로 넘겼다면 502 다(운영 TS 끄기 s34b).
+        {
+          const pd = await freePort();
+          const fd = await startFront(bin, {
+            UPSTREAM_URL: `http://127.0.0.1:${await freePort()}`, DATABASE_URL: db.uri, PORT: String(pd), HARKROOM_FRONT_TS_ROUTES: '',
+            DATABASE_WRITE_URL: writeUrl.toString(), TRUST_PROXY: TRUST.join(','), CORS_ORIGINS: CORS, HARKROOM_CORE: 'rust', ...GROUP_A_ENV,
+          });
+          try {
+            const until = Date.now() + 10_000;
+            while (!fd.log().includes('front: rust core routes') && Date.now() < until) await new Promise((res) => setTimeout(res, 100));
+            expect(fd.log()).toContain('front: invite mail off (409 mail_disabled) — mail env unset');
+            expect(fd.log()).not.toContain('invite mail (issue with email, resend) to TS');
+            const base = `http://127.0.0.1:${pd}`;
+            const off = { error: { code: 'mail_disabled', message: 'invite mail is not configured on this server' } };
+            const before = (await db.pool.query('select count(*)::int as n from invite')).rows[0].n;
+            // TS 처럼 메일 판정이 초대 조회보다 먼저다 — 없는 id 의 다시 보내기도 404 가 아니라 409.
+            expect([
+              await callX(base, 'POST', '/invites', { email: 'ac4@example.test', locale: 'ko' }, A),
+              await callX(base, 'POST', `/invites/${ghost}/resend`, undefined, A),
+            ]).toEqual([0, 1].map(() => ({ status: 409, code: 'mail_disabled', json: off })));
+            expect((await db.pool.query('select count(*)::int as n from invite')).rows[0].n).toBe(before);
+          } finally {
+            fd.child.kill('SIGTERM');
+          }
+        }
         expect((y[0] as { json: unknown }).json).toEqual({ keys: ['id', 'expiresAt', 'mail', 'token'], token: true, iso: true, mail: 'off', week: true });
         expect((y.at(-1) as { audit: unknown[] }).audit).toHaveLength(4);
         await db.pool.query('delete from invite where id = any($1)', [made]);
