@@ -410,14 +410,46 @@ fn account_audience((id, _kind): (String, String)) -> Option<Value> {
     Some(serde_json::json!({ "kind": "account", "accountId": id }))
 }
 
-/// Rust 가 세우는 카드 — 사람 앞(`to` 없음), 거울·머지 거절·supersedes·계획 단계 없음, 원인 헤더 없음(TS 의 사람 앞 푸시
-/// `gateAwaitingAccount`→`enqueueAskPush` 는 원인이 있을 때만 쓴다). 스레드 안이면 열린 카드 검사([`open_card_refusal`])를 이미
-/// 지났어야 한다 — `keepOpen` 은 그 검사에만 쓰인다. 그 밖은 `false`(→ TS).
-fn plain(o: &Map<String, Value>, cause: Option<&str>) -> bool {
-    cause.is_none()
-        && ["to", "mirrorOf", "mergeDenialId"]
-            .iter()
-            .all(|k| !o.contains_key(*k))
+/// Rust 가 세우는 카드 — 사람 앞(`to` 없음), 거울·머지 거절 없음. 원인 헤더가 있으면 거울처럼 차례 주인 푸시
+/// (`gateAwaitingAccount`→`enqueueAskPush`, [`human_ask_push`])까지 Rust 가 한다. 스레드 안이면 열린 카드 검사
+/// ([`open_card_refusal`])를 이미 지났어야 한다 — `keepOpen` 은 그 검사에만 쓰인다. 그 밖은 `false`(→ TS).
+fn plain(o: &Map<String, Value>) -> bool {
+    ["to", "mirrorOf", "mergeDenialId"]
+        .iter()
+        .all(|k| !o.contains_key(*k))
+}
+
+/// TS 사람 앞 푸시(security G4) — 원인 헤더가 있으면 그 턴의 차례 주인(`gateAwaitingAccount`)에게 글 뒤
+/// `enqueueAskPush`(이 글로 inbox 를 받았으면 넣지 않는다). 차례 주인 찾기는 새 글과 상관없어 글 앞에 읽는다.
+/// 원인이 없으면 `Some(None)`. 푸시 job 쓰기 칸이 없으면(→ TS) 또는 DB 오류면 `None`.
+async fn human_ask_push(
+    read: &PgPool,
+    st: &crate::core::msg_post::PostState,
+    me: &Account,
+    channel: &str,
+    cause: Option<&str>,
+) -> Option<Option<String>> {
+    let Some(c) = cause else {
+        return Some(None);
+    };
+    if !crate::write::missing_in(
+        &st.write,
+        crate::core::permission_card::LINK_PUSH_PRIVILEGES,
+        &[],
+    )
+    .await
+    .ok()?
+    .is_empty()
+    {
+        return None;
+    }
+    sqlx::query_scalar(gate_awaiting_sql())
+        .bind(&me.id)
+        .bind(c)
+        .bind(channel)
+        .fetch_optional(read)
+        .await
+        .ok()
 }
 
 /// Rust 가 세우는 거울 카드 — `mirrorOf` 가 있고, `to`·머지 거절이 없을 때만([`answer`] 의 거울·대신하기 검사를 이미
@@ -858,7 +890,7 @@ pub async fn answer_plain(
         .await;
     }
     let st = st?;
-    let mut push_to: Option<String> = None;
+    let push_to: Option<String>;
     let mut mirror_render: Option<NeutralMirror> = None;
     let audience = match o.get("to").and_then(Value::as_str) {
         Some(to) => {
@@ -886,7 +918,10 @@ pub async fn answer_plain(
             push_to = Some(row.0.clone());
             account_audience(row)?
         }
-        None if plain(o, cause) => serde_json::json!({ "kind": "human" }),
+        None if plain(o) => {
+            push_to = human_ask_push(read, st, me, a.channel, cause).await?;
+            serde_json::json!({ "kind": "human" })
+        }
         None if mirror_plain(o) => {
             // 권한 카드의 거울은 원본 요청으로 Rust 가 다시 쓴다(중립·같은 카드 꼴). 글 뒤 `syncAskMirrors` 쓰기 칸이 없어도 TS.
             let root = o.get("mirrorOf")?.as_str()?;
@@ -909,28 +944,7 @@ pub async fn answer_plain(
             {
                 return None;
             }
-            // TS 사람 앞 푸시(security G4) — 원인 헤더가 있으면 그 턴의 차례 주인(`gateAwaitingAccount`)에게 글 뒤
-            // `enqueueAskPush`(이 글로 inbox 를 받았으면 넣지 않는다). 차례 주인 찾기는 새 글과 상관없어 글 앞에 읽는다.
-            if let Some(c) = cause {
-                if !crate::write::missing_in(
-                    &st.write,
-                    crate::core::permission_card::LINK_PUSH_PRIVILEGES,
-                    &[],
-                )
-                .await
-                .ok()?
-                .is_empty()
-                {
-                    return None;
-                }
-                push_to = sqlx::query_scalar(gate_awaiting_sql())
-                    .bind(&me.id)
-                    .bind(c)
-                    .bind(a.channel)
-                    .fetch_optional(read)
-                    .await
-                    .ok()?;
-            }
+            push_to = human_ask_push(read, st, me, a.channel, cause).await?;
             serde_json::json!({ "kind": "human" })
         }
         None => return None,
@@ -1712,7 +1726,7 @@ mod tests {
         let mut m = o.clone();
         m.remove("mirrorOf");
         assert!(!mirror_plain(&m));
-        assert!(!plain(o, None));
+        assert!(!plain(o));
         assert!(MIRROR_PERMISSION_SQL.contains("deleted_at is null"));
         assert!(
             gate_awaiting_sql().contains("i.message_id = $2::uuid and m.channel_id = $3::uuid")
@@ -1886,28 +1900,24 @@ mod tests {
                 "to": { "kind": "human" }, "prompt": "p" } })
         );
         let o = ask(json!({}));
-        assert!(plain(o.as_object().unwrap(), None));
-        assert!(!plain(o.as_object().unwrap(), Some("c")));
+        // 원인 헤더가 있어도 Rust 가 세운다(차례 주인 푸시는 `human_ask_push`).
+        assert!(plain(o.as_object().unwrap()));
         assert!(plain(
             ask(json!({ "threadRootId": C, "keepOpen": [C] }))
                 .as_object()
-                .unwrap(),
-            None
+                .unwrap()
         ));
         for k in ["to", "mirrorOf", "mergeDenialId"] {
-            assert!(
-                !plain(ask(json!({ k: C })).as_object().unwrap(), None),
-                "{k}"
-            );
+            assert!(!plain(ask(json!({ k: C })).as_object().unwrap()), "{k}");
         }
         // 대신하기는 Rust 가 세운 뒤 닫는다.
         let sup = ask(json!({ "supersedes": C, "threadRootId": C }));
-        assert!(plain(sup.as_object().unwrap(), None));
+        assert!(plain(sup.as_object().unwrap()));
         assert!(addressed(sup.as_object().unwrap()));
         assert_eq!(open_card_thread(sup.as_object().unwrap()), Some(C));
         // 계획 단계 잇기도 Rust 가 세운 뒤 한다(계획·단계·권한이 있을 때).
         let step = ask(json!({ "planStepId": "s1", "threadRootId": C }));
-        assert!(plain(step.as_object().unwrap(), None));
+        assert!(plain(step.as_object().unwrap()));
         assert!(addressed(step.as_object().unwrap()));
     }
 
