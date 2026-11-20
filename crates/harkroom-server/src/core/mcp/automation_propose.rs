@@ -4,8 +4,10 @@
 //!
 //! - INSERT 문장은 TS 정본을 골든(`automation_propose_insert`)으로 받는다. Rust 는 **제안 행만** 넣는다 — 승인·켜기·돌리기 길은 없다
 //!   (INSERT 칸에 `approved_at`·`enabled` 는 상수 `null`·`false` 로 박혀 있다).
-//! - **TS 로 넘기는 것**(MCP 쪽만, `None`): zod 가 받지 않을 인자(거절 글자의 정본이 TS SDK 다) · DB 오류. REST
+//! - **TS 로 넘기는 것**(MCP 쪽만, `None`): zod 가 받지 않을 인자(거절 글자의 정본이 TS SDK 다)뿐이다. REST
 //!   (`parse_rest`·`parse_patch`)는 `None` 을 400 으로 직접 답한다 — 판정은 zod 와 같아야 한다(이름은 JS `trim`, 수는 정수 값).
+//! - **DB 오류는 넘기지 않는다**: INSERT 앞의 읽기가 실패하면 `temporarily_unavailable`([`super::db_retry::read_failed`] —
+//!   쓴 것이 없으니 다시 부르면 된다), INSERT 가 실패하면 `internal`(들어갔는지 알 수 없어 다시 넣지 않는다).
 //! - 답 글자는 TS `jsonResult` 와 **키 순서까지** 같게 직접 쓴다(값은 `Value` 로 이스케이프한다). `trigger` 는 DB jsonb 글자 그대로.
 use super::tools::err;
 use crate::auth::Account;
@@ -417,19 +419,26 @@ fn opt_iso(ms: Option<i64>) -> Value {
     ms.map_or(Value::Null, |m| Value::from(msg_post::iso_ms(m)))
 }
 
+const TOOL: &str = "automation.propose";
+
 pub async fn answer(read: &PgPool, write: &PgPool, me: &Account, args: &Value) -> Option<String> {
     let a = parse(args)?;
-    let owner: Option<String> = match &a.for_handle {
-        Some(h) => sqlx::query_scalar(OWNER_BY_HANDLE_SQL)
-            .bind(h)
-            .fetch_optional(read)
-            .await
-            .ok()?,
-        None => sqlx::query_scalar(OWNER_OF_AGENT_SQL)
-            .bind(&me.id)
-            .fetch_optional(read)
-            .await
-            .ok()?,
+    let owner: Result<Option<String>, sqlx::Error> = match &a.for_handle {
+        Some(h) => {
+            sqlx::query_scalar(OWNER_BY_HANDLE_SQL)
+                .bind(h)
+                .fetch_optional(read)
+                .await
+        }
+        None => {
+            sqlx::query_scalar(OWNER_OF_AGENT_SQL)
+                .bind(&me.id)
+                .fetch_optional(read)
+                .await
+        }
+    };
+    let Ok(owner) = owner else {
+        return Some(super::db_retry::read_failed(TOOL));
     };
     let Some(owner) = owner else {
         let msg = match &a.for_handle {
@@ -444,18 +453,23 @@ pub async fn answer(read: &PgPool, write: &PgPool, me: &Account, args: &Value) -
         };
         return Some(err("no_owner", &msg));
     };
-    let exists: Option<i32> = sqlx::query_scalar("select 1 from channel where id = $1::uuid")
+    let Ok(exists) = sqlx::query_scalar::<_, i32>("select 1 from channel where id = $1::uuid")
         .bind(&a.channel)
         .fetch_optional(read)
         .await
-        .ok()?;
+    else {
+        return Some(super::db_retry::read_failed(TOOL));
+    };
     let gate: Option<(bool, bool)> = if exists.is_some() {
-        sqlx::query_as(msg_post::gate_sql())
+        let Ok(g) = sqlx::query_as(msg_post::gate_sql())
             .bind(&a.channel)
             .bind(&owner)
             .fetch_optional(read)
             .await
-            .ok()?
+        else {
+            return Some(super::db_retry::read_failed(TOOL));
+        };
+        g
     } else {
         None
     };
@@ -464,7 +478,7 @@ pub async fn answer(read: &PgPool, write: &PgPool, me: &Account, args: &Value) -
     if !ok {
         return Some(err("forbidden", "the approver cannot post in this channel"));
     }
-    let row = sqlx::query(insert_sql())
+    let Ok(row) = sqlx::query(insert_sql())
         .bind(&owner)
         .bind(&me.id)
         .bind(&a.channel)
@@ -474,7 +488,11 @@ pub async fn answer(read: &PgPool, write: &PgPool, me: &Account, args: &Value) -
         .bind(a.debounce)
         .fetch_one(write)
         .await
-        .ok()?;
+    else {
+        // 들어갔는지 알 수 없다(연결이 답 도중에 끊겼을 수 있다) — TS 로 넘겨 한 번 더 넣지 않는다.
+        eprintln!("front: mcp tool db write failed tool={TOOL}");
+        return Some(err("internal", "the write failed; it was not retried"));
+    };
     // 여기부터는 행이 이미 들어갔다 — 읽기에 실패해도 TS 로 넘기지 않는다(넘기면 TS 가 한 번 더 INSERT 해 대기 제안이 둘 된다).
     let Some(view) = view_of(&row) else {
         return Some(err(
@@ -557,6 +575,45 @@ fn compact(jsonb_text: &str) -> Option<String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    fn dead_pool() -> PgPool {
+        sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(std::time::Duration::from_millis(200))
+            .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+            .unwrap()
+    }
+
+    fn agent() -> Account {
+        Account {
+            id: "11111111-1111-4111-8111-111111111111".into(),
+            handle: "a".into(),
+            display_name: "a".into(),
+            kind: "agent".into(),
+            is_admin: false,
+            role: "member".into(),
+            status: "active".into(),
+            status_text: None,
+            avatar_attachment_id: None,
+        }
+    }
+
+    /// DB 에 닿지 못해도 TS 로 넘기지(`None`) 않는다 — INSERT 앞이라 다시 부를 수 있는 도구 오류다.
+    #[tokio::test]
+    async fn db_down_answers_instead_of_handing_to_ts() {
+        let pool = dead_pool();
+        for extra in [json!({}), json!({ "forHandle": "@someone" })] {
+            let mut args = base();
+            args.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            let r = answer(&pool, &pool, &agent(), &args)
+                .await
+                .expect("answered");
+            assert!(r.contains("temporarily_unavailable"), "{r}");
+        }
+        // zod 가 거절할 인자만 여전히 넘긴다.
+        assert!(answer(&pool, &pool, &agent(), &json!({})).await.is_none());
+    }
 
     fn base() -> Value {
         json!({ "name": "  주간 정리 ", "channelId": "00000000-0000-4000-8000-000000000001", "body": "정리해",
