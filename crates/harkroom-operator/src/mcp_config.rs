@@ -209,6 +209,74 @@ pub fn write_agent_mcp_config(
     Ok(path)
 }
 
+/// TS `rewriteMcpConfigTokens` — 이미 쓴 러너 설정들(`<dir>/<agentId>.json`)에 **새 토큰을 넣는다**. 인증·refresh 뒤 러너를
+/// 다시 띄우지 않고 다음 턴부터 새 토큰이 가게 한다 — claude 는 턴마다 `--mcp-config` 를 읽고, codex·opencode 도 턴마다 다시 읽는다.
+/// P3(Node 오퍼레이터 삭제) 때 이 호출이 빠져, 재인증해도 배정 때 구운 옛 `Authorization` 이 러너가 다시 뜰 때까지 남았다.
+///
+/// 이름과 **url 이 같은** 원격 항목만 고친다 — 같은 이름이 다른 서버를 가리키는 설정에 남의 토큰을 넣지 않는다.
+/// 고친 파일 수를 돌려준다. 못 읽는 파일·이름이 맞지 않는 파일은 건너뛴다(다음 스폰이 새로 쓴다).
+pub fn rewrite_mcp_config_tokens(
+    dir: &Path,
+    updates: &BTreeMap<String, (String, String)>,
+) -> usize {
+    if updates.is_empty() {
+        return 0;
+    }
+    let Ok(entries) = fs::read_dir(dir) else {
+        return 0;
+    };
+    let mut changed = 0;
+    for entry in entries.flatten() {
+        let file_name = entry.file_name();
+        let Some(fname) = file_name.to_str() else {
+            continue;
+        };
+        let Some(agent_id) = fname.strip_suffix(".json") else {
+            continue;
+        };
+        if agent_id.starts_with('.') {
+            continue;
+        }
+        let Ok(text) = fs::read_to_string(entry.path()) else {
+            continue;
+        };
+        let Ok(Value::Object(mut doc)) = serde_json::from_str::<Value>(&text) else {
+            continue;
+        };
+        let Some(Value::Object(servers)) = doc.get_mut("mcpServers") else {
+            continue;
+        };
+        let mut touched = false;
+        for (name, (url, token)) in updates {
+            let Some(Value::Object(e)) = servers.get_mut(name) else {
+                continue;
+            };
+            if e.get("url").and_then(Value::as_str) != Some(url.as_str()) {
+                continue;
+            }
+            e.remove("oauth");
+            let headers = e.entry("headers").or_insert_with(|| json!({}));
+            if !headers.is_object() {
+                *headers = json!({});
+            }
+            if let Some(h) = headers.as_object_mut() {
+                // 대소문자만 다른 옛 헤더가 남아 둘이 되지 않게 지우고 넣는다.
+                h.retain(|k, _| !k.eq_ignore_ascii_case("authorization"));
+                h.insert("Authorization".into(), json!(format!("Bearer {token}")));
+            }
+            touched = true;
+        }
+        if !touched {
+            continue;
+        }
+        let servers = servers.clone();
+        if write_agent_mcp_config(dir, agent_id, &servers).is_ok() {
+            changed += 1;
+        }
+    }
+    changed
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -369,5 +437,52 @@ mod tests {
         let s = format!("{b:?}");
         assert!(!s.contains("sekret-tok"), "{s}");
         assert!(s.contains("remote"), "{s}");
+    }
+
+    #[test]
+    fn rewrite_tokens_puts_new_bearer_only_where_name_and_url_match() {
+        let base = tmp("rewrite");
+        let dir = base.as_path();
+        let mut a = Map::new();
+        a.insert("slack".into(), json!({"type":"http","url":"https://m.example.com/mcp","headers":{"authorization":"Bearer OLD","X-Keep":"1"},"oauth":{"clientId":"c"}}));
+        a.insert("other".into(), json!({"type":"http","url":"https://o.example.com/mcp","headers":{"Authorization":"Bearer KEEP"}}));
+        write_agent_mcp_config(dir, "agent-a", &a).unwrap();
+        let mut b = Map::new();
+        b.insert("slack".into(), json!({"type":"http","url":"https://elsewhere.example.com/mcp","headers":{"Authorization":"Bearer B"}}));
+        write_agent_mcp_config(dir, "agent-b", &b).unwrap();
+        let mut up = BTreeMap::new();
+        up.insert(
+            "slack".to_string(),
+            ("https://m.example.com/mcp".to_string(), "NEW".to_string()),
+        );
+        assert_eq!(rewrite_mcp_config_tokens(dir, &up), 1);
+        let read = |id: &str| -> Value {
+            serde_json::from_str(&fs::read_to_string(dir.join(format!("{id}.json"))).unwrap())
+                .unwrap()
+        };
+        let a2 = read("agent-a");
+        let h = a2["mcpServers"]["slack"]["headers"].as_object().unwrap();
+        assert_eq!(h.get("Authorization").unwrap(), "Bearer NEW");
+        assert!(!h.contains_key("authorization"));
+        assert_eq!(h.get("X-Keep").unwrap(), "1");
+        assert!(a2["mcpServers"]["slack"].get("oauth").is_none());
+        assert_eq!(
+            a2["mcpServers"]["other"]["headers"]["Authorization"],
+            "Bearer KEEP"
+        );
+        // url 이 다른 같은 이름에는 넣지 않는다.
+        assert_eq!(
+            read("agent-b")["mcpServers"]["slack"]["headers"]["Authorization"],
+            "Bearer B"
+        );
+        // 권한은 0600 그대로.
+        let mode = fs::metadata(dir.join("agent-a.json"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600);
+        assert_eq!(rewrite_mcp_config_tokens(dir, &BTreeMap::new()), 0);
+        assert_eq!(rewrite_mcp_config_tokens(&dir.join("none"), &up), 0);
     }
 }
