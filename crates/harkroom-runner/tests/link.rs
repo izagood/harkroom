@@ -374,3 +374,74 @@ fn response_is_delivered_while_a_writer_is_blocked() {
     flood.join().unwrap();
     link.stop();
 }
+
+/// 오퍼레이터가 바뀌면(새 프로세스의 턴 열쇠 장부는 비어 있다) 다시 붙은 링크로 열린 턴의 열쇠를 다시 맡긴다.
+/// 빠지면 도는 턴의 MCP 다리가 새 오퍼레이터에서 받아들여지지 않아 그 턴의 도구 호출이 전부 시한까지 기다린다.
+#[test]
+fn reopened_link_re_registers_open_turn_keys() {
+    use harkroom_runner::mention_clients::{AgentClients, ClientsCell, turn_keys_relink};
+    use harkroom_runner::rest::{OpenTurn, issue_turn_keys};
+
+    let path = sock_path("relink");
+    let listener = UnixListener::bind(&path).unwrap();
+    let cell: ClientsCell<Arc<LinkClient>> = Arc::default();
+    let mut o = opts(&path);
+    o.on_link_open = turn_keys_relink(cell.clone());
+    let link = LinkClient::new(o);
+    let clients = Arc::new(AgentClients::new(Arc::clone(&link), "test"));
+    cell.set(Arc::clone(&clients)).ok().unwrap();
+    link.start();
+
+    // 한 연결을 받아 hello·announce 를 넘기고, 턴 열쇠 맡기기 한 줄을 200 으로 답한 뒤 그 본문을 돌려준다.
+    let serve_one = |listener: &UnixListener| -> (UnixStream, Value) {
+        let (s, _) = listener.accept().unwrap();
+        s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let mut r = BufReader::new(s.try_clone().unwrap());
+        assert_eq!(read_json(&mut r)["type"], "hello");
+        assert_eq!(read_json(&mut r)["type"], "announce");
+        let req = read_json(&mut r);
+        assert_eq!(req["type"], "http.forward");
+        assert_eq!(req["path"], "/agent/turn-keys");
+        let mut w = s.try_clone().unwrap();
+        writeln!(
+            w,
+            "{}",
+            json!({"type":"http.response","id":req["id"],"status":200,"body":"{\"ok\":true}"})
+        )
+        .unwrap();
+        let body: Value = serde_json::from_str(req["body"].as_str().unwrap()).unwrap();
+        (s, body)
+    };
+
+    let keys = issue_turn_keys();
+    let c2 = Arc::clone(&clients);
+    let k2 = keys.clone();
+    let h = std::thread::spawn(move || {
+        assert!(c2.link().when_connected(Duration::from_secs(2)));
+        c2.rest().register_turn_keys(OpenTurn {
+            turn_id: "t1".into(),
+            cause: Some("m1".into()),
+            keys: k2,
+        })
+    });
+    let (first, sent) = serve_one(&listener);
+    h.join().unwrap().unwrap();
+    assert_eq!(sent["turnId"], "t1");
+
+    // 오퍼레이터 교체 — 연결이 끊기고 새 연결이 선다. 러너가 스스로 같은 열쇠를 다시 맡겨야 한다.
+    drop(first);
+    let (_second, again) = serve_one(&listener);
+    assert_eq!(again, sent);
+    assert_eq!(again["keys"]["bridge"], keys.bridge);
+    link.stop();
+}
+
+/// 고리는 기동 코드가 링크에 꽂아야 쓸모가 있다 — 함수만 있고 부르는 곳이 없던 것이 이 시험의 까닭이다.
+#[test]
+fn runner_main_wires_turn_key_relink() {
+    let main = include_str!("../src/main.rs");
+    assert!(
+        main.contains("opts.on_link_open = harkroom_runner::mention_clients::turn_keys_relink(")
+    );
+    assert!(main.contains("clients_cell.set("));
+}
