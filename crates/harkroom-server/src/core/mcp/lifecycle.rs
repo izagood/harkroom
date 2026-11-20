@@ -101,14 +101,16 @@ fn initialize(p: &Value) -> Result<String, ()> {
 
 /// `tools/list` 의 `result` 글자 — TS `mcpToolsListResult` 가 지은 SDK 글자 그대로를 `golden/mcp_tools_list.json` 으로 받는다
 /// (`packages/server/test/rustMcpToolsListGolden.test.ts` 가 TS 와 같은지 본다). 조건부 등록은 `delegation.close` 하나라
-/// `HARKROOM_DELEGATION_V2`(앞단 env)로 고른다 — 값이 없으면 `None`(TS 가 답한다, P2a 의 `registered` 와 같은 규칙).
+/// `HARKROOM_DELEGATION_V2`(앞단 env)로 고른다 — 값이 없으면 TS 기본값(꺼짐 — `delegationV2Enabled`)의 목록을 싣는다.
+/// 모른다고 TS 로 넘기지 않는다(글 쓰기의 `msg_post::delegation_v2_on` 과 같은 규칙). `tools/call` 의 `registered` 는
+/// 그대로 값이 있을 때만 Rust 가 답한다(`route::switch_answer`).
 pub fn tools_list(delegation_v2: Option<bool>) -> Option<&'static str> {
     static G: std::sync::OnceLock<Value> = std::sync::OnceLock::new();
     let g = G.get_or_init(|| {
         serde_json::from_str(include_str!("../../../golden/mcp_tools_list.json"))
             .expect("golden/mcp_tools_list.json")
     });
-    let key = if delegation_v2? {
+    let key = if delegation_v2.unwrap_or(false) {
         "delegation_v2"
     } else {
         "base"
@@ -155,10 +157,11 @@ mod tests {
     }
 
     /// SDK 1.30 이 낸 글자(같은 요청을 McpServer + 무상태 전송에 넣어 받은 것)와 같다.
-    /// 골든 두 판: 둘 다 객체 하나(`{"tools":[…]}`)이고, `delegation.close` 는 v2 에만 있다. 값이 없으면 TS.
+    /// 골든 두 판: 둘 다 객체 하나(`{"tools":[…]}`)이고, `delegation.close` 는 v2 에만 있다. 값이 없으면 TS 기본값(꺼짐)의 판.
     #[test]
     fn tools_list_snapshot() {
-        assert_eq!(tools_list(None), None);
+        assert_eq!(tools_list(None), tools_list(Some(false)));
+        assert!(tools_list(None).is_some());
         let names = |s: &str| -> Vec<String> {
             let v: Value = serde_json::from_str(s).unwrap();
             v["tools"]

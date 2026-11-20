@@ -418,7 +418,7 @@ fn lifecycle_reply(
         return None;
     }
     let v = serde_json::from_slice::<serde_json::Value>(bytes).ok()?;
-    // 도구 목록은 TS 가 지은 스냅숏 — 앞단에 `HARKROOM_DELEGATION_V2` 가 없으면 `tools/list` 는 TS 가 답한다.
+    // 도구 목록은 TS 가 지은 스냅숏 — 앞단에 `HARKROOM_DELEGATION_V2` 가 없으면 TS 기본값(꺼짐)의 목록을 싣는다.
     let tools_list = super::lifecycle::tools_list(pre.switches.delegation_v2);
     let reply = super::lifecycle::answer(&v, tools_list)?;
     presence.mark(pre.agent_id);
