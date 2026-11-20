@@ -801,7 +801,35 @@ pub async fn serve_pre(
         Some(pool) => super::db_retry::run(pool, name, || answer(name, args.clone())).await,
         None => answer(name, args).await,
     }?;
+    log_invalid_params(Answerer::Handler, name, pre.agent_id, &result);
     Some(super::respond::sse(&id, &result))
+}
+
+/// `-32602` 인자 오류를 누가 냈나 — 공통 zod 갈래([`zod_reply`]) 또는 도구 처리기(예: `thread.note`·`message.read` 의 자체 검사).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Answerer {
+    Gate,
+    Handler,
+}
+
+/// 도구 결과가 SDK 꼴 인자 오류(`MCP error -32602: …`, `isError: true`)인가. 본문 안 어딘가에 그 글자가 든 정상 결과(메시지 읽기 등)는
+/// 아니다 — 결과의 첫 text 가 그 글자로 **시작**하고 `isError` 로 끝날 때만.
+fn is_invalid_params(result: &str) -> bool {
+    result.starts_with(r#"{"content":[{"type":"text","text":"MCP error -32602: "#)
+        && result.ends_with(r#""isError":true}"#)
+}
+
+/// Rust 앞단이 `-32602` 로 답한 호출 한 줄 — 도구 이름·code·누가 답했나(gate/handler)·에이전트 id 만. 인자 값·이슈 글자는 싣지 않는다.
+/// TS 로 넘긴 호출 줄(`front: mcp tool to TS …`)과 짝 — 운영 로그로 인자 오류 건수를 센다.
+fn log_invalid_params(by: Answerer, tool: &str, agent: &str, result: &str) {
+    if !is_invalid_params(result) {
+        return;
+    }
+    let by = match by {
+        Answerer::Gate => "gate",
+        Answerer::Handler => "handler",
+    };
+    eprintln!("front: mcp invalid params tool={tool} code=-32602 by={by} agent={agent}");
 }
 
 /// 공통 인자 검증([`super::zod_gate`]) — 단일 `tools/call` 의 인자가 zod 가 거절할 꼴이면 SDK 와 같은 도구 오류로 답한다.
@@ -825,6 +853,7 @@ fn zod_reply(v: &serde_json::Value, pre: &Pre<'_>) -> Option<Response<Body>> {
     if let Some(p) = pre.presence {
         p.mark(pre.agent_id);
     }
+    log_invalid_params(Answerer::Gate, name, pre.agent_id, &text);
     Some(super::respond::sse(&id, &text))
 }
 
@@ -862,6 +891,37 @@ mod tests {
     use super::*;
 
     /// 넘김 로그는 인자 키 이름만 — 값은 싣지 않는다.
+    #[test]
+    fn invalid_params_only_sdk_error_shape() {
+        // zod 갈래·처리기가 내는 글자 그대로.
+        let gate = match crate::core::mcp::zod_gate::check("memory.set", &serde_json::json!({})) {
+            crate::core::mcp::zod_gate::Verdict::Reject(t) => t,
+            other => panic!("{other:?}"),
+        };
+        assert!(is_invalid_params(&gate));
+        // 위임 V2 스위치를 켠 앞단에서 `delegation.close` 인자 검사도 같은 zod 갈래 → 같은 줄로 센다.
+        match crate::core::mcp::zod_gate::check("delegation.close", &serde_json::json!({})) {
+            crate::core::mcp::zod_gate::Verdict::Reject(t) => assert!(is_invalid_params(&t)),
+            other => panic!("{other:?}"),
+        }
+        assert!(is_invalid_params(&crate::core::mcp::note::sdk_invalid(
+            "thread.note",
+            &[("threadRootId", "Required".into())]
+        )));
+        // 정상 결과 본문 안에 같은 글자가 들어 있어도 세지 않는다.
+        let inner = super::super::respond::text_result(
+            "{\"body\":\"MCP error -32602: Input validation error\",\"isError\":true}",
+        );
+        assert!(!is_invalid_params(&inner));
+        // 다른 도구 오류(isError)·정상 결과는 아니다.
+        assert!(!is_invalid_params(
+            r#"{"content":[{"type":"text","text":"forbidden"}],"isError":true}"#
+        ));
+        assert!(!is_invalid_params(&super::super::respond::text_result(
+            "MCP error -32602: x"
+        )));
+    }
+
     #[test]
     fn ts_arg_keys_names_only() {
         let call = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"message.read","arguments":{"channelId":"secret-a","since":"59958","threadRootId":"secret-b"}}}"#;
