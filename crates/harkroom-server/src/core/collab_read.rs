@@ -738,10 +738,8 @@ pub async fn proposals(
             Ok(v) => v.flatten(),
             Err(e) => return internal(e),
         };
-    let env = std::env::var("AVCS_BASE_URL")
-        .ok()
-        .filter(|v| !v.is_empty());
-    let Some(base) = resolve_url(env.as_deref(), app.as_deref()) else {
+    let env = crate::env_once::get(&crate::env_once::AVCS_BASE_URL).filter(|v| !v.is_empty());
+    let Some(base) = resolve_url(env, app.as_deref()) else {
         return json_ok(r#"{"baseUrl":null,"repos":[]}"#.to_owned());
     };
     let bound: Vec<(String, String)> = match sqlx::query_as(

@@ -13,7 +13,7 @@
 //!     [`AVCS_STALL_MS`](shared `PROJECTION_STALL_MS`, 5분)보다 오래됐으면 `false` — 루프가 멈춘 뒤 남은 낡은 `true` 를 믿지 않는다.
 //!     줄이 없거나·DB 가 [`AVCS_READ_TIMEOUT`] 안에 답하지 않거나·권한이 없으면 TS 기본값 `{ connected: false }`.
 //!     값은 [`AVCS_CACHE`] 동안 프로세스 안에 둔다(프로브가 DB 를 두드리지 않게).
-//! - `/metrics` 는 계정 인증(TS `requireAccount`). DB 로 셀 수 있는 게이지만 같은 이름으로 낸다 — 빠진 것은 PR 본문 참고.
+//! - `/metrics` 는 계정 인증(TS `requireAccount`). 요청 수·지연은 `http_metrics`(TS 와 같은 이름·라벨·버킷), 풀은 읽기(TS 와 같은 이름)·쓰기(`harkroom_db_write_pool_*`) 게이지.
 //! - `/projection/status` 는 여기 없다: Rust 투영 루프가 쓰는 `projection_status` 줄을 `directory::projection_status` 가 읽는다.
 use crate::auth::RequireAccount;
 use crate::routes::AppState;
@@ -224,11 +224,9 @@ const OLDEST_UNREAD: &str = "select a.handle, round(extract(epoch from (now() - 
 /// TS `GET /metrics`(Prometheus 텍스트 0.0.4). 게이지 하나가 실패하면 그 지표만 뺀다(TS 와 같다).
 pub async fn metrics(State(state): State<AppState>, _: RequireAccount) -> Response {
     let pool = &state.pool;
-    // TS 는 카운터·히스토그램 머리를 늘 먼저 싣는다. 앞단은 아직 요청을 세지 않으므로 머리만(빈 계열).
-    let mut out = String::from(
-        "# HELP harkroom_http_requests_total total http requests\n# TYPE harkroom_http_requests_total counter\n\
-         # HELP harkroom_http_request_duration_seconds request duration\n# TYPE harkroom_http_request_duration_seconds histogram\n",
-    );
+    // TS 와 같이 카운터·히스토그램을 늘 먼저 싣는다(`http_metrics`, 라우터 바깥 층이 센다).
+    let mut out = String::new();
+    crate::http_metrics::render(&mut out);
     let size = pool.size();
     let idle = pool.num_idle() as u32;
     gauge(
@@ -243,6 +241,21 @@ pub async fn metrics(State(state): State<AppState>, _: RequireAccount) -> Respon
         "db pool idle clients",
         idle,
     );
+    // 쓰기 풀(`DATABASE_WRITE_URL`) — 있을 때만. 막히면 3초 뒤 500 이 나는 풀이라 따로 본다.
+    if let Some(w) = &state.write {
+        gauge(
+            &mut out,
+            "harkroom_db_write_pool_total",
+            "db write pool clients (in use + idle)",
+            w.size(),
+        );
+        gauge(
+            &mut out,
+            "harkroom_db_write_pool_idle",
+            "db write pool idle clients",
+            w.num_idle() as u32,
+        );
+    }
     // `avcs_base_url` 은 null 일 수 있다(「앱에서 정한 것이 없다」 → env).
     let app: Result<Option<Option<String>>, _> =
         sqlx::query_scalar("select avcs_base_url from projection_config where id = true")
@@ -253,7 +266,12 @@ pub async fn metrics(State(state): State<AppState>, _: RequireAccount) -> Respon
             .flatten()
             .as_deref()
             .and_then(canonical_avcs)
-            .or_else(|| env_str("AVCS_BASE_URL").as_deref().and_then(canonical_avcs));
+            .or_else(|| {
+                crate::env_once::get(&crate::env_once::AVCS_BASE_URL)
+                    .map(str::trim)
+                    .filter(|v| !v.is_empty())
+                    .and_then(canonical_avcs)
+            });
         let rows: Result<Vec<(String, i64)>, _> =
             match &url {
                 None => Ok(Vec::new()),

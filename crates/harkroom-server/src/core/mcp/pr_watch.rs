@@ -269,9 +269,9 @@ async fn write<'c>(
 
 /// `pr.watch` 하나의 답. `None` 이면 TS 가 답한다.
 pub async fn answer(pool: &PgPool, me: &Account, args: &Value) -> Option<String> {
-    let v2 = crate::core::msg_post::delegation_v2(
-        std::env::var("HARKROOM_DELEGATION_V2").ok().as_deref(),
-    )?;
+    let v2 = crate::core::msg_post::delegation_v2(crate::env_once::get(
+        &crate::env_once::DELEGATION_V2,
+    ))?;
     let a = parse(args)?;
     if !v2 {
         return Some(denied("disabled"));

@@ -355,9 +355,9 @@ pub async fn patch(
         .map(|d| d.as_millis() as i64)
         .unwrap_or_default();
     // 고치기는 원인 제공자를 싣지 않는다(`principal: None`) — 이 스위치에 걸리는 판정이 없다. 모름이어도 답이 같다.
-    let enabled = mention_calls::principal_invoke_switch(
-        std::env::var("HARKROOM_PRINCIPAL_INVOKE").ok().as_deref(),
-    );
+    let enabled = mention_calls::principal_invoke_switch(crate::env_once::get(
+        &crate::env_once::PRINCIPAL_INVOKE,
+    ));
     match edit_in_tx(
         &st, &id, &message, &me.id, &text, &audience, now_ms, enabled,
     )

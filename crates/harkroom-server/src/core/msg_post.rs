@@ -601,9 +601,9 @@ async fn resolve_post(
             reply_grant_thread_id: thread_root,
             principal: principal.map(|id| mention_calls::Principal { id }),
             now_ms: link.now_ms,
-            principal_invoke_enabled: mention_calls::principal_invoke_switch(
-                std::env::var("HARKROOM_PRINCIPAL_INVOKE").ok().as_deref(),
-            ),
+            principal_invoke_enabled: mention_calls::principal_invoke_switch(crate::env_once::get(
+                &crate::env_once::PRINCIPAL_INVOKE,
+            )),
         },
     )
     .await
@@ -803,7 +803,7 @@ pub(crate) async fn post_tx(
             .execute(&mut *tx)
             .await?;
     }
-    let v2 = delegation_v2(std::env::var("HARKROOM_DELEGATION_V2").ok().as_deref());
+    let v2 = delegation_v2(crate::env_once::get(&crate::env_once::DELEGATION_V2));
     // 위임 글(C3b-2c-4b)은 v1 이면 앞 의무를 대체한다 — 스위치를 모르면 어느 쪽인지 정할 수 없으니 TS 로 넘긴다(fail-closed).
     if origin.delegation.is_some() && v2.is_none() {
         tx.rollback().await?;
@@ -908,9 +908,7 @@ pub(crate) async fn post_tx(
     // 여기서 적는다(꺼짐이면 적을 것이 없다).
     let implicit = implicit_delegation::mode(
         v2,
-        std::env::var("HARKROOM_DELEGATION_IMPLICIT")
-            .ok()
-            .as_deref(),
+        crate::env_once::get(&crate::env_once::DELEGATION_IMPLICIT),
     );
     // 상한에 막힌 부름은 C1c-4d-2 부터 Rust 가 맡는다 — 커밋 뒤 백스톱 카드([`post_in_tx`]).
     if author_is_agent

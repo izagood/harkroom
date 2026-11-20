@@ -272,9 +272,8 @@ async fn board(
     RequireAccount(me, _): RequireAccount,
     req: Request,
 ) -> Response {
-    let v2 = crate::core::msg_post::delegation_v2(
-        std::env::var("HARKROOM_DELEGATION_V2").ok().as_deref(),
-    );
+    let v2 =
+        crate::core::msg_post::delegation_v2(crate::env_once::get(&crate::env_once::DELEGATION_V2));
     let Some((compact, v2)) = parse(req.uri().query()).zip(v2) else {
         return crate::proxy::forward(State(st.up.clone()), ConnectInfo(peer), req).await;
     };

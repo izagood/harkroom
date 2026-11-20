@@ -48,7 +48,7 @@ fn view((id, repo, number, head, until): &Row) -> String {
 }
 
 fn v2_on() -> bool {
-    crate::core::msg_post::delegation_v2(std::env::var("HARKROOM_DELEGATION_V2").ok().as_deref())
+    crate::core::msg_post::delegation_v2(crate::env_once::get(&crate::env_once::DELEGATION_V2))
         .unwrap_or(false)
 }
 

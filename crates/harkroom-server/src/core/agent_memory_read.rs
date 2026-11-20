@@ -440,10 +440,10 @@ pub async fn bg_list(
         Ok(v) => v,
         Err(e) => return internal(e),
     };
-    // TS `backgroundEnabled()` 는 요청마다 env 를 읽는다.
-    let server_enabled = crate::loops::bg::background_enabled(
-        std::env::var("HARKROOM_BACKGROUND_ENABLED").ok().as_deref(),
-    );
+    // TS `backgroundEnabled()` 는 요청마다 env 를 읽는다 — 파드 안에서 값이 바뀌지 않으니 앞단은 한 번 읽은 값(`env_once`).
+    let server_enabled = crate::loops::bg::background_enabled(crate::env_once::get(
+        &crate::env_once::BACKGROUND_ENABLED,
+    ));
     let runs: String = match sqlx::query_scalar(BG_RUNS_SQL)
         .bind(&id)
         .fetch_one(&*read)

@@ -60,10 +60,8 @@ pub struct UploadState {
 
 /// `ATTACHMENT_MAX_BYTES` — 없으면 `None`(TS 가 어느 상한으로 도는지 모른다 → TS). 음이 아닌 정수가 아니면 `None`(TS `Number(...)` 의 NaN·소수 갈래는 옮기지 않는다 → TS).
 pub fn max_bytes_from_env() -> Option<u64> {
-    match std::env::var("ATTACHMENT_MAX_BYTES") {
-        Err(_) => None,
-        Ok(v) => v.trim().parse::<u64>().ok(),
-    }
+    crate::env_once::get(&crate::env_once::ATTACHMENT_MAX_BYTES)
+        .and_then(|v| v.trim().parse::<u64>().ok())
 }
 
 /// TS `displayName` — 경로를 떼고(역슬래시도 구분자), 제어문자(U+0000–U+001F, U+007F)를 지우고, 앞뒤 공백을 자르고,

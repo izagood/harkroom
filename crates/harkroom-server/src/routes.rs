@@ -409,6 +409,7 @@ pub fn router(state: AppState, table: &[Moved], ts: &TsOverrides) -> Router {
     let mut by_path: BTreeMap<&str, MethodRouter<AppState>> = BTreeMap::new();
     let mut open_paths: HashSet<&str> = HashSet::new();
     LazyLock::force(&crate::health::STARTED_AT);
+    crate::env_once::force_all();
     let writes = writes_for(&state);
     for m in table
         .iter()

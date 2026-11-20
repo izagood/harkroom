@@ -20,9 +20,9 @@ pub fn mandate_switch(v: Option<&str>) -> Option<bool> {
     (!v.trim().is_empty()).then(|| mandate_enforced(Some(v)))
 }
 
-/// [`mandate_switch`] 를 지금 환경에서. 부를 때마다 읽는다.
+/// [`mandate_switch`] 를 지금 환경에서. env 는 프로세스에서 한 번 읽는다(`env_once`).
 pub fn mandate_enforced_env() -> Option<bool> {
-    mandate_switch(std::env::var("HARKROOM_MANDATE_ENFORCE").ok().as_deref())
+    mandate_switch(crate::env_once::get(&crate::env_once::MANDATE_ENFORCE))
 }
 
 /// TS `LeaseRow`.
