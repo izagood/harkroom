@@ -9,7 +9,7 @@
 //!   고친 본문으로 넣은 뒤 [`super::mention_fanout::fan_out_calls`] 로 inbox·푸시 줄을 넣는다. 새 머리의 위임은
 //!   [`super::mandate_stamp::stamp_root`]. 받은 사람마다 `inbox.updated`, 응답 헤더에 받은 사람 수·id(TS 와 같은 순서).
 //! - **답글**(C1c-3a): 트랜잭션 첫 줄에서 머리가 이 채널의 최상위 글인지(아니면 400 `bad_thread`), seq 락 뒤에서 이 스레드가
-//!   아직 TS 몫인지([`TS_THREAD_SQL`] — 담당 위임·카드 답으로 읽힐 글이면 되돌리고 TS 로) 본다. 맡으면 머리·
+//!   아직 TS 몫인지([`TS_THREAD_SQL`] — 카드 답으로 읽힐 글이면 되돌리고 TS 로) 본다. 맡으면 머리·
 //!   `alsoInChannel` 을 넣고, 부름 뒤 머리의 위임을 잇고([`super::mandate_stamp::stamp_reply`]), 머리 주인에게 호출 게이트를 지난
 //!   `thread_reply` 를 넣는다(TS 와 같이 위임 판정 **뒤**).
 //! - **깨움 선점**(C1c-3b): 그 뒤 이 스레드의 남의 열린 깨움을 접거나(이 글이 부른 계정) 지금 깨운다([`super::wake_preempt`]).
@@ -17,7 +17,7 @@
 //! - **에이전트 글**(C1c-4a): PAT·오퍼레이터로 선 에이전트의 REST 글도 맡는다(원인·턴 id 가 없는 판). 회신권 「결과 한 번」 락
 //!   (`REPLY_LOCK_CLASS`)을 채널 락 앞에 잡고, 부름이 실제로 간 에이전트에게 회신권을 열고(`openReplyGrants`) 답글이면 받은
 //!   회신권을 닫는다(`closeReplyGrants`). 위임 키·깨움 선점·카드 닫기는 TS 와 같이 사람 글에만. 아직 TS 로 넘기는 것:
-//!   상한에 막힌 부름(백스톱 카드)과 암묵 위임 스위치를 모르는 부름. 스위치를 알면 암묵 위임은 [`implicit_delegation`] 이 적는다(C1c-4d).
+//!   암묵 위임 쓰기 권한이 빠진 서버의 부름. 스위치 값이 없으면 TS 기본값으로 맡고, 암묵 위임은 [`implicit_delegation`] 이 적는다(C1c-4d).
 //! - **사슬 안의 에이전트 글**(C1c-4b): 앞 고리([`chain_link`])에서 깊이·사슬 시작을 잇고, 정체 홉([`super::chain_stall`])을 적고,
 //!   한도를 넘으면 막았을 부름을 `meta.mentionStallShadow` 에 남긴다(그림자 — 부름은 그대로 나간다).
 //! - 순서(TS 와 같다): 본문 읽기(413·400·415) → 인증(401, `route_layer`) → 경로·본문 검사(400) → 쓰기 게이트(403 `forbidden`·
@@ -144,7 +144,7 @@ pub struct PostState {
     pub write: PgPool,
     pub up: Upstream,
     /// 쓰기 풀에 암묵 위임 칸([`implicit_delegation::IMPLICIT_DELEGATION_PRIVILEGES`])이 있는가(C1c-4d). 없으면 암묵 위임을 적을
-    /// 수 있는 에이전트 부름은 지금처럼 TS 로 넘긴다.
+    /// 수 있는(모드가 꺼짐이 아닌) 에이전트 부름만 TS 로 넘긴다.
     pub implicit_ok: bool,
 }
 
@@ -179,23 +179,13 @@ struct Sql {
 
 /// C1c-3a 갈래 판정(TS 동작이 아니라 **어느 쪽이 맡을지**) — 이 스레드에 답하면 TS 가 아직 Rust 에 없는 부수효과를 내는가.
 /// 하나라도 참이면 트랜잭션을 버리고 TS 로 넘긴다. 조건은 그 부수효과의 문장보다 넓게(같거나 더 많이 걸리게) 잡는다:
-/// 작성자가 담당인 열린·보고된 위임 항목인데 위임 스위치를 모름(`$4` 가 거짓 — [`delegation_v2`] 가 `None`. 알면 C1c-3d 부터 Rust 가
-/// `closeDelegationsForReply` 의 사람 글 갈래를 한다) ·
-/// (지워진 머리는 C1c-3d 부터 Rust 가 `rootBack` 까지 맡는다.) 열린 선택 카드인데 글이 **카드 답으로 읽힐 수 있음**(`$3` 이 거짓 — TS `applyChatApproval` 의 글로 고르기, 받는 쪽·종류와
-/// 무관하게 카드 전부). 에이전트 글은 `$3` 이 참이다 — TS 라우트가 카드 고르기·접기를 사람 글에만 한다. 글이 물음뿐이면([`question_only`]) 고르기가 될 수 없어 Rust 가 맡고 카드를 `replied` 로 닫는다(C1c-3c).
+/// (담당의 글은 Rust 가 맡는다 — 위임 스위치 값이 없으면 TS 기본값 v0 으로. [`delegation_v2_on`])
+/// (지워진 머리는 C1c-3d 부터 Rust 가 `rootBack` 까지 맡는다.) 열린 선택 카드인데 글이 **카드 답으로 읽힐 수 있음**(`$2` 가 거짓 — TS `applyChatApproval` 의 글로 고르기, 받는 쪽·종류와
+/// 무관하게 카드 전부). 에이전트 글은 `$2` 가 참이다 — TS 라우트가 카드 고르기·접기를 사람 글에만 한다. 글이 물음뿐이면([`question_only`]) 고르기가 될 수 없어 Rust 가 맡고 카드를 `replied` 로 닫는다(C1c-3c).
 /// 쓰기 트랜잭션 안 seq 락 뒤에서 읽는다 — TS 가 같은 판정을 하는 때와 같은 창이다.
-const TS_THREAD_SQL: &str = "select (not $4::bool and exists(select 1 from team_delegation_item i join team_delegation d on d.id = i.delegation_id \
-                where d.thread_root_id = $1::uuid and i.delegate_account_id = $2::uuid \
-                  and (i.outcome is null or i.outcome = 'reported'))) \
-     or (not $3::bool and exists(select 1 from message where (id = $1::uuid or thread_root_id = $1::uuid) \
+const TS_THREAD_SQL: &str = "select not $2::bool and exists(select 1 from message where (id = $1::uuid or thread_root_id = $1::uuid) \
                 and deleted_at is null and meta->>'kind' = 'ask' \
-                and meta->'ask'->>'answeredWith' is null and meta->'ask'->>'closedAt' is null))";
-
-/// 결과를 닫는 글([`Origin::closes_delegation`])이 TS `closeDelegationsForReply` 의 닫기 갈래에 닿는가 — 작성자가 담당인 안 닫힌
-/// 항목(`outcome is null`)이 이 스레드에 있다. C3b-2c-2 부터 스위치(v0·v1)를 알면 Rust 가 같은 tx 로 닫는다. **스위치를 모르면**
-/// 어느 갈래로 닫을지 정할 수 없으므로 넓게 TS 로 넘긴다(fail-closed).
-const CLOSES_DELEGATION_SQL: &str = "select exists(select 1 from team_delegation_item i join team_delegation d on d.id = i.delegation_id \
-                where d.thread_root_id = $1::uuid and i.delegate_account_id = $2::uuid and i.outcome is null)";
+                and meta->'ask'->>'answeredWith' is null and meta->'ask'->>'closedAt' is null)";
 
 /// 이 글이 TS `parseAskPick` 에서 **반드시 null** 인가(카드 답이 될 수 없는가) — 넓게 TS 로 보내는 쪽으로만 틀린다.
 /// TS 는 코드·인용 줄·링크·멘션을 걷어 낸 나머지에 `?`·`？` 가 있으면 null(`QUESTION`)이다. 여기서는 걷어 낼 거리(백틱·`>` 인용 줄)가
@@ -224,7 +214,8 @@ fn ts_reason(reason: &str, author: &str, root: Option<&str>) {
 
 /// TS `delegationV2Enabled`(`HARKROOM_DELEGATION_V2`)을 Rust 가 읽는 법 — **값이 없으면 모른다**(`None`).
 /// TS 는 없으면 꺼짐(v0)으로 보지만, 앞단 컨테이너에 이 변수가 빠진 채 TS 만 켜져 있으면 두 서버가 다르게 군다. 그래서 Rust 는
-/// 값이 있을 때만 위임 갈래를 맡고(`1`·`on`·`true` → v1, 그 밖의 값 → v0 — TS 와 같은 낱말), 없으면 지금처럼 TS 로 넘긴다.
+/// 값이 있을 때만 위임 갈래를 맡고(`1`·`on`·`true` → v1, 그 밖의 값 → v0 — TS 와 같은 낱말), 없으면 TS 로 넘긴다(인박스·MCP 등).
+/// 글 쓰기는 [`delegation_v2_on`] 을 쓴다.
 /// TS 와 같이 부를 때마다 읽는다.
 pub(crate) fn delegation_v2(raw: Option<&str>) -> Option<bool> {
     let v = raw?.trim().to_lowercase();
@@ -232,6 +223,12 @@ pub(crate) fn delegation_v2(raw: Option<&str>) -> Option<bool> {
         return None;
     }
     Some(matches!(v.as_str(), "1" | "on" | "true"))
+}
+
+/// 글 쓰기가 쓰는 위임 스위치 — 값이 없거나 비면 TS `delegationV2Enabled` 의 기본값(꺼짐)이다. [`delegation_v2`] 의 「모름」을
+/// TS 로 넘기는 대신 TS 가 골랐을 값으로 맡는다.
+pub(crate) fn delegation_v2_on(raw: Option<&str>) -> bool {
+    delegation_v2(raw).unwrap_or(false)
 }
 
 fn sql() -> &'static Sql {
@@ -355,7 +352,7 @@ pub(crate) struct Origin<'a> {
     /// `closeDelegationsForReply` 가 그 항목을 닫고 위임자를 깨운다 — 아직 Rust 에 없는 갈래라 [`CLOSES_DELEGATION_SQL`] 로 TS 에 넘긴다.
     pub(crate) closes_delegation: bool,
     /// MCP `message.delegate`(C3b-2c-4b) — 게이트를 지난 위임. 있으면 같은 tx 에서 사슬 상한(TS `delegationChainCapped`)을 보고
-    /// 의무를 만든다(TS `createDelegation`, [`delegate_write`]). 위임 스위치를 모르면 TS 로 넘긴다.
+    /// 의무를 만든다(TS `createDelegation`, [`delegate_write`]). 위임 스위치 값이 없으면 v0 이다.
     pub(crate) delegation: Option<delegate_write::Plan<'a>>,
     /// TS `kind: 'system'`(S5.4 CH4b-2) — 서버가 사실을 남기는 줄(멤버 넣기·빼기). 라우트 입력에서는 켜지 않는다. TS `postMessage` 와 같이
     /// `kind` 칸이 `system` 이고 `meta`(`i18n` 포함)를 그대로 싣는다. 결과로는 센다(`countsAsReply`). 위임 키(`stampHumanMandate` 는
@@ -601,8 +598,9 @@ async fn resolve_post(
             reply_grant_thread_id: thread_root,
             principal: principal.map(|id| mention_calls::Principal { id }),
             now_ms: link.now_ms,
-            principal_invoke_enabled: mention_calls::principal_invoke_switch(crate::env_once::get(
-                &crate::env_once::PRINCIPAL_INVOKE,
+            // 값이 없으면 TS 기본값(켬)이다 — 글 쓰기는 「모름」으로 TS 에 넘기지 않는다.
+            principal_invoke_enabled: Some(mention_calls::principal_invoke_enabled(
+                crate::env_once::get(&crate::env_once::PRINCIPAL_INVOKE),
             )),
         },
     )
@@ -803,13 +801,8 @@ pub(crate) async fn post_tx(
             .execute(&mut *tx)
             .await?;
     }
-    let v2 = delegation_v2(crate::env_once::get(&crate::env_once::DELEGATION_V2));
-    // 위임 글(C3b-2c-4b)은 v1 이면 앞 의무를 대체한다 — 스위치를 모르면 어느 쪽인지 정할 수 없으니 TS 로 넘긴다(fail-closed).
-    if origin.delegation.is_some() && v2.is_none() {
-        tx.rollback().await?;
-        ts_reason("delegation_v2_unknown", author, root);
-        return Ok((Outcome::ToTs, None));
-    }
+    // 위임 스위치 — 값이 없으면 TS 기본값(꺼짐, v0)으로 글을 맡는다([`delegation_v2_on`]). 모른다고 TS 로 넘기지 않는다.
+    let v2 = delegation_v2_on(crate::env_once::get(&crate::env_once::DELEGATION_V2));
     // TS `mentionDepthFor` — 사람 글은 언제나 사슬 밖이다. 원인이 있으면 먼저 그 원인에서 물려받고(C1c-4c), 원인이 나를 깨운
     // 것이 아니면 스레드 스캔으로 간다.
     let from_cause = match (author_is_agent, origin.cause) {
@@ -898,15 +891,9 @@ pub(crate) async fn post_tx(
         )
         .await?
     };
-    // 원인 제공자 대행이 걸린 부름인데 앞단에 `HARKROOM_PRINCIPAL_INVOKE` 가 없다 — TS 가 어느 쪽인지 모르니 TS 로 넘긴다.
-    if calls.principal_switch_unknown {
-        tx.rollback().await?;
-        ts_reason("principal_switch_unknown", author, root);
-        return Ok((Outcome::ToTs, None));
-    }
-    // 에이전트 글의 아직 TS 몫인 부수효과 — 상한에 막힌 부름(백스톱 카드). 암묵 위임(C1c-4d)은 모드를 알고 쓰기 칸이 있을 때만
-    // 여기서 적는다(꺼짐이면 적을 것이 없다).
-    let implicit = implicit_delegation::mode(
+    // 암묵 위임(C1c-4d) 모드 — 값이 없으면 TS 기본값(v2 꺼짐이면 off, 켜짐이면 shadow)이다. 쓰기 칸이 있을 때만 여기서 적는다
+    // (꺼짐이면 적을 것이 없다).
+    let implicit = implicit_delegation::mode_or_default(
         v2,
         crate::env_once::get(&crate::env_once::DELEGATION_IMPLICIT),
     );
@@ -915,14 +902,12 @@ pub(crate) async fn post_tx(
         && is_result
         && !origin.system
         && !calls.called_ids.is_empty()
-        && match implicit {
-            None => true,
-            Some(implicit_delegation::Mode::Off) => false,
-            Some(_) => !st.implicit_ok,
-        }
+        && implicit != implicit_delegation::Mode::Off
+        && !st.implicit_ok
     {
+        // 암묵 위임 쓰기 권한이 빠진 서버 — 이 갈래만 남긴다(권한이 빠진 기능의 처리는 따로 정한다).
         tx.rollback().await?;
-        ts_reason("capped_call_implicit_unknown", author, root);
+        ts_reason("implicit_privileges_missing", author, root);
         return Ok((Outcome::ToTs, None));
     }
     sqlx::query(s.lock.as_str())
@@ -934,7 +919,6 @@ pub(crate) async fn post_tx(
     if let (true, Some(r)) = (is_result, root) {
         let ts: bool = sqlx::query_scalar(TS_THREAD_SQL)
             .bind(r)
-            .bind(author)
             // 시스템 줄은 카드 답이 되지 않는다(TS `closeAsksByReply` 는 라우트 몫) — ask 갈래를 끈다.
             // 에이전트 글도 그렇다 — TS 라우트는 카드 고르기(`applyChatApproval`)·카드 접기(`closeAsksByReply`)를 사람 글에만 하고,
             // MCP 도구는 서비스 `postMessage` 를 바로 부른다. 넘겨도 TS 가 할 카드 일이 없으니 Rust 가 맡는다.
@@ -945,24 +929,11 @@ pub(crate) async fn post_tx(
                     || origin.chat_ask_rust
                     || question_only(body),
             )
-            .bind(v2.is_some())
             .fetch_one(&mut *tx)
             .await?;
         if ts {
             tx.rollback().await?;
-            ts_reason("thread_delegation_or_open_ask", author, root);
-            return Ok((Outcome::ToTs, None));
-        }
-    }
-    if let (true, Some(r)) = (origin.closes_delegation && is_result && v2.is_none(), root) {
-        let closes: bool = sqlx::query_scalar(CLOSES_DELEGATION_SQL)
-            .bind(r)
-            .bind(author)
-            .fetch_one(&mut *tx)
-            .await?;
-        if closes {
-            tx.rollback().await?;
-            ts_reason("closes_delegation_v2_unknown", author, root);
+            ts_reason("thread_open_ask", author, root);
             return Ok((Outcome::ToTs, None));
         }
     }
@@ -1139,7 +1110,7 @@ pub(crate) async fn post_tx(
     // TS 는 `meta.kind` 가 `delegation` 인 글(`message.delegate`)을 암묵 위임으로 보지 않는다 — 그 도구가 진짜 위임을 만든다.
     let delegation_meta = origin.meta.get("kind").and_then(Value::as_str) == Some("delegation");
     // TS `input.kind !== 'system'` — 시스템 줄은 부름이 있어도 암묵 위임으로 보지 않는다.
-    if let (true, true, false, false, Some(mode)) = (
+    if let (true, true, false, false, mode) = (
         author_is_agent,
         is_result,
         delegation_meta,
@@ -1212,7 +1183,7 @@ pub(crate) async fn post_tx(
             .await?;
     }
     // TS `closeDelegationsForReply`(선점 뒤, 같은 tx) — 사람 글은 결과(`report`·`fail`)가 아니라 닫지 않고 깨우지 않는다:
-    // 기한만 밀고, v1 이면 「대기 중 update」로 적는다(턴 끝에 TS 스위퍼가 넘긴 쪽에 보낸다). 스위치를 모르면 위 가드가 이미 TS 로 넘겼다.
+    // 기한만 밀고, v1 이면 「대기 중 update」로 적는다(턴 끝에 TS 스위퍼가 넘긴 쪽에 보낸다). 스위치 값이 없으면 v0 이다.
     // 서버 알림 줄은 위임 의무를 닫지도 밀지도 않는다(TS `!input.serverNotice`).
     //
     // C3b-2c-2: 결과 글(`meta.kind` 가 `failure`·`report` — [`Origin::closes_delegation`])은 작성자가 담당인 안 닫힌 항목을 닫고,
@@ -1221,7 +1192,7 @@ pub(crate) async fn post_tx(
     // 닫은 항목이 하나라도 있었으면 대기 중 update 를 적지 않는다.
     let mut deleg = wake_preempt::Preempted::default();
     let mut deleg_woke: Vec<String> = Vec::new();
-    if let (false, Some(r), Some(on)) = (origin.server_notice, root, v2) {
+    if let (false, Some(r), on) = (origin.server_notice, root, v2) {
         let closing = origin.closes_delegation && is_result;
         if on || !closing {
             sqlx::query(s.deleg_touch.as_str())
@@ -1278,7 +1249,7 @@ pub(crate) async fn post_tx(
     // C3b-2c-4b `message.delegate` — TS `beforeCommit` 의 사슬 상한, 이어서 `createDelegation`. TS 는 의무를 커밋 뒤 다른 tx 로
     // 만들지만(그 사이 실패면 글만 남는다) 여기서는 같은 tx 다.
     let delegation_id = match (&origin.delegation, v2) {
-        (Some(plan), Some(on)) => {
+        (Some(plan), on) => {
             // TS 는 팀 명단 갈래(`team`)에서 사슬 상한을 보지 않는다(`!team && delegationChainCapped`).
             if plan.team_id.is_none()
                 && delegate_write::chain_capped(&mut tx, &id, now_ms()).await?
@@ -1919,7 +1890,7 @@ mod tests {
 
     #[test]
     fn delegation_v2_unset_means_unknown() {
-        // 값이 없거나 비면 모른다 → TS 로 넘긴다. 있으면 TS `delegationV2Enabled` 와 같은 낱말로 갈린다.
+        // 값이 없거나 비면 모른다(글 쓰기 밖의 길은 TS 로 넘긴다). 있으면 TS `delegationV2Enabled` 와 같은 낱말로 갈린다.
         assert_eq!(delegation_v2(None), None);
         assert_eq!(delegation_v2(Some("  ")), None);
         for on in ["1", "on", "TRUE", " On "] {
@@ -1928,6 +1899,15 @@ mod tests {
         for off in ["0", "off", "false", "yes"] {
             assert_eq!(delegation_v2(Some(off)), Some(false), "{off}");
         }
+    }
+
+    #[test]
+    fn delegation_v2_on_falls_back_to_ts_default() {
+        // 글 쓰기는 값이 없으면 TS 기본값(꺼짐)으로 맡는다 — 넘기지 않는다.
+        assert!(!delegation_v2_on(None));
+        assert!(!delegation_v2_on(Some("  ")));
+        assert!(delegation_v2_on(Some(" On ")));
+        assert!(!delegation_v2_on(Some("yes")));
     }
 
     #[test]

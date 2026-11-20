@@ -3440,11 +3440,11 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           const untilN = Date.now() + 10_000;
           while (!fN.log().includes('front: rust core routes') && Date.now() < untilN) await new Promise((res) => setTimeout(res, 100));
           expect(fN.log()).toContain('thread note core off — missing privileges');
-          // 가군 스위치를 주지 않은 앞단 — 스위치마다 「모름 → TS」로 기동한다(값을 준 앞단은 이 줄을 남기지 않는다).
+          // 가군 스위치를 주지 않은 앞단 — 스위치마다 값이 없다고 알리며 기동한다(값을 준 앞단은 이 줄을 남기지 않는다). 글 쓰기는 TS 기본값으로 맡는다.
           const UNSET_LINES = [
-            'front: principal-invoke posts to TS — HARKROOM_PRINCIPAL_INVOKE unset',
+            'front: principal-invoke edits to TS — HARKROOM_PRINCIPAL_INVOKE unset',
             // 위임 v2 값이 없으면 암묵 위임 줄 대신 v2 스위치 자체를 알린다(암묵 위임은 v2 가 켜졌을 때만 뜻이 있다).
-            'front: delegation posts and inbox to TS — HARKROOM_DELEGATION_V2 unset',
+            'front: delegation inbox to TS — HARKROOM_DELEGATION_V2 unset',
             'front: attachment upload to TS — ATTACHMENT_MAX_BYTES unset',
             'front: background list to TS — HARKROOM_BACKGROUND_ENABLED unset',
           ];
@@ -10047,16 +10047,16 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           ['DM 에이전트(누구나) → dm', async () => '', () => ({ body: '봐 줘' }), A, undefined, dmBot2],
           ['DM 에이전트(주인만) → 게이트 막힘', async () => '', () => ({ body: '봐 줘' }), member.token, undefined, dmBot],
           ['머리 id 가 null → 400', async () => '', () => ({ body: '답', threadRootId: null }), A],
-          // 앞단에 `HARKROOM_DELEGATION_V2` 가 없으면 스위치를 모르니 TS 로(아래에서 값을 준 앞단으로 v0·v1 을 견준다).
-          ['담당 사람 글, 스위치 모름 → TS 몫', withDelegation, (r) => ({ body: '작업하는 중', threadRootId: r }), A, 'ts'],
+          // 앞단에 `HARKROOM_DELEGATION_V2` 가 없으면 TS 기본값(꺼짐, v0)으로 Rust 가 맡는다(아래에서 값을 준 앞단으로 v0·v1 을 견준다).
+          ['담당 사람 글, 스위치 값 없음 → v0 로 Rust', withDelegation, (r) => ({ body: '작업하는 중', threadRootId: r }), A],
           // C1c-4a — 에이전트(PAT) 글. BOT 은 주인만(회신권을 주는 쪽), BOT2 는 누구나.
           ['에이전트 최상위 글(부름 없음)', async () => '', () => ({ body: '보고 드림' }), agent.pat, undefined, freshCh],
           ['에이전트 답글 → 머리 주인 thread_reply · 받은 회신권 닫음', withGrant, (r) => ({ body: '결과다', threadRootId: r }), agent.pat],
           ['에이전트 답글(누구나) → 남의 회신권 그대로', withGrant, (r) => ({ body: '덧붙임', threadRootId: r }), bot2.pat],
           ['에이전트 DM → 상대에게 dm', async () => '', () => ({ body: '알림' }), bot2.pat, undefined, dmBot2],
           ['에이전트 머리 id 가 null → 400', async () => '', () => ({ body: '답', threadRootId: null }), agent.pat],
-          // 아직 TS 몫 — 부름은 암묵 위임 스위치를 모르면(C1c-4d), 사슬 안의 글은 정체 홉(C1c-4b).
-          ['에이전트 부름, 암묵 위임 스위치 모름 → TS 몫', async () => '', () => ({ body: '@mem 봐 줘' }), agent.pat, 'ts', freshCh],
+          // 위임 스위치 값이 없으면 v0 — 암묵 위임은 꺼짐이고 부름이 든 에이전트 글도 Rust 가 맡는다.
+          ['에이전트 부름, 스위치 값 없음 → Rust', async () => '', () => ({ body: '@mem 봐 줘' }), agent.pat, undefined, freshCh],
           // C1c-4b — 사슬 안의 에이전트 글: 깊이·정체 홉·사슬 시작(앞 고리 시각)을 TS 와 같게 적는다.
           ['사슬 안 에이전트 답(결과물 없음) → 정체 +1', withChainBy(() => bot2.accountId, 2, 1), (r) => ({ body: '봤다', threadRootId: r }), agent.pat],
           ['사슬 안 에이전트 답(새 sha) → 정체 0', withChainBy(() => bot2.accountId, 2, 3), (r) => ({ body: 'head abc1234 올림', threadRootId: r }), agent.pat],
@@ -10294,7 +10294,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         type D = { deleg: Record<string, unknown>[]; count: string };
         expect((delegOut['1'] as D[])[0]!.deleg).toEqual([{ outcome: null, active: true, pending: true, pending_at: true, pushed: true }]);
         expect((delegOut['0'] as D[])[0]!.deleg).toEqual([{ outcome: null, active: false, pending: false, pending_at: false, pushed: true }]);
-        expect((tsOut as D[]).find((x) => (x as unknown as { name: string }).name === '담당 사람 글, 스위치 모름 → TS 몫')!.deleg)
+        expect((tsOut as D[]).find((x) => (x as unknown as { name: string }).name === '담당 사람 글, 스위치 값 없음 → v0 로 Rust')!.deleg)
           .toEqual([{ outcome: null, active: false, pending: false, pending_at: false, pushed: true }]);
         expect(handedOnRust, 'TS 몫 스레드의 답은 Rust outbox 에 없다').toEqual([]);
         // C1c-4d — 대조가 「둘 다 안 적음」으로 같아지지 않게 TS 쪽 판정을 못 박는다.
@@ -10381,7 +10381,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         for (const mode of ['1', '0']) {
           expect(chainOf(delegOut[mode], '정체 한도 → 그림자 기록'), mode).toEqual({ ...c0, depth: 2, stall: 4, shadow: { wouldCap: ['BOT2'], stallDepth: 4, limit: 4 } });
         }
-        expect(by('에이전트 부름, 암묵 위임 스위치 모름 → TS 몫').inbox).toEqual([{ who: 'MEM', reason: 'mention' }]);
+        expect(by('에이전트 부름, 스위치 값 없음 → Rust').inbox).toEqual([{ who: 'MEM', reason: 'mention' }]);
         for (const mode of ['1', '0']) {
           const d = delegOut[mode] as unknown[];
           expect(byG(d, '에이전트가 에이전트를 부름 → 회신권 열기').grants, mode).toEqual([{ grantee: 'BOT2', granter: 'BOT', closed: false, ttl: true }]);
@@ -10431,7 +10431,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
 
       // S5.3 C1c-4c — MCP `message.post`(원인 입력 + 몸통). 같은 장면을 서버마다 새로 깔고(원인 글·inbox·임대), 같은 도구 호출을 TS `/mcp` 와
       // 앞단에 보내 답(아이디·시각을 지운 꼴)과 남은 행(깊이·정체·사슬 고리·턴 id·모델·위임·principal)을 견준다. Rust 가 답했는지는
-      // `x-harkroom-core: mcp` 로 가른다. 기본 앞단은 암묵 위임 스위치를 모르므로 부름이 든 글은 TS 몫이다(C1c-4d) — 장면은 부름 없이 짠다.
+      // `x-harkroom-core: mcp` 로 가른다. 장면은 부름 없이 짠다.
       {
         expect(f.log()).not.toContain('mcp message.post core off');
         expect(f.log()).not.toContain('mcp turn.wake core off');
@@ -11993,8 +11993,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
               }
             }
           };
-          const PRINCIPAL_LINE = 'front: principal-invoke posts to TS — HARKROOM_PRINCIPAL_INVOKE unset';
-          const IMPLICIT_LINE = 'front: agent calls under delegation v2 to TS — HARKROOM_DELEGATION_IMPLICIT unset';
+          const PRINCIPAL_LINE = 'front: principal-invoke edits to TS — HARKROOM_PRINCIPAL_INVOKE unset';
+          const IMPLICIT_LINE = 'front: implicit delegation defaults to shadow — HARKROOM_DELEGATION_IMPLICIT unset';
           try {
             const K = await front({});
             const noPrincipal = await front({ HARKROOM_PRINCIPAL_INVOKE: '' });
@@ -12017,20 +12017,20 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                 `select meta ? 'invokedAsPrincipal' as as_principal, meta ? 'mentionDenied' as denied from message where id = $1`, [id])).rows[0] : undefined;
               return { rust: r.core === 'mcp', posted: !!id, asPrincipal: row?.as_principal, denied: row?.denied };
             };
-            // (가) 원인 제공자 대행 — 대행으로 열릴 부름이 있는 글만 TS 로 간다. TS 는 스위치가 없으면 켜짐이라 대행으로 연다.
+            // (가) 원인 제공자 대행 — 스위치 값이 없으면 TS 기본값(켜짐)으로 Rust 가 대행으로 연다.
             expect(await post(K.url, '@s55gapbot 이것 봐 줘', true), '값을 준 앞단: Rust 가 대행으로 연다')
               .toEqual({ rust: true, posted: true, asPrincipal: true, denied: false });
-            expect(await post(noPrincipal.url, '@s55gapbot 이것 봐 줘', true), '스위치 없는 앞단: TS 가 답한다')
-              .toEqual({ rust: false, posted: true, asPrincipal: true, denied: false });
+            expect(await post(noPrincipal.url, '@s55gapbot 이것 봐 줘', true), '스위치 없는 앞단: Rust 가 TS 기본값(켜짐)으로 답한다')
+              .toEqual({ rust: true, posted: true, asPrincipal: true, denied: false });
             expect(await post(tsUrl, '@s55gapbot 이것 봐 줘', true), 'TS 직접')
               .toEqual({ rust: false, posted: true, asPrincipal: true, denied: false });
             // 대행이 걸리지 않는 글(원인 없음 → 막힌 부름으로 적힘)은 스위치가 없어도 Rust 가 답한다.
             expect(await post(noPrincipal.url, '@s55gapbot 이것 봐 줘', false), '대행이 없으면 스위치와 무관')
               .toEqual({ rust: true, posted: true, asPrincipal: false, denied: true });
-            // (나) 암묵 위임 — 위임 스위치가 켜져 있는데 암묵 위임 값이 없으면 에이전트의 부름은 TS 로 간다. 부름 없는 글은 Rust 가 답한다.
+            // (나) 암묵 위임 — 위임 스위치가 켜져 있는데 암묵 위임 값이 없으면 TS 기본값(shadow)으로 Rust 가 답한다.
             expect((await post(K.url, '@mem 봐 줘', false)).rust, '값을 준 앞단: Rust 가 부름을 답한다').toBe(true);
-            expect(await post(noImplicit.url, '@mem 봐 줘', false), '암묵 위임 값 없는 앞단: TS 가 답한다')
-              .toEqual({ rust: false, posted: true, asPrincipal: false, denied: false });
+            expect(await post(noImplicit.url, '@mem 봐 줘', false), '암묵 위임 값 없는 앞단: Rust 가 답한다')
+              .toEqual({ rust: true, posted: true, asPrincipal: false, denied: false });
             expect((await post(noImplicit.url, '부름 없는 글', false)).rust, '부름이 없으면 스위치와 무관').toBe(true);
             // 위 글들의 호출함 이벤트(outbox)가 다 나간 뒤에 넘어간다 — 다음 블록이 「이벤트 없음」을 센다.
             await new Promise((res) => setTimeout(res, 1500));
