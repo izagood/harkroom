@@ -122,7 +122,7 @@ jobs:
     # 번들을 실제로 말아야만** 드러나는 고장이 이미 여러 번 나왔다:
     #
     # - `tauri-plugin-notification` 의 크레이트/JS 버전 불일치(#440) — `cargo check` 는 통과했다.
-    # - `build:sidecar` 를 잊으면 `resource path 'binaries/harkroom-runner-…' doesn't exist`(#441).
+    # - `build:sidecar` 를 잊으면 `resource path 'binaries/harkroom-…' doesn't exist`(#441).
     # - macOS 에서만 통과하는 테스트(반대 방향도 마찬가지다).
     #
     # 그래서 이 잡의 질문은 하나다: **"macOS 에서 앱이 실제로 빌드되고, 그 안에 들어갈 것이
@@ -167,7 +167,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       # **사이드카가 `tauri build` 보다 반드시 앞이다.** `tauri.conf.json` 의 `externalBin` 이
-      # `binaries/harkroom-runner`·`binaries/harkroom-operator-rs` 등을 요구하고, 없으면 번들 단계가
+      # `binaries/harkroom-operator-rs`·`binaries/harkroom-runner-rs` 를 요구하고, 없으면 번들 단계가
       # `resource path … doesn't exist` 로 죽는다(#441). 사람이 기억해야 하는 순서를 여기에
       # 못박는 것이 이 잡이 #441 을 닫는 방식이다.
       - run: pnpm --filter @harkroom/desktop build:sidecar
@@ -205,20 +205,14 @@ jobs:
       #
       # `tauri build` 가 성공했다는 것과 배포 가능한 `.app` 이 나왔다는 것은 다른 명제다.
       # #441 류의 고장은 "빌드는 됐는데 앱 안에 사이드카가 없다"는 모양으로 나타난다.
-      # 그래서 번들을 열어 **실제로 들어가야 할 넷**을 확인한다:
+      # 그래서 번들을 열어 **실제로 들어가야 할 셋**을 확인한다:
       #
       #   Contents/MacOS/harkroom-desktop           ← 본체
-      #   Contents/MacOS/harkroom-runner            ← externalBin (하네스를 돌린다)
-      #   Contents/MacOS/harkroom-operator-rs         ← externalBin (오퍼레이터, 러너를 spawn 한다)
-      #   (옛 Node 오퍼레이터 `harkroom-operator` 는 **없어야** 한다 — P2 에서 걷었다)
-      #   Contents/Resources/node_modules/node-pty ← bundle.resources (러너가 PTY 를 연다)
+      #   Contents/MacOS/harkroom-operator-rs       ← externalBin (오퍼레이터, 러너를 spawn 한다)
+      #   Contents/MacOS/harkroom-runner-rs         ← externalBin (Rust 러너, 하네스를 돌린다)
       #
-      # 마지막 항목이 `Resources/` 인 것은 Tauri 가 `bundle.resources` 를 거기 두기 때문이다.
-      # 러너는 자기 위치에서 `../Resources/node_modules/node-pty` 를 계산해 해석한다
-      # (`packages/agent/src/nodePtyLoader.ts`) — **번들에 링크를 만들지 않는다**(`#470`).
-      # 예전에는 `ensure_node_pty_alongside_sidecar()` 가 사이드카 옆으로 링크했는데,
-      # 그 링크가 `staple` 을 거절시켜(`invalid destination for symbolic link in bundle`)
-      # 걷어냈다. 그러니 여기서 볼 자리는 `MacOS/` 가 아니라 `Resources/` 다.
+      # 그리고 **없어야 할 것**: 옛 Node 오퍼레이터 `harkroom-operator`(P2), Node 러너 `harkroom-runner` 와
+      # 그것이 쓰던 `Contents/Resources/node_modules`(node-pty). 번들은 Rust 사이드카만 싣는다.
       # 링크 SDK — 릴리스가 서명 전에 보는 것과 같은 스크립트다. 여기서도 부르는 것은 이 잡이
       # `macos-latest`(지금 macos-26) 라 통과해야 정상이고, 그래서 스크립트 자체의 회귀선이 된다.
       # 라벨이 옮겨 가 SDK 가 26 아래로 내려가는 일은 없지만, 올라가도 통과한다.
@@ -249,8 +243,8 @@ jobs:
           missing=0
           for f in \
             "$app/Contents/MacOS/harkroom-desktop" \
-            "$app/Contents/MacOS/harkroom-runner" \
-            "$app/Contents/MacOS/harkroom-operator-rs"
+            "$app/Contents/MacOS/harkroom-operator-rs" \
+            "$app/Contents/MacOS/harkroom-runner-rs"
           do
             if [ -x "$f" ]; then
               echo "ok  $f"
@@ -266,22 +260,23 @@ jobs:
             missing=1
           fi
 
-          pty="$app/Contents/Resources/node_modules/node-pty"
-          if [ -d "$pty" ]; then
-            echo "ok  $pty"
-          else
-            echo "::error::node-pty 리소스가 없다: $pty"
-            missing=1
-          fi
+          # Node 러너와 그 node-pty 는 번들에 없어야 한다 — 앱의 턴은 전부 Rust 러너로 돈다.
+          for gone in \
+            "$app/Contents/MacOS/harkroom-runner" \
+            "$app/Contents/Resources/node_modules"
+          do
+            if [ -e "$gone" ]; then
+              echo "::error::Node 러너의 것이 번들에 남아 있다: $gone"
+              missing=1
+            else
+              echo "ok  없음: $gone"
+            fi
+          done
 
           # 번들 안에 심볼릭 링크가 없어야 한다(`#470`).
           #
           # `#433` 이 만들던 `Contents/MacOS/node_modules` 링크가 공증의 `staple` 을
-          # 거절시켰다(`invalid destination for symbolic link in bundle`). 지금은 러너가
-          # 자기 위치에서 `../Resources` 를 계산해 해석하므로 링크가 필요 없다.
-          #
-          # **위 `-d` 검사만으로는 이 회귀를 못 잡는다** — `-d` 는 심볼릭 링크를 따라가서,
-          # 링크로 되돌아가도 통과한다. 그래서 링크 자체를 따로 센다.
+          # 거절시켰다(`invalid destination for symbolic link in bundle`). 링크 자체를 센다.
           links=$(find "$app" -type l | wc -l | tr -d ' ')
           if [ "$links" = "0" ]; then
             echo "ok  심볼릭 링크 0개"

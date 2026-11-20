@@ -56,7 +56,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 /// 오퍼레이터 사이드카의 이름 — Rust 오퍼레이터(`crates/harkroom-operator` 의 `harkroom-operator`)다.
-/// **`tauri.conf.json` 의 `bundle.externalBin` 항목과 같아야 한다** — 러너 쪽 `RUNNER_SIDECAR_NAME` 과 같은 계약이다.
+/// **`tauri.conf.json` 의 `bundle.externalBin` 항목과 같아야 한다** — 이름이 갈리면 번들에서 못 찾는다.
 /// 앱이 띄우는 오퍼레이터는 이것 하나다(P2 — Node 오퍼레이터와 구현 스위치 `HARKROOM_OPERATOR_IMPL` 를 걷었다).
 pub const OPERATOR_SIDECAR_NAME: &str = "harkroom-operator-rs";
 
@@ -64,10 +64,6 @@ pub const OPERATOR_SIDECAR_NAME: &str = "harkroom-operator-rs";
 /// Node 오퍼레이터가 소켓을 쥐고 남아 있으면 그것이 「내 번들의 옛 구현」인지 알아보고 내리는 데만 쓴다(`ensure_at` 의 G2·
 /// 기동 때 `retire_operators_at`). 같은 설치 경로(`/Applications/Harkroom.app/Contents/MacOS/…`)라 판을 올려도 경로가 같다.
 pub const LEGACY_NODE_OPERATOR_SIDECAR_NAME: &str = "harkroom-operator";
-
-/// Rust 오퍼레이터가 띄울 러너 사이드카. 오퍼레이터는 `--runner-command` 로 받는다
-/// (클라이언트는 프로그램을 못 고른다 — 이 값도 Rust 상수다).
-pub const RUNNER_SIDECAR_FOR_OPERATOR: &str = "harkroom-runner";
 
 /// **내 번들**의 오퍼레이터 실행 파일 자리 — 지금 판(Rust)과 옛 판(Node). 회수는 기록의 `entryPath` 가 이 중 하나일 때만 한다
 /// (G2·#2254 security L1) — 같은 HOME 의 dev·시험 빌드가 릴리스 앱의 오퍼레이터를 내리지 않게 한다.
@@ -1683,7 +1679,6 @@ fn spawn_daemon(
             .app_data_dir()
             .map_err(|e| format!("앱 데이터 디렉터리를 찾지 못했다: {e}"))?
     };
-    let runner = crate::sidecar_path(RUNNER_SIDECAR_FOR_OPERATOR)?;
     let mut cmd = rust_daemon_command(
         &program,
         paths,
@@ -1692,7 +1687,6 @@ fn spawn_daemon(
         &RustServeArgs {
             base_url: &community.key,
             app_data_root: &app_data_root(&app_data_dir),
-            runner: &runner,
         },
     );
     // 커뮤니티마다 모드: 이 오퍼레이터(와 그 러너)가 맡은 커뮤니티·뿌리를 준다. 오퍼레이터는 이 값으로 계정 선택
@@ -2123,7 +2117,6 @@ struct RustServeArgs<'a> {
     base_url: &'a str,
     /// `operators.json` 색인이 있는 앱 데이터 뿌리 — 앱이 방금 적은 색인 칸을 오퍼레이터가 같이 읽는다.
     app_data_root: &'a Path,
-    runner: &'a Path,
 }
 
 /// Rust 오퍼레이터(`harkroom-operator-rs serve`)를 띄울 `Command` (S2 A4②).
@@ -2142,15 +2135,14 @@ fn rust_daemon_command(
     use std::process::Stdio;
 
     let mut cmd = crate::detached_command(program);
-    // 러너 사이드카가 셔뱅 스크립트(`#!/usr/bin/env node`)라 Node 판과 같은 `PATH` 가 필요하다(`#513`).
+    // 러너가 하네스(`claude`·`codex` 등)를 `PATH` 에서 찾는다 — 로그인 셸의 `PATH` 를 준다(`#513`).
+    // 러너 프로그램은 넘기지 않는다: 번들에 node 러너가 없고, 오퍼레이터는 자기 옆의 Rust 러너를 스스로 찾는다.
     cmd.env("PATH", crate::login_path::child_path());
     cmd.arg("serve")
         .arg("--base-url")
         .arg(serve.base_url)
         .arg("--app-data")
         .arg(serve.app_data_root)
-        .arg("--runner-command")
-        .arg(serve.runner)
         .arg("--app-version")
         .arg(app_version)
         .arg("--launch-nonce")
@@ -3314,7 +3306,6 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
             &RustServeArgs {
                 base_url: "https://c.example.com",
                 app_data_root: Path::new("/D/app"),
-                runner: Path::new("/A/harkroom-runner"),
             },
         );
         let args: Vec<String> = cmd
@@ -3329,8 +3320,6 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
                 "https://c.example.com",
                 "--app-data",
                 "/D/app",
-                "--runner-command",
-                "/A/harkroom-runner",
                 "--app-version",
                 "0.4.999",
                 "--launch-nonce",
@@ -3340,7 +3329,7 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
         assert!(
             cmd.get_envs()
                 .any(|(k, v)| k == std::ffi::OsStr::new("PATH") && v.is_some()),
-            "Rust 오퍼레이터 커맨드에 PATH 가 없다 — 러너 셔뱅의 `node` 를 못 찾는다"
+            "Rust 오퍼레이터 커맨드에 PATH 가 없다 — 러너가 하네스를 못 찾는다"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

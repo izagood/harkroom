@@ -331,11 +331,13 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
   });
 
   it('사이드카 이름이 고정 리터럴이다', () => {
-    expect(mainRs).toContain('const RUNNER_SIDECAR_NAME: &str = "harkroom-runner"');
     expect(daemonRs).toContain('pub const OPERATOR_SIDECAR_NAME: &str = "harkroom-operator-rs"');
     // 옛 Node 이름은 회수(G2)용으로만 남는다 — 번들에 싣지 않는다(`daemonSidecar.test.ts`).
     expect(daemonRs).toContain('pub const LEGACY_NODE_OPERATOR_SIDECAR_NAME: &str = "harkroom-operator"');
-    expect(daemonRs).toContain('pub const RUNNER_SIDECAR_FOR_OPERATOR: &str = "harkroom-runner"');
+    // Node 러너는 번들에 없다 — 앱은 러너 프로그램을 오퍼레이터에 넘기지 않는다(오퍼레이터가 자기 옆의 Rust 러너를 찾는다).
+    expect(mainRs).not.toContain('RUNNER_SIDECAR_NAME');
+    expect(daemonRs).not.toContain('RUNNER_SIDECAR_FOR_OPERATOR');
+    expect(daemonRs).not.toContain('"--runner-command"');
   });
 
   /**

@@ -173,20 +173,6 @@ async fn secret_delete(key: String) -> Result<(), String> {
 // daemon 이 자기 쪽에서 같은 성질(`detached`)로 띄운다(옛 Node 오퍼레이터(P3 에서 지움)의 `src/runners.ts`).
 // ---------------------------------------------------------------------------
 
-/// 러너 사이드카의 스코프 이름. **`tauri.conf.json` 의 `bundle.externalBin` 항목 이름과
-/// 반드시 같아야 한다** — 다르면 번들 빌드가 그 이름으로 복사한 실행 파일을 여기서 못 찾는다.
-///
-/// **`#[cfg(test)]` 인 이유**: `#433` 을 닫으면서 프로덕션 경로에서 이 이름을 쓰는 자리가
-/// 사라졌다. 러너를 실제로 띄우는 것은 daemon 이고, daemon 은 **자기 위치에서** 러너 경로를
-/// 계산한다(옛 Node 오퍼레이터(P3 에서 지움)의 `src/run.ts` — 같은 디렉터리에 있다는 계약을 daemon 쪽이 안다).
-/// 앱은 배치에 더 이상 관여하지 않는다.
-///
-/// 그래도 지우지 않는 이유는 회귀선이 이 이름으로 **실행 위치의 사이드카를 실물로 띄우기**
-/// 때문이다 — 그 테스트가 `#433` 이 재려던 것("빌드 위치가 아니라 실행 위치에서 해석되는가")
-/// 을 계속 잰다.
-#[cfg(test)]
-const RUNNER_SIDECAR_NAME: &str = "harkroom-runner";
-
 /// 이 실행 파일(앱)과 같은 디렉터리에서 사이드카를 찾는다. Tauri 의 `externalBin` 번들링이
 /// `<name>-<target-triple>` 을 `<name>` 으로 이름을 바꿔 앱 실행 파일과 **같은 디렉터리**에
 /// 복사한다(`tauri-build::copy_binaries`) — 그래서 `current_exe()` 의 부모 디렉터리를 그대로
@@ -195,8 +181,8 @@ const RUNNER_SIDECAR_NAME: &str = "harkroom-runner";
 ///
 /// ## `name` 파라미터는 웹뷰의 입력이 아니다 (`#431` 2단계-b 3/3)
 ///
-/// daemon 도 사이드카가 되면서 이 함수가 이름을 받게 됐다. **그 이름을 넘기는 자리는 둘
-/// 뿐이고 둘 다 Rust 안의 상수다** — `RUNNER_SIDECAR_NAME` 과 `OPERATOR_SIDECAR_NAME`.
+/// daemon 도 사이드카가 되면서 이 함수가 이름을 받게 됐다. **그 이름을 넘기는 자리는 Rust 안의
+/// 상수뿐이다** — `OPERATOR_SIDECAR_NAME`(node 러너는 번들에서 빠져 그 이름은 없다).
 /// 웹뷰가 이 함수에 닿는 경로는 없다: 커맨드 시그니처 어디에도 프로그램 이름을 받는
 /// 파라미터가 없고, 그 성질을 `test/runnerShellScope.test.ts` 가 소스를 읽어 못박는다.
 ///
@@ -1295,7 +1281,7 @@ mod tests {
     //! 앱 프로세스 그룹 그대로였고, `kill -TERM -<그 그룹>` 한 번에 러너 전부가 죽었다.
     //! `setsid` 가 빠지면 이 테스트가 그 회귀를 그대로 재현한다 — "되돌려 RED" 절차가
     //! 확인하는 것이 정확히 이것이다.
-    use super::{detached_command, RUNNER_SIDECAR_NAME};
+    use super::detached_command;
     use std::process::Stdio;
     use std::{thread, time::Duration};
 
@@ -1343,91 +1329,5 @@ mod tests {
 
         let _ = child.kill();
         let _ = child.wait();
-    }
-
-    // -----------------------------------------------------------------------
-    // `#433` 회귀선 — **실행 위치**에서 `node-pty` 가 해석되는지를 잰다.
-    //
-    // `#431` 1단계가 이 결함을 놓친 이유가 "빌드 위치(`src-tauri/binaries/`)에서만
-    // 확인했다"이기 때문이다(이슈 본문 "왜 테스트가 못 잡았나" 참고). 그래서 이 테스트는
-    // **앱이 실제로 사이드카를 찾는 그 자리** — `cargo build`/`cargo test` 가 공유하는
-    // `target/<profile>/`(`sidecar_path()`가 `current_exe()`의 부모로 계산하는 것과 같은
-    // 디렉터리) — 에서 사이드카를 직접 spawn 해 `node-pty` 로딩이 성공하는지 확인한다.
-    // -----------------------------------------------------------------------
-
-    /// `cargo test` 가 만드는 테스트 바이너리는 `target/<profile>/deps/` 에 있어 그 부모를
-    /// 그대로 쓸 수 없다 — 대신 `CARGO_MANIFEST_DIR`(이 크레이트 루트) 기준으로 `target/`
-    /// 다음에 프로파일 이름을 붙인다. `cargo test`/`cargo build` 는 기본적으로 `debug`
-    /// 프로파일을 쓰고, 이 회귀선이 재려는 자리도 정확히 그 프로파일의 `target/debug/`다
-    /// (실물 확인 절차의 `target/debug/harkroom-runner` 와 같은 자리).
-    fn target_debug_dir() -> std::path::PathBuf {
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("target")
-            .join("debug")
-    }
-
-    #[test]
-    fn 사이드카_실행_위치에서_node_pty_가_해석된다() {
-        let dir = target_debug_dir();
-        let program = dir.join(RUNNER_SIDECAR_NAME);
-
-        // `build:sidecar` + `cargo build` 를 아직 안 돌렸으면 이 자리에 사이드카가 없다 —
-        // 이 테스트가 재려는 것은 "배치가 맞으면 통과"이지 "빌드를 대신 해준다"가 아니므로,
-        // 그 경우는 실패 대신 사람이 알아볼 수 있는 이유로 건너뛴다(CI 는 `build:sidecar` 를
-        // cargo 전에 반드시 돌리므로 정상 경로에서는 항상 존재한다).
-        if !program.is_file() {
-            eprintln!(
-                "건너뜀: 사이드카가 `{}` 에 없다 — 먼저 `pnpm --filter @harkroom/desktop build:sidecar` \
-                 와 `cargo build` 를 돌려라",
-                program.display()
-            );
-            return;
-        }
-
-        // **되돌려 RED 로 확인한 배치 계약**: 개발 빌드에서는 `node_modules` 가 사이드카와
-        // 같은 디렉터리에 있어야 한다 — 그것이 `nodePtyLoader.ts` 의 **첫 번째 후보**이고,
-        // 개발 빌드에는 `Contents/Resources` 라는 두 번째 후보가 아예 없다. 여기가 비면
-        // 아래 spawn 이 로더의 "node-pty 를 찾지 못했다" 로 죽는다.
-        //
-        // 배포 번들의 두 번째 후보는 이 자리에서 잴 수 없다(`.app` 이 있어야 한다) —
-        // 그쪽은 `test/bundleSignable.test.ts` 와 실물 검증 절차가 맡는다.
-        assert!(
-            dir.join("node_modules").join("node-pty").is_dir(),
-            "`{}` 옆에 `node_modules/node-pty` 가 없다 — `tauri.conf.json` 의 \
-             `bundle.resources` 가 사이드카와 같은 자리로 배치되는지 확인하라",
-            program.display()
-        );
-
-        let child = std::process::Command::new(&program)
-            .env("HARKROOM_PAT", "test-fake-pat")
-            // 접속하지 않는 포트 — node-pty 로딩 이후 단계(서버 접속)에서 무엇이 나든
-            // 이 테스트가 관심 있는 것은 그 전 단계(모듈 해석)뿐이다.
-            .env("HARKROOM_URL", "http://127.0.0.1:1")
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("사이드카를 못 띄웠다");
-
-        let output = child
-            .wait_with_output()
-            .expect("사이드카 종료를 기다리지 못했다");
-        let stderr = String::from_utf8_lossy(&output.stderr);
-
-        // **무엇을 찾는지가 바뀌었다.** 예전에는 정적 `import` 가 실패해
-        // `ERR_MODULE_NOT_FOUND` 가 났다. 지금은 러너가 `createRequire` 로 직접 해석하므로
-        // (`nodePtyLoader.ts`) 그 오류 코드는 **영영 안 난다** — 그것만 계속 보고 있으면 이
-        // 회귀선은 배치가 깨져도 초록으로 남는다. 그래서 **로더 자신이 던지는 문구**를 잰다.
-        //
-        // `ERR_MODULE_NOT_FOUND` 도 함께 본다: 누군가 정적 `import pty from 'node-pty'` 로
-        // 되돌리면 배포 번들에서 그 오류가 되살아나고, 그것도 이 회귀선이 잡아야 하는 결함이다.
-        assert!(
-            !stderr.contains("node-pty 를 찾지 못했다") && !stderr.contains("ERR_MODULE_NOT_FOUND"),
-            "사이드카가 실행 위치(`{}`)에서 `node-pty` 를 못 찾았다 — Tauri 는 \
-             `externalBin` 파일 하나만 복사하고 옆의 `node_modules` 는 안 가져간다(#433). \
-             stderr:\n{}",
-            program.display(),
-            stderr,
-        );
     }
 }

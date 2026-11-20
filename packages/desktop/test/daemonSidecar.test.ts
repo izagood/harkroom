@@ -39,27 +39,22 @@ describe('tauri.conf.json — daemon 이 externalBin 에 있다 (#431 2단계-a)
    * `tauri build` 가 daemon 을 번들에 넣지 않고, 그 사실은 배포된 앱이 daemon 을
    * 못 찾을 때 처음 드러난다.
    */
-  it('externalBin 이 러너와 Rust 오퍼레이터를 싣고 Node 오퍼레이터는 싣지 않는다', () => {
+  it('externalBin 이 Rust 오퍼레이터·Rust 러너만 싣는다 — Node 오퍼레이터·Node 러너는 싣지 않는다', () => {
     const externalBin = readTauriConf().bundle?.externalBin;
-    expect(externalBin).toContain('binaries/harkroom-runner');
+    expect(externalBin).not.toContain('binaries/harkroom-runner');
     // P2: 오퍼레이터는 Rust 하나다. 옛 Node 오퍼레이터(`binaries/harkroom-operator`)는 싣지 않는다 — 되돌리는 스위치도 없다.
     expect(externalBin).toContain('binaries/harkroom-operator-rs');
     expect(externalBin).not.toContain('binaries/harkroom-operator');
-    // B4-5b: Rust 러너도 실린다. 앱은 띄우지 않는다 — 오퍼레이터가 에이전트마다 고르는 것은 B4-5c 다.
+    // Rust 러너가 실린다 — 띄우는 것은 앱이 아니라 오퍼레이터다(자기 옆에서 찾는다).
     expect(externalBin).toContain('binaries/harkroom-runner-rs');
   });
 
   /**
-   * **`resources` 는 러너 것이다 — daemon 이 그것을 늘리면 안 된다.** `node-pty` 는
-   * PTY 를 여는 러너에만 필요하고, daemon 은 프로세스를 spawn 하고 소켓으로 말할 뿐이다.
-   * 리소스 항목이 늘어나면 daemon 이 쓰지도 않는 네이티브 애드온을 배포에 싣게 되고,
-   * macOS 의 `Contents/Resources` 배치·서명 문제(`main.rs` 의 알려진 한계)를 daemon 까지
-   * 끌고 들어간다.
+   * `resources` 는 비어 있다 — `node-pty` 는 Node 러너의 것이었고 그 러너는 번들에서 빠졌다. 다시 생기면 서명·공증이
+   * 그 안의 Mach-O 를 따로 챙겨야 한다(`sign-app.mjs`).
    */
-  it('resources 는 러너의 node-pty 하나뿐이다', () => {
-    expect(readTauriConf().bundle?.resources).toEqual({
-      'binaries/node_modules/node-pty': 'node_modules/node-pty',
-    });
+  it('resources 가 없다 — node-pty 를 싣지 않는다', () => {
+    expect(readTauriConf().bundle?.resources).toBeUndefined();
   });
 });
 
@@ -68,69 +63,29 @@ describe('오퍼레이터 사이드카 산출물', () => {
    * P2 — `build:sidecar` 는 옛 Node 오퍼레이터를 더 내지 않는다. 산출물 디렉터리는 빌드마다 통째로 비워지므로
    * (`build-sidecars.mjs`) 여기 `harkroom-operator-<triple>` 이 있으면 누군가 그 빌드를 되살린 것이다.
    */
-  it('Node 오퍼레이터 산출물이 없다', () => {
-    const runner = findSidecar('harkroom-runner');
-    if (!runner) {
+  it('Node 오퍼레이터·Node 러너 산출물이 없다', () => {
+    const operator = findSidecar('harkroom-operator-rs');
+    if (!operator) {
       console.warn(`건너뜀: 사이드카가 ${BINARIES_DIR} 에 없다 — ${SKIP_HINT}`);
       return;
     }
-    const nodeOperator = readdirSync(BINARIES_DIR).filter((f) => /^harkroom-operator-(?!rs-)/.test(f));
-    expect(nodeOperator).toEqual([]);
+    const node = readdirSync(BINARIES_DIR).filter(
+      (f) => /^harkroom-operator-(?!rs-)/.test(f) || /^harkroom-runner-(?!rs-)/.test(f) || f === 'node_modules',
+    );
+    expect(node).toEqual([]);
   });
 
   /**
-   * 대조군 — 러너 쪽은 **반대로** `node-pty` 를 필요로 한다. 이것이 없으면 위 검사가
-   * "빌드가 아무것도 안 해서 통과"하는 경우와 구분되지 않는다.
-   *
-   * ## 무엇을 재는지가 `#433` 을 닫으면서 바뀌었다
-   *
-   * 예전에는 러너 번들에 **정적 `import ... 'node-pty'`** 가 남는지를 봤다. 지금은 남지
-   * 않는다 — 그 import 가 배포 번들에서 해석되지 않는 것이 `#433` 의 결함 자체였고,
-   * 러너는 이제 런타임에 위치로 찾는다(`packages/agent/src/nodePtyLoader.ts`).
-   *
-   * 그래서 **로더가 번들에 들어갔는지**를 본다. 재려는 것(러너는 PTY 를 열고 daemon 은
-   * 열지 않는다)은 그대로이고, 그 사실이 번들에 남는 형태만 달라졌다. 옛 정규식을 그대로
-   * 두면 이 대조군은 영영 RED 다 — 실제로 그렇게 한 번 깨졌다(구현 중 실측).
+   * Rust 러너와 Rust 오퍼레이터가 **함께** 같은 triple 로 나온다. 갈리면 `tauri build --target` 이 다른 아키텍처를 싣는다.
    */
-  it('러너 번들은 node-pty 로더를 싣는다 (대조군)', () => {
-    const sidecar = findSidecar('harkroom-runner');
-    if (!sidecar) {
-      console.warn(`건너뜀: 러너 사이드카가 ${BINARIES_DIR} 에 없다 — ${SKIP_HINT}`);
-      return;
-    }
-    const source = readFileSync(sidecar, 'utf8');
-    // 로더가 후보 경로를 조립하는 자리 — 번들에 그대로 남는다(문자열 리터럴이다).
-    expect(source, '러너 번들에 node-pty 해석 경로가 있어야 한다').toContain('"node-pty"');
-    expect(source, '배포 번들의 리소스 자리를 알아야 한다').toContain('Resources');
-  });
-
-  /**
-   * **정적 `import` 로 되돌아가면 RED.** 그것이 `#433` 의 결함이다 — 배포 번들에서
-   * `Contents/MacOS` 위로는 `node_modules` 가 없어 ESM 해석기가 그것을 못 찾고,
-   * 예전에는 그 간극을 심볼릭 링크가 메웠다(그리고 그 링크가 `staple` 을 막았다).
-   */
-  it('러너 번들에 정적 node-pty import 가 없다 (#433)', () => {
-    const sidecar = findSidecar('harkroom-runner');
-    if (!sidecar) {
-      console.warn(`건너뜀: 러너 사이드카가 ${BINARIES_DIR} 에 없다 — ${SKIP_HINT}`);
-      return;
-    }
-    const source = readFileSync(sidecar, 'utf8');
-    expect(source, '정적 import 는 배포 번들에서 해석되지 않는다 — 런타임 해석이어야 한다')
-      .not.toMatch(/(?:^|\n)\s*import\s+[^;]*\s+from\s*["']node-pty["']/);
-  });
-
-  /**
-   * 러너와 오퍼레이터가 **함께** 같은 triple 로 나온다. 갈리면 `tauri build --target` 이 다른 아키텍처를 싣는다.
-   */
-  it('러너와 Rust 오퍼레이터가 같은 triple 로 함께 나온다', () => {
-    const runner = findSidecar('harkroom-runner');
+  it('Rust 러너와 Rust 오퍼레이터가 같은 triple 로 함께 나온다', () => {
+    const runner = findSidecar('harkroom-runner-rs');
     const operator = findSidecar('harkroom-operator-rs');
     if (!runner || !operator) {
       console.warn(`건너뜀: 사이드카가 ${BINARIES_DIR} 에 없다 — ${SKIP_HINT}`);
       return;
     }
-    const triple = (p: string) => path.basename(p).replace(/^harkroom-(runner|operator-rs)-/, '');
+    const triple = (p: string) => path.basename(p).replace(/^harkroom-(runner-rs|operator-rs)-/, '');
     expect(triple(operator)).toBe(triple(runner));
   });
 });
