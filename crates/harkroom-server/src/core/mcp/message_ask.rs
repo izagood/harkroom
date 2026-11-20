@@ -460,7 +460,7 @@ fn mirror_plain(o: &Map<String, Value>) -> bool {
 }
 
 /// TS `GATE_AWAITING_SQL`(`gateAwaitingAccount`) — $1 에이전트, $2 원인 멘션, $3 채널.
-fn gate_awaiting_sql() -> &'static str {
+pub(super) fn gate_awaiting_sql() -> &'static str {
     static S: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     S.get_or_init(|| {
         let v: Value = serde_json::from_str(include_str!("../../../golden/sql_fragments.json"))

@@ -339,6 +339,7 @@ pub async fn answer_picks(
         None,
         Some(&hook),
         None,
+        None,
     )
     .await
 }
@@ -540,17 +541,22 @@ struct FailArgs {
     retryable: bool,
     what: Option<String>,
     reason: Option<String>,
-    /// zod `z.enum(FAILURE_CODES)` 중 Rust 가 맡는 셋(`account_gate` 는 차례 주인·inbox 라 아직 TS).
+    /// zod `z.enum(FAILURE_CODES)` — 넷 다 Rust 가 맡는다(`account_gate` 는 차례 주인·inbox 까지, [`GateNotify`]).
     code: Option<&'static str>,
+    /// `account_gate` 의 차례 주인 재료 — 그 턴을 띄운 멘션과 관문이 선 풀·계정 순번. 다른 표지에서는 읽고 버린다.
+    mention_id: Option<String>,
+    pool_rank: Option<i64>,
+    account_rank: Option<i64>,
     /// zod `z.enum(PROVIDER_LANE_FAILURE_CODES)` — `code` 와 상관없이 받되 meta 에는 `provider_lane` 일 때만 붙는다.
     lane_code: Option<&'static str>,
 }
 
-/// TS `FAILURE_CODES` 중 Rust 가 답하는 것. `account_gate` 는 빠져 있다 — 그 표지는 TS 로 넘긴다(fail-closed).
+/// TS `FAILURE_CODES` 중 Rust 가 답하는 것 — 전부.
 const RUST_FAILURE_CODES: &[&str] = &[
     "thread_model_rejected",
     "provider_lane",
     "inject_unconfirmed",
+    "account_gate",
 ];
 
 /// TS `getThreadAgentModel(...)?.stale` — 그 스레드에 이 에이전트의 모델 지정이 있으면 `Some(stale)`.
@@ -570,9 +576,9 @@ fn opt_str(o: &Map<String, Value>, key: &str, max: usize) -> Option<Option<Strin
     }
 }
 
-/// zod `message.fail` 의 `inputSchema`. 표지(`code`)는 `thread_model_rejected`·`provider_lane`·`inject_unconfirmed` 를 Rust 가 맡는다.
-/// **TS 로 넘기는 것**(fail-closed): `account_gate`(차례 주인·inbox 는 아직 TS 몫), 목록 밖 `code`·`laneCode`(zod 오류 글자).
-/// 차례 주인 재료(`mentionId`·`claudePoolRank`·`claudeAccountRank`)는 TS 가 `account_gate` 일 때만 읽는다 — 그 밖에는 zod 꼴만
+/// zod `message.fail` 의 `inputSchema`. 표지(`code`) 넷을 모두 Rust 가 맡는다.
+/// **TS 로 넘기는 것**: 목록 밖 `code`·`laneCode`(zod 오류 글자).
+/// 차례 주인 재료(`mentionId`·`claudePoolRank`·`claudeAccountRank`)는 `account_gate` 일 때만 쓴다 — 그 밖에는 zod 꼴만
 /// 보고 버린다(러너의 침묵·혼자 꺼짐·보고 누락 통지가 `mentionId` 만 싣는다). 꼴이 틀리면 zod 오류 글자를 위해 TS 로 넘긴다.
 /// 옛 러너의 `account` 도 zod 처럼 받고 버린다.
 fn parse_fail(args: &Value) -> Option<FailArgs> {
@@ -591,16 +597,18 @@ fn parse_fail(args: &Value) -> Option<FailArgs> {
         ),
         _ => return None,
     };
-    match o.get("mentionId") {
-        None => {}
-        Some(Value::String(m)) if is_uuid(m) => {}
+    let mention_id = match o.get("mentionId") {
+        None => None,
+        Some(Value::String(m)) if is_uuid(m) => Some(m.clone()),
         _ => return None,
-    }
+    };
     for k in ["claudePoolRank", "claudeAccountRank"] {
         if o.get(k).is_some_and(|v| !zod_rank(v)) {
             return None;
         }
     }
+    let rank = |k: &str| o.get(k).and_then(Value::as_f64).map(|f| f as i64);
+    let (pool_rank, account_rank) = (rank("claudePoolRank"), rank("claudeAccountRank"));
     let retryable = match o.get("retryable") {
         Some(Value::Bool(b)) => *b,
         _ => return None,
@@ -626,6 +634,9 @@ fn parse_fail(args: &Value) -> Option<FailArgs> {
         what,
         reason,
         code,
+        mention_id,
+        pool_rank,
+        account_rank,
         lane_code,
     })
 }
@@ -636,9 +647,10 @@ fn zod_rank(v: &Value) -> bool {
         .is_some_and(|f| f.fract() == 0.0 && (1.0..=99.0).contains(&f))
 }
 
-/// TS `FailureMeta` 의 `failure` — `{ retryable, what?, reason?, code?, laneCode? }`. `keep_code` 는 TS `keepCode`
-/// (`thread_model_rejected` 는 살아 있는 스레드 모델 지정이 있을 때만, 다른 표지는 늘 참). `laneCode` 는 `provider_lane` 에만 붙는다.
-fn failure_meta(f: &FailArgs, keep_code: bool) -> Map<String, Value> {
+/// TS `FailureMeta` 의 `failure` — `{ retryable, what?, reason?, code?, awaitingAccountId?, claudePoolRank?, claudeAccountRank?, laneCode? }`.
+/// `keep_code` 는 TS `keepCode`(`thread_model_rejected` 는 살아 있는 스레드 모델 지정이 있을 때만, 다른 표지는 늘 참).
+/// 차례 주인·순번은 `account_gate` 에만, `laneCode` 는 `provider_lane` 에만 붙는다.
+fn failure_meta(f: &FailArgs, keep_code: bool, awaiting: Option<&str>) -> Map<String, Value> {
     let mut failure = Map::new();
     failure.insert("retryable".into(), Value::Bool(f.retryable));
     if let Some(w) = &f.what {
@@ -649,6 +661,17 @@ fn failure_meta(f: &FailArgs, keep_code: bool) -> Map<String, Value> {
     }
     if let Some(c) = f.code.filter(|_| keep_code) {
         failure.insert("code".into(), Value::String(c.into()));
+        if c == "account_gate" {
+            if let Some(a) = awaiting {
+                failure.insert("awaitingAccountId".into(), Value::String(a.into()));
+            }
+            if let Some(r) = f.pool_rank {
+                failure.insert("claudePoolRank".into(), Value::from(r));
+            }
+            if let Some(r) = f.account_rank {
+                failure.insert("claudeAccountRank".into(), Value::from(r));
+            }
+        }
         if let Some(l) = f.lane_code.filter(|_| c == "provider_lane") {
             failure.insert("laneCode".into(), Value::String(l.into()));
         }
@@ -683,8 +706,22 @@ pub async fn answer_fail(
         },
         _ => true,
     };
-    let meta = failure_meta(&f, keep_code);
-    post(
+    // TS: `account_gate` 의 차례 주인은 서버가 정한다 — 그 턴을 띄운 멘션(`mentionId`, 없으면 원인 헤더)이 이 에이전트를 실제로
+    // 깨웠고 작성자가 그 채널을 볼 수 있는 사람일 때만(`gateAwaitingAccount`). 못 정해도 표지는 남긴다.
+    let gate = keep_code && f.code == Some("account_gate");
+    let awaiting: Option<String> = match f.mention_id.as_deref().or(cause) {
+        Some(source) if gate => sqlx::query_scalar(super::message_ask::gate_awaiting_sql())
+            .bind(&me.id)
+            .bind(source)
+            .bind(&f.args.channel)
+            .fetch_optional(&st.read)
+            .await
+            .ok()?,
+        _ => None,
+    };
+    let meta = failure_meta(&f, keep_code, awaiting.as_deref());
+    let hook = awaiting.map(|account| GateNotify { account });
+    post_with(
         st,
         me,
         f.args,
@@ -696,8 +733,46 @@ pub async fn answer_fail(
         turn,
         operator,
         None,
+        &[],
+        None,
+        None,
+        None,
+        hook.as_ref(),
     )
     .await
+}
+
+/// TS `notifyGateAwaiting` — 차례 주인이 이 글로 알림을 못 받는 자리(남이 세운 스레드에서 불렀다 등)면 같은 tx 에서
+/// inbox 에 `thread_reply` 로 넣는다(숨긴 채널도 다시 보이는 사유). 이미 받았으면 두 번 넣지 않는다.
+#[derive(Debug)]
+pub(super) struct GateNotify {
+    account: String,
+}
+
+impl msg_post::BeforeCommit for GateNotify {
+    fn run<'a>(
+        &'a self,
+        tx: &'a mut sqlx::Transaction<'static, sqlx::Postgres>,
+        message_id: &'a str,
+        notified: &'a std::collections::HashSet<String>,
+    ) -> msg_post::BeforeCommitFuture<'a> {
+        Box::pin(async move {
+            if notified.contains(&self.account) {
+                return Ok(None);
+            }
+            let mut seen = notified.clone();
+            crate::core::mention_fanout::insert_inbox_many(
+                tx,
+                std::slice::from_ref(&self.account),
+                message_id,
+                "thread_reply",
+                &mut seen,
+                None,
+            )
+            .await?;
+            Ok(None)
+        })
+    }
 }
 
 /// `message.ask` 의 평범한 카드(사람 앞·거울/머지 거절 없음, `supersedes` 는 글이 선 뒤 닫는다) — [`super::message_ask::answer_plain`] 이 고른 인자와 ask meta 로
@@ -732,6 +807,7 @@ pub(super) async fn answer_ask(
         plan_step,
         None,
         push_to,
+        None,
     )
     .await
 }
@@ -1050,6 +1126,7 @@ async fn post(
         None,
         None,
         None,
+        None,
     )
     .await
 }
@@ -1073,6 +1150,7 @@ async fn post_with(
     plan_step: Option<&str>,
     picks: Option<&crate::core::agent_model_picks::AgentPicks>,
     push_to: Option<&str>,
+    gate: Option<&GateNotify>,
 ) -> Option<String> {
     // TS `if (mirrorOf) await syncAskMirrors(pool, mirrorOf)` — 검사와 발행 사이에 원본이 정해졌으면 새 거울을 곧바로 닫는다.
     let mirror_root = meta
@@ -1120,7 +1198,8 @@ async fn post_with(
         no_mentions: false,
         before_commit: artifact
             .map(|h| h as &dyn msg_post::BeforeCommit)
-            .or(picks.map(|h| h as &dyn msg_post::BeforeCommit)),
+            .or(picks.map(|h| h as &dyn msg_post::BeforeCommit))
+            .or(gate.map(|h| h as &dyn msg_post::BeforeCommit)),
         service_call: false,
         chain_depth: None,
     };
@@ -1466,15 +1545,12 @@ mod tests {
         assert_eq!(f.reason, None);
         // fail 에 없는 칸(alsoInChannel)은 zod 가 버린다.
         assert!(!f.args.post.also_in_channel);
-        let m = Value::Object(failure_meta(&f, true));
+        let m = Value::Object(failure_meta(&f, true, None));
         assert_eq!(
             m,
             json!({ "kind": "failure", "failure": { "retryable": true, "what": "w" } })
         );
         for bad in [
-            // 표지는 TS 로(fail-closed) — 차례 주인 재료가 같이 와도.
-            json!({ "channelId": C, "body": "x", "retryable": true, "code": "account_gate" }),
-            json!({ "channelId": C, "body": "x", "retryable": true, "code": "account_gate", "mentionId": R, "claudePoolRank": 1 }),
             // 목록 밖 표지·까닭 코드는 zod 오류 글자를 위해 TS 로.
             json!({ "channelId": C, "body": "x", "retryable": true, "code": "nope" }),
             json!({ "channelId": C, "body": "x", "retryable": true, "code": null }),
@@ -1505,12 +1581,28 @@ mod tests {
         }))
         .expect("mentionId without code");
         assert_eq!(
-            Value::Object(failure_meta(&f, true)),
+            Value::Object(failure_meta(&f, true, None)),
             json!({ "kind": "failure", "failure": { "retryable": false, "what": "w" } })
         );
-        // Rust 가 맡는 표지 셋. keepCode 가 참이면 붙고, laneCode 는 provider_lane 에만 따라 붙는다.
+        // account_gate — 차례 주인·순번은 이 표지에만 붙는다. 차례 주인을 못 정하면 그 칸만 빠진다.
+        let gate = parse_fail(&json!({
+            "channelId": C, "body": "x", "retryable": true, "code": "account_gate",
+            "mentionId": R, "claudePoolRank": 1, "claudeAccountRank": 3.0, "laneCode": "lane_unset"
+        }))
+        .expect("account_gate is rust");
+        assert_eq!(
+            Value::Object(failure_meta(&gate, true, Some(R))),
+            json!({ "kind": "failure", "failure": {
+                "retryable": true, "code": "account_gate", "awaitingAccountId": R, "claudePoolRank": 1, "claudeAccountRank": 3
+            } })
+        );
+        assert_eq!(
+            Value::Object(failure_meta(&gate, true, None)),
+            json!({ "kind": "failure", "failure": { "retryable": true, "code": "account_gate", "claudePoolRank": 1, "claudeAccountRank": 3 } })
+        );
+        // Rust 가 맡는 다른 표지. keepCode 가 참이면 붙고, laneCode 는 provider_lane 에만 따라 붙는다.
         let meta = |v: Value, keep: bool| {
-            Value::Object(failure_meta(&parse_fail(&v).expect("code"), keep))
+            Value::Object(failure_meta(&parse_fail(&v).expect("code"), keep, None))
         };
         assert_eq!(
             meta(
