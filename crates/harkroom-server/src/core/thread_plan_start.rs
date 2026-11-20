@@ -22,24 +22,8 @@ pub struct StartReq {
     pub en: bool,
     /// `ifRev`(실제 시작에는 꼭 있다 — 라우트가 먼저 본다).
     pub if_rev: Option<i64>,
-}
-
-/// [`super::thread_plan_manager`] 의 `parse_start` 를 지난 본문에서 단계·언어를 읽는다.
-pub fn start_req(bytes: &[u8]) -> Option<StartReq> {
-    let v: Value = serde_json::from_slice(bytes).ok()?;
-    let mut steps: Vec<(String, Option<String>)> = Vec::new();
-    for s in v["steps"].as_array()? {
-        let id = s["id"].as_str()?.to_string();
-        if steps.iter().any(|(x, _)| *x == id) {
-            continue;
-        }
-        steps.push((id, s["assigneeId"].as_str().map(str::to_string)));
-    }
-    Some(StartReq {
-        steps,
-        en: v["locale"].as_str() == Some("en"),
-        if_rev: v["ifRev"].as_i64(),
-    })
+    /// `dryRun` — 아무것도 바꾸지 않는 미리보기.
+    pub dry: bool,
 }
 
 pub struct Route {

@@ -5177,6 +5177,36 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           expect({ status: y.status, code: y.code }, '익명 → 401').toEqual({ status: x.status, code: x.code });
           expect(y.status).toBe(401);
         }
+        // `POST …/plan/start` 의 본문 판정(zod `startBody`) — Rust 가 TS 로 넘기지 않고 같은 상태·코드로 답한다. 판은 바뀌지 않는다.
+        {
+          const S = `/threads/${parent}/plan/start`;
+          const one = [{ id: 's1' }];
+          for (const [name, p, body, token, want, code] of [
+            ['빈 객체', S, {}, M, 400, 'invalid_request'],
+            ['단계 0개', S, { steps: [] }, M, 400, 'invalid_request'],
+            ['단계 id 꼴 아님', S, { steps: [{ id: 's0' }], dryRun: true }, M, 400, 'invalid_request'],
+            ['담당 uuid 아님', S, { steps: [{ id: 's1', assigneeId: 'x' }], dryRun: true }, M, 400, 'invalid_request'],
+            ['ifRev 0', S, { steps: one, ifRev: 0 }, M, 400, 'invalid_request'],
+            ['ifRev 정수 아님', S, { steps: one, ifRev: 1.5 }, M, 400, 'invalid_request'],
+            ['dryRun null', S, { steps: one, dryRun: null }, M, 400, 'invalid_request'],
+            ['모르는 locale', S, { steps: one, dryRun: true, locale: 'fr' }, M, 400, 'invalid_request'],
+            ['배열 본문', S, [], M, 400, 'invalid_request'],
+            ['ifRev 없는 실제 시작', S, { steps: one }, M, 400, 'if_rev_required'],
+            ['에이전트는 본문보다 먼저 403', S, {}, agent.pat, 403, 'human_only'],
+            ['uuid 아닌 루트는 본문보다 먼저 404', '/threads/not-a-uuid/plan/start', {}, M, 404, 'not_found'],
+          ] as const) {
+            const [x, y] = [await callX(tsUrl, 'POST', p, body, token), await callX(rsUrl, 'POST', p, body, token)];
+            expect({ status: y.status, code: y.code }, `plan/start ${name}`).toEqual({ status: x.status, code: x.code });
+            expect({ status: y.status, code: y.code }, `plan/start ${name}`).toEqual({ status: want, code });
+          }
+          const raw = async (base: string) => {
+            const res = await fetch(`${base}${S}`, { method: 'POST', headers: { authorization: `Bearer ${M}`, 'x-forwarded-for': XFF, 'content-type': J }, body: '{"steps":' });
+            return { status: res.status, code: ((await res.json()) as { error?: { code?: string } }).error?.code };
+          };
+          const [x, y] = [await raw(tsUrl), await raw(rsUrl)];
+          expect(y, 'plan/start 깨진 JSON').toEqual(x);
+          expect(y.status).toBe(400);
+        }
         // S5.4 A4a — MCP `thread.plan` 읽기(`core/mcp/plan_read.rs`)도 같은 몸통을 쓴다. 거절은 REST 와 달리 코드별로 갈린다.
         // `plan`·`ifUpdatedAt` 이 실리면(쓰기·검증) TS 가 답한다 — 여기서는 지우지 않게 `ifUpdatedAt` 만 싣는다.
         for (const [name, args, rust, want] of [
