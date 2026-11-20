@@ -13839,24 +13839,18 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                   return a;
                 };
                 // ⑤ → ① → ②: 거절 카드 [이번 한 번] → 같은 임대로 다시 판정하면 승인을 쓴다 → 머지 보고(1회 승인 줄).
-                // 카드 답(`answeredWith`)은 쪽마다 따로 모은다 — TS 는 아직 선택지의 첫 후보(`approve_new_mandate`)를 적고, Rust 는 늘 `approve_once` 다.
-                const onceAnswers: (string | null)[] = [];
+                // 이 장면의 요청은 `openPermissionRequest` 로만 세워 카드 글이 없다(card_message_id null) — 카드 답(`answeredWith`)은 여기서 볼 수 없다.
                 const once = await both('⑤ 이번 한 번 → ① 승인 소모 → ② merged', async (call) => {
                   const x = await turn('izagood/s55mc-once1');
                   const d = deny(await call('판정 → not_granted', MC, x.body, x.headers));
                   const rid = await openCard(x, d!);
                   await call('[이번 한 번]', `/agents/${mc.accountId}/permission-requests/${rid}/approve-once`, { number: 7, headSha: SHA40, ghUser: null }, S);
-                  onceAnswers.push((await db.pool.query<{ a: string | null }>(
-                    `select m.meta->'ask'->>'answeredWith' as a from permission_request p join message m on m.id = p.card_message_id where p.id = $1`, [rid])).rows[0]?.a ?? null);
                   await call('[이번 한 번] 다시 → 409', `/agents/${mc.accountId}/permission-requests/${rid}/approve-once`, { number: 7, headSha: SHA40, ghUser: null }, S);
                   await call('다시 판정 → 1회 승인 소모', MC, x.body, x.headers);
                   await call('merged 보고', MR, { ...lb(x), result: 'merged', mergeSha: 'd'.repeat(40), ghUserUsed: 'octo-bot' }, x.headers);
                   await call('merged 다시 → 409', MR, { ...lb(x), result: 'merged', mergeSha: 'd'.repeat(40) }, x.headers);
                 });
                 expect(once.steps.map((s) => s.status)).toEqual([403, 200, 409, 200, 201, 409]);
-                expect(onceAnswers, '1회 승인 카드 답 — [TS, Rust]').toHaveLength(2);
-                expect(onceAnswers[0], 'TS 도 답을 적는다(값은 선택지 첫 후보)').not.toBeNull();
-                expect(onceAnswers[1], 'Rust 는 1회 승인 답을 approve_once 로').toBe('approve_once');
                 expect(once.effects.approvals).toMatchObject([{ used: true, used_by_lease: true, gh_user: null }]);
                 expect(once.effects.msgs.length, '1회 승인 줄·머지 줄').toBeGreaterThanOrEqual(2);
                 // ② grant 있는 저장소의 보고 갈래 — merged(무시한 체크 꼬리)·failed·CI 거절(denialId)·판정 없는 보고.
