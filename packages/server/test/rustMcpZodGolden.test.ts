@@ -125,6 +125,11 @@ function cases(name: string, root: Schema): { tool: string; args: unknown }[] {
 const AUTOMATION_BASE = { name: 'a', channelId: UUID, body: 'a' };
 const daily = (tz: unknown, time = '09:00') => ({ ...AUTOMATION_BASE, trigger: { kind: 'schedule', freq: 'daily', time, tz } });
 const weekly = (tz: unknown, weekdays: unknown) => ({ ...AUTOMATION_BASE, trigger: { kind: 'schedule', freq: 'weekly', weekdays, time: '09:00', tz } });
+// `.trim()` 도 JSON 스키마에 없다 — 길이는 깎은 뒤에 잰다(`zod_gate::TRIMS`). 공백만·가장자리 공백·깎으면 상한 안/밖·JS 만 깎는 글자
+// (U+FEFF)·JS 는 안 깎는 글자(U+0085).
+const TRIMMED = (max: number): string[] => [
+  '   ', ' a ', `${'a'.repeat(max)} `, ` ${'a'.repeat(max + 1)}`, '\uFEFF\u3000', '\uFEFFa', '\u0085', '\u0085\u2028',
+];
 const EXTRA: Record<string, unknown[]> = {
   'automation.propose': [
     ...['UTC', 'Asia/Seoul', 'asia/seoul', 'US/Eastern', 'Asia/Calcutta', 'JST', 'jst', 'PST', 'SystemV/EST5EDT', 'SystemV/EST5',
@@ -139,6 +144,17 @@ const EXTRA: Record<string, unknown[]> = {
     weekly('Nowhere/X', [1.5]),
     { ...daily('Asia/Seoul'), name: '' },
     { ...daily('Nowhere/X'), debounceSec: 1.5 },
+    ...TRIMMED(100).map((name) => ({ ...daily('Asia/Seoul'), name })),
+    { ...daily('Nowhere/X'), name: '  ' },
+  ],
+  'artifact.publish': [
+    ...TRIMMED(200).map((title) => ({ channelId: UUID, title, body: 'a', html: 'a' })),
+    ...TRIMMED(500).map((summary) => ({ channelId: UUID, title: 'a', body: 'a', html: 'a', summary })),
+  ],
+  'workitem.remove': TRIMMED(300).map((externalKey) => ({ source: 'avcs', externalKey })),
+  'workitem.upsert': [
+    ...TRIMMED(300).map((externalKey) => ({ source: 'avcs', externalKey, title: 'a' })),
+    ...TRIMMED(200).map((title) => ({ source: 'avcs', externalKey: 'a', title })),
   ],
 };
 

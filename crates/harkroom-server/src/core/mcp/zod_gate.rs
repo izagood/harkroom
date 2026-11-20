@@ -131,6 +131,18 @@ const PATTERN_MESSAGES: &[(&str, &str)] = &[(r"^[\w.-]+\/[\w.-]+$", "owner/name"
 /// 골든 시험이 「Rust 는 통과라는데 TS 는 거절」인 꼴을 여기 없이 찾아낸다.
 const TZ_CHECKS: &[(&str, &str)] = &[("automation.propose", "trigger.tz")];
 
+/// JSON 스키마에 실리지 않는 `.trim()` 이 붙은 칸(도구, 점 경로) — zod 는 깎은 **뒤에** 길이를 잰다(공백만이면 「at least 1」,
+/// 가장자리 공백 때문에 상한을 넘는 값은 받는다). 깎는 글자는 JS `String#trim`([`js_trim`](super::automation_propose::js_trim)).
+/// 골든 시험이 「Rust 는 통과라는데 TS 는 거절」·「TS 는 받는데 Rust 가 거절」인 꼴로 빠진 칸을 찾아낸다.
+const TRIMS: &[(&str, &str)] = &[
+    ("automation.propose", "name"),
+    ("artifact.publish", "title"),
+    ("artifact.publish", "summary"),
+    ("workitem.remove", "externalKey"),
+    ("workitem.upsert", "externalKey"),
+    ("workitem.upsert", "title"),
+];
+
 /// JSON 스키마에 실리지 않는 `.transform()` 이 붙은 칸(도구, 점 경로) — TS `scheduleSchema` 의 `weekdays`(중복 걷고 정렬).
 const TRANSFORMS: &[(&str, &str)] = &[("automation.propose", "trigger.weekdays")];
 
@@ -439,6 +451,14 @@ impl<'a> Cx<'a> {
     fn string(&mut self, s: &'a Oj, v: Option<&Value>, path: &[Seg]) -> St {
         let Some(Value::String(x)) = v else {
             return self.required_or_type(path, "string", v);
+        };
+        let x = if TRIMS
+            .iter()
+            .any(|(t, p)| *t == self.tool && *p == dot_path(path))
+        {
+            super::automation_propose::js_trim(x)
+        } else {
+            x.as_str()
         };
         let len = x.encode_utf16().count() as f64;
         let (min, max) = (

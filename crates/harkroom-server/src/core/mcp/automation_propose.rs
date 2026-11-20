@@ -4,8 +4,11 @@
 //!
 //! - INSERT 문장은 TS 정본을 골든(`automation_propose_insert`)으로 받는다. Rust 는 **제안 행만** 넣는다 — 승인·켜기·돌리기 길은 없다
 //!   (INSERT 칸에 `approved_at`·`enabled` 는 상수 `null`·`false` 로 박혀 있다).
-//! - **TS 로 넘기는 것**(MCP 쪽만, `None`): zod 가 받지 않을 인자(거절 글자의 정본이 TS SDK 다)뿐이다. REST
-//!   (`parse_rest`·`parse_patch`)는 `None` 을 400 으로 직접 답한다 — 판정은 zod 와 같아야 한다(이름은 JS `trim`, 수는 정수 값).
+//! - **zod 가 받지 않을 인자**는 TS 로 넘기지 않는다: 공통 관문([`super::zod_gate`])이 SDK 와 같은 글자로 먼저 거절하고,
+//!   관문과 [`parse`] 의 판정이 같다는 것을 골든 시험(`parse_agrees_with_zod_golden`)이 본다. 처리기에 닿았는데 [`parse`] 가
+//!   못 읽으면 관문의 거절 글자를 그대로 낸다. **TS 로 넘기는 것**(`None`)은 `arguments` 가 객체가 아닌 요청뿐이다(도구 인자가
+//!   아니라 `tools/call` 요청 꼴의 거절 — 모든 도구가 같이 남긴 자리다). REST(`parse_rest`·`parse_patch`)는 `None` 을 400 으로
+//!   직접 답한다 — 판정은 zod 와 같아야 한다(이름은 JS `trim`, 수는 정수 값).
 //! - **DB 오류는 넘기지 않는다**: INSERT 앞의 읽기가 실패하면 `temporarily_unavailable`([`super::db_retry::read_failed`] —
 //!   쓴 것이 없으니 다시 부르면 된다), INSERT 가 실패하면 `internal`(들어갔는지 알 수 없어 다시 넣지 않는다).
 //! - 답 글자는 TS `jsonResult` 와 **키 순서까지** 같게 직접 쓴다(값은 `Value` 로 이스케이프한다). `trigger` 는 DB jsonb 글자 그대로.
@@ -147,7 +150,7 @@ fn u16len(s: &str) -> usize {
 
 /// JS `String#trim` — ECMAScript 의 WhiteSpace·LineTerminator 를 그대로 적는다(Rust `trim` 은 `\u{FEFF}` 를 안 깎고
 /// `\u{85}` 를 깎아서 다르다).
-fn js_trim(s: &str) -> &str {
+pub(crate) fn js_trim(s: &str) -> &str {
     s.trim_matches(|c: char| {
         matches!(
             c,
@@ -422,7 +425,9 @@ fn opt_iso(ms: Option<i64>) -> Value {
 const TOOL: &str = "automation.propose";
 
 pub async fn answer(read: &PgPool, write: &PgPool, me: &Account, args: &Value) -> Option<String> {
-    let a = parse(args)?;
+    let Some(a) = parse(args) else {
+        return refused(args);
+    };
     let owner: Result<Option<String>, sqlx::Error> = match &a.for_handle {
         Some(h) => {
             sqlx::query_scalar(OWNER_BY_HANDLE_SQL)
@@ -505,6 +510,21 @@ pub async fn answer(read: &PgPool, write: &PgPool, me: &Account, args: &Value) -
         Value::from("Tell the approver in chat: Settings › Automations › Approve.")
     );
     Some(super::respond::text_result(&text))
+}
+
+/// [`parse`] 가 못 읽은 인자의 답. 앞단은 공통 관문이 먼저 거절하므로 여기 닿지 않는다 — 닿아도 같은 글자를 낸다.
+/// 관문은 받는데 [`parse`] 만 못 읽는 꼴은 없어야 한다(골든 시험이 본다). 있으면 넣지 않고 `internal` 로 끝낸다.
+fn refused(args: &Value) -> Option<String> {
+    if !args.is_object() {
+        return None;
+    }
+    match super::zod_gate::check(TOOL, args) {
+        super::zod_gate::Verdict::Reject(text) => Some(text),
+        _ => {
+            eprintln!("front: mcp tool failed tool={TOOL} at=arguments");
+            Some(err("internal", "the arguments could not be read"))
+        }
+    }
 }
 
 /// INSERT 가 돌려준 행 → TS `automationView` 글자(`lastRun` 은 새 행이라 null).
@@ -611,8 +631,52 @@ mod tests {
                 .expect("answered");
             assert!(r.contains("temporarily_unavailable"), "{r}");
         }
-        // zod 가 거절할 인자만 여전히 넘긴다.
-        assert!(answer(&pool, &pool, &agent(), &json!({})).await.is_none());
+        // zod 가 거절할 인자는 DB 를 보기 전에 SDK 와 같은 글자로 답한다(넘기지 않는다).
+        let r = answer(&pool, &pool, &agent(), &json!({}))
+            .await
+            .expect("answered");
+        assert!(
+            r.contains("Invalid arguments for tool automation.propose: Required at name"),
+            "{r}"
+        );
+        let mut blank = base();
+        blank["name"] = json!(" \u{3000}");
+        let r = answer(&pool, &pool, &agent(), &blank)
+            .await
+            .expect("answered");
+        assert!(
+            r.contains("String must contain at least 1 character(s) at name"),
+            "{r}"
+        );
+        // `arguments` 가 객체가 아닌 요청 꼴만 넘긴다.
+        for v in [Value::Null, json!([]), json!("x")] {
+            assert!(answer(&pool, &pool, &agent(), &v).await.is_none());
+        }
+    }
+
+    /// TS(zod)가 구운 꼴마다: 관문이 판정을 확정하고(`Unsure` 0), zod 가 받는 꼴은 [`parse`] 도 읽고 거절하는 꼴은 못 읽는다.
+    /// 이것이 깨지면 처리기에 「관문은 받았는데 못 읽는」 인자가 닿는다.
+    #[test]
+    fn parse_agrees_with_zod_golden() {
+        use crate::core::mcp::zod_gate::{Verdict, check};
+        let cases: Vec<Value> =
+            serde_json::from_str(include_str!("../../../golden/mcp_zod_cases.json")).unwrap();
+        let (mut accepted, mut rejected) = (0, 0);
+        for c in cases.iter().filter(|c| c["tool"] == TOOL) {
+            let (args, ts_accepts) = (&c["args"], c["text"].is_null());
+            assert_eq!(parse(args).is_some(), ts_accepts, "{args}");
+            match check(TOOL, args) {
+                Verdict::Pass => assert!(ts_accepts, "{args}"),
+                Verdict::Reject(_) => assert!(!ts_accepts, "{args}"),
+                Verdict::Unsure => panic!("unsure: {args}"),
+            }
+            if ts_accepts {
+                accepted += 1;
+            } else {
+                rejected += 1;
+            }
+        }
+        assert!(accepted > 20 && rejected > 250, "{accepted} {rejected}");
     }
 
     fn base() -> Value {
@@ -633,7 +697,7 @@ mod tests {
     }
 
     #[test]
-    fn falls_back_to_ts_when_unsure() {
+    fn parse_matches_zod_edges() {
         let mut v = base();
         v["trigger"]["tz"] = json!("asia/seoul");
         assert!(
@@ -647,7 +711,7 @@ mod tests {
         v["trigger"]["tz"] = json!("JST");
         assert!(parse(&v).is_some(), "ICU 옛 약칭도 Intl 처럼 받는다");
         v["trigger"]["tz"] = json!("UTC+9");
-        assert!(parse(&v).is_none(), "Intl 이 거절하는 꼴은 TS 가 판정");
+        assert!(parse(&v).is_none(), "Intl 이 거절하는 꼴은 못 읽는다");
         let mut v = base();
         v["name"] = json!("\u{FEFF}\u{A0} 이름\u{3000}\u{2028}");
         assert_eq!(parse(&v).unwrap().name, "이름", "JS trim 과 같은 공백");
