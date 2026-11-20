@@ -294,8 +294,8 @@ pub async fn answer(read: &PgPool, post: &PostState, me: &Account, args: &Value)
                 Err(_) => internal(),
                 Ok(Err(code)) => refused(code),
                 Ok(Ok(on)) => {
-                    // TS 는 받은 인자 그대로 링크를 쓴다.
-                    let (body, meta) = on_line(&until, &source, &on.by);
+                    // 링크·meta 의 근거 id 는 받은 글자가 아니라 저장된 값(uuid 표기)을 쓴다.
+                    let (body, meta) = on_line(&until, &on.source, &on.by);
                     if post_line(
                         post,
                         &channel,
