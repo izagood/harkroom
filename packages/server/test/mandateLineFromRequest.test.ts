@@ -148,6 +148,22 @@ describe('permission request → mandate line (W4)', () => {
     expect((await linesOf(once.requestId))[0].limits).toMatchObject({ uses: 1 });
   });
 
+  it('command approve (older app) → single-use command grant, line with uses 1, no account_grant', async () => {
+    const { root, mandateId } = await mandateThread();
+    const cmd = 'kubectl --kubeconfig /etc/k/ops.yaml --context ops -n w4 rollout status deploy/web';
+    const { requestId, cardId } = await request({ kind: 'command', target: cmd, root, mandateId });
+    expect(await decide(pool, (await resolveDecision(pool, cardId))!, alice.accountId, { option: 'approve', via: 'button' }))
+      .toMatchObject({ ok: true, result: { status: 'granted', grantMode: 'once' } });
+    const lines = await linesOf(requestId);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({ mandateId, cap: 'command', scope: cmd });
+    expect(lines[0].limits.uses).toBe(1);
+    expect(Date.parse(lines[0].limits.until) - Date.now()).toBeGreaterThan(50 * 60_000);
+    expect((await pool.query(`select single_use from command_grant where request_id = $1`, [requestId])).rows).toEqual([{ single_use: true }]);
+    expect((await pool.query(`select 1 from account_grant where account_id = $1 and scope = $2`, [agentId, cmd])).rowCount).toBe(0);
+    expect((await pool.query(`select 1 from audit_log where action = 'grant.given' and detail->>'requestId' = $1`, [requestId])).rowCount).toBe(0);
+  });
+
   it('7-day merge approve → merge line ends with the grant', async () => {
     const { root, mandateId } = await mandateThread();
     const { requestId, cardId } = await request({ kind: 'merge', target: 'repo:acme-org/w4-until', root, mandateId });

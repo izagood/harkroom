@@ -67,8 +67,11 @@ function isStandingApprove(d: PermissionDecision): boolean {
  * - 옛 `approve`(7일 버튼)와 줄을 적을 위임장이 없는 승인(소유자 아닌 사람·위임장을 못 세운 스레드)은 grant 를 쓴다.
  * - **tool** 카드는 그대로 grant 를 쓴다 — 러너의 셸 허락(`toolAllowsFor`)은 아직 account_grant 만 읽고 위임장 줄을 보지 않는다.
  *   tool 까지 줄만 쓰려면 `/agent/tool-allows` 가 그 턴 임대의 위임장 줄을 읽어야 한다(후속).
+ * - **command** 카드는 어느 결정이든 쓰지 않는다 — 명령 승인의 정본은 `command_grant` 다.
  */
 function writesStandingGrant(d: PermissionDecision, kind: PermissionKind, mandateId: string | null): boolean {
+  // command 승인은 `command_grant` 가 전부다 — 옛 앱의 `approve` 도 account_grant 를 쓰지 않는다(Rust `decide_approve.rs` 와 같다).
+  if (kind === 'command') return false;
   if (!isStandingApprove(d)) return false;
   return d === 'approve' || kind !== 'merge' || !mandateId;
 }
@@ -920,9 +923,10 @@ export async function addLineFromRequest(
     limits.turnCause = args.request.cardMessageId;
     limits.until = new Date(args.now.getTime() + COMMAND_GRANT_TTL_MS).toISOString();
   } else if (args.request.kind === 'command') {
-    // 명령 grant 와 같은 기한(1시간). 「이번 한 번」은 한 번만.
+    // 명령 grant 와 같은 기한(1시간). 「이 스레드 1시간」(`approve_hour`)만 여러 번이고, 나머지(「이번 한 번」·옛 앱의 `approve`)는
+    // 명령 grant 가 1회(`single_use`)이므로 줄도 한 번만 — Rust `LineKind::Command { once }` 와 같다.
     limits.until = new Date(args.now.getTime() + COMMAND_GRANT_TTL_MS).toISOString();
-    if (args.decision === 'approve_once') limits.uses = 1;
+    if (args.decision !== 'approve_hour') limits.uses = 1;
   } else if (isStandingApprove(args.decision)) {
     // 7일 승인: grant 와 같은 기한. 기한을 모르면 줄을 적지 않는다(기한 없는 줄을 만들지 않는다).
     if (!args.until) return { ok: false, mandateId, cap, code: 'no_until' };
