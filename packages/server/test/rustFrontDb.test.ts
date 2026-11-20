@@ -2064,15 +2064,32 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         ['message.read 많은 글 채널', { channelId: todayId, limit: 500 }, true],
         ['message.read 멤버 아닌 DM → forbidden', { channelId: String(dm.id) }, true],
         ['message.read 없는 채널', { channelId: missingCh }, true],
-        ['message.read limit 0 → TS', { channelId: readCh, limit: 0 }, false],
-        ['message.read limit 501 → TS', { channelId: readCh, limit: 501 }, false],
-        ['message.read limit 소수 → TS', { channelId: readCh, limit: 1.5 }, false],
-        ['message.read since 음수 → TS', { channelId: readCh, since: -1 }, false],
-        ['message.read 스레드 uuid 아님 → TS', { channelId: readCh, threadRootId: 'x' }, false],
+        ['message.read 스레드 since', { channelId: readCh, threadRootId: readRoot, since: Number(readSeq) }, true],
+        // zod 가 거절하는 인자 — SDK 의 검증 오류(`isError: true`)를 Rust 가 같은 글자로 낸다(TS 를 꺼도 같은 답).
+        ['message.read limit 0 → zod', { channelId: readCh, limit: 0 }, true],
+        ['message.read limit 501 → zod', { channelId: readCh, limit: 501 }, true],
+        ['message.read limit 소수 → zod', { channelId: readCh, limit: 1.5 }, true],
+        ['message.read since 음수 → zod', { channelId: readCh, since: -1 }, true],
+        ['message.read since 음수 소수 → zod', { channelId: readCh, since: -1.5 }, true],
+        ['message.read since 문자열 → zod', { channelId: readCh, threadRootId: readRoot, since: readSeq }, true],
+        ['message.read since null → zod', { channelId: readCh, since: null }, true],
+        ['message.read limit 문자열 → zod', { channelId: readCh, limit: '5' }, true],
+        ['message.read 스레드 uuid 아님 → zod', { channelId: readCh, threadRootId: 'x' }, true],
+        ['message.read 스레드 null → zod', { channelId: readCh, threadRootId: null }, true],
+        ['message.read channelId 없음 → zod', { threadRootId: readRoot }, true],
+        ['message.read channelId uuid 아님 → zod', { channelId: 'x' }, true],
+        ['message.read 넷 다 틀림 → zod', { channelId: 1, since: 'a', limit: 0, threadRootId: 'x' }, true],
+        // 인자 객체가 없으면 앞단은 「없음」과 `null` 을 가르지 못한다 → TS(thread.note 와 같다).
+        ['message.read 인자 없음 → TS', undefined, false],
       ] as const) {
         const [a, b] = [await mcpCall(tsUrl, agent.pat, 'message.read', args), await mcpCall(`http://127.0.0.1:${port}`, agent.pat, 'message.read', args)];
         expect({ status: b.status, type: b.type, text: b.text }, name).toEqual({ status: a.status, type: a.type, text: a.text });
         expect(b.core, `${name} — 누가 답했나`).toBe(answeredByRust ? 'mcp' : null);
+        // 빈 값끼리 같아서 통과하지 않게 — 기대한 꼴이 실렸는지.
+        if (name.endsWith('→ zod')) {
+          expect(b.text, name).toContain('Input validation error: Invalid arguments for tool message.read: ');
+          expect(b.text, name).toContain('"isError":true');
+        }
       }
       const readText = (await mcpCall(`http://127.0.0.1:${port}`, agent.pat, 'message.read', { channelId: readCh })).text;
       for (const want of ['@mem', '@crew', '@squad', '@bot2', 'relatedAccountId', '<@00000000-0000-4000-8000-000000000000>']) expect(readText).toContain(want);

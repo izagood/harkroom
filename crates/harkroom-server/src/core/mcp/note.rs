@@ -40,7 +40,7 @@ enum BodyArg<'a> {
 }
 
 /// zod v3 `getParsedType` 의 이름 — JSON 이 낼 수 있는 값만(`undefined`·`nan` 은 오지 않는다).
-fn zod_type(v: &Value) -> &'static str {
+pub(super) fn zod_type(v: &Value) -> &'static str {
     match v {
         Value::Null => "null",
         Value::Bool(_) => "boolean",
@@ -109,9 +109,14 @@ fn guard_arg(o: &serde_json::Map<String, Value>) -> Result<Guard, String> {
 /// SDK `validateToolInput` 의 거절 — `McpError(InvalidParams)` 를 `createToolError` 로 싼 결과. 이슈는 스키마 키 순서, 한 줄에 하나
 /// (`<문구> at <키>`).
 fn invalid(issues: &[(&str, String)]) -> String {
+    sdk_invalid("thread.note", issues)
+}
+
+/// [`invalid`] 의 도구 이름을 받는 꼴 — `message.read`([`super::tools`])도 같은 글자를 쓴다.
+pub(super) fn sdk_invalid(tool: &str, issues: &[(&str, String)]) -> String {
     let lines: Vec<String> = issues.iter().map(|(k, m)| format!("{m} at {k}")).collect();
     let text = format!(
-        "MCP error -32602: Input validation error: Invalid arguments for tool thread.note: {}",
+        "MCP error -32602: Input validation error: Invalid arguments for tool {tool}: {}",
         lines.join("\n")
     );
     format!(

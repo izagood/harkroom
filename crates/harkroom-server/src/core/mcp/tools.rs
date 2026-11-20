@@ -2,7 +2,7 @@
 //!
 //! - 인자 모양은 TS zod 가 받는 것만 받는다. 모양이 조금이라도 다르면(객체 아님·uuid 아님·타입 다름) Rust 는 답하지 않고 TS 로 넘긴다
 //!   — SDK 의 검증 오류 글자(`Input validation error: …`)를 따라 쓰지 않고 정본을 하나로 둔다. zod `z.object` 는 모르는 키를 버리므로
-//!   더 붙은 키는 받는다.
+//!   더 붙은 키는 받는다. 예외: `message.read` 는 zod 거절도 SDK 글자로 답한다(`thread.note` 와 같이, TS 를 끌 때 그 길이 남지 않게).
 //! - DB 오류도 TS 로 넘긴다(같은 요청을 TS 가 다시 답한다 — 읽기라 두 번 돌아도 바뀌는 것이 없다).
 //! - 결과 글자: 행은 Postgres 가 짓고(`json`, 열 순서 = 키 순서) [`super::respond::minify`] 로 공백만 지운다. TS 는 node-pg 가 읽은
 //!   객체를 `JSON.stringify` 하므로 키 순서·값이 같고 공백이 없다.
@@ -171,11 +171,101 @@ pub(super) fn top_string_span(t: &str, key: &str) -> Option<(usize, usize)> {
 }
 
 /// `message.read` — TS `listMessages` → `denormalizeBodies`(본문의 `<@…>` 를 지금 이름으로) → `markSystemLines`.
+/// `message.read` 인자 넷(`channelId`·`since`·`limit`·`threadRootId`).
+type ReadArgs = (String, Option<i64>, Option<i64>, Option<String>);
+
+/// zod `z.string().uuid()`(필수면 `required`) — `Err` 는 zod 문구.
+fn zod_uuid(
+    o: &serde_json::Map<String, Value>,
+    key: &str,
+    required: bool,
+) -> Result<Option<String>, String> {
+    match o.get(key) {
+        None if required => Err("Required".into()),
+        None => Ok(None),
+        Some(Value::String(s)) if crate::core::channels::is_uuid(s) => Ok(Some(s.clone())),
+        Some(Value::String(_)) => Err("Invalid uuid".into()),
+        Some(v) => Err(format!(
+            "Expected string, received {}",
+            super::note::zod_type(v)
+        )),
+    }
+}
+
+/// zod `z.number().int().min(lo).max(hi).optional()` — `Err(문구들)` 는 zod 가 그 키에 내는 이슈(검사 순서대로 모두).
+/// JSON 의 `59958.0` 은 JS 에서 정수라 zod 가 받는다 → 받는다. 정수지만 i64 밖(`1e300`)은 `Ok(Err(()))`(TS 도 DB 에서 깨진다 → TS).
+fn zod_int(
+    o: &serde_json::Map<String, Value>,
+    key: &str,
+    lo: i64,
+    hi: Option<i64>,
+) -> Result<Result<Option<i64>, ()>, Vec<String>> {
+    let Some(v) = o.get(key) else {
+        return Ok(Ok(None));
+    };
+    let Value::Number(n) = v else {
+        return Err(vec![format!(
+            "Expected number, received {}",
+            super::note::zod_type(v)
+        )]);
+    };
+    let f = n.as_f64().unwrap_or(f64::NAN);
+    let mut issues = Vec::new();
+    if n.as_i64().is_none() && n.as_u64().is_none() && f.fract() != 0.0 {
+        issues.push("Expected integer, received float".to_owned());
+    }
+    if f < lo as f64 {
+        issues.push(format!("Number must be greater than or equal to {lo}"));
+    }
+    if let Some(hi) = hi.filter(|h| f > *h as f64) {
+        issues.push(format!("Number must be less than or equal to {hi}"));
+    }
+    if !issues.is_empty() {
+        return Err(issues);
+    }
+    Ok(match n.as_i64() {
+        Some(i) => Ok(Some(i)),
+        None if f.fract() == 0.0 && f >= i64::MIN as f64 && f < i64::MAX as f64 => {
+            Ok(Some(f as i64))
+        }
+        None => Err(()),
+    })
+}
+
+/// `message.read` 인자. `Err(None)` = 객체가 아니거나 Rust 가 모르는 꼴(TS), `Err(Some(답))` = SDK 검증 오류(zod 거절, 이슈는 스키마 키 순서).
+fn read_args(args: &Value) -> Result<ReadArgs, Option<String>> {
+    let o = args.as_object().ok_or(None)?;
+    let channel = zod_uuid(o, "channelId", true);
+    let since = zod_int(o, "since", 0, None);
+    let limit = zod_int(o, "limit", 1, Some(500));
+    let thread = zod_uuid(o, "threadRootId", false);
+    let mut issues: Vec<(&str, String)> = Vec::new();
+    if let Err(m) = &channel {
+        issues.push(("channelId", m.clone()));
+    }
+    for (k, r) in [("since", &since), ("limit", &limit)] {
+        if let Err(ms) = r {
+            issues.extend(ms.iter().map(|m| (k, m.clone())));
+        }
+    }
+    if let Err(m) = &thread {
+        issues.push(("threadRootId", m.clone()));
+    }
+    if !issues.is_empty() {
+        return Err(Some(super::note::sdk_invalid("message.read", &issues)));
+    }
+    match (channel, since, limit, thread) {
+        (Ok(Some(c)), Ok(Ok(since)), Ok(Ok(limit)), Ok(thread)) => Ok((c, since, limit, thread)),
+        _ => Err(None),
+    }
+}
+
 async fn message_read(pool: &PgPool, me: &Account, args: &Value) -> Option<String> {
-    let channel = uuid_arg(args, "channelId")?;
-    let since = opt_int(args, "since", 0, i64::MAX)?;
-    let limit = opt_int(args, "limit", 1, 500)?;
-    let thread = opt_uuid(args, "threadRootId")?;
+    let (channel, since, limit, thread) = match read_args(args) {
+        Ok(a) => a,
+        Err(r) => return r,
+    };
+    let channel = channel.as_str();
     if !crate::core::channels::visible(pool, &me.id, channel)
         .await
         .ok()?
@@ -486,6 +576,81 @@ mod tests {
         }
         assert_ne!(guide("turn", true), guide("turn", false));
         assert_eq!(guide("other", true), None);
+    }
+
+    #[test]
+    fn read_args_follow_zod() {
+        use serde_json::json;
+        const C: &str = "11111111-1111-4111-8111-111111111111";
+        const HEAD: &str =
+            "MCP error -32602: Input validation error: Invalid arguments for tool message.read: ";
+        let ok = |v: Value| read_args(&v).unwrap();
+        let bad = |v: Value| match read_args(&v) {
+            Err(Some(t)) => serde_json::from_str::<Value>(&t).unwrap()["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .strip_prefix(HEAD)
+                .unwrap()
+                .to_owned(),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(
+            ok(json!({"channelId": C})),
+            (C.to_owned(), None, None, None)
+        );
+        assert_eq!(
+            ok(
+                json!({"channelId": C, "since": 59958, "limit": 500, "threadRootId": C, "extra": 1})
+            ),
+            (C.to_owned(), Some(59958), Some(500), Some(C.to_owned()))
+        );
+        // JSON 의 59958.0 은 JS 에서 정수 — zod 가 받는다.
+        assert_eq!(ok(json!({"channelId": C, "since": 59958.0})).1, Some(59958));
+        assert_eq!(bad(json!({})), "Required at channelId");
+        assert_eq!(bad(json!({"channelId": "x"})), "Invalid uuid at channelId");
+        assert_eq!(
+            bad(json!({"channelId": null})),
+            "Expected string, received null at channelId"
+        );
+        assert_eq!(
+            bad(json!({"channelId": C, "since": "59958"})),
+            "Expected number, received string at since"
+        );
+        assert_eq!(
+            bad(json!({"channelId": C, "since": null})),
+            "Expected number, received null at since"
+        );
+        assert_eq!(
+            bad(json!({"channelId": C, "since": -1})),
+            "Number must be greater than or equal to 0 at since"
+        );
+        assert_eq!(
+            bad(json!({"channelId": C, "since": -1.5})),
+            "Expected integer, received float at since\nNumber must be greater than or equal to 0 at since"
+        );
+        assert_eq!(
+            bad(json!({"channelId": C, "limit": 0})),
+            "Number must be greater than or equal to 1 at limit"
+        );
+        assert_eq!(
+            bad(json!({"channelId": C, "limit": 501})),
+            "Number must be less than or equal to 500 at limit"
+        );
+        assert_eq!(
+            bad(json!({"channelId": C, "limit": 1.5})),
+            "Expected integer, received float at limit"
+        );
+        assert_eq!(
+            bad(json!({"channelId": 1, "since": "a", "limit": 0, "threadRootId": "x"})),
+            "Expected string, received number at channelId\nExpected number, received string at since\nNumber must be greater than or equal to 1 at limit\nInvalid uuid at threadRootId"
+        );
+        // 객체가 아님·i64 밖 정수 → TS.
+        assert!(matches!(read_args(&json!(null)), Err(None)));
+        assert!(matches!(read_args(&json!([])), Err(None)));
+        assert!(matches!(
+            read_args(&json!({"channelId": C, "since": 1e300})),
+            Err(None)
+        ));
     }
 
     #[test]
