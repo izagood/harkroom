@@ -65,6 +65,11 @@ pub(crate) async fn message_by_id<'e, E: sqlx::PgExecutor<'e>>(
         .await
 }
 
+/// [`channel_visible`] 의 문장 — `$1` 보는 계정, `$2` 채널. 트랜잭션 안에서 같은 판정을 할 때 쓴다.
+pub(crate) fn visible_sql() -> &'static str {
+    sql().visible.as_str()
+}
+
 /// TS `assertChannelVisible` — 없는 채널은 막지 않는다(`get_message` 와 같은 판정).
 pub(crate) async fn channel_visible(pool: &PgPool, me: &str, channel: &str) -> sqlx::Result<bool> {
     let v: Option<bool> = sqlx::query_scalar(sql().visible.as_str())

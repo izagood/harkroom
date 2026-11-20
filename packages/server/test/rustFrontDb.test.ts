@@ -5249,7 +5249,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       }
 
       // S5.4 A4b2 — MCP `thread.plan` 쓰기·지우기와 `thread.plan.item`(`core/mcp/plan_write.rs`). TS·Rust 에 **각자의 루트**(T·R)로
-      // 같은 순서를 돌려 답 글자를 견준다(루트 id·시각만 자리표). `auto` 칸·애매한 꼴은 TS 로 넘긴다.
+      // 같은 순서를 돌려 답 글자를 견준다(루트 id·시각만 자리표). 애매한 꼴은 TS 로 넘긴다. `auto` 칸은 아래 `plan_auto.rs` 블록이 본다.
       {
         expect(f.log()).not.toContain('thread plan write core off');
         const ch = await createChannel(db.pool, { name: 'a4b2-pub' });
@@ -5342,7 +5342,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         // TS 로 넘기는 인자 — 같은 요청을 둘에 보내 글자 그대로, 둘 다 TS 가 답한다.
         const rootX = await say(ch.id, member.accountId, 'a4b2 root X');
         for (const [name, token, tool, args] of [
-          ['auto 칸 → TS(A4b3)', agent.pat, 'thread.plan.item', { threadRootId: rootX, type: 'plan', auto: null }],
+          ['auto 꼴 틀림 → TS(zod)', agent.pat, 'thread.plan.item', { threadRootId: rootX, type: 'plan', auto: { until: 's0' } }],
           ['uuid 아님 → TS', agent.pat, 'thread.plan', { threadRootId: 'x', ifUpdatedAt: null, plan: null }],
           ['plan 꼴 틀림 → TS(zod)', agent.pat, 'thread.plan', { threadRootId: rootX, ifUpdatedAt: null, plan: { goal: 1 } }],
           ['모르는 type → TS(zod)', agent.pat, 'thread.plan.item', { threadRootId: rootX, type: 'x', title: 't' }],
@@ -5351,6 +5351,82 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           const [a, b] = [await mcpCall(tsUrl, token, tool, args), await mcpCall(rsUrl, token, tool, args)];
           expect({ status: b.status, text: b.text.replace(ISO, '<t>') }, name).toEqual({ status: a.status, text: a.text.replace(ISO, '<t>') });
           expect(answerers(false, zodRejects(tool, args)), `${name} — TS 가 답한다`).toContain(b.core);
+        }
+        // `thread.plan.item` 의 `auto` 칸(`core/mcp/plan_auto.rs`) — 자동 진행 켜기·끄기. TS·Rust 에 각자의 루트로 같은 순서를 돌려
+        // 답 글자·판 상태·시스템 줄을 견준다. 전부 Rust 가 답한다.
+        {
+          expect(f.log()).not.toContain('mcp thread.plan.item auto core off');
+          const autoOp = (await db.pool.query<{ id: string }>(
+            `insert into operator(owner_account_id, name, token_hash) values ($1, 'a4b3-op', 'a4b3-op-hash') returning id`, [member.accountId])).rows[0]!.id;
+          const autoSide = async (base: string, tag: string) => {
+            const root = await say(ch.id, member.accountId, `a4b3 root ${tag}`);
+            const src = await say(ch.id, member.accountId, `a4b3 s2까지 진행해 ${tag}`, root);
+            const botSrc = await say(ch.id, agent.accountId, `a4b3 bot ${tag}`, root);
+            const norm = (t: string) => t.split(root).join('<root>').split(botSrc).join('<bot>').split(src).join('<src>').replace(ISO, '<t>');
+            const out: { name: string; text: string; core: string | null }[] = [];
+            const item = async (name: string, args: Record<string, unknown>, token = agent.pat) => {
+              const r = await mcpCall(base, token, 'thread.plan.item', { threadRootId: root, type: 'plan', ...args });
+              out.push({ name, text: norm(r.text), core: r.core });
+            };
+            const lease = (cause: string) => db.pool.query(
+              `insert into secret_turn_lease (token_hash, agent_id, operator_id, cause_message_id, channel_id, thread_root_id, expires_at)
+               values ($1, $2, $3, $4, $5, $6, now() + interval '1 hour')`, [`a4b3-${tag}-${cause}`, agent.accountId, autoOp, cause, ch.id, root]);
+            const manager = (id: string | null) => db.pool.query(
+              `update thread_plan set doc = jsonb_set(doc, '{managerId}', to_jsonb($2::text)) where root_id = $1`, [root, id]);
+            await item('판 없음 켜기 → no_plan', { auto: { until: 's2', sourceMessageId: src } });
+            await item('판 없음 끄기 → no_plan', { auto: null });
+            // s1 은 이미 도는 중이고 s2 는 s1 을 기다린다 — 시작할 단계가 없어 감시가 깨우지 않는다(이 블록은 켜기·끄기만 본다).
+            await mcpCall(base, agent.pat, 'thread.plan', {
+              threadRootId: root, ifUpdatedAt: null,
+              plan: { goal: 'auto', groups: [], steps: [{ id: 's1', title: 'a', state: 'active' }, { id: 's2', title: 'b', state: 'pending', dependsOn: ['s1'] }] },
+            });
+            await manager(member2.accountId);
+            await item('관리자 아님 켜기 → not_manager', { auto: { until: 's2', sourceMessageId: src } });
+            await item('관리자 아님 끄기 → not_manager', { auto: null });
+            await manager(agent.accountId);
+            await item('없는 끝점 → unknown_until', { auto: { until: 's9', sourceMessageId: src } });
+            await item('임대 없음 → source_not_cause', { auto: { until: 's2', sourceMessageId: src } });
+            await lease(src);
+            await lease(botSrc);
+            await item('에이전트 글 → invalid_source', { auto: { until: 's2', sourceMessageId: botSrc } });
+            await item('다른 칸과 함께 → auto_alone', { auto: null, managerId: null });
+            await item('type 이 plan 아님 → auto_alone', { type: 'step', auto: null });
+            await item('사람 계정 → agents_only', { auto: null }, member.token);
+            await item('꺼진 판 끄기 → changed false', { auto: null });
+            await item('켜기', { auto: { until: 's2', sourceMessageId: src } });
+            const snap = (await db.pool.query(
+              `select auto_until as until, auto_range as range, auto_by as by, auto_mandate as mandate, auto_source = $2 as source,
+                      auto_used_sources = array[$2::uuid] as used, auto_at = date_trunc('milliseconds', auto_at) as ms
+                 from thread_plan where root_id = $1`, [root, src])).rows[0];
+            await item('쓴 글로 다시 → source_used', { auto: { until: 's1', sourceMessageId: src } });
+            await item('끄기', { auto: null });
+            const after = (await db.pool.query(
+              `select auto_until as until, auto_range as range, auto_used_sources = array[$2::uuid] as used from thread_plan where root_id = $1`, [root, src])).rows[0];
+            const lines = (await db.pool.query<{ body: string; state: unknown; i18n: unknown; author: string; kind: string }>(
+              `select body, meta->'planAutoState' as state, meta->'i18n' as i18n, author_id as author, kind
+                 from message where thread_root_id = $1 and meta ? 'planAutoState' order by seq`, [root])).rows
+              .map((l) => JSON.parse(norm(JSON.stringify(l))) as unknown);
+            return { out, snap, after, lines };
+          };
+          const [T, R] = [await autoSide(tsUrl, 'T'), await autoSide(rsUrl, 'R')];
+          const strip = (o: { name: string; text: string }) => ({ name: o.name, text: o.text });
+          expect(R.out.map(strip)).toEqual(T.out.map(strip));
+          for (const o of R.out) expect(o.core, `${o.name} — Rust 가 답한다`).toBe('mcp');
+          expect(R.snap).toEqual(T.snap);
+          expect(R.snap).toMatchObject({ until: 's2', by: member.accountId, mandate: null, source: true, used: true, ms: true });
+          expect(Object.keys(R.snap.range as Record<string, string>).sort(), '범위는 끝점과 그 앞 단계').toEqual(['s1', 's2']);
+          expect(R.after).toEqual(T.after);
+          expect(R.after, '끈 뒤에도 쓴 근거 글은 남는다').toMatchObject({ until: null, range: {}, used: true });
+          expect(R.lines).toEqual(T.lines);
+          expect(R.lines.length, '켜짐 줄 + 꺼짐 줄').toBe(2);
+          const text = (name: string) => R.out.find((o) => o.name === name)!.text;
+          expect(text('켜기')).toContain('changed\\":true');
+          expect(text('켜기')).toContain('sourceMessageId\\":\\"<src>');
+          expect(text('끄기')).toContain('auto\\":null,\\"changed\\":true');
+          expect(text('꺼진 판 끄기 → changed false')).toContain('changed\\":false');
+          for (const code of ['no_plan', 'not_manager', 'unknown_until', 'source_not_cause', 'invalid_source', 'auto_alone', 'agents_only', 'source_used']) {
+            expect(R.out.some((o) => o.text.includes(`code\\":\\"${code}`)), code).toBe(true);
+          }
         }
         // 자동 진행이 켜진 판에서 관리자를 바꾸면 Rust 가 같은 tx 에서 자동 진행을 끄며 바꾼다(739c7e190 부터 TS 로 넘기지 않는다).
         await mcpCall(rsUrl, agent.pat, 'thread.plan', { threadRootId: rootX, ifUpdatedAt: null, plan: { goal: 'auto', groups: [], steps: [{ id: 's1', title: 'a', state: 'pending' }] } });

@@ -3,7 +3,8 @@
 //! - zod 가 확실히 받고 JS 와 같은 값을 낸다고 장담할 수 있는 입력만 `Some` 이다. 그 밖(zod 거절이든 애매한 값이든)은 `None`
 //!   → TS 가 답한다(같은 검증 오류든 같은 결과든 TS 가 정본이다). 넓게 받으면 TS 와 갈린다.
 //! - 애매해서 넘기는 것: JS `trim` 과 Rust `trim` 이 다르게 지우는 글자(U+FEFF·U+0085), 정수가 아니거나 2^53 이상인 수,
-//!   `ifUpdatedAt` 이 JS `Invalid Date` 로 읽히는 값, `auto` 칸(자동 진행 — A4b3 몫).
+//!   `ifUpdatedAt` 이 JS `Invalid Date` 로 읽히는 값.
+//! - `auto` 칸(자동 진행 켜기·끄기)은 [`parse_auto`] 가 읽고 `plan_auto.rs` 가 답한다.
 //! - 결과는 zod `parse` 의 출력과 같은 값이다: 모르는 키는 버리고(strip), `default([])` 칸을 채우고, `text()` 칸은 다듬는다.
 //!   저장은 jsonb 라 객체 키 순서는 뜻이 없다.
 use crate::core::plan_graph::ItemPatch;
@@ -305,12 +306,77 @@ fn opt_uuid_s(v: Option<&Value>) -> Option<Option<Option<String>>> {
     }
 }
 
-/// `thread.plan.item` 인자(zod `planItemShape`). `auto` 칸이 있으면 `None`(자동 진행은 TS — A4b3).
+/// `thread.plan.item` 의 `auto` 칸(zod `z.object({ until, sourceMessageId }).nullable()`).
+#[derive(Debug, PartialEq, Eq)]
+pub enum AutoArg {
+    /// `auto: null` — 끄기.
+    Off,
+    /// 켜기. `source` 는 근거가 되는 사람 글 id.
+    On { until: String, source: String },
+}
+
+/// `auto` 칸이 있는 `thread.plan.item` 인자.
+#[derive(Debug, PartialEq, Eq)]
+pub struct AutoItem {
+    pub root: String,
+    pub auto: AutoArg,
+    /// TS `patch.type === 'plan' && Object.keys(patch).length === 1` — `type: "plan"` 말고 다른 칸이 없다.
+    pub alone: bool,
+}
+
+/// `auto` 밖의 `planItemShape` 칸 — zod 가 남기는 키(모르는 키는 벗긴다).
+const ITEM_KEYS: &[&str] = &[
+    "type",
+    "id",
+    "remove",
+    "after",
+    "title",
+    "groupId",
+    "state",
+    "assigneeId",
+    "linkedRootId",
+    "dependsOn",
+    "addDependsOn",
+    "removeDependsOn",
+    "addLinks",
+    "removeLinks",
+    "blockedReason",
+    "managerId",
+    "ifRev",
+];
+
+/// `auto` 칸이 있는 `thread.plan.item` 인자. 칸이 없거나 zod 가 거절할 꼴이면 `None`(거절 글은 TS 가 쓴다).
+pub fn parse_auto(args: &Value) -> Option<AutoItem> {
+    let o = args.as_object()?;
+    let auto = match o.get("auto")? {
+        Value::Null => AutoArg::Off,
+        Value::Object(a) => AutoArg::On {
+            until: id_value(a.get("until")?, None)?,
+            source: a
+                .get("sourceMessageId")?
+                .as_str()
+                .filter(|s| is_zod_uuid(s))?
+                .to_owned(),
+        },
+        _ => return None,
+    };
+    let (root, patch) = parse_patch(o)?;
+    let alone = patch.type_.as_deref() == Some("plan")
+        && o.keys().filter(|k| ITEM_KEYS.contains(&k.as_str())).count() == 1;
+    Some(AutoItem { root, auto, alone })
+}
+
+/// `thread.plan.item` 인자(zod `planItemShape`). `auto` 칸이 있으면 `None` — 그 꼴은 [`parse_auto`] 몫이다.
 pub fn parse_item(args: &Value) -> Option<(String, ItemPatch)> {
     let o = args.as_object()?;
     if o.contains_key("auto") {
         return None;
     }
+    parse_patch(o)
+}
+
+/// `auto` 밖의 칸.
+fn parse_patch(o: &Map<String, Value>) -> Option<(String, ItemPatch)> {
     let root = o.get("threadRootId")?.as_str().filter(|s| is_zod_uuid(s))?;
     let mut p = ItemPatch::default();
     if let Some(t) = o.get("type") {

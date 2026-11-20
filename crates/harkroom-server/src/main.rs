@@ -3413,6 +3413,30 @@ async fn main() {
         }
         None => None,
     };
+    // MCP `thread.plan.item` 의 `auto` 칸(자동 진행 켜기·끄기). 끄기 칸·글 올리기에 더해 켜기 칸 권한까지 있을 때만 — 아니면 TS 에 남는다.
+    let plan_auto_ok = match &thread_plan_auto_off {
+        Some(w) => {
+            use harkroom_server::core::mcp::plan_auto as c;
+            match write::missing_in(w, c::PLAN_AUTO_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => true,
+                Ok(m) => {
+                    eprintln!(
+                        "front: mcp thread.plan.item auto core off — missing privileges {m:?}"
+                    );
+                    refuse_missing_grants(&m);
+                    false
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: mcp thread.plan.item auto core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    false
+                }
+            }
+        }
+        None => false,
+    };
     // C3b-2c-4b — MCP `message.delegate` 의 쓰기(게이트를 지난 위임)는 MCP 글 칸에 더해 위임 칸(`DELEGATE_WRITE_PRIVILEGES`)까지 있을 때만.
     // 없으면 게이트를 지난 위임만 TS 에 남는다(거절 갈래는 그대로 Rust).
     let mcp_delegate_ok = mcp_post_ok
@@ -5299,6 +5323,10 @@ async fn main() {
                 plan_read: thread_plan_read_on,
                 plan_write,
                 plan_auto_off: plan_manager_post.clone().map(std::sync::Arc::new),
+                plan_auto: plan_manager_post
+                    .clone()
+                    .filter(|_| plan_auto_ok)
+                    .map(std::sync::Arc::new),
                 work_item: work_item_write,
                 work_item_upsert: work_item_upsert_write,
                 pr_watch: pr_watch_write,
