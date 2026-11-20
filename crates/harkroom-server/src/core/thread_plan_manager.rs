@@ -14,12 +14,13 @@ use super::msg_post::{gate_sql, to_ts};
 use super::msg_read::channel_visible;
 use super::thread_plan_read::{ROOT_SQL, plan_view_json};
 use super::thread_plan_start::{
-    Sent, activate, bodies_after, finish, handles_of, nothing_json, plan_routes, preview_json,
-    refused_json, start_req, started_full_json,
+    Sent, StartReq, activate, bodies_after, finish, handles_of, nothing_json, plan_routes,
+    preview_json, refused_json, started_full_json,
 };
 use crate::auth::{RequireAccount, Via};
 use crate::directory::{internal, json_err, json_ok};
 use crate::proxy::Upstream;
+use crate::write::{Body, fastify_body};
 use axum::body::to_bytes;
 use axum::extract::{ConnectInfo, Path, Request, State};
 use axum::http::{StatusCode, header};
@@ -53,6 +54,16 @@ fn err_fields(status: StatusCode, fields: &str) -> Response {
         format!("{{\"error\":{{{fields}}}}}"),
     )
         .into_response()
+}
+
+/// 올 수 없는 갈래 — 흔적을 남기고 500 `internal`(TS 오류 처리기와 같은 몸통).
+fn broken(what: &str) -> Response {
+    eprintln!("[threadPlanStart] {what}");
+    json_err(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "internal",
+        "internal error",
+    )
 }
 
 /// TS `HTTP_BY_CODE` — 없으면 409.
@@ -151,15 +162,28 @@ pub async fn put_manager(
     }
 }
 
-/// zod `startBody` 를 Rust 가 같은 판정으로 읽을 수 있는 꼴만 — `(dryRun, ifRev 있음)`. 애매하면 `None`(→ TS 가 판정한다).
-fn parse_start(bytes: &[u8]) -> Option<(bool, bool)> {
-    let v: Value = serde_json::from_slice(bytes).ok()?;
+/// zod `z.number().int().min(1)` — 정수 값인 수(`2.0`·`1e2` 포함)만. i64 를 넘는 값은 어떤 판 번호와도 맞지 않으니 끝값으로 접는다.
+fn zod_rev(v: &Value) -> Option<i64> {
+    if let Some(n) = v.as_i64() {
+        return (n >= 1).then_some(n);
+    }
+    if v.as_u64().is_some() {
+        return Some(i64::MAX);
+    }
+    let f = v.as_f64()?;
+    #[allow(clippy::cast_possible_truncation)] // 넘치면 끝값으로 접힌다(`as` 는 포화한다).
+    (f.is_finite() && f >= 1.0 && f.fract() == 0.0).then_some(f as i64)
+}
+
+/// zod `startBody` 그대로 — 어긋나면 `None`(→ 400 `invalid_request`). 모르는 칸은 버리고, 겹친 단계 id 는 앞의 것만 남긴다(TS 라우트).
+fn parse_start(v: &Value) -> Option<StartReq> {
     let o = v.as_object()?;
-    let steps = o.get("steps")?.as_array()?;
-    if steps.is_empty() || steps.len() > 40 {
+    let raw = o.get("steps")?.as_array()?;
+    if raw.is_empty() || raw.len() > 40 {
         return None;
     }
-    for st in steps {
+    let mut steps: Vec<(String, Option<String>)> = Vec::new();
+    for st in raw {
         let so = st.as_object()?;
         let id = so.get("id")?.as_str()?;
         let digits = id.strip_prefix('s')?;
@@ -170,10 +194,13 @@ fn parse_start(bytes: &[u8]) -> Option<(bool, bool)> {
         {
             return None;
         }
-        match so.get("assigneeId") {
-            None => {}
-            Some(Value::String(a)) if crate::lists::is_zod_uuid(a) => {}
+        let assignee = match so.get("assigneeId") {
+            None => None,
+            Some(Value::String(a)) if crate::lists::is_zod_uuid(a) => Some(a.clone()),
             Some(_) => return None,
+        };
+        if !steps.iter().any(|(x, _)| x == id) {
+            steps.push((id.to_owned(), assignee));
         }
     }
     let dry = match o.get("dryRun") {
@@ -182,26 +209,26 @@ fn parse_start(bytes: &[u8]) -> Option<(bool, bool)> {
         Some(_) => return None,
     };
     let if_rev = match o.get("ifRev") {
-        None => false,
-        Some(v) => {
-            let n = v.as_i64()?;
-            if !(1..=9_007_199_254_740_991).contains(&n) {
-                return None;
-            }
-            true
-        }
+        None => None,
+        Some(v) => Some(zod_rev(v)?),
     };
-    match o.get("locale") {
-        None => {}
-        Some(Value::String(l)) if l == "ko" || l == "en" => {}
+    let en = match o.get("locale") {
+        None => false,
+        Some(Value::String(l)) if l == "ko" || l == "en" => l == "en",
         Some(_) => return None,
-    }
-    Some((dry, if_rev))
+    };
+    Some(StartReq {
+        steps,
+        en,
+        if_rev,
+        dry,
+    })
 }
 
 /// `POST /threads/{rootId}/plan/start` — TS `startPlanSteps` 의 앞 거절들(`human_only`·`not_found`·`if_rev_required`·
 /// `not_root`·보기 404·`channel_archived`·`no_plan`·`plan_flagged`), 미리보기, 자기 단계만 시작(TP5b), 글을 올리는 시작(TP5c)을
-/// Rust 가 답한다. 글 경로가 없는 글 올리기와 zod 판정이 애매한 본문은 요청을 그대로 TS 에 넘긴다.
+/// Rust 가 답한다. 본문 판정(fastify 본문 규칙 → zod `startBody`, 400 `invalid_request`)도 Rust 다. 글 경로가 없는 글 올리기만
+/// 요청을 그대로 TS 에 넘긴다.
 pub async fn post_start(
     State(st): State<Arc<ManagerState>>,
     RequireAccount(me, auth): RequireAccount,
@@ -213,16 +240,27 @@ pub async fn post_start(
     let Ok(bytes) = to_bytes(body, BODY_LIMIT).await else {
         return code_err(StatusCode::PAYLOAD_TOO_LARGE, "fst_err_ctp_body_too_large");
     };
+    // fastify 는 본문을 인증·사람 판정보다 먼저 읽는다 — JSON 이 깨졌거나 매체가 틀리면 여기서 끝난다.
+    let json = match fastify_body(&parts.headers, &bytes) {
+        Ok(b) => b,
+        Err(r) => return r,
+    };
     if me.kind != "human" || auth.via != Some(Via::Session) {
         return code_err(StatusCode::FORBIDDEN, "human_only");
     }
     if !crate::lists::is_zod_uuid(&root) {
         return code_err(StatusCode::NOT_FOUND, "not_found");
     }
-    let Some((dry, if_rev)) = parse_start(&bytes) else {
-        return to_ts(st.up.clone(), peer, parts, bytes).await;
+    let parsed = match &json {
+        Body::Json(v) => parse_start(v),
+        _ => None,
     };
-    if !dry && !if_rev {
+    let Some(req) = parsed else {
+        // 문구는 TS(zod 오류 JSON)와 다르다 — 대조는 상태·코드만 본다.
+        return json_err(StatusCode::BAD_REQUEST, "invalid_request", "body: invalid");
+    };
+    let dry = req.dry;
+    if !dry && req.if_rev.is_none() {
         return code_err(StatusCode::BAD_REQUEST, "if_rev_required");
     }
     let w = &st.write;
@@ -262,9 +300,9 @@ pub async fn post_start(
         Ok(Some((_, d, r))) => (d, r),
         Err(e) => return internal(e),
     };
-    // 미리보기와 「시작할 단계 없음」 거절은 Rust(TP5), 자기 단계만 시작하는 실제 쓰기도 Rust(TP5b), 글을 올리는 시작은 TS.
-    let (Some(req), Ok(doc)) = (start_req(&bytes), serde_json::from_str::<Value>(&doc_text)) else {
-        return to_ts(st.up.clone(), peer, parts, bytes).await;
+    // jsonb 를 글자로 읽은 것이라 깨질 수 없다 — 깨졌으면 서버 쪽 고장이다.
+    let Ok(doc) = serde_json::from_str::<Value>(&doc_text) else {
+        return broken("plan doc is not json");
     };
     let route = match plan_routes(w, &me.id, &channel, &doc, &req).await {
         Ok(r) => r,
@@ -294,8 +332,9 @@ pub async fn post_start(
         };
         Some(p)
     };
+    // 실제 시작에는 꼭 있다(위에서 봤다).
     let Some(if_rev) = req.if_rev else {
-        return to_ts(st.up.clone(), peer, parts, bytes).await;
+        return code_err(StatusCode::BAD_REQUEST, "if_rev_required");
     };
     let handles = if post_st.is_some() {
         match handles_of(w, &route, &doc).await {
@@ -365,9 +404,9 @@ pub async fn post_start(
             return err_fields(status_of(code), &fields);
         }
         Ok((ManagerWrite::Deleted, _)) => return code_err(StatusCode::NOT_FOUND, "no_plan"),
-        // 관리자를 바꾸지 않는 판이라 오지 않는다 — 오면 되감았으니 TS 가 처음부터 다시 돈다.
+        // 관리자를 바꾸지 않는 판이라 오지 않는다.
         Ok((ManagerWrite::Written { auto_off: Some(_) } | ManagerWrite::ToTs, _)) => {
-            return to_ts(st.up.clone(), peer, parts, bytes).await;
+            return broken("plan start changed the manager");
         }
         Err(e) => return internal(e),
     };
@@ -546,26 +585,77 @@ mod tests {
 #[cfg(test)]
 mod start_tests {
     use super::parse_start;
+    use serde_json::json;
+
+    const A: &str = "00000000-0000-4000-8000-00000000000a";
 
     #[test]
     fn start_body_follows_zod() {
+        let r = parse_start(&json!({"steps":[{"id":"s1"}],"ifRev":2})).unwrap();
+        assert_eq!((r.dry, r.if_rev, r.en), (false, Some(2), false));
+        let r =
+            parse_start(&json!({"steps":[{"id":"s9999"}],"dryRun":true,"locale":"en"})).unwrap();
+        assert_eq!((r.dry, r.if_rev, r.en), (true, None, true));
         assert_eq!(
-            parse_start(br#"{"steps":[{"id":"s1"}],"ifRev":2}"#),
-            Some((false, true))
+            parse_start(&json!({"steps":[{"id":"s1"}]})).unwrap().if_rev,
+            None
         );
+        for bad in [
+            json!({}),
+            json!([]),
+            json!("x"),
+            json!({"steps":[]}),
+            json!({"steps":[{"id":"s0"}]}),
+            json!({"steps":[{"id":"s10000"}]}),
+            json!({"steps":[{"id":1}]}),
+            json!({"steps":["s1"]}),
+            json!({"steps":[{"id":"s1"}],"ifRev":0}),
+            json!({"steps":[{"id":"s1"}],"ifRev":1.5}),
+            json!({"steps":[{"id":"s1"}],"ifRev":"1"}),
+            json!({"steps":[{"id":"s1"}],"ifRev":null}),
+            json!({"steps":[{"id":"s1"}],"dryRun":null}),
+            json!({"steps":[{"id":"s1"}],"dryRun":"true"}),
+            json!({"steps":[{"id":"s1"}],"locale":"fr"}),
+            json!({"steps":[{"id":"s1","assigneeId":"x"}]}),
+            json!({"steps":[{"id":"s1","assigneeId":null}]}),
+        ] {
+            assert!(parse_start(&bad).is_none(), "{bad}");
+        }
+        let many: Vec<_> = (1..=41).map(|n| json!({"id": format!("s{n}")})).collect();
+        assert!(parse_start(&json!({ "steps": many })).is_none());
+    }
+
+    /// zod `.int()` 는 정수 **값**을 본다 — `2.0`·`1e2` 도 통과한다. 예전에는 이 꼴을 TS 로 넘겼다.
+    #[test]
+    fn if_rev_takes_integer_valued_numbers() {
+        let rev = |s: &str| {
+            let v: serde_json::Value =
+                serde_json::from_str(&format!(r#"{{"steps":[{{"id":"s1"}}],"ifRev":{s}}}"#))
+                    .unwrap();
+            parse_start(&v).map(|r| r.if_rev)
+        };
+        assert_eq!(rev("2.0"), Some(Some(2)));
+        assert_eq!(rev("1e2"), Some(Some(100)));
+        assert_eq!(rev("18446744073709551615"), Some(Some(i64::MAX)));
+        assert_eq!(rev("1e30"), Some(Some(i64::MAX)));
+        assert_eq!(rev("-1"), None);
+        assert_eq!(rev("0.5"), None);
+    }
+
+    /// 겹친 단계 id 는 앞의 것만(TS 라우트의 `seen`), 모르는 칸은 버린다.
+    #[test]
+    fn dedupes_steps_and_drops_unknown_keys() {
+        let r = parse_start(&json!({
+            "steps":[{"id":"s2","assigneeId":A,"x":1},{"id":"s1"},{"id":"s2"}],
+            "dryRun":true,"zzz":[1]
+        }))
+        .unwrap();
         assert_eq!(
-            parse_start(br#"{"steps":[{"id":"s9999"}],"dryRun":true}"#),
-            Some((true, false))
+            r.steps,
+            vec![
+                ("s2".to_owned(), Some(A.to_owned())),
+                ("s1".to_owned(), None)
+            ]
         );
-        assert_eq!(
-            parse_start(br#"{"steps":[{"id":"s1"}]}"#),
-            Some((false, false))
-        );
-        assert!(parse_start(br#"{"steps":[]}"#).is_none());
-        assert!(parse_start(br#"{"steps":[{"id":"s0"}]}"#).is_none());
-        assert!(parse_start(br#"{"steps":[{"id":"s10000"}]}"#).is_none());
-        assert!(parse_start(br#"{"steps":[{"id":"s1"}],"ifRev":0}"#).is_none());
-        assert!(parse_start(br#"{"steps":[{"id":"s1"}],"locale":"fr"}"#).is_none());
-        assert!(parse_start(br#"{"steps":[{"id":"s1","assigneeId":"x"}]}"#).is_none());
     }
 }
