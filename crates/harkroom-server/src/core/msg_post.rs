@@ -349,7 +349,7 @@ pub(crate) struct Origin<'a> {
     /// 건드리지 않고, 갈래 판정(TS 몫)도 하지 않는다(서버 안쪽 호출이라 넘길 TS 라우트가 없다). 라우트 입력에서는 켜지 않는다.
     pub(crate) server_notice: bool,
     /// 결과를 닫는 글(`meta.kind` 가 `failure`·`report`, C3b-2c). 작성자가 담당인 **안 닫힌** 위임 항목이 이 스레드에 있으면 TS
-    /// `closeDelegationsForReply` 가 그 항목을 닫고 위임자를 깨운다 — 아직 Rust 에 없는 갈래라 [`CLOSES_DELEGATION_SQL`] 로 TS 에 넘긴다.
+    /// `closeDelegationsForReply` 가 그 항목을 닫고 위임자를 깨운다.
     pub(crate) closes_delegation: bool,
     /// MCP `message.delegate`(C3b-2c-4b) — 게이트를 지난 위임. 있으면 같은 tx 에서 사슬 상한(TS `delegationChainCapped`)을 보고
     /// 의무를 만든다(TS `createDelegation`, [`delegate_write`]). 위임 스위치 값이 없으면 v0 이다.

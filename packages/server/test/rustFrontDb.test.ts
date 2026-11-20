@@ -10596,8 +10596,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           ['공백 본문도 받는다(min 1)', async (ch) => ({ args: { channelId: ch, body: ' ' }, via: viaPat }), true],
           // S5.4 — 빈 agentModels(3f7e8cb78·39da7054d) · ASCII 밖 모델(UTF-16 길이로 센다)은 Rust 가 답한다.
           ['agentModels 빈 목록', async (ch) => ({ args: { channelId: ch, body: '지정', agentModels: [] }, via: viaPat }), true],
-          // 위임 스위치(env)가 없는 앞단은 암묵 위임 모드를 모른다 — 부름은 Rust 가 답하지 않고 TS 로 넘긴다.
-          ['부름(암묵 위임 모름) → TS', async (ch) => ({ args: { channelId: ch, body: '@mem 봐 줘' }, via: viaPat }), false],
+          // 위임 스위치(env)가 없는 앞단 — 값이 없으면 TS 기본값(위임 v0 → 암묵 위임 꺼짐)으로 Rust 가 부름을 답한다.
+          ['부름(위임 스위치 값 없음) → Rust', async (ch) => ({ args: { channelId: ch, body: '@mem 봐 줘' }, via: viaPat }), true],
           ['ASCII 밖 모델', async (ch) => ({ args: { channelId: ch, body: '보고', model: '오푸스' }, via: viaPat }), true],
           // C3b-2c-1 — `message.fail`(표지 없는 실패). 표지(`code`·`laneCode`)가 있으면 TS 몫이다(fail-closed).
           ['fail 원인 없음 · what/reason · 옛 account', async (ch) => ({ tool: 'message.fail', args: { channelId: ch, body: '못 했다', retryable: true, what: '빌드', reason: '권한', account: 'old', model: 'claude-opus-5' }, via: viaPat }), true],
