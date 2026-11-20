@@ -295,7 +295,15 @@ pub async fn handle(
             {
                 return r;
             }
-            super::tools::answer(&pool, &me, tool, &args, cause.as_deref()).await
+            super::tools::answer(
+                &pool,
+                &me,
+                tool,
+                &args,
+                cause.as_deref(),
+                writes.switches.background,
+            )
+            .await
         })
     };
     let relay_moved = writes.relay_moved;
