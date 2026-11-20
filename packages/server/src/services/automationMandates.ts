@@ -21,38 +21,46 @@ type Q = Pick<PoolClient, 'query'>;
 
 export interface AutomationLeaseMandate { mandateId: string; created: boolean; automationId: string; ownerId: string; delegatorId: string }
 
-/** 이 원인 글이 키를 줄 수 있는 자동화 회차 글이면 그 위임장(없으면 만든다). 아니면 null. 임대 발급 트랜잭션 안에서 부른다. */
-export async function automationMandateForCause(client: Q, args: {
-  agentId: string; causeMessageId: string; channelId: string; now: Date;
-}): Promise<AutomationLeaseMandate | null> {
-  const run = (await client.query<{ automationId: string; delegatorId: string; ownerId: string | null; channelId: string }>(
-    `select r.automation_id as "automationId", a.owner_id as "delegatorId", c.owner_account_id as "ownerId", a.channel_id as "channelId"
+/**
+ * ⑤b 의 문장 넷 — Rust 턴 임대(`crates/harkroom-server/src/core/turn_lease.rs`)가 골든(`sql_fragments.json`)으로 그대로 읽는다.
+ * RUN: $1 원인 글 $2 에이전트. INSERT: $1 주인 $2 맡긴 사람 $3 자동화 $4 채널 $5 지금. LIVE: $1 자동화 $2 주인. TOUCH: $1 위임장 $2 지금.
+ */
+export const AUTOMATION_MANDATE_RUN_SQL = `select r.automation_id as "automationId", a.owner_id as "delegatorId", c.owner_account_id as "ownerId", a.channel_id as "channelId"
        from automation_run r
        join automation a on a.id = r.automation_id
        join message m on m.id = r.message_id and m.deleted_at is null and m.meta ? 'automation'
-       join agent_config c on c.account_id = $2
-      where r.message_id = $1
+       join agent_config c on c.account_id = $2::uuid
+      where r.message_id = $1::uuid
         and a.deleted_at is null and a.enabled and a.approved_at is not null
         -- security n5: 마지막 만들기·승인·고침이 사람 세션이었던 자동화만(PAT 로 만든·고친 자동화는 키 없음).
         and a.mandate_session_at is not null
         and ((r.trigger_kind = 'schedule' and r.initiated_by is null)
           or (r.trigger_kind = 'manual' and r.initiated_by = a.owner_id))
-      limit 1`,
-    [args.causeMessageId, args.agentId])).rows[0];
+      limit 1`;
+export const AUTOMATION_MANDATE_INSERT_SQL = `insert into mandate (owner_account_id, delegator_account_id, automation_id, channel_id, created_at, last_activity_at)
+     values ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::timestamptz, $5::timestamptz)
+     on conflict (automation_id, owner_account_id) where automation_id is not null and ended_at is null do nothing
+     returning id`;
+export const AUTOMATION_MANDATE_LIVE_SQL = `select id from mandate where automation_id = $1::uuid and owner_account_id = $2::uuid and ended_at is null`;
+export const AUTOMATION_MANDATE_TOUCH_SQL = `update mandate set last_activity_at = greatest(last_activity_at, $2::timestamptz) where id = $1::uuid`;
+
+/** 이 원인 글이 키를 줄 수 있는 자동화 회차 글이면 그 위임장(없으면 만든다). 아니면 null. 임대 발급 트랜잭션 안에서 부른다. */
+export async function automationMandateForCause(client: Q, args: {
+  agentId: string; causeMessageId: string; channelId: string; now: Date;
+}): Promise<AutomationLeaseMandate | null> {
+  const run = (await client.query<{ automationId: string; delegatorId: string; ownerId: string | null; channelId: string }>(
+    AUTOMATION_MANDATE_RUN_SQL, [args.causeMessageId, args.agentId])).rows[0];
   if (!run || !run.ownerId || run.channelId !== args.channelId) return null;
   const v = await mayDecideFor(client, { agentId: args.agentId, actorId: run.delegatorId, channelId: run.channelId });
   if (!v.ok) return null;
   const inserted = (await client.query<{ id: string }>(
-    `insert into mandate (owner_account_id, delegator_account_id, automation_id, channel_id, created_at, last_activity_at)
-     values ($1, $2, $3, $4, $5, $5)
-     on conflict (automation_id, owner_account_id) where automation_id is not null and ended_at is null do nothing
-     returning id`,
+    AUTOMATION_MANDATE_INSERT_SQL,
     [run.ownerId, run.delegatorId, run.automationId, run.channelId, args.now])).rows[0];
   const id = inserted?.id ?? (await client.query<{ id: string }>(
-    `select id from mandate where automation_id = $1 and owner_account_id = $2 and ended_at is null`,
+    AUTOMATION_MANDATE_LIVE_SQL,
     [run.automationId, run.ownerId])).rows[0]?.id;
   if (!id) return null;
-  await client.query(`update mandate set last_activity_at = greatest(last_activity_at, $2) where id = $1`, [id, args.now]);
+  await client.query(AUTOMATION_MANDATE_TOUCH_SQL, [id, args.now]);
   return { mandateId: id, created: !!inserted, automationId: run.automationId, ownerId: run.ownerId, delegatorId: run.delegatorId };
 }
 

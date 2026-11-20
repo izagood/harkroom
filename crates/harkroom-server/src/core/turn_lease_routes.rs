@@ -4,27 +4,23 @@
 //!
 //! - 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 [`super::turn_lease::TURN_LEASE_PRIVILEGES`] 가 다 있을 때만 선다(`main.rs`).
 //!   아니면 세 줄 모두 TS 에 남는다.
-//! - 원인 글이 자동화 회차 글이면 [`super::turn_lease::Issue::Handoff`] — Rust 는 아무것도 쓰지 않았고, 받은 요청(머리·본문 바이트)을
-//!   그대로 TS 로 넘긴다. TS 가 처음부터 다시 판정한다(위임장 ⑤b 는 TS 몫).
+//! - 요청별로 TS 에 넘기는 갈래는 없다 — 자동화 회차 글의 위임장(⑤b)도 [`super::turn_lease::issue`] 가 같은 tx 에서 한다.
 use super::msg_read::is_uuid;
 use super::turn_lease::{self as lease, Issue};
 use crate::auth::{Account, RequireAccount};
 use crate::directory::{internal, json_err};
-use crate::proxy::Upstream;
 use crate::trust_proxy::TrustProxy;
 use crate::write::{AuditEntry, BODY_LIMIT, record_audit};
 use axum::body::{Body, to_bytes};
-use axum::extract::{ConnectInfo, Path, Request, State};
+use axum::extract::{Path, Request, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde_json::{Value, json};
 use sqlx::PgPool;
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 pub struct LeaseState {
     pub write: PgPool,
-    pub up: Upstream,
     pub trust: Arc<TrustProxy>,
 }
 
@@ -118,7 +114,6 @@ fn not_found() -> Response {
 pub async fn issue(
     State(st): State<Arc<LeaseState>>,
     RequireAccount(me, auth): RequireAccount,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     req: Request,
 ) -> Response {
     let (agent_id, operator_id) = match via_operator(&me, &auth) {
@@ -126,7 +121,7 @@ pub async fn issue(
         Err(r) => return r,
     };
     let (parts, body) = req.into_parts();
-    let (bytes, v) = match read_body(&parts.headers, body).await {
+    let (_, v) = match read_body(&parts.headers, body).await {
         Ok(b) => b,
         Err(r) => return r,
     };
@@ -155,15 +150,6 @@ pub async fn issue(
         detail,
     };
     match issued {
-        // 위임장이 걸릴 수 있는 자동화 회차 글 — 아무것도 안 썼다. 받은 그대로 TS 로.
-        Issue::Handoff => {
-            crate::proxy::forward(
-                State(st.up.clone()),
-                ConnectInfo(peer),
-                Request::from_parts(parts, Body::from(bytes)),
-            )
-            .await
-        }
         Issue::LeaseUsed => {
             // 충돌은 사건이다(H2·S1) — TS 와 같은 줄.
             record_audit(
