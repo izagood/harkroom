@@ -364,6 +364,13 @@ pub(super) async fn record_chat_answer(
     .await
 }
 
+/// 머지 거절 카드의 once 칸(`permissionRequest.once`) — [이번 한 번]이 선택지가 아니라 이 칸으로 그려지는 카드.
+fn has_merge_once(meta: &Value) -> bool {
+    meta.get("permissionRequest")
+        .and_then(|p| p.get("once"))
+        .is_some_and(Value::is_object)
+}
+
 /// TS `recordAskAnswer(… viaPermissionDecision: true)` — 권한 결정을 **커밋한 뒤** 카드에 답을 적는 길(C3b-3c).
 /// 권한 카드 표지(`permissionRequest`) 거절만 건너뛴다. 결정권 판정은 이미 결정 tx 가 했다.
 pub(super) async fn record_permission_answer(
@@ -394,7 +401,10 @@ async fn record_ask_answer_with(
     let Some(ask) = read_ask_meta(&meta) else {
         return Ok(Outcome::NotFound);
     };
-    if written.is_none() && !ask.options.iter().any(|o| o == option) {
+    if written.is_none()
+        && !ask.options.iter().any(|o| o == option)
+        && !(via_permission && option == "approve_once" && has_merge_once(&meta))
+    {
         return Ok(Outcome::UnknownOption);
     }
     if !via_permission && meta.get("permissionRequest").is_some_and(|v| !v.is_null()) {

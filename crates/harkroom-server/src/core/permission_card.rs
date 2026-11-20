@@ -538,6 +538,28 @@ pub fn plain_card_meta(permission_request: Value) -> Map<String, Value> {
     m
 }
 
+/// 카드 스레드에 위임장을 세울 수 있는가 — [`super::mandate_card_thread`] 의 머리 글 조건(소유자가 정할 때)을 잠그지 않고 읽는다:
+/// 이 채널의 지워지지 않은 글, 자동화 글 아님, 소유자 본인이나 그 소유자의 에이전트가 쓴 글. $1 머리 $2 채널 $3 소유자.
+pub const CARD_THREAD_OPEN_SQL: &str = "select exists (select 1 from message m where m.id = $1::uuid and m.channel_id = $2::uuid \
+     and m.deleted_at is null and not (coalesce(m.meta, '{}'::jsonb) ? 'automation') \
+     and (m.author_id = $3::uuid or exists (select 1 from agent_config c where c.account_id = m.author_id and c.owner_account_id = $3::uuid)))";
+
+/// 위임장을 세울 수 없는 스레드의 머지 거절 카드 — [이 스레드로 위임장 만들고 더하기]를 선택지와 줄 한도에서 뺀다.
+/// 누르면 늘 409 `mandate_unavailable` 이던 버튼이 추천으로 서 있었다. 남는 것은 once 칸의 [이번 한 번](주 버튼)과 [거절] — CI 카드와 같은 꼴이다.
+pub fn drop_new_mandate(meta: &mut Map<String, Value>) {
+    if let Some(Value::Array(opts)) = meta.get_mut("ask").and_then(|a| a.get_mut("options")) {
+        opts.retain(|o| o.get("id").and_then(Value::as_str) != Some("approve_new_mandate"));
+    }
+    if let Some(limits) = meta
+        .get_mut("permissionRequest")
+        .and_then(|p| p.get_mut("line"))
+        .and_then(|l| l.get_mut("limits"))
+        .and_then(Value::as_object_mut)
+    {
+        limits.remove("approve_new_mandate");
+    }
+}
+
 /// TS `too_many` 거절 글.
 pub fn too_many_message() -> String {
     format!("at most {PERMISSION_REQUESTS_PER_DAY} permission requests a day")
@@ -656,6 +678,38 @@ mod tests {
             merge_card_options(true, false),
             json!([{ "id": "deny", "label": "거절" }])
         );
+    }
+
+    #[test]
+    fn drop_new_mandate_leaves_once_and_deny() {
+        let o = once("no_mandate_line", &[]);
+        let m = merge_request_meta("r", "a", Some("o"), "repo:a/b", "why", &o, "t0", "t1", None);
+        let mut meta = merge_card_meta(m, false);
+        drop_new_mandate(&mut meta);
+        assert_eq!(
+            meta["ask"]["options"],
+            json!([{ "id": "deny", "label": "거절" }])
+        );
+        assert_eq!(
+            meta["permissionRequest"]["line"]["limits"],
+            json!({ "approve_once": { "pr": 42, "head": "0123456789abcdef", "uses": 1 } })
+        );
+        // 위임 있는 턴의 [이 위임장 동안]은 건드리지 않는다.
+        let m = merge_request_meta(
+            "r",
+            "a",
+            Some("o"),
+            "repo:a/b",
+            "why",
+            &o,
+            "t0",
+            "t1",
+            Some(("m", json!({}))),
+        );
+        let mut meta = merge_card_meta(m, false);
+        let before = meta.clone();
+        drop_new_mandate(&mut meta);
+        assert_eq!(meta, before);
     }
 
     #[test]

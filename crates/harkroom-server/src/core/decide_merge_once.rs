@@ -77,13 +77,10 @@ pub const MERGE_ONCE_AUDIT: &str = "insert into audit_log (action, actor_id, tar
 pub const MERGE_ONCE_UPDATE_REQUEST: &str = "update permission_request set status = 'approved_once', \
      decided_at = $3::timestamptz, decided_by = $2::uuid, grant_expires_at = null, grant_mode = null where id = $1::uuid";
 
-/// TS `answerOptionId` 후보 `[approve_once, approve_mandate, approve_new_mandate, approve, approve_once]`(뒤 중복 뺌).
-pub const ANSWER_MERGE_ONCE: &[&str] = &[
-    "approve_once",
-    "approve_mandate",
-    "approve_new_mandate",
-    "approve",
-];
+/// 1회 머지의 카드 답은 늘 `approve_once` 다. 거절 카드의 [이번 한 번]은 선택지에 없고 once 칸으로 그려지므로, TS `answerOptionId` 처럼
+/// 「카드에 있는 첫 후보」를 고르면 `approve_new_mandate` 가 골라져 `status = approved_once` 인데 답은 「위임장 만들고 더함」으로 남았다.
+/// 카드 답 기록([`super::ask`] `record_permission_answer`)은 once 칸이 있는 카드에 한해 선택지에 없는 `approve_once` 를 받는다.
+pub const ANSWER_MERGE_ONCE: &[&str] = &["approve_once"];
 
 pub const DENIAL_USED_MESSAGE: &str = "the merge refusal behind this card was already used";
 
