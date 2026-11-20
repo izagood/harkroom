@@ -108,7 +108,7 @@ pub async fn agent_wakes(
 }
 
 /// TS `listReportWakes` 의 머리 — 스레드 머리 글의 채널과 그 채널이 내게 보이나($2).
-fn report_head_sql() -> &'static str {
+pub(crate) fn report_head_sql() -> &'static str {
     static S: OnceLock<String> = OnceLock::new();
     S.get_or_init(|| {
         format!(
@@ -141,7 +141,7 @@ fn report_wakes_sql() -> &'static str {
     })
 }
 
-fn plain_err(status: axum::http::StatusCode, code: &str) -> Response {
+pub(crate) fn plain_err(status: axum::http::StatusCode, code: &str) -> Response {
     use axum::response::IntoResponse;
     (
         status,

@@ -41,6 +41,7 @@ export const EVENT_VISIBILITY: Readonly<Record<WorkspaceEvent['type'], 'audience
   'thread.status': 'audience',
   'thread.reportWakes.changed': 'audience',
   'thread.plan.changed': 'audience',
+  'thread.turns.changed': 'audience',
   // 관문 알림은 그 에이전트의 소유자에게만 간다(audience 가 소유자 한 명).
   'agent.attention': 'audience',
   'agent.attention.cleared': 'audience',

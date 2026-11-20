@@ -57,6 +57,7 @@ export const AUDIENCE_TYPES: ReadonlySet<string> = new Set([
   'channel.created', 'channel.updated', 'channel.deleted', 'channel.member_added', 'channel.member_removed',
   'handle_group.changed', 'agent_team.changed', 'grant.changed', 'operator.changed', 'agent_assignment.changed',
   'thread.agent_model.changed', 'thread.status', 'thread.reportWakes.changed', 'thread.plan.changed',
+  'thread.turns.changed',
   'agent.attention', 'agent.attention.cleared',
 ]);
 /** 계정 한 명에게만 가는 이벤트. */

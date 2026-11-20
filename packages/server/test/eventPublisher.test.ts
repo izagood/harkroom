@@ -115,7 +115,7 @@ describe('발행 대상·보존', () => {
     'handle_group.changed': true, 'agent_team.changed': true, 'grant.changed': true, 'operator.changed': true,
     'agent_assignment.changed': true, 'saved.changed': true, 'skill.proposed': true, 'skill.approved': true, 'skill.disabled': true,
     'link_preview.ready': true, 'thread.status': true, 'thread.agent_model.changed': true, 'thread.reportWakes.changed': true,
-    'thread.plan.changed': true,
+    'thread.plan.changed': true, 'thread.turns.changed': true,
   };
 
   it('TS `WorkspaceEvent` 의 종류 ⊆ `EVENT_BUS_TYPES` — 발행한 것을 Rust 리스너가 버리지 않는다', () => {

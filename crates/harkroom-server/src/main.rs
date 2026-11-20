@@ -2165,6 +2165,27 @@ async fn main() {
         }
         _ => false,
     };
+    // R1 — `GET /threads/{rootId}/turns`(스레드에서 도는 턴). 같은 두 겹 잠금(읽기 풀 SELECT).
+    let thread_turns_read_on = match &core_mode {
+        harkroom_server::core::CoreMode::Rust => {
+            use harkroom_server::core::thread_turns as t;
+            match write::missing_in(&state.pool, t::THREAD_TURNS_READ_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => true,
+                Ok(m) => {
+                    eprintln!("front: thread turns read core off — missing privileges {m:?}");
+                    false
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: thread turns read core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    false
+                }
+            }
+        }
+        _ => false,
+    };
     // S5.4 AG1 — `GET /agent/merge-grants`·`/agent/api-grants`·`/agent/thread-model`. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고
     // 읽기 풀에 그 SELECT 가 다 있을 때만. `/agent/pr-watches/due` 는 만료 UPDATE 가 있어 쓰기 풀로 따로 켠다(`pr_watch_due_write`).
     let agent_grants_read_on = match &core_mode {
@@ -3755,7 +3776,33 @@ async fn main() {
     let relay_live = match &operator_write {
         Some(w) => match harkroom_server::core::relay_live::SessionLive::start(
             w.clone(),
-            harkroom_server::core::relay_live::LiveOpts::default(),
+            harkroom_server::core::relay_live::LiveOpts {
+                // R1 — 턴 살아 있음 신호. 쓰는 풀에 권한이 있을 때만 켠다. 없으면 신호만 꺼지고 사본·릴레이는 그대로 돈다.
+                signal: {
+                    use harkroom_server::core::thread_turns as t;
+                    match write::missing_in(
+                        w,
+                        t::THREAD_TURNS_SIGNAL_PRIVILEGES,
+                        t::THREAD_TURNS_SIGNAL_SEQUENCE_PRIVILEGES,
+                    )
+                    .await
+                    {
+                        Ok(m) if m.is_empty() => true,
+                        Ok(m) => {
+                            eprintln!("front: thread turns signal off — missing privileges {m:?}");
+                            false
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "front: thread turns signal off — privilege check failed ({})",
+                                e.as_database_error().map_or("io", |_| "db")
+                            );
+                            false
+                        }
+                    }
+                },
+                ..Default::default()
+            },
         )
         .await
         {
@@ -4012,6 +4059,16 @@ async fn main() {
             core_routes.router = core_routes.router.merge(aw.router);
             core_routes.http.extend(aw.http);
             core_routes.sockets.extend(aw.sockets);
+        }
+        if thread_turns_read_on {
+            let tt = harkroom_server::core::thread_turns::routes(
+                state.pool.clone(),
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(tt.router);
+            core_routes.http.extend(tt.http);
+            core_routes.sockets.extend(tt.sockets);
         }
         // C3b B1 — 명령 grant 쓰기(`POST /agent/command-grants/match`). 쓰기 풀 권한이 다 있을 때만.
         if let Some(write) = match_write {

@@ -32,6 +32,7 @@
     "thread.plan.changed": "audience",
     "thread.reportWakes.changed": "audience",
     "thread.status": "audience",
+    "thread.turns.changed": "audience",
     "typing.changed": "audience",
     "workspace.icon.changed": "everyone"
   },
@@ -69,6 +70,7 @@
       "thread.plan.changed",
       "thread.reportWakes.changed",
       "thread.status",
+      "thread.turns.changed",
       "typing.changed",
       "workspace.icon.changed"
     ],
@@ -94,6 +96,7 @@
       "thread.plan.changed",
       "thread.reportWakes.changed",
       "thread.status",
+      "thread.turns.changed",
       "typing.changed"
     ],
     "account": [
