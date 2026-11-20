@@ -4204,7 +4204,6 @@ async fn main() {
                 harkroom_server::core::automation_create::CreateState {
                     read: state.pool.clone(),
                     write,
-                    up: state.up.clone(),
                 },
                 auth.clone(),
                 state.cors.clone(),
@@ -4219,7 +4218,6 @@ async fn main() {
                 harkroom_server::core::automation_approve::ApproveState {
                     read: state.pool.clone(),
                     write,
-                    up: state.up.clone(),
                 },
                 auth.clone(),
                 state.cors.clone(),
@@ -4234,7 +4232,6 @@ async fn main() {
                 harkroom_server::core::automation_run_now::RunNowState {
                     read: state.pool.clone(),
                     write,
-                    up: state.up.clone(),
                 },
                 auth.clone(),
                 state.cors.clone(),
@@ -4297,7 +4294,6 @@ async fn main() {
                 harkroom_server::core::automation_patch::PatchState {
                     read: state.pool.clone(),
                     write,
-                    up: state.up.clone(),
                 },
                 auth.clone(),
                 state.cors.clone(),

@@ -7,21 +7,20 @@
 //! - 1시간 회차가 `RATE_LIMIT_PER_HOUR` 에 닿으면 TS `enqueueRun` 처럼 자동화를 멈추고(`paused_reason = 'rate_limited'`)
 //!   위임장을 `automation_off` 로 끝낸 뒤 429 `rate_limited` — sweeper 와 같은 [`RATE_LIMIT_SQL`]·[`end_automation_mandates_tx`]
 //!   를 한 트랜잭션으로 쓴다(TS 는 풀에서 문장마다 커밋한다 — 결과는 같다). 권한은 [`AUTOMATION_RUN_NOW_PAUSE_PRIVILEGES`].
-//! - **TS 로 넘기는 것**: 일정 트리거의 tz 를 `chrono-tz` 가 모름.
+//! - TS 로 넘기는 갈래는 없다. 저장된 일정 트리거의 tz 를 못 읽거나 넣은 회차 줄을 못 읽으면 500 `internal` 과 서버 로그다.
 //! - 비밀 칸(`ingress_token_hash`·`ingress_secret_enc`)은 문장에 없다. 소유 확인은 읽기 풀, 회차 셈·INSERT 는 쓰기 풀.
 //! - 권한은 [`AUTOMATION_RUN_NOW_PRIVILEGES`] — MCP `automation.run` 이 이미 받는 칸의 부분집합이다(새 GRANT 없음).
+use super::automation_approve::broken;
 use crate::auth::RequireAccount;
 use crate::core::mcp::automation_run as ar;
 use crate::directory::{internal, json_err};
 use crate::loops::automation::{RATE_LIMIT_SQL, end_automation_mandates_tx};
-use crate::proxy::Upstream;
 use axum::body::to_bytes;
-use axum::extract::{ConnectInfo, Path, Request, State};
+use axum::extract::{Path, Request, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde_json::Value;
 use sqlx::PgPool;
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 /// 쓰기 풀이 쓰는 칸 권한(enqueueRun 의 행 읽기·1시간 셈·INSERT·`returning`).
@@ -76,14 +75,13 @@ const BODY_LIMIT: usize = 1024 * 1024;
 pub struct RunNowState {
     pub read: PgPool,
     pub write: PgPool,
-    pub up: Upstream,
 }
 
 enum Out {
     Queued(String),
     Refused(&'static str),
     RateLimited,
-    ToTs,
+    Broken,
 }
 
 /// TS `enqueueRun`(사람 「지금 한 번」 — `initiated_by`·원인·연쇄 깊이는 null). 트랜잭션이 없는 것도 TS 와 같다.
@@ -126,14 +124,13 @@ async fn enqueue(
     let Some(ins) = ins else {
         return Ok(Out::Refused("duplicate"));
     };
-    Ok(ar::run_view(&ins).map_or(Out::ToTs, Out::Queued))
+    Ok(ar::run_view(&ins).map_or(Out::Broken, Out::Queued))
 }
 
 /// `POST /automations/:id/run`.
 pub async fn run_now(
     State(st): State<Arc<RunNowState>>,
     RequireAccount(me, _): RequireAccount,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Path(id): Path<String>,
     req: Request,
 ) -> Response {
@@ -178,15 +175,9 @@ pub async fn run_now(
     let Some((aid, trigger)) = owned else {
         return json_err(StatusCode::NOT_FOUND, "not_found", "automation not found");
     };
-    let to_ts = |parts, bytes| {
-        crate::proxy::forward(
-            State(st.up.clone()),
-            ConnectInfo(peer),
-            Request::from_parts(parts, axum::body::Body::from(bytes)),
-        )
-    };
     let Some(vars) = ar::vars_for(&trigger) else {
-        return to_ts(parts, bytes).await;
+        // 저장된 트리거는 zod 를 지난 값이다 — 아직 아무것도 쓰지 않았다.
+        return broken("run-now: stored trigger has no readable time zone");
     };
     // TS `manual:${randomUUID()}` — v4 를 DB 에서 받는다(크레이트에 uuid 가 없다).
     let event_key: String = match sqlx::query_scalar("select 'manual:' || gen_random_uuid()::text")
@@ -213,7 +204,8 @@ pub async fn run_now(
             "rate_limited",
             "too many runs in the last hour; automation paused",
         ),
-        Ok(Out::ToTs) => to_ts(parts, bytes).await,
+        // 회차는 이미 들어갔다 — 넘기면 TS 가 한 번 더 넣는다.
+        Ok(Out::Broken) => broken("run-now: inserted run row is unreadable"),
         Err(e) => internal(e),
     }
 }

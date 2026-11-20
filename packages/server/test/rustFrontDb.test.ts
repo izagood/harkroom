@@ -12845,6 +12845,13 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             ['자동화 만들기 익명 → 401', { ...base, trigger: hook }, ''],
             ['자동화 만들기 본문 없음 → 400', {}, M],
             ['자동화 만들기 이름 공백 → 400', { ...base, name: '   ', trigger: hook }, M],
+            // zod 거절·JS trim 을 Rust 가 직접 판정한다(TS 로 넘기지 않는다) — 400 은 상태·코드, 201 은 깎인 이름까지 같다.
+            ['자동화 만들기 이름 가장자리 유니코드 공백', { ...base, name: '\u00a0\ufeffs54r4 nb\u3000\u2028', trigger: hook }, M],
+            ['자동화 만들기 이름 유니코드 공백뿐 → 400', { ...base, name: '\ufeff\u3000', trigger: hook }, M],
+            ['자동화 만들기 모르는 시간대 → 400', { ...base, trigger: { kind: 'schedule', freq: 'daily', time: '09:00', tz: 'UTC+9' } }, M],
+            ['자동화 만들기 시각 꼴 틀림 → 400', { ...base, trigger: { kind: 'schedule', freq: 'daily', time: '24:00', tz: 'UTC' } }, M],
+            ['자동화 만들기 디바운스 소수 → 400', { ...base, trigger: hook, debounceSec: 1.5 }, M],
+            ['자동화 만들기 본문이 배열 → 400', [], M],
             ['자동화 만들기 없는 채널 → 404', { ...base, channelId: g4, trigger: hook }, M],
             ['자동화 만들기 안 보이는 채널 → 403', { ...base, channelId: priv, trigger: hook }, M],
             ['자동화 만들기 보관 채널 → 403', { ...base, channelId: archived, trigger: hook }, M],

@@ -4,8 +4,8 @@
 //!
 //! - INSERT 문장은 TS 정본을 골든(`automation_propose_insert`)으로 받는다. Rust 는 **제안 행만** 넣는다 — 승인·켜기·돌리기 길은 없다
 //!   (INSERT 칸에 `approved_at`·`enabled` 는 상수 `null`·`false` 로 박혀 있다).
-//! - **TS 로 넘기는 것**(`None`): zod 가 받지 않을 인자 · 시간대가 허용 목록 밖(ICU `Intl` 판정과 갈라질 수 있어서) · 이름 가장자리가
-//!   ASCII 밖 공백(JS `trim` 과 Rust `trim` 이 다르다) · 정수가 아닌 수 표기 · DB 오류.
+//! - **TS 로 넘기는 것**(MCP 쪽만, `None`): zod 가 받지 않을 인자(거절 글자의 정본이 TS SDK 다) · DB 오류. REST
+//!   (`parse_rest`·`parse_patch`)는 `None` 을 400 으로 직접 답한다 — 판정은 zod 와 같아야 한다(이름은 JS `trim`, 수는 정수 값).
 //! - 답 글자는 TS `jsonResult` 와 **키 순서까지** 같게 직접 쓴다(값은 `Value` 로 이스케이프한다). `trigger` 는 DB jsonb 글자 그대로.
 use super::tools::err;
 use crate::auth::Account;
@@ -127,10 +127,15 @@ pub(crate) struct Args {
     for_handle: Option<String>,
 }
 
-/// REST `POST /automations` 의 zod — `forHandle` 이 없는 같은 꼴(모르는 키는 버린다). `None` 이면 TS 가 판정한다.
+/// REST `POST /automations` 의 zod — `forHandle` 이 없고 `debounceSec` 이 `.nullable()` 인 같은 꼴(모르는 키는 버린다).
+/// `None` 이면 zod 가 거절하는 본문이다(400 `invalid_request`).
 pub(crate) fn parse_rest(body: &Value) -> Option<Args> {
     let mut o = body.as_object()?.clone();
     o.remove("forHandle");
+    if o.get("debounceSec").is_some_and(Value::is_null) {
+        // TS `input.debounceSec ?? null` — null 과 없음이 같다.
+        o.remove("debounceSec");
+    }
     parse(&Value::Object(o))
 }
 
@@ -138,17 +143,22 @@ fn u16len(s: &str) -> usize {
     s.encode_utf16().count()
 }
 
-/// JS `String#trim` 과 같은 결과를 낼 수 있을 때만 깎는다. ASCII 공백만 깎고, 깎은 가장자리가 ASCII 밖 공백(JS 와 Rust 의 공백 정의가
-/// 다르다)·`\u{FEFF}` 면 `None`.
-fn js_trim(s: &str) -> Option<&str> {
-    let t = s.trim_matches(|c: char| matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{0B}' | '\u{0C}'));
-    let edge = |c: Option<char>| {
-        c.is_some_and(|c| !c.is_ascii() && (c.is_whitespace() || c == '\u{FEFF}'))
-    };
-    if edge(t.chars().next()) || edge(t.chars().last()) {
-        return None;
-    }
-    Some(t)
+/// JS `String#trim` — ECMAScript 의 WhiteSpace·LineTerminator 를 그대로 적는다(Rust `trim` 은 `\u{FEFF}` 를 안 깎고
+/// `\u{85}` 를 깎아서 다르다).
+fn js_trim(s: &str) -> &str {
+    s.trim_matches(|c: char| {
+        matches!(
+            c,
+            '\t' | '\n' | '\u{0B}' | '\u{0C}' | '\r' | ' ' | '\u{A0}' | '\u{1680}' | '\u{2000}'
+                ..='\u{200A}'
+                    | '\u{2028}'
+                    | '\u{2029}'
+                    | '\u{202F}'
+                    | '\u{205F}'
+                    | '\u{3000}'
+                    | '\u{FEFF}'
+        )
+    })
 }
 
 fn str_len<'a>(o: &'a Map<String, Value>, k: &str, min: usize, max: usize) -> Option<&'a str> {
@@ -294,7 +304,7 @@ pub(crate) fn parse_patch(v: &Value) -> Option<PatchArgs> {
     }
     let mut p = PatchArgs::default();
     if let Some(n) = optional(o, "name")? {
-        let n = js_trim(n.as_str()?)?;
+        let n = js_trim(n.as_str()?);
         if !(1..=NAME_MAX).contains(&u16len(n)) {
             return None;
         }
@@ -373,7 +383,7 @@ pub(crate) fn jsonb_order(a: &str, b: &str) -> std::cmp::Ordering {
 fn parse(args: &Value) -> Option<Args> {
     let o = args.as_object()?;
     let raw_name = o.get("name")?.as_str()?;
-    let name = js_trim(raw_name)?;
+    let name = js_trim(raw_name);
     if !(1..=NAME_MAX).contains(&u16len(name)) {
         return None;
     }
@@ -582,8 +592,16 @@ mod tests {
         v["trigger"]["tz"] = json!("UTC+9");
         assert!(parse(&v).is_none(), "Intl 이 거절하는 꼴은 TS 가 판정");
         let mut v = base();
-        v["name"] = json!("\u{FEFF}이름");
-        assert!(parse(&v).is_none());
+        v["name"] = json!("\u{FEFF}\u{A0} 이름\u{3000}\u{2028}");
+        assert_eq!(parse(&v).unwrap().name, "이름", "JS trim 과 같은 공백");
+        v["name"] = json!("\u{85}이름\u{200B}");
+        assert_eq!(
+            parse(&v).unwrap().name,
+            "\u{85}이름\u{200B}",
+            "JS 가 공백으로 안 보는 글자는 남는다"
+        );
+        v["name"] = json!("\u{FEFF}\u{3000}");
+        assert!(parse(&v).is_none(), "깎으면 빈 이름");
         let mut v = base();
         v["debounceSec"] = json!(1.5);
         assert!(parse(&v).is_none());

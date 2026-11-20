@@ -3,20 +3,19 @@
 //! - 판정 순서는 TS 와 같다: `requireAccount`(401) → 본문 해석(fastify 400·415) → 에이전트 403 `agents_cannot_automate` →
 //!   zod → `gateFor`(채널 없음 404 `channel_not_found` · 안 보임 403 `forbidden` · 보관 403 `channel_archived`) →
 //!   INSERT → 201 `{automation}`.
-//! - zod 를 Rust 가 확신하지 못하면(MCP `automation.propose` 의 `parse` 가 `None` — 틀린 꼴·tz 대소문자 등) 판정 전부를 TS 로
-//!   넘긴다. 다음 회차를 못 셈(모르는 일정 꼴)도 TS 로 — 둘 다 아직 아무것도 쓰지 않았다.
+//! - zod 판정은 Rust 가 끝낸다([`parse_rest`] 가 `None` 이면 400 `invalid_request` — 문구만 TS 와 다르다). TS 로 넘기는
+//!   갈래는 없다. zod 를 지난 트리거의 다음 회차를 못 세는 일은 없어야 하므로 그때는 500 `internal` 과 서버 로그다.
 //! - 비밀 칸은 문장에 없다(`returning` 은 `COLS` 칸만). 권한은 [`AUTOMATION_CREATE_PRIVILEGES`] — 없으면 TS 에 남는다.
 use crate::auth::{RequireAccount, Via};
+use crate::core::automation_approve::{broken, invalid_body};
 use crate::core::mcp::automation_propose::parse_rest;
 use crate::directory::{internal, json_err};
-use crate::proxy::Upstream;
 use crate::write::Body;
 use axum::body::to_bytes;
-use axum::extract::{ConnectInfo, Request, State};
+use axum::extract::{Request, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use sqlx::PgPool;
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 /// 쓰기 풀이 쓰는 칸 권한(INSERT 칸, `returning`·회차 join 의 SELECT).
@@ -59,14 +58,12 @@ const BODY_LIMIT: usize = 1024 * 1024;
 pub struct CreateState {
     pub read: PgPool,
     pub write: PgPool,
-    pub up: Upstream,
 }
 
 /// `POST /automations`.
 pub async fn create(
     State(st): State<Arc<CreateState>>,
     RequireAccount(me, auth): RequireAccount,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     req: Request,
 ) -> Response {
     let (parts, raw) = req.into_parts();
@@ -88,19 +85,12 @@ pub async fn create(
             "agents cannot create or change automations",
         );
     }
-    let to_ts = |parts, bytes| {
-        crate::proxy::forward(
-            State(st.up.clone()),
-            ConnectInfo(peer),
-            Request::from_parts(parts, axum::body::Body::from(bytes)),
-        )
-    };
     let parsed = match &body {
         Body::Json(v) => parse_rest(v),
         _ => None,
     };
     let Some(a) = parsed else {
-        return to_ts(parts, bytes).await;
+        return invalid_body();
     };
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -109,7 +99,7 @@ pub async fn create(
     let Some(next_at) = now_ms
         .and_then(|n| crate::core::automation_approve::initial_next_at(&a.trigger.to_string(), n))
     else {
-        return to_ts(parts, bytes).await;
+        return broken("create: parsed trigger is not a readable schedule");
     };
     // TS `gateFor`.
     let exists: Option<i32> = match sqlx::query_scalar("select 1 from channel where id = $1::uuid")
@@ -229,5 +219,15 @@ mod tests {
         let a = parse_rest(&v).expect("parses");
         assert_eq!(a.name, "n");
         assert!(parse_rest(&serde_json::json!([])).is_none());
+        // zod `.nullable().optional()` — null 은 없음과 같다. 소수·범위 밖은 거절.
+        let with = |d: serde_json::Value| {
+            let mut v = v.clone();
+            v["debounceSec"] = d;
+            parse_rest(&v).map(|a| a.debounce)
+        };
+        assert_eq!(with(serde_json::Value::Null), Some(None));
+        assert_eq!(with(serde_json::json!(30.0)), Some(Some(30)));
+        assert_eq!(with(serde_json::json!(1.5)), None);
+        assert_eq!(with(serde_json::json!(3601)), None);
     }
 }
