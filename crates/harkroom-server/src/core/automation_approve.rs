@@ -4,22 +4,20 @@
 //! - 판정 순서는 TS 와 같다: `requireAccount`(401) → 에이전트 403 `agents_cannot_automate` → 경로 id(400 `invalid_request`) →
 //!   내 것이 아니거나 지웠거나 이미 승인한 것은 404 `not_found`('no pending proposal with this id') → UPDATE(0줄이면 404) →
 //!   200 `{automation}`.
-//! - 다음 회차는 TS `initialNextAt` — 일정 트리거면 `nextOccurrence(trigger, now)`, 아니면 null. 일정 꼴을 Rust 가 못 읽으면
-//!   (`Schedule::parse` 실패 — 모르는 tz 등) TS 로 넘긴다(아직 아무것도 쓰지 않았다).
+//! - 다음 회차는 TS `initialNextAt` — 일정 트리거면 `nextOccurrence(trigger, now)`, 아니면 null. 저장된 트리거는 zod 를 지난 값이라
+//!   못 읽을 일이 없어야 한다 — 못 읽으면 500 `internal` 과 서버 로그다(TS 로 넘기지 않는다, 아직 아무것도 쓰지 않았다).
 //! - `mandate_session_at` 은 사람 세션으로 승인했을 때만 now()(⑤b).
 //! - 비밀 칸(`ingress_token_hash`·`ingress_secret_enc`)은 문장에 없다(`returning` 은 `COLS` 칸만).
 //! - 권한은 [`AUTOMATION_APPROVE_PRIVILEGES`] — 없으면 `main.rs` 가 붙이지 않아 TS 에 남는다.
 use crate::auth::{RequireAccount, Via};
 use crate::core::automation_time as at;
 use crate::directory::{internal, json_err, json_ok};
-use crate::proxy::Upstream;
 use axum::body::to_bytes;
-use axum::extract::{ConnectInfo, Path, Request, State};
+use axum::extract::{Path, Request, State};
 use axum::http::StatusCode;
 use axum::response::Response;
 use serde_json::Value;
 use sqlx::PgPool;
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 /// 쓰기 풀이 쓰는 칸 권한(WHERE·`returning`·마지막 회차 join 의 SELECT, SET 의 UPDATE).
@@ -62,7 +60,21 @@ const PENDING_SQL: &str = "select (a.approved_at is not null), a.trigger::text f
 pub struct ApproveState {
     pub read: PgPool,
     pub write: PgPool,
-    pub up: Upstream,
+}
+
+/// 올 수 없는 갈래 — 흔적을 남기고 500 `internal`(TS 오류 처리기와 같은 몸통).
+pub(crate) fn broken(what: &str) -> Response {
+    eprintln!("[automation] {what}");
+    json_err(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "internal",
+        "internal error",
+    )
+}
+
+/// zod 가 거절하는 본문 — 문구는 TS(zod 오류 JSON)와 다르다(대조는 상태·코드만 본다).
+pub(crate) fn invalid_body() -> Response {
+    json_err(StatusCode::BAD_REQUEST, "invalid_request", "body: invalid")
 }
 
 fn no_pending() -> Response {
@@ -73,7 +85,7 @@ fn no_pending() -> Response {
     )
 }
 
-/// TS `initialNextAt` — `Some(None)` 는 null, `None` 은 Rust 가 못 읽는 일정(TS 로).
+/// TS `initialNextAt` — `Some(None)` 는 null, `None` 은 못 읽는 일정(zod 를 지난 트리거에서는 나오지 않는다).
 pub(crate) fn initial_next_at(trigger: &str, now_ms: i64) -> Option<Option<String>> {
     let t: Value = serde_json::from_str(trigger).ok()?;
     if t.get("kind").and_then(Value::as_str) != Some("schedule") {
@@ -87,7 +99,6 @@ pub(crate) fn initial_next_at(trigger: &str, now_ms: i64) -> Option<Option<Strin
 pub async fn approve(
     State(st): State<Arc<ApproveState>>,
     RequireAccount(me, auth): RequireAccount,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Path(id): Path<String>,
     req: Request,
 ) -> Response {
@@ -135,8 +146,8 @@ pub async fn approve(
         .ok()
         .and_then(|d| i64::try_from(d.as_millis()).ok());
     let Some(next_at) = now_ms.and_then(|n| initial_next_at(&trigger, n)) else {
-        let req = Request::from_parts(parts, axum::body::Body::from(bytes));
-        return crate::proxy::forward(State(st.up.clone()), ConnectInfo(peer), req).await;
+        // 저장된 트리거는 zod 를 지난 값이다 — 못 읽으면 행이 깨졌거나 시간대 표가 뒤졌다. 아무것도 쓰지 않았다.
+        return broken("approve: stored trigger is not a readable schedule");
     };
     let by_session = me.kind == "human" && auth.via == Some(Via::Session);
     match sqlx::query_scalar::<_, String>(super::automations_read::APPROVE_SQL)
