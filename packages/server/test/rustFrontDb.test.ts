@@ -10273,6 +10273,11 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             `insert into message (channel_id, thread_root_id, author_id, body, kind, mention_depth, stall_depth, meta) values ($1, $2, $3, $4, 'user', $5, $6, $7::jsonb) returning id::text as id`,
             [o.ch, o.root ?? null, o.author, o.body, o.depth ?? 0, o.stall ?? 0, JSON.stringify(o.meta ?? {})])).rows[0]!.id;
         const wokeBy = (id: string, reason = 'mention') => db.pool.query(`insert into inbox (account_id, message_id, reason) values ($1, $2, $3)`, [bot3.accountId, id, reason]);
+        // ②b — 이 스레드에 bot3 의 모델 지정을 둔다. harness 를 주지 않으면 지금 하네스와 같다(살아 있음), 주면 stale.
+        const pinModel = (root: string, harness: string | null) => db.pool.query(
+          `insert into thread_agent_model (thread_root_id, agent_id, harness, model, effort, set_by, set_by_kind, set_at)
+           select $1, $2, coalesce($3, (select coalesce(c.harness, 'claude-code') from agent_config c where c.account_id = $2), 'claude-code'), 'opus', null, $4, 'human', now()`,
+          [root, bot3.accountId, harness, member.accountId]);
         // 장면 하나 = 채널·머리·원인을 새로 깔고 { 인자, 헤더 } 를 돌려준다.
         type Setup = { args: Record<string, unknown>; via: { token: string; extra: Record<string, string> }; cause?: string; turn?: string; tool?: string };
         const turnId = randomUUID();
@@ -10400,7 +10405,26 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             return { tool: 'message.fail', args: { channelId: ch, threadRootId: root, body: '막혔다', retryable: false }, via: viaOp, cause: call, turn: turnId };
           }, true],
           ['fail 없는 머리 → bad_thread', async (ch) => ({ tool: 'message.fail', args: { channelId: ch, threadRootId: randomUUID(), body: '답', retryable: true }, via: viaPat }), true],
-          ['fail code → TS', async (ch) => ({ tool: 'message.fail', args: { channelId: ch, body: '지정 모델 거절', retryable: true, code: 'thread_model_rejected' }, via: viaPat }), false],
+          // C3b-2c-1 ②b — 드문 표지 셋(`thread_model_rejected`·`provider_lane`·`inject_unconfirmed`)은 Rust. `account_gate`·목록 밖 값은 TS.
+          ['fail thread_model_rejected 머리 없음 → 표지 뺌', async (ch) => ({ tool: 'message.fail', args: { channelId: ch, body: '지정 모델 거절', retryable: true, code: 'thread_model_rejected' }, via: viaPat }), true],
+          ['fail thread_model_rejected 지정 없음 → 표지 뺌', async (ch) => {
+            const root = await ins({ ch, author: member.accountId, body: '질문' });
+            return { tool: 'message.fail', args: { channelId: ch, threadRootId: root, body: '지정 모델 거절', retryable: true, code: 'thread_model_rejected' }, via: viaPat };
+          }, true],
+          ['fail thread_model_rejected 지정 살아 있음 → 표지 남김', async (ch) => {
+            const root = await ins({ ch, author: member.accountId, body: '질문' });
+            await pinModel(root, null);
+            return { tool: 'message.fail', args: { channelId: ch, threadRootId: root, body: '지정 모델 거절', retryable: true, code: 'thread_model_rejected' }, via: viaPat };
+          }, true],
+          ['fail thread_model_rejected 지정 stale → 표지 뺌', async (ch) => {
+            const root = await ins({ ch, author: member.accountId, body: '질문' });
+            await pinModel(root, 'c3b2c1-other-harness');
+            return { tool: 'message.fail', args: { channelId: ch, threadRootId: root, body: '지정 모델 거절', retryable: true, code: 'thread_model_rejected' }, via: viaPat };
+          }, true],
+          ['fail provider_lane·laneCode → Rust', async (ch) => ({ tool: 'message.fail', args: { channelId: ch, body: 'lane 막힘', retryable: false, code: 'provider_lane', laneCode: 'lane_unset' }, via: viaPat }), true],
+          ['fail provider_lane 목록 밖 laneCode → TS(zod 오류)', async (ch) => ({ tool: 'message.fail', args: { channelId: ch, body: 'lane 막힘', retryable: false, code: 'provider_lane', laneCode: 'no_such_lane' }, via: viaPat }), false],
+          ['fail 목록 밖 code → TS(zod 오류)', async (ch) => ({ tool: 'message.fail', args: { channelId: ch, body: '못 했다', retryable: true, code: 'no_such_code' }, via: viaPat }), false],
+          ['fail inject_unconfirmed·mentionId·laneCode → 표지만', async (ch) => ({ tool: 'message.fail', args: { channelId: ch, body: '주입 확인 못 함', retryable: true, code: 'inject_unconfirmed', laneCode: 'lane_unset', mentionId: randomUUID(), claudePoolRank: 1 }, via: viaOp, turn: turnId }), true],
           // 표지 없는 차례 주인 재료(러너의 침묵·혼자 꺼짐·보고 누락 통지가 싣는 `mentionId`)는 TS 처럼 꼴만 보고 버린다 — Rust 가 답한다.
           ['fail 표지 없는 mentionId·순번 → Rust', async (ch) => ({ tool: 'message.fail', args: { channelId: ch, body: '답을 남기지 못하고 끝났다', retryable: true, what: '침묵', mentionId: randomUUID(), claudePoolRank: 2, claudeAccountRank: 1 }, via: viaOp, turn: turnId }), true],
           ['fail mentionId 꼴 틀림 → TS(zod 오류)', async (ch) => ({ tool: 'message.fail', args: { channelId: ch, body: '못 했다', retryable: true, mentionId: 'nope' }, via: viaPat }), false],
@@ -10699,7 +10723,16 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         }
         expect(row('fail 오퍼레이터 원인 → 깊이·고리·턴 id')).toMatchObject({ kind: 'failure', failure: { retryable: false }, depth: 3, stall: 2, linked: true, turn: '<uuid>' });
         expect(by('fail 없는 머리 → bad_thread').body.error?.code).toBe('bad_thread');
-        expect(row('fail code → TS')).toMatchObject({ kind: 'failure', failure: { retryable: true } });
+        for (const n of ['fail thread_model_rejected 머리 없음 → 표지 뺌', 'fail thread_model_rejected 지정 없음 → 표지 뺌', 'fail thread_model_rejected 지정 stale → 표지 뺌']) {
+          expect(row(n), n).toMatchObject({ kind: 'failure', failure: { retryable: true } });
+          expect(row(n).failure, n).not.toHaveProperty('code');
+        }
+        expect(row('fail thread_model_rejected 지정 살아 있음 → 표지 남김')).toMatchObject({ kind: 'failure', failure: { retryable: true, code: 'thread_model_rejected' } });
+        expect(row('fail provider_lane·laneCode → Rust')).toMatchObject({ kind: 'failure', failure: { retryable: false, code: 'provider_lane', laneCode: 'lane_unset' } });
+        expect(by('fail provider_lane 목록 밖 laneCode → TS(zod 오류)').row).toBeNull();
+        expect(by('fail 목록 밖 code → TS(zod 오류)').row).toBeNull();
+        expect(row('fail inject_unconfirmed·mentionId·laneCode → 표지만')).toMatchObject({ kind: 'failure', failure: { retryable: true, code: 'inject_unconfirmed' } });
+        for (const k of ['laneCode', 'awaitingAccountId', 'claudePoolRank', 'claudeAccountRank']) expect(row('fail inject_unconfirmed·mentionId·laneCode → 표지만').failure).not.toHaveProperty(k);
         expect(by('delegate 자기 → self_delegation').body.error?.code).toBe('self_delegation');
         expect(by('delegate 못 부르는 이름 → not_invokable').body).toMatchObject({ error: { code: 'not_invokable', handles: ['nobody-c3b2c4', 'C1C4CBOTX'] } });
         expect(by('delegate 라운드 상한 → round_limit').body.error?.code).toBe('round_limit');
