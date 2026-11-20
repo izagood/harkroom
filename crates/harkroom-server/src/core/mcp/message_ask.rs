@@ -42,7 +42,7 @@ fn uuid_ok(v: &Value) -> bool {
 }
 
 /// `/^s[1-9][0-9]{0,3}$/`.
-fn plan_step_ok(v: &Value) -> bool {
+pub(super) fn plan_step_ok(v: &Value) -> bool {
     v.as_str().is_some_and(|s| {
         let b = s.as_bytes();
         b.len() >= 2
@@ -1414,7 +1414,7 @@ impl crate::core::msg_post::BeforeCommit for DenialRequestHook<'_> {
 /// `planStepId` 를 Rust 가 맡을 수 있나 — 쓰기 풀에 계획 쓰기 권한([`super::plan_write::PLAN_WRITE_PRIVILEGES`])이 다 있을 때만.
 /// 계획이 없거나(`no_plan`) 그 단계가 없으면(`unknown_item`) TS `linkPlanCard` 처럼 카드는 세우고 그 거절을 답의 `plan` 칸에 싣는다
 /// ([`super::plan_write::link_plan_card`] 가 잠근 판에서 판정한다). 권한이 모자라면 `Some(false)`(→ TS), DB 오류는 `None`.
-async fn plan_step_ready(st: &crate::core::msg_post::PostState) -> Option<bool> {
+pub(super) async fn plan_step_ready(st: &crate::core::msg_post::PostState) -> Option<bool> {
     use super::plan_write::{PLAN_WRITE_PRIVILEGES, PLAN_WRITE_SEQUENCE_PRIVILEGES};
     let missing = crate::write::missing_in(
         &st.write,

@@ -315,6 +315,35 @@ enum Build {
     Custom(StartBuild),
     /// TS `linkPlanGroup` 의 build — 부모 계획의 그룹을 위임 스레드에 잇는다(`message.delegate` 의 `planGroupId`, P6-5).
     LinkGroup { group: String, child: String },
+    /// TS `completePlanStep` 의 build — 그 단계를 done 으로(`message.report` 의 `planStepId`).
+    CompleteStep { step: String },
+}
+
+/// TS `completePlanStep` 의 build. 판이 없으면 `no_plan`, 단계가 없으면 `unknown_item`, 이미 done 이면 `unchanged`.
+/// 나머지 판정은 `applyPlanItem({ type: 'step', id, state: 'done' })` 이다.
+fn build_complete_step(now: Option<(&Value, i64)>, step: &str) -> Result<Value, Refusal> {
+    let Some((doc, rev)) = now else {
+        return Err(Refusal::plain("no_plan"));
+    };
+    let found = doc.get("steps").and_then(Value::as_array).and_then(|a| {
+        a.iter()
+            .find(|s| s.get("id").and_then(Value::as_str) == Some(step))
+    });
+    let Some(s) = found else {
+        return Err(Refusal::id("unknown_item", step));
+    };
+    if s.get("state").and_then(Value::as_str) == Some("done") {
+        return Err(Refusal::plain("unchanged"));
+    }
+    let patch = ItemPatch {
+        type_: Some("step".to_owned()),
+        id: Some(step.to_owned()),
+        state: Some("done".to_owned()),
+        ..ItemPatch::default()
+    };
+    apply_plan_item(Some((doc, rev)), &patch)
+        .map(|(d, _)| d)
+        .map_err(|e| Refusal::plan(&e))
 }
 
 /// TS `linkPlanGroup` 의 build. 판이 없으면 `no_plan`, 그룹이 없으면 `unknown_item`, 이미 그 스레드에 이어졌으면 `unchanged`,
@@ -516,6 +545,10 @@ async fn write_plan(
             .map_err(Refusal::plain),
         Build::LinkGroup { group, child } => {
             build_link_group(now.as_ref().map(|n| (&n.doc, n.rev)), &group, &child)
+                .map(|d| (Some(d), String::new()))
+        }
+        Build::CompleteStep { step } => {
+            build_complete_step(now.as_ref().map(|n| (&n.doc, n.rev)), &step)
                 .map(|d| (Some(d), String::new()))
         }
     };
@@ -971,6 +1004,28 @@ pub(crate) async fn link_plan_card(
         false,
     )
     .await?;
+    Ok(plan_hook_out(match out {
+        Outcome::Refused(r) => Err(r),
+        Outcome::Written { rev, .. } => Ok(rev),
+        Outcome::Deleted => Err(Refusal::plain("unexpected_delete")),
+        // 관리자를 바꾸지 않는 판이라 오지 않는다.
+        Outcome::ToTs => Err(Refusal::plain("internal")),
+    }))
+}
+
+/// TS `completePlanStep` + `planHookOut` — `message.report` 의 `planStepId`. 보고가 선 **뒤** 그 단계를 done 으로 바꾸고
+/// 도구 답의 `plan` 칸(JSON 글자)을 돌려준다. 루트·가시성은 부른 쪽이 봤다(그 스레드에 방금 보고를 세웠다).
+pub(crate) async fn complete_plan_step(
+    write: &PgPool,
+    me: &str,
+    root: &str,
+    channel: &str,
+    step: &str,
+) -> sqlx::Result<String> {
+    let build = Build::CompleteStep {
+        step: step.to_owned(),
+    };
+    let out = write_plan(write, me, root, channel, build, false).await?;
     Ok(plan_hook_out(match out {
         Outcome::Refused(r) => Err(r),
         Outcome::Written { rev, .. } => Ok(rev),

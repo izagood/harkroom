@@ -323,3 +323,30 @@ fn link_group_follows_link_plan_group() {
     assert_eq!(out["groups"][0]["linkedRootId"], json!(CHILD));
     // 단계를 가진 그룹(`linked_group_has_steps`)은 build 가 아니라 저장 앞 `validate_plan` 이 막는다 — 다른 쓰기와 같은 길.
 }
+
+#[test]
+fn complete_step_follows_complete_plan_step() {
+    // TS `completePlanStep` — 판이 없으면 no_plan.
+    assert_eq!(build_complete_step(None, "s1").unwrap_err().code, "no_plan");
+    let doc = json!({ "goal": "x", "groups": [], "steps": [
+        { "id": "s1", "title": "a", "state": "active" },
+        { "id": "s2", "title": "b", "state": "done" },
+        { "id": "s3", "title": "c", "state": "blocked", "blockedReason": "기다림" },
+    ] });
+    // 없는 단계 → unknown_item(id 칸).
+    let e = build_complete_step(Some((&doc, 7)), "s9").unwrap_err();
+    assert_eq!(e.fields, r#""code":"unknown_item","id":"s9""#);
+    // 이미 done → unchanged — 성공으로 접힌다(rev 를 올리지 않는다).
+    let e = build_complete_step(Some((&doc, 7)), "s2").unwrap_err();
+    assert_eq!(e.code, "unchanged");
+    assert_eq!(plan_hook_out(Err(e)), r#"{"ok":true,"unchanged":true}"#);
+    // 그 단계만 done 으로 — 다른 단계는 그대로.
+    let out = build_complete_step(Some((&doc, 7)), "s1").unwrap();
+    let steps = out["steps"].as_array().unwrap();
+    assert_eq!(steps[0]["state"], json!("done"));
+    assert_eq!(steps[1]["state"], json!("done"));
+    assert_eq!(steps[2]["state"], json!("blocked"));
+    // 막힌 단계도 done 으로 닫힌다(applyPlanItem 과 같은 판정).
+    let out = build_complete_step(Some((&doc, 7)), "s3").unwrap();
+    assert_eq!(out["steps"][2]["state"], json!("done"));
+}
