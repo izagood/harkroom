@@ -5,6 +5,9 @@
 //!   "serverInfo":{"name":"harkroom","version":"0.1.0"}}` (Server `_oninitialize` · McpServer 가 도구를 실으며 세우는 능력).
 //! - `ping`: `{}`.
 //! - 알림·답만 담은 본문: 본문 없는 202.
+//! - `server/discover`(새 스펙의 접속 탐색, 단일 요청만): SDK 1.30 은 이 메서드를 몰라 `-32601 Method not found` 로 답하고, 클라이언트는
+//!   `initialize` 로 돌아간다. 그 오류 글자(`{"jsonrpc":"2.0","id":…,"error":{"code":-32601,"message":"Method not found"}}`,
+//!   SDK `Protocol._onrequest` 의 키 순서)를 그대로 낸다 — 이것이 없으면 접속마다 TS `/mcp` 1회가 남는다.
 //! - 배치: 메시지마다 SSE 한 조각씩, 배치 순서대로(SDK 의 처리기가 모두 동기라 순서가 같다).
 //!
 //! 조금이라도 모양이 다르면(필드 꼴·모르는 메서드·`tools/call` 이 섞인 배치·`initialize` 가 든 배치·`cursor`) **답하지 않고** TS 로 넘긴다 —
@@ -23,8 +26,21 @@ pub enum Reply {
     Sse(String),
 }
 
-/// 한 메시지의 결과 글자(`result` 칸) — 요청이면 `Some((id, result))`, 알림이면 `None`. 답할 수 없으면 `Err`.
-fn one(m: &Value, single: bool, tools_list: Option<&str>) -> Result<Option<(String, String)>, ()> {
+/// 요청 하나의 답 — `result` 칸 또는 SDK 오류 글자 한 조각.
+#[derive(Debug, PartialEq, Eq)]
+enum Out {
+    /// `result` 칸의 JSON 글자.
+    Result(String),
+    /// `-32601 Method not found`(SDK 가 모르는 메서드에 내는 글자).
+    MethodNotFound,
+}
+
+/// SDK 1.30 이 모르는데 Rust 가 SDK 와 같은 `-32601` 로 대신 답하는 메서드 — 단일 요청일 때만.
+/// 모르는 메서드 전부가 아니라 이름을 하나씩 올린다(TS 에만 등록된 메서드를 잘못 막지 않게).
+const SDK_UNKNOWN_METHODS: &[&str] = &["server/discover"];
+
+/// 한 메시지의 답 — 요청이면 `Some((id, Out))`, 알림이면 `None`. 답할 수 없으면 `Err`.
+fn one(m: &Value, single: bool, tools_list: Option<&str>) -> Result<Option<(String, Out)>, ()> {
     let o = m.as_object().ok_or(())?;
     if o.get("jsonrpc").and_then(Value::as_str) != Some("2.0") {
         return Err(());
@@ -43,7 +59,10 @@ fn one(m: &Value, single: bool, tools_list: Option<&str>) -> Result<Option<(Stri
         };
     };
     let id = super::respond::id_text(id).ok_or(())?;
-    let result = match method {
+    let out = match method {
+        m if single && SDK_UNKNOWN_METHODS.contains(&m) => {
+            return Ok(Some((id, Out::MethodNotFound)));
+        }
         "initialize" if single => initialize(params.ok_or(())?)?,
         "ping" => "{}".to_owned(),
         "tools/list" => {
@@ -55,7 +74,7 @@ fn one(m: &Value, single: bool, tools_list: Option<&str>) -> Result<Option<(Stri
         }
         _ => return Err(()),
     };
-    Ok(Some((id, result)))
+    Ok(Some((id, Out::Result(out))))
 }
 
 /// SDK `InitializeRequestSchema` 가 받는 꼴만 — `protocolVersion` 문자열 · `capabilities` 객체 · `clientInfo.name`·`version` 문자열.
@@ -108,10 +127,14 @@ pub fn answer(body: &Value, tools_list: Option<&str>) -> Option<Reply> {
     let single = msgs.len() == 1 && !body.is_array();
     let mut out = String::new();
     for m in msgs {
-        if let Some((id, result)) = one(m, single, tools_list).ok()? {
-            out.push_str(&format!(
+        match one(m, single, tools_list).ok()? {
+            Some((id, Out::Result(result))) => out.push_str(&format!(
                 "event: message\ndata: {{\"result\":{result},\"jsonrpc\":\"2.0\",\"id\":{id}}}\n\n"
-            ));
+            )),
+            Some((id, Out::MethodNotFound)) => out.push_str(&format!(
+                "event: message\ndata: {{\"jsonrpc\":\"2.0\",\"id\":{id},\"error\":{{\"code\":-32601,\"message\":\"Method not found\"}}}}\n\n"
+            )),
+            None => {}
         }
     }
     Some(if out.is_empty() {
@@ -197,6 +220,25 @@ mod tests {
             None
         );
         assert_eq!(answer(&json!([]), None), None);
+    }
+
+    /// Claude Code 2.1.329 가 접속할 때 맨 먼저 보내는 탐색 요청(508B, `_meta` 세 칸·문자열 id). TS SDK 는 -32601 로 답하고
+    /// 운영에서 잰 그 답이 124B 다 — 같은 글자를 낸다. 배치에 들어 있으면 지금처럼 TS.
+    #[test]
+    fn discover_probe_is_sdk_method_not_found() {
+        let probe = json!({ "jsonrpc": "2.0", "id": "server-discover-probe-1", "method": "server/discover",
+            "params": { "_meta": {
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientInfo": { "name": "c", "title": "C", "version": "1", "description": "d", "websiteUrl": "https://example.invalid" },
+                "io.modelcontextprotocol/clientCapabilities": { "roots": {}, "elicitation": {}, "extensions": { "tasks": {} } }
+            } } });
+        let want = "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":\"server-discover-probe-1\",\"error\":{\"code\":-32601,\"message\":\"Method not found\"}}\n\n";
+        assert_eq!(want.len(), 124);
+        assert_eq!(answer(&probe, None), Some(Reply::Sse(want.into())));
+        assert_eq!(answer(&json!([probe]), None), None);
+        // 다른 모르는 메서드는 그대로 TS.
+        let other = json!({ "jsonrpc": "2.0", "id": 1, "method": "resources/list" });
+        assert_eq!(answer(&other, None), None);
     }
 
     #[test]
