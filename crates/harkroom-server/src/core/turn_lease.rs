@@ -7,8 +7,9 @@
 //!   줄 세운다. 그래서 TS 와 Rust 가 같은 DB 에서 동시에 발급해도 한 부름에 살아 있는 임대는 하나다(`rustFrontDb.test.ts` 동시 시험).
 //! - 시각: TS 는 앱 시계(`now`)를 쓴다. 여기서는 트랜잭션의 DB `now()` 를 밀리초로 자른 값 하나를 판정·쓰기에 같이 쓴다
 //!   (TS 가 쓴 행과 같은 정밀도 — 만료 시각 글자가 같은 꼴로 나온다).
-//! - 자동화 위임장(⑤b, `automationMandateForCause`)은 옮기지 않는다: 원인 글이 자동화 회차 글이면 아무것도 쓰지 않고
-//!   [`Issue::Handoff`] 를 돌려준다 — 부르는 쪽이 그 요청을 TS 로 넘긴다(C3b-1 의 권한·머지 카드와 같은 꼴).
+//! - 자동화 위임장(⑤b, TS `automationMandateForCause`)도 여기서 한다: 원인 글·깨움 행에 키가 없고 그 글이 키를 줄 수 있는
+//!   자동화 회차 글이면, 맡긴 사람(자동화 소유자)이 **지금도** 그 에이전트를 정할 수 있는지 같은 tx 안에서 다시 보고
+//!   (자동화, 에이전트 소유자)당 하나인 위임장을 만들거나 잇는다. 문장 넷은 골든 `turn_lease_automation_*` 그대로다.
 //! - 배선은 [`super::turn_lease_routes`](C6b-2).
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -18,13 +19,31 @@ use sqlx::PgPool;
 use std::sync::OnceLock;
 
 /// 발급·다시 주기·늘리기·끝내기가 쓰는 권한 — homelab GRANT 와 같아야 한다. 하나라도 없으면 C6b-2 배선이 서지 않는다(TS 에 남는다).
-/// 임대 행은 넣고, `ended_at`·`expires_at`·`last_renewed_at` 세 칸만 고친다.
+/// 임대 행은 넣고, `ended_at`·`expires_at`·`last_renewed_at` 세 칸만 고친다. 자동화 위임장(⑤b)은 회차·자동화 행을 읽고
+/// 위임장 행을 넣고 `last_activity_at` 한 칸만 고친다.
 pub const TURN_LEASE_PRIVILEGES: &[(&str, &str)] = &[
     ("secret_turn_lease", "INSERT"),
     ("secret_turn_lease.ended_at", "UPDATE"),
     ("secret_turn_lease.expires_at", "UPDATE"),
     ("secret_turn_lease.last_renewed_at", "UPDATE"),
     ("audit_log", "INSERT"),
+    ("automation_run.automation_id", "SELECT"),
+    ("automation_run.message_id", "SELECT"),
+    ("automation_run.trigger_kind", "SELECT"),
+    ("automation_run.initiated_by", "SELECT"),
+    ("automation.id", "SELECT"),
+    ("automation.owner_id", "SELECT"),
+    ("automation.channel_id", "SELECT"),
+    ("automation.enabled", "SELECT"),
+    ("automation.approved_at", "SELECT"),
+    ("automation.deleted_at", "SELECT"),
+    ("automation.mandate_session_at", "SELECT"),
+    ("mandate.id", "SELECT"),
+    ("mandate.automation_id", "SELECT"),
+    ("mandate.owner_account_id", "SELECT"),
+    ("mandate.ended_at", "SELECT"),
+    ("mandate", "INSERT"),
+    ("mandate.last_activity_at", "UPDATE"),
 ];
 
 struct Sql {
@@ -36,7 +55,10 @@ struct Sql {
     insert: String,
     end: String,
     renew: String,
-    automation_cause: &'static str,
+    automation_run: String,
+    automation_mandate_insert: String,
+    automation_mandate_live: String,
+    automation_mandate_touch: String,
     ttl_ms: i64,
     max_ms: i64,
     renew_ms: i64,
@@ -87,9 +109,19 @@ fn sql() -> &'static Sql {
                 "with x as ({}) select to_char(x.\"expiresAt\" at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') from x",
                 frag("turn_lease_renew")
             ),
-            // `automationMandateForCause` 의 첫 질의가 행을 찾을 수 있는 글인가 — 찾을 수 있으면 TS 로 넘긴다. 일부러 넓게 본다
-            // (자동화가 꺼졌거나 승인 전이어도 넘긴다): 판정은 TS 한 곳에 두고, Rust 는 「자동화와 무관한 부름」만 맡는다.
-            automation_cause: "select exists (select 1 from automation_run r where r.message_id = $1::uuid)",
+            automation_run: format!(
+                "select x.\"automationId\"::text, x.\"delegatorId\"::text, x.\"ownerId\"::text, x.\"channelId\"::text from ({}) x",
+                frag("turn_lease_automation_run")
+            ),
+            automation_mandate_insert: format!(
+                "with x as ({}) select id::text from x",
+                frag("turn_lease_automation_mandate_insert")
+            ),
+            automation_mandate_live: format!(
+                "select y.id::text from ({}) y",
+                frag("turn_lease_automation_mandate_live")
+            ),
+            automation_mandate_touch: frag("turn_lease_automation_mandate_touch"),
             ttl_ms,
             max_ms,
             renew_ms,
@@ -155,8 +187,6 @@ pub enum Issue {
     NotInvoked,
     /// TS `lease_used` — 그 부름에 이미 임대를 줬고 다시 주기 조건이 아니다.
     LeaseUsed,
-    /// 자동화 회차 글 — 위임장을 만들 수 있어 TS 가 맡는다. 아무것도 쓰지 않았다.
-    Handoff,
 }
 
 /// 원인 글 한 줄: 채널·스레드·위임장·principal·인박스 시각(epoch ms).
@@ -243,11 +273,6 @@ pub async fn issue(
             tx.rollback().await?;
             return Ok(Issue::LeaseUsed);
         }
-        // TS 와 같은 차례: 위임장 판정은 다시 주기 판정 뒤다 — 자동화 글이면 여기서 넘기고 옛 임대도 건드리지 않는다.
-        if mandate_id.is_none() && automation_cause(&mut tx, cause_message_id).await? {
-            tx.rollback().await?;
-            return Ok(Issue::Handoff);
-        }
         sqlx::query(s.end_prior.as_str())
             .bind(&prior_id)
             .bind(&now)
@@ -258,9 +283,16 @@ pub async fn issue(
             since_last_beat_sec: round_div(now_ms - last_beat_ms, 1000),
             via: if stale { "stale_beat" } else { "thread_claim" },
         });
-    } else if mandate_id.is_none() && automation_cause(&mut tx, cause_message_id).await? {
-        tx.rollback().await?;
-        return Ok(Issue::Handoff);
+    }
+    // TS 와 같은 차례: 위임장은 다시 주기 판정 뒤에 새로 계산한다(옛 임대에서 베끼지 않는다).
+    // ⑤b: 원인 글·깨움 행에 키가 없으면 — 그 글이 키를 줄 수 있는 자동화 회차 글일 때 그 자동화의 위임장.
+    let mut automation_mandate: Option<AutomationMandate> = None;
+    let mut mandate_id = mandate_id;
+    if mandate_id.is_none() {
+        automation_mandate =
+            automation_mandate_for_cause(&mut tx, agent_id, cause_message_id, &channel_id, &now)
+                .await?;
+        mandate_id = automation_mandate.as_ref().map(|m| m.mandate_id.clone());
     }
     let token = new_token();
     let (expires_at, expires_iso): (String, String) = sqlx::query_as(
@@ -286,6 +318,21 @@ pub async fn issue(
         .fetch_one(&mut *tx)
         .await?;
     tx.commit().await?;
+    // TS `auditAutomationMandateCreated` — 새로 만든 위임장만, 커밋 뒤에, 실패는 삼킨다(임대는 이미 나갔다).
+    if let Some(m) = automation_mandate.filter(|m| m.created) {
+        let r = sqlx::query(super::mandate_card_thread::MANDATE_CREATED_AUDIT)
+            .bind(&m.delegator_id)
+            .bind(&m.mandate_id)
+            .bind(m.audit_detail().to_string())
+            .execute(pool)
+            .await;
+        if let Err(e) = r {
+            eprintln!(
+                "front: audit record failed (mandate.created): {}",
+                e.as_database_error().map_or("io", |_| "db")
+            );
+        }
+    }
     Ok(Issue::Ok(Issued {
         lease_id,
         token,
@@ -297,14 +344,95 @@ pub async fn issue(
     }))
 }
 
-async fn automation_cause(
+/// TS `AutomationLeaseMandate`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AutomationMandate {
+    mandate_id: String,
+    created: bool,
+    automation_id: String,
+    owner_id: String,
+    delegator_id: String,
+}
+
+impl AutomationMandate {
+    /// TS `auditAutomationMandateCreated` 의 detail.
+    fn audit_detail(&self) -> Value {
+        serde_json::json!({
+            "mandateId": self.mandate_id, "via": "automation", "automationId": self.automation_id,
+            "ownerId": self.owner_id, "delegatorId": self.delegator_id,
+        })
+    }
+}
+
+/// 회차 한 줄: 자동화·맡긴 사람(자동화 소유자)·에이전트 소유자·자동화 채널.
+type RunRow = (String, String, Option<String>, String);
+
+/// TS `automationMandateForCause` — 이 원인 글이 키를 줄 수 있는 자동화 회차 글이면 그 위임장(없으면 만든다). 아니면 `None`.
+/// 임대 발급 tx 안에서만 부른다. 키를 주는 조건(켜짐·승인·사람 세션·정기 또는 소유자 본인이 돌린 회차)은 골든 문장에 있고,
+/// 여기서는 채널이 같은지와 맡긴 사람이 **지금도** 이 에이전트를 정할 수 있는지를 더 본다(TS `mayDecideFor` 와 같은 판정).
+async fn automation_mandate_for_cause(
     tx: &mut sqlx::PgConnection,
+    agent_id: &str,
     cause_message_id: &str,
-) -> Result<bool, sqlx::Error> {
-    sqlx::query_scalar(sql().automation_cause)
+    channel_id: &str,
+    now: &str,
+) -> Result<Option<AutomationMandate>, sqlx::Error> {
+    let s = sql();
+    let run: Option<RunRow> = sqlx::query_as(s.automation_run.as_str())
         .bind(cause_message_id)
-        .fetch_one(tx)
-        .await
+        .bind(agent_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+    let Some((automation_id, delegator_id, Some(owner_id), run_channel)) = run else {
+        return Ok(None);
+    };
+    if run_channel != channel_id {
+        return Ok(None);
+    }
+    let v = super::decide_core::may_decide_for_unlocked(
+        &mut *tx,
+        agent_id,
+        &delegator_id,
+        Some(&run_channel),
+    )
+    .await?;
+    if v.ok.is_none() {
+        return Ok(None);
+    }
+    let inserted: Option<String> = sqlx::query_scalar(s.automation_mandate_insert.as_str())
+        .bind(&owner_id)
+        .bind(&delegator_id)
+        .bind(&automation_id)
+        .bind(&run_channel)
+        .bind(now)
+        .fetch_optional(&mut *tx)
+        .await?;
+    let created = inserted.is_some();
+    let id = match inserted {
+        Some(id) => Some(id),
+        None => {
+            sqlx::query_scalar(s.automation_mandate_live.as_str())
+                .bind(&automation_id)
+                .bind(&owner_id)
+                .fetch_optional(&mut *tx)
+                .await?
+        }
+    };
+    let Some(mandate_id) = id else {
+        return Ok(None);
+    };
+    sqlx::query(s.automation_mandate_touch.as_str())
+        .bind(&mandate_id)
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
+    Ok(Some(AutomationMandate {
+        mandate_id,
+        created,
+        automation_id,
+        owner_id,
+        delegator_id,
+    }))
 }
 
 /// JS `Math.round(a / b)`(b > 0) — 절반은 +∞ 쪽으로.

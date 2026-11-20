@@ -140,11 +140,13 @@ const BG_GRANTS = ['update (status, error, finished_at) on bg_job'];
 /** `loops/bg_produce.rs::BG_PRODUCE_PRIVILEGES` 만 가진 쓰기 역할(S5.3 C5c-3b-1) — 넣는 칸만. */
 const BG_PRODUCE_GRANTS = ['insert (account_id, kind, day, input) on bg_job'];
 
-/** `core/turn_lease.rs::TURN_LEASE_PRIVILEGES` 만 가진 쓰기 역할(S5.3 C6b) — 임대 행 넣기와 세 칸 고치기. */
+/** `core/turn_lease.rs::TURN_LEASE_PRIVILEGES` 만 가진 쓰기 역할(S5.3 C6b) — 임대 행 넣기와 세 칸 고치기, 자동화 위임장(⑤b) 넣기와 한 칸 고치기. */
 const TURN_LEASE_GRANTS = [
   'insert on secret_turn_lease',
   'update (ended_at, expires_at, last_renewed_at) on secret_turn_lease',
   'insert on audit_log',
+  'insert on mandate',
+  'update (last_activity_at) on mandate',
 ];
 
 const PERMISSION_EXPIRE_GRANTS = [
@@ -12013,7 +12015,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       }
 
       // S5.3 C6b-2 — 턴 임대 세 줄(`core/turn_lease_routes.rs`). 임대는 한 번 쓰면 상태가 바뀌므로 TS·Rust 에 **각자의 부름**을 주고
-      // 같은 차례로 청해 상태·코드·본문 꼴·no-store·감사 줄을 견준다. 자동화 회차 글은 Rust 가 손대지 않고 TS 로 넘긴다 — 결과가 TS 와 같아야 한다.
+      // 같은 차례로 청해 상태·코드·본문 꼴·no-store·감사 줄을 견준다. 자동화 회차 글의 위임장(⑤b)도 Rust 가 직접 한다 — 결과가 TS 와 같아야 한다
+      // (Rust 혼자 만드는 것은 `tests/turn_lease.rs` 가 본다 — 거기에는 TS 가 없다).
       {
         for (const k of ['POST /agent/turn-leases', 'POST /agent/turn-leases/{id}/end', 'POST /agent/turn-leases/{id}/renew']) expect(f.log()).toContain(`"${k}"`);
         expect(f.log()).not.toContain('turn lease core off');
@@ -12072,7 +12075,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           rec('끝내기 → 204', await lc(base, `/agent/turn-leases/${lease.id}/end`, { token: lease.token }));
           rec('다시 끝내기 → 404', await lc(base, `/agent/turn-leases/${lease.id}/end`, { token: lease.token }));
           rec('끝난 뒤 늘리기 → 404', await lc(base, `/agent/turn-leases/${lease.id}/renew`, { token: lease.token }));
-          rec('자동화 회차 글(TS 가 판정) → 200', await lc(base, '/agent/turn-leases', { causeMessageId: sd.auto }));
+          rec('자동화 회차 글 → 200', await lc(base, '/agent/turn-leases', { causeMessageId: sd.auto }));
           return out;
         };
         const rsBase = `http://127.0.0.1:${port}`;

@@ -63,6 +63,56 @@ async fn live(admin: &PgPool, agent: &str, cause: &str) -> i64 {
     .unwrap()
 }
 
+/// 켜짐·승인·사람 세션으로 만든 자동화(위임장 ⑤b 가 키를 줄 수 있는 꼴).
+async fn automation(admin: &PgPool, owner: &str, ch: &str) -> String {
+    sqlx::query_scalar(
+        "insert into automation(owner_id, channel_id, name, body, trigger, approved_at, enabled, mandate_session_at) \
+         values ($1::uuid, $2::uuid, 'n', 'b', '{}'::jsonb, now(), true, now()) returning id::text",
+    )
+    .bind(owner)
+    .bind(ch)
+    .fetch_one(admin)
+    .await
+    .unwrap()
+}
+
+/// 그 자동화의 정기 회차 글(meta.automation)과 회차 행, 그 글로 에이전트를 부른 인박스 항목.
+async fn auto_called(
+    admin: &PgPool,
+    ch: &str,
+    author: &str,
+    agent: &str,
+    automation_id: &str,
+    key: &str,
+) -> String {
+    let m = called(admin, ch, author, agent, "1 minute").await;
+    sqlx::query("update message set meta = jsonb_build_object('automation', jsonb_build_object('id', $2::text)) where id = $1::uuid")
+        .bind(&m)
+        .bind(automation_id)
+        .execute(admin)
+        .await
+        .unwrap();
+    sqlx::query(
+        "insert into automation_run(automation_id, event_key, trigger_kind, status, message_id, initiated_by) \
+         values ($1::uuid, $2, 'schedule', 'sent', $3::uuid, null)",
+    )
+    .bind(automation_id)
+    .bind(key)
+    .bind(&m)
+    .execute(admin)
+    .await
+    .unwrap();
+    m
+}
+
+async fn lease_mandate(admin: &PgPool, lease_id: &str) -> Option<String> {
+    sqlx::query_scalar("select mandate_id::text from secret_turn_lease where id = $1::uuid")
+        .bind(lease_id)
+        .fetch_one(admin)
+        .await
+        .unwrap()
+}
+
 fn ok(i: Issue) -> harkroom_server::core::turn_lease::Issued {
     match i {
         Issue::Ok(x) => x,
@@ -404,7 +454,7 @@ async fn turn_lease_like_ts() {
             .unwrap();
     assert_eq!(got.as_deref(), Some(mandate.as_str()));
 
-    // 자동화 회차 글 — 위임장 없는 부름이면 아무것도 안 쓰고 TS 로 넘긴다.
+    // 자동화 회차 글(⑤b) — 키를 줄 수 없는 회차(승인 전·사람이 아닌 길로 돌린 회차)는 위임장 없이 임대만 나간다.
     let m4 = called(&admin, &ch, &human, &agent, "1 minute").await;
     sqlx::query(
         "with a as (insert into automation(owner_id, channel_id, name, body, trigger) values ($1::uuid, $2::uuid, 'n', 'b', '{}'::jsonb) returning id) \
@@ -416,10 +466,77 @@ async fn turn_lease_like_ts() {
     .execute(&admin)
     .await
     .unwrap();
+    let l4 = ok(issue(&w, &agent, &op, &m4, None).await.unwrap());
+    assert_eq!(lease_mandate(&admin, &l4.lease_id).await, None);
+
+    // 키를 주는 회차: 켜짐·승인·사람 세션으로 만든 자동화의 정기 회차 글. 맡긴 사람(자동화 소유자)이 에이전트 소유자 본인이다.
+    let auto_id = automation(&admin, &human, &ch).await;
+    let m5 = auto_called(&admin, &ch, &human, &agent, &auto_id, "r5").await;
+    let l5 = ok(issue(&w, &agent, &op, &m5, None).await.unwrap());
+    let made = lease_mandate(&admin, &l5.lease_id)
+        .await
+        .expect("automation mandate");
+    let (m_auto, m_owner, m_delegator, m_root): (String, String, String, Option<String>) = sqlx::query_as(
+        "select automation_id::text, owner_account_id::text, delegator_account_id::text, root_message_id::text from mandate where id = $1::uuid and ended_at is null",
+    )
+    .bind(&made)
+    .fetch_one(&admin)
+    .await
+    .unwrap();
     assert_eq!(
-        issue(&w, &agent, &op, &m4, None).await.unwrap(),
-        Issue::Handoff
+        (
+            m_auto.as_str(),
+            m_owner.as_str(),
+            m_delegator.as_str(),
+            m_root
+        ),
+        (auto_id.as_str(), human.as_str(), human.as_str(), None)
     );
-    assert_eq!(live(&admin, &agent, &m4).await, 0);
+    // 다음 회차는 같은 위임장을 잇는다 — 새로 만들지 않고 감사도 한 줄뿐이다.
+    let m6 = auto_called(&admin, &ch, &human, &agent, &auto_id, "r6").await;
+    let l6 = ok(issue(&w, &agent, &op, &m6, None).await.unwrap());
+    assert_eq!(
+        lease_mandate(&admin, &l6.lease_id).await.as_deref(),
+        Some(made.as_str())
+    );
+    let audits: Vec<(Option<String>, String)> = sqlx::query_as(
+        "select actor_id::text, detail::text from audit_log where action = 'mandate.created' and target = $1",
+    )
+    .bind(&made)
+    .fetch_all(&admin)
+    .await
+    .unwrap();
+    assert_eq!(audits.len(), 1);
+    assert_eq!(audits[0].0.as_deref(), Some(human.as_str()));
+    let detail: serde_json::Value = serde_json::from_str(&audits[0].1).unwrap();
+    assert_eq!(
+        detail,
+        serde_json::json!({"mandateId": made, "via": "automation", "automationId": auto_id, "ownerId": human, "delegatorId": human})
+    );
+
+    // 맡긴 사람이 지금 이 에이전트를 정할 수 없으면(여기서는 사람이 아닌 계정이 자동화 소유자) 키 없음 — 위임장도 안 생긴다.
+    let bot_owner = account(&admin, "tl-auto-bot", "agent").await;
+    let auto2 = automation(&admin, &bot_owner, &ch).await;
+    let m7 = auto_called(&admin, &ch, &human, &agent, &auto2, "r7").await;
+    let l7 = ok(issue(&w, &agent, &op, &m7, None).await.unwrap());
+    assert_eq!(lease_mandate(&admin, &l7.lease_id).await, None);
+    let n: i64 = sqlx::query_scalar("select count(*) from mandate where automation_id = $1::uuid")
+        .bind(&auto2)
+        .fetch_one(&admin)
+        .await
+        .unwrap();
+    assert_eq!(n, 0);
+
+    // 자동화가 다른 채널 것이면 키 없음.
+    let other_ch: String = sqlx::query_scalar(
+        "insert into channel(name, kind) values ('tl-rs-other', 'standard') returning id::text",
+    )
+    .fetch_one(&admin)
+    .await
+    .unwrap();
+    let auto3 = automation(&admin, &human, &other_ch).await;
+    let m8 = auto_called(&admin, &ch, &human, &agent, &auto3, "r8").await;
+    let l8 = ok(issue(&w, &agent, &op, &m8, None).await.unwrap());
+    assert_eq!(lease_mandate(&admin, &l8.lease_id).await, None);
     println!("turn-lease rust ok");
 }

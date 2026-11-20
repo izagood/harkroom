@@ -5248,7 +5248,6 @@ async fn main() {
             let leases = harkroom_server::core::turn_lease_routes::routes(
                 harkroom_server::core::turn_lease_routes::LeaseState {
                     write,
-                    up: state.up.clone(),
                     trust: state.trust.clone(),
                 },
                 auth.clone(),
