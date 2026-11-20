@@ -7,7 +7,7 @@
 //! - 자리의 키는 `(runner_id, key)` 다. runner_id 는 링크 인증이 정한 값이다.
 //! - relay 가 끊기거나 **다시 붙으면** 그 러너의 자리를 전부 돌려받는다(`release_runner`, security #1127 L1).
 //! - 자리는 relay 소켓에서만 잡고 놓는다. 다른 소켓이면 403 이고 서버로도 넘기지 않는다(security #1127 L2).
-//! - 값이 없거나 0 이면 상한이 없다.
+//! - 값이 없으면 기본값 [`DEFAULT_MAX_TURNS`] 이다. `0` 이면 상한이 없다(일부러 끈 것).
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -18,27 +18,32 @@ use serde_json::{Value, json};
 pub const TURN_SLOTS_PATH: &str = "/agent/turn-slots";
 pub const TURN_SLOTS_RELEASE_PATH: &str = "/agent/turn-slots/release";
 pub const MAX_TURNS_ENV: &str = "HARKROOM_MAX_TURNS";
+/// 값이 없을 때의 상한 — 바꿀 수 있는 기본값이다(`HARKROOM_MAX_TURNS` 로 덮고, `0` 으로 끈다).
+/// 턴 하나가 하네스까지 수백 MB 를 쓰므로, 상한 없이 두면 부름이 몰릴 때 기기 메모리가 먼저 바닥난다.
+pub const DEFAULT_MAX_TURNS: u32 = 8;
 /// 러너가 보내는 키(스레드 키) 길이 상한. 비교에만 쓰고 어디에도 찍지 않는다.
 const KEY_MAX: usize = 512;
 const FULL_LOG_EVERY_MS: u64 = 60_000;
 
-/// TS `parseMaxTurns` — 없음·빈 값·0 은 상한 없음. 숫자(1~4자리)가 아니면 상한 없음 + 경고.
+/// 없음·빈 값은 기본값([`DEFAULT_MAX_TURNS`]), `0` 은 상한 없음. 숫자(1~4자리)가 아니면 기본값 + 경고 —
+/// 잘못 적은 값이 상한을 조용히 끄지 않는다.
 pub fn parse_max_turns(raw: Option<&str>, log: &dyn Fn(&str)) -> Option<u32> {
-    let v = raw?.trim();
+    let v = raw.map(str::trim).unwrap_or_default();
     if v.is_empty() {
-        return None;
+        return Some(DEFAULT_MAX_TURNS);
     }
     if !(1..=4).contains(&v.len()) || !v.bytes().all(|b| b.is_ascii_digit()) {
         let shown: String = v.chars().take(20).collect();
         log(&format!(
-            "{MAX_TURNS_ENV}={} 는 0 이상의 정수가 아니다 — 동시 턴 상한 없이 돈다",
+            "{MAX_TURNS_ENV}={} 는 0 이상의 정수가 아니다 — 기본값 {DEFAULT_MAX_TURNS} 로 돈다",
             Value::String(shown)
         ));
-        return None;
+        return Some(DEFAULT_MAX_TURNS);
     }
     match v.parse::<u32>() {
-        Ok(0) | Err(_) => None,
+        Ok(0) => None,
         Ok(n) => Some(n),
+        Err(_) => Some(DEFAULT_MAX_TURNS),
     }
 }
 
@@ -81,8 +86,9 @@ impl TurnSlots {
         Arc::clone(SLOTS.get_or_init(|| {
             let log = |line: &str| eprintln!("{line}");
             let max = parse_max_turns(std::env::var(MAX_TURNS_ENV).ok().as_deref(), &log);
-            if let Some(m) = max {
-                eprintln!("동시 턴 상한: {m}");
+            match max {
+                Some(m) => eprintln!("동시 턴 상한: {m}"),
+                None => eprintln!("동시 턴 상한: 없음({MAX_TURNS_ENV}=0)"),
             }
             Arc::new(Mutex::new(TurnSlots::new(
                 max,
@@ -253,22 +259,28 @@ mod tests {
     }
 
     #[test]
-    fn parse_max_turns_matches_ts() {
+    fn parse_max_turns_defaults_when_unset_and_zero_turns_it_off() {
         let warned = Arc::new(AtomicUsize::new(0));
         let w = Arc::clone(&warned);
         let log = move |_: &str| {
             w.fetch_add(1, Ordering::SeqCst);
         };
-        assert_eq!(parse_max_turns(None, &log), None);
-        assert_eq!(parse_max_turns(Some(""), &log), None);
-        assert_eq!(parse_max_turns(Some("  "), &log), None);
+        assert_eq!(DEFAULT_MAX_TURNS, 8);
+        assert_eq!(parse_max_turns(None, &log), Some(DEFAULT_MAX_TURNS));
+        assert_eq!(parse_max_turns(Some(""), &log), Some(DEFAULT_MAX_TURNS));
+        assert_eq!(parse_max_turns(Some("  "), &log), Some(DEFAULT_MAX_TURNS));
+        // 0 은 일부러 끈 것이다 — 경고 없이 상한 없음.
         assert_eq!(parse_max_turns(Some("0"), &log), None);
         assert_eq!(parse_max_turns(Some(" 6 "), &log), Some(6));
         assert_eq!(parse_max_turns(Some("9999"), &log), Some(9999));
         assert_eq!(warned.load(Ordering::SeqCst), 0);
-        assert_eq!(parse_max_turns(Some("10000"), &log), None);
-        assert_eq!(parse_max_turns(Some("-1"), &log), None);
-        assert_eq!(parse_max_turns(Some("3.5"), &log), None);
+        // 잘못 적은 값은 상한을 끄지 않는다 — 기본값 + 경고.
+        assert_eq!(
+            parse_max_turns(Some("10000"), &log),
+            Some(DEFAULT_MAX_TURNS)
+        );
+        assert_eq!(parse_max_turns(Some("-1"), &log), Some(DEFAULT_MAX_TURNS));
+        assert_eq!(parse_max_turns(Some("3.5"), &log), Some(DEFAULT_MAX_TURNS));
         assert_eq!(warned.load(Ordering::SeqCst), 3);
     }
 
