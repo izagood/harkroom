@@ -8,16 +8,19 @@
 //!   - `startedAt`: 앞단 프로세스가 뜬 시각.
 //!   - `push`: 앞단 푸시 sweeper(C5e)가 섰으면 `ok`/`degraded`, 아니면 `off`(TS `pushSweeper.health` 와 같은 낱말).
 //!   - `mail`: TS `loadMailConfig` 와 같은 env(`HARKROOM_SMTP_*`·`HARKROOM_MAIL_FROM`·`HARKROOM_PUBLIC_URL`)로 `on`/`off`.
-//!   - `avcs`: 소켓 상태는 TS 프로세스 안에 있다 — TS `/healthz` 를 1초 안에 물어 옮겨 싣고, 답이 없으면 TS 기본값 `{ connected: false }`.
+//!   - `avcs`: Rust 투영 루프(`loops::projection`)가 사이클마다 쓰는 `projection_status` 한 줄에서 읽는다 — TS `/healthz` 는
+//!     더 묻지 않는다(TS 를 끈 뒤엔 1초 시한만 남는 조회였다). `connected` 는 줄의 `configured && connected` 이고, 마지막 폴링이
+//!     [`AVCS_STALL_MS`](shared `PROJECTION_STALL_MS`, 5분)보다 오래됐으면 `false` — 루프가 멈춘 뒤 남은 낡은 `true` 를 믿지 않는다.
+//!     줄이 없거나·DB 가 [`AVCS_READ_TIMEOUT`] 안에 답하지 않거나·권한이 없으면 TS 기본값 `{ connected: false }`.
+//!     값은 [`AVCS_CACHE`] 동안 프로세스 안에 둔다(프로브가 DB 를 두드리지 않게).
 //! - `/metrics` 는 계정 인증(TS `requireAccount`). DB 로 셀 수 있는 게이지만 같은 이름으로 낸다 — 빠진 것은 PR 본문 참고.
 //! - `/projection/status` 는 여기 없다: Rust 투영 루프가 쓰는 `projection_status` 줄을 `directory::projection_status` 가 읽는다.
 use crate::auth::RequireAccount;
 use crate::routes::AppState;
 use axum::body::Body;
 use axum::extract::State;
-use axum::http::{Request, StatusCode, header};
+use axum::http::{StatusCode, header};
 use axum::response::Response;
-use http_body_util::BodyExt;
 use serde_json::{Map, Value, json};
 use std::fmt::Write as _;
 use std::sync::LazyLock;
@@ -65,21 +68,53 @@ fn json_reply(status: StatusCode, v: &Value) -> Response {
         .expect("고정 응답")
 }
 
-async fn ts_health(state: &AppState) -> Option<Map<String, Value>> {
-    let uri = format!("{}/healthz", state.up.base);
-    let req = Request::get(uri).body(Body::empty()).ok()?;
-    let res = tokio::time::timeout(Duration::from_secs(1), state.up.client.request(req))
-        .await
-        .ok()?
-        .ok()?;
-    if !res.status().is_success() {
-        return None;
+/// shared `PROJECTION_STALL_MS` — 마지막 폴링이 이보다 오래면 루프가 멈춘 것으로 본다.
+pub const AVCS_STALL_MS: i64 = 5 * 60 * 1000;
+/// `projection_status` 를 읽는 시한 — `/healthz` 는 DB 가 느려도 늘 빨리 답한다(DB 는 `/readyz` 가 본다).
+pub const AVCS_READ_TIMEOUT: Duration = Duration::from_millis(500);
+/// 읽은 값을 쥐고 있는 시간. 루프가 사이클마다(최소 25초) 쓰므로 이보다 짧으면 충분하다.
+pub const AVCS_CACHE: Duration = Duration::from_secs(5);
+
+static AVCS_CACHED: std::sync::Mutex<Option<(std::time::Instant, bool)>> =
+    std::sync::Mutex::new(None);
+
+/// 줄 하나 → `connected`. `now_ms` 는 시험에서 고정한다.
+pub fn avcs_connected(
+    configured: bool,
+    connected: bool,
+    last_polled_at: Option<i64>,
+    now_ms: i64,
+) -> bool {
+    configured && connected && last_polled_at.is_some_and(|t| now_ms - t <= AVCS_STALL_MS)
+}
+
+async fn read_avcs(pool: &sqlx::PgPool) -> bool {
+    let row = tokio::time::timeout(
+        AVCS_READ_TIMEOUT,
+        sqlx::query_as::<_, (bool, bool, Option<i64>)>(
+            "select configured, connected, last_polled_at from projection_status where id = true",
+        )
+        .fetch_optional(pool),
+    )
+    .await;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as i64);
+    match row {
+        Ok(Ok(Some((cfg, conn, polled)))) => avcs_connected(cfg, conn, polled, now),
+        _ => false,
     }
-    let bytes = res.into_body().collect().await.ok()?.to_bytes();
-    match serde_json::from_slice(&bytes).ok()? {
-        Value::Object(m) => Some(m),
-        _ => None,
+}
+
+async fn avcs_state(pool: &sqlx::PgPool) -> bool {
+    if let Some((at, v)) = *AVCS_CACHED.lock().unwrap_or_else(|e| e.into_inner())
+        && at.elapsed() < AVCS_CACHE
+    {
+        return v;
     }
+    let v = read_avcs(pool).await;
+    *AVCS_CACHED.lock().unwrap_or_else(|e| e.into_inner()) = Some((std::time::Instant::now(), v));
+    v
 }
 
 /// 빌드 때 구운 릴리스 판(`build.rs`). 정본 파일을 못 읽었으면 `None`.
@@ -112,10 +147,7 @@ fn push_word() -> &'static str {
 
 /// TS `GET /healthz` — `ServerHealth`.
 pub async fn healthz(State(state): State<AppState>) -> Response {
-    let avcs = ts_health(&state)
-        .await
-        .and_then(|mut m| m.remove("avcs"))
-        .unwrap_or_else(|| json!({ "connected": false }));
+    let avcs = json!({ "connected": avcs_state(&state.pool).await });
     let mut out = Map::new();
     out.insert("ok".into(), Value::Bool(true));
     out.insert("avcs".into(), avcs);
