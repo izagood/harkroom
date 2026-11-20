@@ -16,7 +16,7 @@ import { describe, expect, it } from 'vitest';
 import { buildServer } from '../src/buildServer.js';
 import { agentPat, bootstrapAdmin, createAgent, createMember, registerOperator } from './helpers/fixtures.js';
 import { startTestDb } from './helpers/testDb.js';
-import { BAD_THREAD_MESSAGE, fanOutCalls, postMessage, resolveMentionCalls } from '../src/services/messages.js';
+import { fanOutCalls, postMessage, resolveMentionCalls } from '../src/services/messages.js';
 import { addMandateLine } from '../src/services/mandateLines.js';
 import { openPermissionRequest } from '../src/services/permissionRequests.js';
 import { mkdtempSync, writeFileSync as writeCases } from 'node:fs';
@@ -11440,7 +11440,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                 args: { to: ['c3b2c4del'], body: '맡아 줘', planRootId: await parentPlan(ch, await ins({ ch, author: member.accountId, body: '다른 일' })), planGroupId: 'g1' }, plan: true })],
               ['delegate 계획판 없는 부모 → plan no_plan', async (ch) => ({
                 args: { to: ['c3b2c4del'], body: '맡아 줘', planRootId: await ins({ ch, author: member.accountId, body: '계획 없음' }), planGroupId: 'g1' }, plan: true })],
-              // 머리가 답글(최상위 글 아님) — 아무것도 쓰지 않고 `message.post` 와 같은 400 bad_thread. Rust 가 답한다(TS 로 넘기지 않음).
+              // 머리가 답글(최상위 글 아님) — 아무것도 쓰지 않는다. TS 위임 도구는 `post_failed`·`bad_thread` 로 답한다. Rust 가 같은 답을 낸다(TS 로 넘기지 않음).
               ['delegate 답글 머리 → bad_thread(아무것도 안 씀)', async (ch, root) => ({
                 args: { to: ['c3b2c4del'], body: '맡아 줘' }, root: await ins({ ch, root, author: member.accountId, body: '답글' }) })],
               ['delegate 사슬 상한 → chain_limit(아무것도 안 씀)', async (ch, root) => {
@@ -11506,7 +11506,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             expect(w('delegate 열린 카드 스레드 → Rust 위임').body).toMatchObject({ delegated: ['c3b2c4del'], unreachable: [] });
             expect(w('delegate 사슬 상한 → chain_limit(아무것도 안 씀)').body).toMatchObject({ error: { code: 'chain_limit' } });
             expect(w('delegate 사슬 상한 → chain_limit(아무것도 안 씀)').deleg).toEqual([]);
-            expect(w('delegate 답글 머리 → bad_thread(아무것도 안 씀)').body).toMatchObject({ error: { code: 'bad_thread', message: BAD_THREAD_MESSAGE } });
+            expect(w('delegate 답글 머리 → bad_thread(아무것도 안 씀)').body).toMatchObject({ error: { code: 'post_failed', message: 'bad_thread' } });
             expect(w('delegate 답글 머리 → bad_thread(아무것도 안 씀)').deleg).toEqual([]);
             expect((rsW as { name: string; rust: boolean }[]).find((x) => x.name === 'delegate 답글 머리 → bad_thread(아무것도 안 씀)')!.rust).toBe(true);
             type PW = WO & { planRow: { doc: { groups: { id: string; linkedRootId?: string }[] }; rev: number; links: string[] } | null };
