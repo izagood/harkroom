@@ -51,6 +51,13 @@ pub fn unavailable(tool: &str) -> String {
     super::tool_error(super::ts_down::CODE, super::ts_down::MESSAGE).to_string()
 }
 
+/// 다시 부르지 않는 처리기(쓰기가 섞인 도구)의 **읽기**가 DB 에 닿지 못했을 때 — 아직 쓴 것이 없으니 [`unavailable`] 과 같은
+/// 답(`temporarily_unavailable`)을 내고, 부르는 쪽이 다시 부르면 된다. 로그에는 도구 이름만 싣는다.
+pub fn read_failed(tool: &str) -> String {
+    eprintln!("front: mcp tool db read failed tool={tool}");
+    super::tool_error(super::ts_down::CODE, super::ts_down::MESSAGE).to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1513,8 +1513,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       // S5.2 P3 — 쓰기 역할. **`write.rs::REQUIRED_PRIVILEGES` 만** 준다(homelab GRANT 와 같은 표). 넓은 권한으로 돌리면
       // 앞단이 목록에 없는 표를 쓰기 시작해도 이 시험이 못 잡는다.
       const rw = `front_rw_${Math.random().toString(36).slice(2, 10)}`;
-      // connection limit = 쓰기 풀 2 + 루프 문지기 풀 7(루프 수) + 루프 sweep 풀 3 (S5.3 C5c-4 — 운영 역할 한도도 이만큼 받아야 한다).
-      await db.pool.query(`create role ${rw} login password '${rw}' nosuperuser nocreatedb nocreaterole nobypassrls connection limit 12`);
+      // connection limit = 앞단 한 벌이 쓰기 역할로 쥘 수 있는 몫(쓰기 풀 4 + 루프 문지기 풀 15 + 루프 sweep 풀 3 + outbox 리스너 1 = 23, `main.rs` 의
+      // 풀 표) × 2. 이 한도 아래에서 본 앞단과 둘째 앞단(bg 켜짐)이 같이 뜬다 — 한 벌 몫만 주면 본 앞단이 루프 연결을 쥔 뒤 둘째가 못 뜬다.
+      await db.pool.query(`create role ${rw} login password '${rw}' nosuperuser nocreatedb nocreaterole nobypassrls connection limit 46`);
       for (const q of [
         `grant pg_read_all_data to ${rw}`,
         `grant insert on event_outbox to ${rw}`,
@@ -3479,7 +3480,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         } finally {
           frontN?.kill('SIGTERM');
           await db.pool.query(`grant delete on thread_note to ${rw}`);
-          await db.pool.query(`alter role ${rw} connection limit 12`);
+          await db.pool.query(`alter role ${rw} connection limit 46`);
         }
       }
 
