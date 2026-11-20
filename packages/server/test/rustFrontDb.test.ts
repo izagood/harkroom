@@ -3318,16 +3318,33 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           ['못 보는 DM → forbidden', agent.pat, { threadRootId: privRoot, body: 'x' }, true],
           // 앞단 MCP 는 에이전트만 받는다(route.rs) — 사람 계정은 TS 가 agents_only 로 답한다. Rust 의 같은 갈래는 단위 시험이 본다.
           ['사람 계정 → TS(agents_only)', member.token, { threadRootId: noteRootR }, false],
-          ['빈 본문 → TS(zod)', agent.pat, { threadRootId: noteRootR, body: '' }, false],
-          ['4001자 → TS(zod)', agent.pat, { threadRootId: noteRootR, body: 'a'.repeat(4001) }, false],
-          ['본문 수 → TS', agent.pat, { threadRootId: noteRootR, body: 1 }, false],
-          ['uuid 아님 → TS', agent.pat, { threadRootId: 'x' }, false],
-          ['날짜 꼴 아님 → TS', agent.pat, { threadRootId: noteRootR, body: 'x', ifUpdatedAt: 'nope' }, false],
+          // zod 가 거절하는 인자 — SDK 의 검증 오류(`isError: true`)를 Rust 가 같은 글자로 낸다(TS 를 꺼도 같은 답).
+          ['빈 본문 → zod', agent.pat, { threadRootId: noteRootR, body: '' }, true],
+          ['4001자 → zod', agent.pat, { threadRootId: noteRootR, body: 'a'.repeat(4001) }, true],
+          ['본문 수 → zod', agent.pat, { threadRootId: noteRootR, body: 1 }, true],
+          ['본문 배열 → zod', agent.pat, { threadRootId: noteRootR, body: [] }, true],
+          ['uuid 아님 → zod', agent.pat, { threadRootId: 'x' }, true],
+          ['threadRootId 없음 → zod', agent.pat, {}, true],
+          ['threadRootId null → zod', agent.pat, { threadRootId: null }, true],
+          ['날짜 꼴 아님 → zod', agent.pat, { threadRootId: noteRootR, body: 'x', ifUpdatedAt: 'nope' }, true],
+          ['날짜 수 → zod', agent.pat, { threadRootId: noteRootR, body: null, ifUpdatedAt: 1 }, true],
+          ['셋 다 틀림 → zod 세 줄', agent.pat, { threadRootId: 'x', body: '', ifUpdatedAt: 'nope' }, true],
+          ['지우기 + 날짜 꼴 아님 → zod', agent.pat, { threadRootId: noteRootR, body: null, ifUpdatedAt: 'nope' }, true],
+          // zod 는 받지만 JS 가 Invalid Date 로 읽는 판(오프셋 시 24) — TS 는 늘 conflict(지금 판)로 답한다.
+          ['Invalid Date 판 → conflict', agent.pat, { threadRootId: noteRootR, body: '바뀌면 안 됨', ifUpdatedAt: '2026-01-01T00:00:00+24:00' }, true],
+          ['Invalid Date 판으로 지우기 → conflict', agent.pat, { threadRootId: noteRootR, body: null, ifUpdatedAt: '2026-01-01T00:00:00+24:00' }, true],
+          // 인자 객체가 없으면 SDK 가 `Required` 를 내지만 앞단은 「없음」과 `null` 을 가르지 못한다(`null` 은 요청 꼴 오류) → TS.
           ['인자 없음 → TS', agent.pat, undefined, false],
         ] as const) {
           const [a, b] = [await mcpCall(tsUrl, token, 'thread.note', args), await mcpCall(rsUrl4, token, 'thread.note', args)];
           expect({ status: b.status, type: b.type, text: b.text }, name).toEqual({ status: a.status, type: a.type, text: a.text });
           expect(b.core, `${name} — 누가 답했나`).toBe(answeredByRust ? 'mcp' : null);
+          // 빈 값끼리 같아서 통과하지 않게 — 기대한 꼴이 실렸는지.
+          if (name.endsWith('→ zod') || name.endsWith('세 줄')) {
+            expect(b.text, name).toContain('Input validation error: Invalid arguments for tool thread.note: ');
+            expect(b.text, name).toContain('"isError":true');
+          }
+          if (name.endsWith('→ conflict')) expect(b.text, name).toContain('code\\":\\"conflict');
         }
         expect(await noteRow(noteRootR), '거절·넘김 줄은 행을 바꾸지 않는다').toEqual([{ body: '다시 쓴 메모', flag: null, archived: false }]);
         // W1 — 쓰기를 시작한 뒤의 오류는 TS 로 넘기지 않는다. (1) insert 권한을 거두면 새 메모 쓰기가 실패 → internal, 행 없음.

@@ -42,8 +42,13 @@ where
             tokio::time::sleep(Duration::from_millis(*ms)).await;
         }
     }
+    Some(unavailable(tool))
+}
+
+/// 다시 돌아도 DB 에 닿지 못했을 때의 답(로그 한 줄과 함께) — `thread.note`([`super::note`])도 같은 끝을 쓴다.
+pub fn unavailable(tool: &str) -> String {
     eprintln!("front: mcp tool db unavailable tool={tool} attempts={ATTEMPTS}");
-    Some(super::tool_error(super::ts_down::CODE, super::ts_down::MESSAGE).to_string())
+    super::tool_error(super::ts_down::CODE, super::ts_down::MESSAGE).to_string()
 }
 
 #[cfg(test)]
