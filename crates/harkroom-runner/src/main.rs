@@ -127,6 +127,9 @@ fn main() {
         Box::new(|l: &str| eprintln!("{l}")),
     );
     harkroom_runner::interactive_open::fill(&relay_cell, &relay);
+    // 링크가 열릴 때마다 열린 턴의 열쇠를 다시 맡긴다 — 손님 묶음은 링크 뒤에 서므로 칸으로 잇는다.
+    let clients_cell: harkroom_runner::mention_clients::ClientsCell<Link> = Arc::default();
+    opts.on_link_open = harkroom_runner::mention_clients::turn_keys_relink(clients_cell.clone());
     let opts = relay.wire(opts);
     let link: Link = LinkClient::new(opts);
     relay.attach_link(&link);
@@ -140,6 +143,7 @@ fn main() {
         // 서버에 알리는 러너 판 — 오퍼레이터가 심은 번들 판(`runner_version` 주석).
         harkroom_runner::runner_version::runner_version(|k| std::env::var(k).ok()),
     ));
+    let _ = clients_cell.set(Arc::clone(&clients));
     let (me_id, me_handle) = match clients.mcp().me() {
         Ok(v) => v,
         Err(e) => {

@@ -12,6 +12,7 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::sync::Arc;
 
 use crate::adapter::AgentHarness;
 use crate::link::LinkClient;
@@ -43,6 +44,32 @@ impl<L: RunnerLink + Clone> AgentClients<L> {
             link,
         }
     }
+}
+
+/// 손님 묶음이 링크보다 늦게 서므로 링크의 `on_link_open` 고리는 이 칸을 통해 부른다(정본 `main.ts` `relinkTurnKeys`).
+pub type ClientsCell<L> = Arc<std::sync::OnceLock<Arc<AgentClients<L>>>>;
+
+/// 링크가 열릴 때마다 열린 턴의 열쇠를 다시 맡기는 고리 — 오퍼레이터가 바뀌면 새 오퍼레이터의 장부는 비어 있어서,
+/// 다시 맡기지 않으면 도는 턴의 MCP 다리가 받아들여지지 않고 그 턴의 도구 호출이 전부 시한까지 기다리다 끝난다.
+/// 칸이 비어 있으면(첫 연결) 맡길 것이 없다. 링크 읽기 고리 밖에서 보낸다 — 고리 안에서 답을 기다리면 읽을 손이 없다.
+pub fn turn_keys_relink<L: RunnerLink + Send + Sync + 'static>(
+    cell: ClientsCell<L>,
+) -> Box<dyn Fn() + Send + Sync> {
+    Box::new(move || {
+        let Some(clients) = cell.get().cloned() else {
+            return;
+        };
+        let _ = std::thread::Builder::new()
+            .name("turn-keys-relink".into())
+            .spawn(move || {
+                let (ok, failed) = clients.rest().re_register_turn_keys();
+                if ok + failed > 0 {
+                    eprintln!(
+                        "[main] 링크가 열려 턴 열쇠를 다시 맡겼다: 성공 {ok}개, 실패 {failed}개"
+                    );
+                }
+            });
+    })
 }
 
 impl<L: RunnerLink> AgentClients<L> {
