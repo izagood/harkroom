@@ -2758,7 +2758,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           const a = await mcpCall(tsUrl, agent.pat, 'delegation.close', ta);
           const b = await mcpCall(rsUrl4, agent.pat, 'delegation.close', ra);
           expect({ status: b.status, type: b.type, text: b.text }, `delegation.close ${name}`).toEqual({ status: a.status, type: a.type, text: a.text });
-          expect(b.core, `delegation.close ${name} — 누가 답했나`).toBe(name.endsWith('→ TS') ? null : 'mcp');
+          expect(b.core, `delegation.close ${name} — 누가 답했나`).toBe(name.endsWith('→ TS') && !zodRejects('delegation.close', ra) ? null : 'mcp');
         }
         // W7 — 거부·빈 길을 Rust 쪽에서 따로 본다(bot2 는 이 위임 묶음의 리드가 아니다 — 픽스처에서 확인).
         expect((await db.pool.query(`select 1 from team_delegation where id = $1 and lead_account_id = $2`, [DR.theirs, agent.accountId])).rowCount).toBe(0);
@@ -3003,7 +3003,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           const b = await mcpCall(rsUrl4, agent.pat, 'message.askBundleResolve', args(fR));
           expect({ status: b.status, type: b.type, text: normText(b.text, fR) }, name)
             .toEqual({ status: a.status, type: a.type, text: normText(a.text, fT) });
-          expect(b.core, `${name} — 누가 답했나`).toBe(byRust ? 'mcp' : null);
+          expect(b.core, `${name} — 누가 답했나`).toBe(byRust || zodRejects('message.askBundleResolve', args(fR)) ? 'mcp' : null);
         }
         // 빈 것끼리 같아 통과하지 않게 — 거절 코드와 성공 모양을 Rust 답에서 따로 본다.
         const rsB = (args: unknown) => mcpCall(rsUrl4, agent.pat, 'message.askBundleResolve', args);
@@ -3088,7 +3088,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         ] as const) {
           const [a, b] = await cPair(args, extra);
           expect({ status: b!.status, type: b!.type, text: b!.text }, name).toEqual({ status: a!.status, type: a!.type, text: a!.text });
-          expect(b!.core, `${name} — 누가 답했나`).toBe(core);
+          expect(b!.core, `${name} — 누가 답했나`).toBe(core ?? (zodRejects('bg.complete', args) ? 'mcp' : null));
           expect(a!.text, name).toContain(code);
         }
         const [, pb] = await cPair({ jobId: closed, status: 'done' }, {}, agent.pat);
@@ -3536,7 +3536,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         ] as const) {
           const [a, b] = [await mcpCall(tsUrl, token, tool, args), await mcpCall(rsUrl4, token, tool, args)];
           expect({ status: b.status, type: b.type, text: b.text.replace(ISO, '<t>') }, name).toEqual({ status: a.status, type: a.type, text: a.text.replace(ISO, '<t>') });
-          expect(b.core, `${name} — 누가 답했나`).toBe(name.includes('→ TS') ? null : 'mcp');
+          expect(b.core, `${name} — 누가 답했나`).toBe(name.includes('→ TS') && !zodRejects(tool, args) ? null : 'mcp');
         }
         // 상한 — 주인 보드를 500개로 채우면 새 키는 too_many, 있는 키 고쳐 쓰기는 된다.
         const have = (await db.pool.query<{ n: number }>(`select count(*)::int as n from work_item where owner_account_id = $1`, [owner])).rows[0]!.n;
@@ -5185,7 +5185,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         ] as const) {
           const [x, y] = [await mcpCall(tsUrl, agent.pat, 'thread.plan', args), await mcpCall(rsUrl, agent.pat, 'thread.plan', args)];
           expect(y.text, name).toBe(x.text);
-          expect(y.core === 'mcp', `${name} — Rust 가 답하는가`).toBe(rust);
+          expect(y.core === 'mcp', `${name} — Rust 가 답하는가`).toBe(rust || zodRejects('thread.plan', args));
           expect(y.text, name).toContain(want);
           seen.push({ token: agent.pat, json: y.text });
         }
@@ -5342,7 +5342,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         ] as const) {
           const [a, b] = [await mcpCall(tsUrl, token, tool, args), await mcpCall(rsUrl, token, tool, args)];
           expect({ status: b.status, text: b.text.replace(ISO, '<t>') }, name).toEqual({ status: a.status, text: a.text.replace(ISO, '<t>') });
-          expect(b.core, `${name} — TS 가 답한다`).toBeNull();
+          expect(b.core, `${name} — TS 가 답한다`).toBe(zodRejects(tool, args) ? 'mcp' : null);
         }
         // 자동 진행이 켜진 판에서 관리자를 바꾸면 Rust 가 같은 tx 에서 자동 진행을 끄며 바꾼다(739c7e190 부터 TS 로 넘기지 않는다).
         await mcpCall(rsUrl, agent.pat, 'thread.plan', { threadRootId: rootX, ifUpdatedAt: null, plan: { goal: 'auto', groups: [], steps: [{ id: 's1', title: 'a', state: 'pending' }] } });
@@ -9268,7 +9268,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         const rsOut = await run(rsUrl, R);
         const strip = (o: { step: string; body: unknown }[]) => o.map(({ step, body }) => ({ step, body }));
         expect(strip(rsOut)).toEqual(strip(tsOut));
-        const TS_STEPS = ['model 빈 글자 → TS(zod)'];
+        // 빈 model 은 zod 가 거절한다 — 앞단 공통 검증(`zod_gate.rs`)이 TS 와 같은 글자로 답한다.
+        const TS_STEPS: string[] = [];
         for (const o of rsOut) expect(o.core, `${o.step} — 누가 답했나`).toBe(TS_STEPS.includes(o.step) ? null : 'mcp');
         const codeOf = (o: { body: unknown }) => (o.body as { error?: { code: string; rootId?: string } }).error;
         expect(Object.fromEntries(tsOut.map((o) => [o.step, codeOf(o)?.code ?? 'ok']))).toMatchObject({
@@ -9388,7 +9389,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           const nrs = await nrun(rsUrl, NR, 'R');
           const nstrip = (o: { step: string; body: unknown }[]) => o.map(({ step, body }) => ({ step, body }));
           expect(nstrip(nrs)).toEqual(nstrip(nts));
-          const N_TS = ['새 묶음 권한 거울 원본 → TS', '새 묶음 model 빈 글자 → TS(zod)'];
+          const N_TS = ['새 묶음 권한 거울 원본 → TS'];  // 빈 model 은 zod_gate 가 답한다
           for (const o of nrs) expect(o.core, `${o.step} — 누가 답했나`).toBe(N_TS.includes(o.step) ? null : 'mcp');
           const ncode = (o: { body: unknown }) => (o.body as { error?: { code: string; rootId?: string } }).error;
           expect(Object.fromEntries(nts.slice(0, 4).map((o) => [o.step, ncode(o)?.code ?? 'ok']))).toEqual({
@@ -10770,7 +10771,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             const extra = { ...st.via.extra, ...(st.cause ? { 'x-harkroom-cause': st.cause } : {}), ...(st.turn ? { 'x-harkroom-turn-id': st.turn } : {}) };
             const r = await mcpCall(base, st.via.token, st.tool ?? 'message.post', st.args, 7, extra);
             const body = sse(r.text) as { message?: { id?: string }; foldedWakes?: { wakeAt: string }[] } | null;
-            out.push({ name, status: r.status, rust: base === tsUrl ? rust : r.core === 'mcp', body: shape(body), row: await facts(body?.message?.id, st.cause),
+            out.push({ name, status: r.status, rust: base === tsUrl ? rust || zodRejects(st.tool ?? 'message.post', st.args) : r.core === 'mcp', body: shape(body), row: await facts(body?.message?.id, st.cause),
               wakes: await wakesOf(ch), perms: await permsOf(ch), wakeAt: body?.foldedWakes?.map((w) => w.wakeAt) ?? null,
               askPush: await askPushOf(body?.message?.id),
               ...(name.startsWith('fail account_gate') ? { gateInbox: await gateInboxOf(body?.message?.id) } : {}) });
@@ -11033,7 +11034,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                 const b = await mcpCall(v2Url, bot3.pat, 'pr.watch', mk(hR), 11);
                 const auditRs = await audits() - auditBefore - auditTs;
                 expect({ status: b.status, type: b.type, text: norm(b.text) }, `V2=${V2} pr.watch ${name}`).toEqual({ status: a.status, type: a.type, text: norm(a.text) });
-                expect(b.core, `V2=${V2} pr.watch ${name} — 누가 답했나`).toBe(rust ? 'mcp' : null);
+                expect(b.core, `V2=${V2} pr.watch ${name} — 누가 답했나`).toBe(rust || zodRejects('pr.watch', mk(hR)) ? 'mcp' : null);
                 expect(await rowsOf(hR), `V2=${V2} pr.watch ${name} — 행`).toEqual(await rowsOf(hT));
                 expect(auditRs, `V2=${V2} pr.watch ${name} — 감사 줄`).toBe(auditTs);
                 if (V2 === '0' && rust) expect(b.text, name).toContain('pr watch not created: disabled');
@@ -11309,7 +11310,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                 for (const [name, setup] of ARS) {
                   const { args, cause: c } = await setup(side);
                   const r = await mcpCall(side === 't' ? tsUrl : v2Url, bot3.pat, 'automation.run', args, 32, c ? { 'x-harkroom-cause': c } : {});
-                  out.push({ name, status: r.status, type: r.type, core: r.core, text: arNorm(r.text) });
+                  out.push({ name, status: r.status, type: r.type, core: r.core, zod: zodRejects('automation.run', args), text: arNorm(r.text) });
                 }
                 return out;
               };
@@ -11321,7 +11322,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                 const { core: rc, ...b } = rsAr[i]!;
                 expect(b, `automation.run ${String(a.name)}`).toEqual(a);
                 expect(core, `${String(a.name)} — TS`).toBeNull();
-                expect(rc, `${String(a.name)} — 누가 답했나`).toBe(ARS[i]![2] ? 'mcp' : null);
+                expect(rc, `${String(a.name)} — 누가 답했나`).toBe(ARS[i]![2] || a.zod ? 'mcp' : null);
               }
               // ⑬ chain_capped — 상한을 1로 내리고 양쪽에 한 번씩.
               const prevLimit = (await db.pool.query<{ n: number }>(`select chain_limit as n from mention_policy where id = true`)).rows[0]?.n ?? null;
@@ -11392,7 +11393,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                   const out: Record<string, unknown>[] = [];
                   for (const [name, args] of GDS) {
                     const r = await mcpCall(side === 't' ? tsUrl : v2Url, bot3.pat, 'grant.delegate', args(side), 34);
-                    out.push({ name, status: r.status, type: r.type, core: r.core, text: gdNorm(r.text) });
+                    out.push({ name, status: r.status, type: r.type, core: r.core, zod: zodRejects('grant.delegate', args(side)), text: gdNorm(r.text) });
                   }
                   return out;
                 };
@@ -11403,7 +11404,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                   const { core: rc, ...b } = rsGd[i]!;
                   expect(b, `grant.delegate ${String(a.name)}`).toEqual(a);
                   expect(core, `${String(a.name)} — TS`).toBeNull();
-                  expect(rc, `${String(a.name)} — 누가 답했나`).toBe(GDS[i]![2] ? 'mcp' : null);
+                  expect(rc, `${String(a.name)} — 누가 답했나`).toBe(GDS[i]![2] || a.zod ? 'mcp' : null);
                 }
                 expect(String(tsGd[0]!.text)).toContain('no_connector');
                 expect(String(tsGd[1]!.text)).toContain('not_granted');
@@ -11558,7 +11559,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                 const out: Record<string, unknown>[] = [];
                 for (const [name, args] of PRS) {
                   const r = await mcpCall(side === 't' ? tsUrl : v2Url, bot3.pat, 'permission.request', args, 37);
-                  out.push({ name, status: r.status, type: r.type, core: r.core, text: r.text });
+                  out.push({ name, status: r.status, type: r.type, core: r.core, zod: zodRejects('permission.request', args), text: r.text });
                 }
                 return out;
               };
@@ -11569,7 +11570,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                 const { core: rc, ...b } = rsPr[i]!;
                 expect(b, `permission.request ${String(a.name)}`).toEqual(a);
                 expect(core, `${String(a.name)} — TS`).toBeNull();
-                expect(rc, `${String(a.name)} — 누가 답했나`).toBe(PRS[i]![2] ? 'mcp' : null);
+                expect(rc, `${String(a.name)} — 누가 답했나`).toBe(PRS[i]![2] || a.zod ? 'mcp' : null);
               }
               expect(String(tsPr[1]!.text)).toContain('too_broad');
               expect(String(tsPr[3]!.text)).toContain('shell_syntax');
