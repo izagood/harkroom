@@ -245,21 +245,12 @@ pub fn silent_turn_notice(i: &SilentTurnInput<'_>) -> SilentTurnNotice {
     let head = i.proxy_head;
     let reserve = head.encode_utf16().count();
     match i.caller {
-        NudgeCaller::Wake => {
+        // 넘긴 일의 결말을 확인한 턴(위임자 쪽)도 예약으로 깨어난 턴과 같다 — 프롬프트가 「보고할 것이 없으면 글 없이
+        // 끝내도 된다」고 하므로 빈 결과는 실패가 아니다. 스레드에 줄을 남기지 않고 ✅ 와 러너 로그(끝말)로만 남긴다.
+        // 담당 쪽(`Delegated`)의 대리 실패는 그대로다 — 위임이 닫히는 길이 그것뿐이다.
+        NudgeCaller::Wake | NudgeCaller::DelegationOutcome => {
             return SilentTurnNotice::React {
                 emoji: SILENT_ACK_EMOJI,
-            };
-        }
-        NudgeCaller::DelegationOutcome => {
-            let said = quoted_line(i.last_said, i.pat, i.secrets);
-            let body = if said.is_empty() {
-                "넘긴 일의 결말을 확인한 턴이 글 없이 끝났습니다.".to_owned()
-            } else {
-                format!("넘긴 일의 결말을 확인한 턴이 글 없이 끝났습니다 — 마지막 말:\n> {said}")
-            };
-            return SilentTurnNotice::Post {
-                body,
-                proxied: false,
             };
         }
         NudgeCaller::Agent => {
