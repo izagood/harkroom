@@ -162,7 +162,7 @@ const TOUCH_PAT: &str = "update pat set last_used_at = now() \
   where token_hash = $1 and (last_used_at is null or last_used_at < now() - interval '5 minutes')";
 
 /// 세션 연장·PAT 사용 시각 기록. `defer` 면 응답을 기다리게 하지 않고 따로 돌린다(P4a, security 가용성 권고) —
-/// 쓰기 풀(연결 2)이 붐벼도 인증된 요청이 그 줄을 기다리지 않는다. 실패는 원래부터 버린다(판정에 닿지 않는다).
+/// 쓰기 풀(연결 4)이 붐벼도 인증된 요청이 그 줄을 기다리지 않는다. 실패는 원래부터 버린다(판정에 닿지 않는다).
 async fn record(w: &PgPool, sql: &'static str, hash: &str, defer: bool) {
     if defer {
         let (w, hash) = (w.clone(), hash.to_string());
