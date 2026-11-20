@@ -1828,12 +1828,10 @@ async fn main() {
     {
         eprintln!("front: merge checks to TS — HARKROOM_MANDATE_ENFORCE unset");
     }
-    // 같은 꼴의 스위치들 — 값이 없으면 알린다. 글 쓰기(`msg_post`)는 TS 기본값으로 맡고, 그 밖에 이 스위치에 걸린 요청은 TS 로 넘긴다.
+    // 같은 꼴의 스위치들 — 값이 없으면 알린다. `HARKROOM_PRINCIPAL_INVOKE` 는 여기 없다: 값이 없으면 TS 기본값(켬)으로 Rust 가 답하고
+    // 이 스위치 때문에 TS 로 넘어가는 요청이 없다.
     if matches!(core_mode, harkroom_server::core::CoreMode::Rust) {
         let unset = |k: &str| std::env::var(k).map_or(true, |v| v.trim().is_empty());
-        if unset("HARKROOM_PRINCIPAL_INVOKE") {
-            eprintln!("front: principal-invoke edits to TS — HARKROOM_PRINCIPAL_INVOKE unset");
-        }
         // 암묵 위임은 위임 v2 가 켜졌을 때만 뜻이 있다 — v2 가 꺼졌으면(off) 그 줄은 거짓 경고다.
         // v2 값이 없을 때는 그 스위치 자체를 알린다(인박스가 그것 때문에 TS 로 간다. 글 쓰기는 v0 으로 맡는다).
         match harkroom_server::loops::delegation_deadline::v2_switch(

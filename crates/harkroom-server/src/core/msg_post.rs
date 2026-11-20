@@ -598,10 +598,10 @@ async fn resolve_post(
             reply_grant_thread_id: thread_root,
             principal: principal.map(|id| mention_calls::Principal { id }),
             now_ms: link.now_ms,
-            // 값이 없으면 TS 기본값(켬)이다 — 글 쓰기는 「모름」으로 TS 에 넘기지 않는다.
-            principal_invoke_enabled: Some(mention_calls::principal_invoke_enabled(
+            // 값이 없으면 TS 기본값(켬)이다.
+            principal_invoke_enabled: mention_calls::principal_invoke_enabled(
                 crate::env_once::get(&crate::env_once::PRINCIPAL_INVOKE),
-            )),
+            ),
         },
     )
     .await
@@ -625,7 +625,6 @@ fn no_mention_calls(body: &str) -> mention_calls::Resolved {
         target_call: Vec::new(),
         channel_called: false,
         call_meta: serde_json::Map::new(),
-        principal_switch_unknown: false,
     }
 }
 

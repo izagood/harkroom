@@ -44,7 +44,7 @@ async fn resolve_matches_ts() {
             reply_grant_thread_id: thread.as_deref(),
             principal: principal.as_deref().map(|id| Principal { id }),
             now_ms,
-            principal_invoke_enabled: Some(c["principalInvokeEnabled"].as_bool().unwrap_or(true)),
+            principal_invoke_enabled: c["principalInvokeEnabled"].as_bool().unwrap_or(true),
         };
         let mut tx = pool.begin().await.unwrap();
         let r = resolve(&mut tx, &input).await.unwrap();
