@@ -10316,8 +10316,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           const { call } = await chainBy(member.accountId, 0, 0)(ch);
           return { tool: 'message.ask', args, via: viaOp, cause: call, turn: turnId };
         };
-        const denialAsk = (o: { used?: boolean; otherThread?: boolean; pending?: boolean; ci?: boolean; op?: boolean } = {}) => async (ch: string): Promise<Setup> => {
-          const head = await ins({ ch, author: member.accountId, body: '머지해 줘' });
+        // `ownerHead` — 스레드 머리를 에이전트 소유자(admin)가 썼다: 위임장을 세울 수 있는 스레드다. 기본(member 머리)은 세울 수 없다.
+        const denialAsk = (o: { used?: boolean; otherThread?: boolean; pending?: boolean; ci?: boolean; op?: boolean; ownerHead?: boolean } = {}) => async (ch: string): Promise<Setup> => {
+          const head = await ins({ ch, author: o.ownerHead ? admin.accountId : member.accountId, body: '머지해 줘' });
           const other = await ins({ ch, author: member.accountId, body: '다른 스레드' });
           const denial = (await db.pool.query<{ id: string }>(
             `insert into merge_denial (agent_id, scope, pr_number, head_sha, channel_id, thread_root_id, reason, failed_checks, expires_at, used_at, lease_id)
@@ -10494,6 +10495,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           // 이 앞단의 쓰기 역할에는 요청 줄 INSERT 칸이 없어 새 카드는 TS 가 세운다 — 칸을 준 앞단의 장면은 따로 둔다.
           ['ask 머지 거절 카드 → 요청·카드 한 번에', denialAsk(), true],
           ['ask 머지 거절 카드 · CI 실패 거절', denialAsk({ ci: true }), true],
+          ['ask 머지 거절 카드 · 소유자 머리 → [위임장 만들고 더하기] 남음', denialAsk({ ownerHead: true }), true],
           ['ask 머지 거절 카드 · 기다리는 카드 있음 → pending', denialAsk({ pending: true }), true],
           ['ask 머지 거절 카드 · 쓴 거절 → denial_used', denialAsk({ used: true }), true],
           ['ask 머지 거절 카드 · 다른 스레드 → denial_other_thread', denialAsk({ otherThread: true }), true],
@@ -10668,7 +10670,30 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         const rsOut = await run(rsUrl);
         // 장면마다 이름을 달아 비교한다 — 통째 비교는 어긋난 장면 이름을 diff 문맥 밖으로 밀어낸다.
         expect(rsOut.map((x) => (x as { name: string }).name)).toEqual(tsOut.map((x) => (x as { name: string }).name));
-        for (let i = 0; i < tsOut.length; i++) expect(rsOut[i], `장면 ${(tsOut[i] as { name: string }).name}`).toEqual(tsOut[i]);
+        // 위임장을 세울 수 없는 스레드(머리가 소유자·소유자 에이전트 글이 아님)의 머지 거절 카드 — Rust 는 늘 409 `mandate_unavailable` 이던
+        // [이 스레드로 위임장 만들고 더하기](`approve_new_mandate`)를 선택지와 줄 한도에서 뺀다. TS 는 아직 세우므로 그것만 걷어 내고 견준다.
+        const NO_NEW_MANDATE = new Set(['ask 머지 거절 카드 → 요청·카드 한 번에']);
+        const stripNewMandate = (v: unknown): unknown => Array.isArray(v)
+          ? v.filter((x) => (x as { id?: unknown } | null)?.id !== 'approve_new_mandate').map(stripNewMandate)
+          : v && typeof v === 'object'
+            ? Object.fromEntries(Object.entries(v).filter(([k]) => k !== 'approve_new_mandate').map(([k, x]) => [k, stripNewMandate(x)]))
+            : v;
+        for (let i = 0; i < tsOut.length; i++) {
+          const n = (tsOut[i] as { name: string }).name;
+          expect(rsOut[i], `장면 ${n}`).toEqual(NO_NEW_MANDATE.has(n) ? stripNewMandate(tsOut[i]) : tsOut[i]);
+        }
+        {
+          type C = { name: string; perms: { ask: { options: { id: string }[] }; pr: { line?: { limits?: Record<string, unknown> } } }[] };
+          const card = (out: unknown[], n: string) => (out as C[]).find((x) => x.name === n)!.perms[0]!;
+          const ids = (out: unknown[], n: string) => card(out, n).ask.options.map((o) => o.id);
+          const cut = 'ask 머지 거절 카드 → 요청·카드 한 번에';
+          expect(ids(tsOut, cut)).toContain('approve_new_mandate');
+          expect(ids(rsOut, cut)).toEqual(['deny']);
+          expect(card(rsOut, cut).pr.line?.limits).not.toHaveProperty('approve_new_mandate');
+          expect(card(rsOut, cut).pr.line?.limits).toHaveProperty('approve_once');
+          // 소유자 머리 — 위임장을 세울 수 있으니 두 서버 모두 버튼을 남긴다(위 대조가 같음을, 여기서 값이 있음을 본다).
+          expect(ids(rsOut, 'ask 머지 거절 카드 · 소유자 머리 → [위임장 만들고 더하기] 남음')).toContain('approve_new_mandate');
+        }
         // 대조가 「둘 다 아무것도 안 적음」으로 같아지지 않게 TS 쪽 값을 못 박는다.
         type O = { name: string; body: { message?: { meta?: Record<string, unknown> }; error?: { code: string } }; row: Record<string, unknown>[] | null };
         const by = (n: string) => (tsOut as O[]).find((x) => x.name === n)!;
@@ -13814,17 +13839,24 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                   return a;
                 };
                 // ⑤ → ① → ②: 거절 카드 [이번 한 번] → 같은 임대로 다시 판정하면 승인을 쓴다 → 머지 보고(1회 승인 줄).
+                // 카드 답(`answeredWith`)은 쪽마다 따로 모은다 — TS 는 아직 선택지의 첫 후보(`approve_new_mandate`)를 적고, Rust 는 늘 `approve_once` 다.
+                const onceAnswers: (string | null)[] = [];
                 const once = await both('⑤ 이번 한 번 → ① 승인 소모 → ② merged', async (call) => {
                   const x = await turn('izagood/s55mc-once1');
                   const d = deny(await call('판정 → not_granted', MC, x.body, x.headers));
                   const rid = await openCard(x, d!);
                   await call('[이번 한 번]', `/agents/${mc.accountId}/permission-requests/${rid}/approve-once`, { number: 7, headSha: SHA40, ghUser: null }, S);
+                  onceAnswers.push((await db.pool.query<{ a: string | null }>(
+                    `select m.meta->'ask'->>'answeredWith' as a from permission_request p join message m on m.id = p.card_message_id where p.id = $1`, [rid])).rows[0]?.a ?? null);
                   await call('[이번 한 번] 다시 → 409', `/agents/${mc.accountId}/permission-requests/${rid}/approve-once`, { number: 7, headSha: SHA40, ghUser: null }, S);
                   await call('다시 판정 → 1회 승인 소모', MC, x.body, x.headers);
                   await call('merged 보고', MR, { ...lb(x), result: 'merged', mergeSha: 'd'.repeat(40), ghUserUsed: 'octo-bot' }, x.headers);
                   await call('merged 다시 → 409', MR, { ...lb(x), result: 'merged', mergeSha: 'd'.repeat(40) }, x.headers);
                 });
                 expect(once.steps.map((s) => s.status)).toEqual([403, 200, 409, 200, 201, 409]);
+                expect(onceAnswers, '1회 승인 카드 답 — [TS, Rust]').toHaveLength(2);
+                expect(onceAnswers[0], 'TS 도 답을 적는다(값은 선택지 첫 후보)').not.toBeNull();
+                expect(onceAnswers[1], 'Rust 는 1회 승인 답을 approve_once 로').toBe('approve_once');
                 expect(once.effects.approvals).toMatchObject([{ used: true, used_by_lease: true, gh_user: null }]);
                 expect(once.effects.msgs.length, '1회 승인 줄·머지 줄').toBeGreaterThanOrEqual(2);
                 // ② grant 있는 저장소의 보고 갈래 — merged(무시한 체크 꼬리)·failed·CI 거절(denialId)·판정 없는 보고.
