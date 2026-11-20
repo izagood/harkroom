@@ -6,6 +6,9 @@
 //!
 //! 서버 스위치가 꺼지면 due 가 빈 목록이라 gh 를 부르지 않는다. 감시 하나의 실패는 로그만 남기고 넘긴다 — 오퍼레이터를 죽이지 않는다.
 //! 저장소는 서버가 돌려준 감시 행의 것이다(서버가 머지 grant 를 보고 만든 행, 보고 때 다시 본다).
+//!
+//! due 에 403 을 받은 에이전트(예: 지운 계정의 키가 로컬 설정에 남은 경우)는 **다음 hello 까지** 묻지 않는다 — 한 줄 로그만 남기고,
+//! 서버 링크가 다시 붙어 hello 세대가 바뀌면 다시 물어본다(그 사이 배정이 돌아왔을 수 있다).
 use crate::forward::{AGENT_HEADER, Transport};
 use crate::local_merge::gh_env;
 use crate::merge::is_repo;
@@ -15,7 +18,8 @@ use crate::turn_pr_status::{TurnPrStatus, pick_pr_status};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 /// 폴링 주기(TS `PR_WATCH_POLL_MS`).
@@ -39,6 +43,23 @@ pub struct PrWatchPoller {
     pub http: AgentHttp,
     pub agent_ids: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
     pub log: Arc<dyn Fn(&str) + Send + Sync>,
+    /// 서버 hello 세대 — 링크가 hello 를 낼 때마다 1 오른다([`HelloGeneration`]).
+    pub hello: HelloGeneration,
+    /// due 에 403 을 받은 에이전트 → 그때의 hello 세대. 세대가 같은 동안은 건너뛴다.
+    pub denied: Arc<Mutex<HashMap<String, u64>>>,
+}
+
+/// 서버 hello 세대 수. 링크의 hello 손잡이가 [`HelloGeneration::bump`] 하고, 폴러는 [`HelloGeneration::get`] 으로 읽는다.
+#[derive(Clone, Default)]
+pub struct HelloGeneration(Arc<AtomicU64>);
+
+impl HelloGeneration {
+    pub fn bump(&self) {
+        self.0.fetch_add(1, Ordering::SeqCst);
+    }
+    pub fn get(&self) -> u64 {
+        self.0.load(Ordering::SeqCst)
+    }
 }
 
 /// `start` 가 돌려주는 손잡이 — `stop` 하면 다음 깨어날 때 고리를 나간다(TS `stop`).
@@ -172,12 +193,32 @@ impl PrWatchPoller {
     /// (TS 의 `running` 겹침 막기는 `start` 의 한 스레드가 차례로 부르므로 따로 두지 않는다.)
     pub fn tick(&self) {
         let mut tokens = TickTokens::new();
+        let generation = self.hello.get();
         for agent_id in (self.agent_ids)() {
+            if self
+                .denied
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(&agent_id)
+                == Some(&generation)
+            {
+                continue;
+            }
             let watches = match self.http(&agent_id, "GET", PR_WATCHES_DUE_PATH, None) {
                 Some((200, v)) => match v.get("watches") {
                     Some(Value::Array(a)) => a.clone(),
                     _ => continue,
                 },
+                Some((403, _)) => {
+                    self.denied
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .insert(agent_id.clone(), generation);
+                    (self.log)(&format!(
+                        "pr.watch: 에이전트 {agent_id} due 403 — 다음 hello 까지 건너뜀"
+                    ));
+                    continue;
+                }
                 _ => continue,
             };
             for w in &watches {
@@ -319,6 +360,8 @@ mod tests {
                 http,
                 agent_ids: Arc::new(|| vec!["a1".to_string()]),
                 log: Arc::new(move |line: &str| l.lock().unwrap().push(line.into())),
+                hello: HelloGeneration::default(),
+                denied: Arc::default(),
             },
             forwards,
             execs,
@@ -514,6 +557,50 @@ mod tests {
         }
         h.stop();
         assert!(!t.forwards.lock().unwrap().is_empty());
+    }
+
+    /// due 403 을 받은 에이전트는 다음 hello 까지 묻지 않고(로그 한 줄), 다른 에이전트는 그대로 묻는다. hello 세대가 바뀌면 다시 묻는다.
+    #[test]
+    fn denied_agent_is_skipped_until_next_hello() {
+        let mut t = setup(json!([]), false);
+        let f = t.forwards.clone();
+        t.poller.http = Arc::new(move |agent, method, path, body| {
+            f.lock()
+                .unwrap()
+                .push((agent.into(), method.into(), path.into(), body));
+            if agent == "gone" {
+                Ok((403, json!({"error": "forbidden"}).to_string()))
+            } else {
+                Ok((200, json!({"watches": []}).to_string()))
+            }
+        });
+        t.poller.agent_ids = Arc::new(|| vec!["gone".to_string(), "a1".to_string()]);
+        let asked = |t: &T, who: &str| {
+            t.forwards
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(a, m, p, _)| a == who && m == "GET" && p == PR_WATCHES_DUE_PATH)
+                .count()
+        };
+        t.poller.tick();
+        t.poller.tick();
+        t.poller.tick();
+        assert_eq!(
+            asked(&t, "gone"),
+            1,
+            "403 뒤에는 같은 hello 세대 동안 묻지 않는다"
+        );
+        assert_eq!(asked(&t, "a1"), 3, "다른 에이전트는 그대로 묻는다");
+        let logs = t.logs.lock().unwrap().clone();
+        assert_eq!(logs.len(), 1);
+        assert!(logs[0].contains("gone") && logs[0].contains("403"));
+        t.poller.hello.bump();
+        t.poller.tick();
+        assert_eq!(asked(&t, "gone"), 2, "hello 세대가 바뀌면 다시 묻는다");
+        t.poller.tick();
+        assert_eq!(asked(&t, "gone"), 2);
+        assert_eq!(t.logs.lock().unwrap().len(), 2);
     }
 
     #[test]
