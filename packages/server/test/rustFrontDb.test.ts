@@ -2115,7 +2115,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         ['memory.list', agent.pat, 'memory.list', {}, true],
         ['memory.list 인자 없음', agent.pat, 'memory.list', undefined, true],
         ['memory.list 배열 인자 → TS', agent.pat, 'memory.list', [], false],
-        ['memory.list 기억 없는 에이전트(bgCleanup 참일 수 있음) → TS', bot2.pat, 'memory.list', {}, false],
+        // 앞단 env(GROUP_A_ENV `HARKROOM_BACKGROUND_ENABLED=0`)를 알므로 설정이 켜진 에이전트도 Rust 가 답한다(bgCleanup 없음).
+        ['memory.list 설정 켠 에이전트·앞단 꺼짐', bot2.pat, 'memory.list', {}, true],
         ['secret.list', agent.pat, 'secret.list', {}, true],
         ['secret.list 받은 것 없음', bot2.pat, 'secret.list', {}, true],
         ['secret.list 문자열 인자 → TS', agent.pat, 'secret.list', 'x', false],
@@ -2866,6 +2867,17 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           expect({ status: b.status, type: b.type, text: b.text }, 'bg.claim 켜진 러너').toEqual({ status: a.status, type: a.type, text: a.text });
           expect(b.core, 'bg.claim 켜진 러너 — Rust 가 답한다').toBe('mcp');
           expect(b.text).toMatch(/outside_window|none/);
+          // memory.list — 앞단 env 가 켜짐이면 설정 켠 에이전트에 Rust 가 `bgCleanup:true` 를 붙여 답한다(TS 와 같은 글자).
+          for (const [name, token, want] of [
+            ['memory.list 설정 켠 에이전트·앞단 켜짐', bot2.pat, true],
+            ['memory.list 설정 끈 에이전트·앞단 켜짐', agent.pat, false],
+          ] as const) {
+            const ma = await mcpCall(tsUrl, token, 'memory.list', {});
+            const mb = await mcpCall(`http://127.0.0.1:${portBg}`, token, 'memory.list', {});
+            expect({ status: mb.status, type: mb.type, text: mb.text }, name).toEqual({ status: ma.status, type: ma.type, text: ma.text });
+            expect(mb.core, `${name} — Rust 가 답한다`).toBe('mcp');
+            expect(mb.text.includes('bgCleanup'), name).toBe(want);
+          }
         } finally {
           frontBg?.kill('SIGTERM');
         }
