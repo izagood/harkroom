@@ -1089,7 +1089,7 @@ pub(crate) async fn post_tx(
     )
     .await?;
     // 위임은 부름만 본다 — TS 는 `thread_reply` 를 넣기 **앞에서** 판정한다.
-    let called = notified_in_order(&mut tx, &id, &notified_set).await?;
+    let called = notified_in_order(&mut tx, &id, &notified_set, false).await?;
     // TS 는 사람·세션 글만 위임을 적는다. 에이전트 글은 원인(살아 있는 임대)이 있을 때만 그 위임과 principal 을 잇는다(C1c-4c).
     if let (true, Some(c)) = (author_is_agent, origin.chain_cause) {
         if let Some(m) =
@@ -1322,7 +1322,9 @@ pub(crate) async fn post_tx(
             row = r;
         }
     }
-    let notified = notified_in_order(&mut tx, &id, &notified_set).await?;
+    // 훅(차례 주인 알림 등)이 inbox 를 더 넣었을 수 있다 — 그때는 표가 비어 있어도 DB 에서 읽는다.
+    let notified =
+        notified_in_order(&mut tx, &id, &notified_set, origin.before_commit.is_some()).await?;
     // TS 는 선점 신호를 `postMessage` 안(커밋 뒤)에서, `message.created` 는 라우트가 그 뒤에 낸다 — 같은 순서로 outbox 에.
     wake_preempt::announce(&mut tx, &preempted).await?;
     // TS 는 이어서 위임이 접은 예약의 보고처·대기 줄을 알리고, 결말이 난 위임자에게 `inbox.updated` 를 낸다(`wokeByDelegation`).
@@ -1432,8 +1434,9 @@ async fn notified_in_order(
     conn: &mut sqlx::PgConnection,
     message_id: &str,
     set: &HashSet<String>,
+    hooked: bool,
 ) -> Result<Vec<String>, sqlx::Error> {
-    if set.is_empty() {
+    if set.is_empty() && !hooked {
         return Ok(vec![]);
     }
     sqlx::query_scalar("select account_id::text from inbox where message_id = $1::uuid order by id")

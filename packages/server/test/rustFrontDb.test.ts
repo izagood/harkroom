@@ -10460,7 +10460,22 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           ['fail 표지 없는 mentionId·순번 → Rust', async (ch) => ({ tool: 'message.fail', args: { channelId: ch, body: '답을 남기지 못하고 끝났다', retryable: true, what: '침묵', mentionId: randomUUID(), claudePoolRank: 2, claudeAccountRank: 1 }, via: viaOp, turn: turnId }), true],
           ['fail mentionId 꼴 틀림 → TS(zod 오류)', async (ch) => ({ tool: 'message.fail', args: { channelId: ch, body: '못 했다', retryable: true, mentionId: 'nope' }, via: viaPat }), false],
           ['fail 순번 범위 밖 → TS(zod 오류)', async (ch) => ({ tool: 'message.fail', args: { channelId: ch, body: '못 했다', retryable: true, mentionId: randomUUID(), claudePoolRank: 100 }, via: viaPat }), false],
-          ['fail account_gate·mentionId → TS', async (ch) => ({ tool: 'message.fail', args: { channelId: ch, body: '관문', retryable: true, code: 'account_gate', mentionId: randomUUID(), claudePoolRank: 1 }, via: viaPat }), false],
+          // account_gate — 차례 주인(그 턴을 띄운 사람)·inbox 표지까지 Rust. 깨우지 않은 멘션이면 차례 주인 없이 표지만.
+          ['fail account_gate · 깨우지 않은 mentionId → 차례 주인 없음', async (ch) => ({ tool: 'message.fail', args: { channelId: ch, body: '관문', retryable: true, code: 'account_gate', mentionId: randomUUID(), claudePoolRank: 1 }, via: viaPat }), true],
+          ['fail account_gate · 남이 세운 스레드의 mentionId → 차례 주인 inbox', async (ch) => {
+            const root = await ins({ ch, author: admin.accountId, body: '머리' });
+            const call = await ins({ ch, root, author: member.accountId, body: `<@${bot3.accountId}> 해 줘` });
+            await wokeBy(call);
+            return { tool: 'message.fail', args: { channelId: ch, threadRootId: root, body: '관문', retryable: true, code: 'account_gate', mentionId: call, claudePoolRank: 2, claudeAccountRank: 1 }, via: viaPat };
+          }, true],
+          ['fail account_gate · 오퍼레이터 원인(머리 주인) → 한 번만', async (ch) => {
+            const { root, call } = await chainBy(member.accountId, 0, 0)(ch);
+            return { tool: 'message.fail', args: { channelId: ch, threadRootId: root, body: '관문', retryable: true, code: 'account_gate', claudePoolRank: 1 }, via: viaOp, cause: call, turn: turnId };
+          }, true],
+          ['fail account_gate · 에이전트 원인 → 차례 주인 없음', async (ch) => {
+            const { root, call } = await chainBy(bot2.accountId, 1, 0)(ch);
+            return { tool: 'message.fail', args: { channelId: ch, threadRootId: root, body: '관문', retryable: true, code: 'account_gate' }, via: viaOp, cause: call, turn: turnId };
+          }, true],
           ['fail retryable 없음 → TS(zod 오류)', async (ch) => ({ tool: 'message.fail', args: { channelId: ch, body: '못 했다' }, via: viaPat }), false],
           // C3b-2c-4a — `message.delegate` 의 게이트·상한 거절만 Rust. 지나면(접속 확인·글·위임 행) TS 몫이다.
           ...((): [string, (ch: string) => Promise<Setup>, boolean][] => {
@@ -10652,6 +10667,10 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         // 사람 앞 카드의 차례 주인 푸시(`enqueueAskPush`) — 그 카드로 넣은 'ask' job 의 받는 사람.
         const askPushOf = async (id: string | undefined) => id ? shape((await db.pool.query(
           `select account_id::text as account from push_job where message_id = $1 and reason = 'ask' order by account_id`, [id])).rows) : null;
+        // account_gate — 그 실패 글의 inbox 줄과 푸시 job(차례 주인이 한 번만 받는가).
+        const gateInboxOf = async (id: string | undefined) => id ? shape((await db.pool.query(
+          `select i.account_id::text as who, i.reason, (select count(*)::int from push_job p where p.message_id = i.message_id and p.account_id = i.account_id) as push
+             from inbox i where i.message_id = $1 order by i.id`, [id])).rows) : null;
         // S5.5 e·f — 그 채널의 권한 요청 줄과 이어진 카드의 표지(요청·카드가 같이 섰는가).
         const permsOf = async (ch: string) => shape((await db.pool.query(
           `select p.kind, p.target, p.status, p.denial_id is not null as from_denial, p.card_message_id is not null as linked, p.mandate_id is not null as mandated,
@@ -10688,7 +10707,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             const body = sse(r.text) as { message?: { id?: string }; foldedWakes?: { wakeAt: string }[] } | null;
             out.push({ name, status: r.status, rust: base === tsUrl ? rust : r.core === 'mcp', body: shape(body), row: await facts(body?.message?.id, st.cause),
               wakes: await wakesOf(ch), perms: await permsOf(ch), wakeAt: body?.foldedWakes?.map((w) => w.wakeAt) ?? null,
-              askPush: await askPushOf(body?.message?.id) });
+              askPush: await askPushOf(body?.message?.id),
+              ...(name.startsWith('fail account_gate') ? { gateInbox: await gateInboxOf(body?.message?.id) } : {}) });
           }
           return out;
         };
@@ -10745,6 +10765,18 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect(by('보관된 채널도 올린다').row).not.toBeNull();
         expect(row('fail 원인 없음 · what/reason · 옛 account')).toMatchObject({ kind: 'failure', failure: { retryable: true, what: '빌드', reason: '권한' }, model: { id: 'claude-opus-5' }, depth: 0 });
         expect(row('fail 원인 없음 · what/reason · 옛 account').failure).not.toHaveProperty('account');
+        // account_gate — TS 쪽 값을 못 박는다(둘 다 차례 주인 없음으로 같아지지 않게).
+        {
+          type G = { gateInbox: { who: string; reason: string }[] };
+          const gi = (n: string) => (by(n) as unknown as G).gateInbox;
+          expect(row('fail account_gate · 남이 세운 스레드의 mentionId → 차례 주인 inbox').failure).toMatchObject({ code: 'account_gate', awaitingAccountId: 'MEM', claudePoolRank: 2, claudeAccountRank: 1 });
+          expect(gi('fail account_gate · 남이 세운 스레드의 mentionId → 차례 주인 inbox')).toContainEqual(expect.objectContaining({ who: 'MEM', reason: 'thread_reply' }));
+          expect(row('fail account_gate · 오퍼레이터 원인(머리 주인) → 한 번만').failure).toMatchObject({ code: 'account_gate', awaitingAccountId: 'MEM' });
+          expect(gi('fail account_gate · 오퍼레이터 원인(머리 주인) → 한 번만').filter((x) => x.who === 'MEM')).toHaveLength(1);
+          expect(row('fail account_gate · 깨우지 않은 mentionId → 차례 주인 없음').failure).toMatchObject({ code: 'account_gate', claudePoolRank: 1 });
+          expect(row('fail account_gate · 깨우지 않은 mentionId → 차례 주인 없음').failure).not.toHaveProperty('awaitingAccountId');
+          expect(row('fail account_gate · 에이전트 원인 → 차례 주인 없음').failure).not.toHaveProperty('awaitingAccountId');
+        }
         // P6-4d — 경고·파일·위임장 거울: TS 쪽 값을 못 박는다(둘 다 빈 거울로 같아지지 않게).
         {
           type M = { body?: string; meta?: { permissionMirror?: Record<string, unknown> } };
