@@ -42,6 +42,8 @@ pub const TURN_LEASE_PRIVILEGES: &[(&str, &str)] = &[
     ("mandate.automation_id", "SELECT"),
     ("mandate.owner_account_id", "SELECT"),
     ("mandate.ended_at", "SELECT"),
+    // TOUCH 문장의 `greatest(last_activity_at, …)` 가 이 칸을 읽는다 — UPDATE 만으로는 모자라다.
+    ("mandate.last_activity_at", "SELECT"),
     ("mandate", "INSERT"),
     ("mandate.last_activity_at", "UPDATE"),
 ];
