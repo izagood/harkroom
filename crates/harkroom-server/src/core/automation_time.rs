@@ -3,8 +3,10 @@
 //! TS 는 `Intl.DateTimeFormat` 으로 tz 벽시계를 풀고, 여기는 `chrono-tz` 의 IANA 표로 푼다 — 산법(오프셋 두 번 구하기,
 //! 분 단위 내림)은 한 줄씩 같으므로 DST 경계의 결과도 같다(시험이 TS 로 뽑은 값을 고정한다).
 //!
-//! 남는 차이(그래서 [`Schedule::parse`] 가 `None` = TS 로 넘긴다): `Intl` 은 tz 이름을 대소문자 무시·별칭 정규화로 받는다 —
-//! [`parse_tz`] 가 대소문자 무시·링크 이름까지 푼다. 오프셋 꼴(`+09:00`·`-0530`·`+09`)은 [`Zone::Fixed`] 로 푼다(`UTC+9` 는 `Intl` 도 거절). tz 표의 판(ICU vs chrono-tz 내장)이 다르면 그 사이 바뀐 규칙에서 갈린다.
+//! `Intl` 이 받는 tz 이름은 [`parse_tz`] 가 다 푼다: IANA 이름·링크(대소문자 무시), 오프셋 꼴(`+09:00`·`-0530`·`+09` — [`Zone::Fixed`],
+//! `UTC+9` 는 `Intl` 도 거절), 그리고 tz 표에는 없고 ICU 만 아는 옛 이름([`icu_legacy`] — `JST`·`PST` 같은 세 글자 약칭과 `SystemV/*`).
+//! 그래서 [`Schedule::parse`] 가 tz 때문에 `None` 인 것은 `Intl` 도 거절하는 이름이다. 남는 차이는 tz 표의 판(ICU vs chrono-tz 내장)뿐이다 —
+//! 판이 다르면 그 사이 새로 생긴 이름·바뀐 규칙에서 갈린다.
 use chrono::{Datelike, FixedOffset, NaiveDate, TimeZone, Timelike};
 use chrono_tz::Tz;
 use serde_json::Value;
@@ -30,6 +32,8 @@ fn utc_ms(y: i32, m: u32, d: u32, h: u32, mi: u32) -> Option<i64> {
 pub enum Zone {
     Iana(Tz),
     Fixed(FixedOffset),
+    /// ICU `SystemV/*` 의 서머타임 꼴(`EST5EDT` 등) — 표준시 오프셋(초, 동쪽이 +). 규칙은 [`systemv_dst`].
+    SystemV(i32),
 }
 
 impl From<Tz> for Zone {
@@ -44,6 +48,7 @@ impl Zone {
         match self {
             Zone::Iana(tz) => tz.name().to_owned(),
             Zone::Fixed(o) => o.to_string(),
+            Zone::SystemV(std) => format!("SystemV{:+}", std / 3600),
         }
     }
 }
@@ -63,7 +68,34 @@ pub fn wall_clock(at_ms: i64, tz: Zone) -> Option<WallClock> {
     Some(match tz {
         Zone::Iana(z) => wc(z.from_utc_datetime(&utc)),
         Zone::Fixed(o) => wc(o.from_utc_datetime(&utc)),
+        Zone::SystemV(std) => {
+            let dst = if systemv_dst(at_ms.div_euclid(1000), std)? {
+                3600
+            } else {
+                0
+            };
+            wc(FixedOffset::east_opt(std + dst)?.from_utc_datetime(&utc))
+        }
     })
+}
+
+/// 그 달의 마지막 일요일.
+fn last_sunday(y: i32, m: u32) -> Option<NaiveDate> {
+    let last = NaiveDate::from_ymd_opt(y, m, days_in_month(y, m))?;
+    last.checked_sub_days(chrono::Days::new(u64::from(
+        last.weekday().num_days_from_sunday(),
+    )))
+}
+
+/// ICU `SystemV/*` 서머타임 규칙(옛 미국 규칙이 해마다 그대로 간다): 4월 마지막 일요일 표준시 02:00 에 시작해 10월 마지막 일요일
+/// 서머타임 02:00(= 표준시 01:00)에 끝난다. Node 22(ICU tzdata 2026a)의 전환 시각으로 확인했다(시험이 고정한다).
+fn systemv_dst(utc_secs: i64, std: i32) -> Option<bool> {
+    let local =
+        chrono::DateTime::from_timestamp(utc_secs.checked_add(i64::from(std))?, 0)?.naive_utc();
+    let y = local.year();
+    let start = last_sunday(y, 4)?.and_hms_opt(2, 0, 0)?;
+    let end = last_sunday(y, 10)?.and_hms_opt(1, 0, 0)?;
+    Some(start <= local && local < end)
 }
 
 /// TS `offsetMs(at, tz)`.
@@ -112,7 +144,8 @@ pub struct Schedule {
 }
 
 /// TS `isTimeZone` + `Intl` 해석 — IANA 이름은 `chrono-tz` 로(대소문자 무시, 별칭(backward 링크: `US/Eastern`·
-/// `Asia/Calcutta` 등)도 받는다), 오프셋 꼴은 [`parse_offset`] 로 푼다. 모르면 `None`(부른 쪽이 TS 로 넘긴다).
+/// `Asia/Calcutta` 등)도 받는다), 오프셋 꼴은 [`parse_offset`] 로, tz 표에 없는 ICU 옛 이름은 [`icu_legacy`] 로 푼다.
+/// `None` 은 `Intl` 도 거절하는 이름이다(tz 표의 판 차이는 모듈 머리 참고).
 pub fn parse_tz(s: &str) -> Option<Zone> {
     if let Some(o) = parse_offset(s) {
         return Some(Zone::Fixed(o));
@@ -125,6 +158,73 @@ pub fn parse_tz(s: &str) -> Option<Zone> {
         .copied()
         .find(|tz| tz.name().eq_ignore_ascii_case(s) && tz.name() != "Factory")
         .map(Zone::Iana)
+        .or_else(|| icu_legacy(s))
+}
+
+/// tz 표(IANA)에는 없지만 ICU 가 받는 옛 이름(대소문자 무시) — Node 22 `Intl` 이 받는 이름과 chrono-tz 0.10.4 의 이름을 견줘 남은 38개다.
+/// 세 글자 약칭 25개는 ICU 가 푸는 IANA 시간대로(`resolvedOptions().timeZone`), `SystemV/*` 13개는 고정 오프셋 7개와
+/// 서머타임 꼴 6개([`Zone::SystemV`])로 푼다. 짝은 Node 의 벽시계와 2020~2031년을 한 시간 단위로 견줘 같음을 확인했다.
+fn icu_legacy(s: &str) -> Option<Zone> {
+    use chrono_tz::{Africa, America, Asia, Australia, Europe, Pacific};
+    const SHORT: &[(&str, Tz)] = &[
+        ("ACT", Australia::Darwin),
+        ("AET", Australia::Sydney),
+        ("AGT", America::Argentina::Buenos_Aires),
+        ("ART", Africa::Cairo),
+        ("AST", America::Anchorage),
+        ("BET", America::Sao_Paulo),
+        ("BST", Asia::Dhaka),
+        ("CAT", Africa::Maputo),
+        ("CNT", America::St_Johns),
+        ("CST", America::Chicago),
+        ("CTT", Asia::Shanghai),
+        ("EAT", Africa::Nairobi),
+        ("ECT", Europe::Paris),
+        ("IET", America::Indiana::Indianapolis),
+        ("IST", Asia::Kolkata),
+        ("JST", Asia::Tokyo),
+        ("MIT", Pacific::Apia),
+        ("NET", Asia::Yerevan),
+        ("NST", Pacific::Auckland),
+        ("PLT", Asia::Karachi),
+        ("PNT", America::Phoenix),
+        ("PRT", America::Puerto_Rico),
+        ("PST", America::Los_Angeles),
+        ("SST", Pacific::Guadalcanal),
+        ("VST", Asia::Ho_Chi_Minh),
+    ];
+    // (이름, 표준시 서쪽 시간, 서머타임 꼴인지).
+    const SYSTEM_V: &[(&str, i32, bool)] = &[
+        ("AST4", 4, false),
+        ("AST4ADT", 4, true),
+        ("EST5", 5, false),
+        ("EST5EDT", 5, true),
+        ("CST6", 6, false),
+        ("CST6CDT", 6, true),
+        ("MST7", 7, false),
+        ("MST7MDT", 7, true),
+        ("PST8", 8, false),
+        ("PST8PDT", 8, true),
+        ("YST9", 9, false),
+        ("YST9YDT", 9, true),
+        ("HST10", 10, false),
+    ];
+    if let Some((_, tz)) = SHORT.iter().find(|(n, _)| n.eq_ignore_ascii_case(s)) {
+        return Some(Zone::Iana(*tz));
+    }
+    let (head, rest) = s.split_at_checked(8)?;
+    if !head.eq_ignore_ascii_case("SystemV/") {
+        return None;
+    }
+    let (_, west, dst) = SYSTEM_V
+        .iter()
+        .find(|(n, ..)| n.eq_ignore_ascii_case(rest))?;
+    let std = -west * 3600;
+    if *dst {
+        Some(Zone::SystemV(std))
+    } else {
+        FixedOffset::east_opt(std).map(Zone::Fixed)
+    }
 }
 
 /// ECMA-402 오프셋 시간대(Node 22 `Intl` 이 받는 꼴): 부호(`+`·`-`·U+2212) + `HH`, 뒤에 `MM` 또는 `:MM` 이 붙을 수 있다.
@@ -469,6 +569,42 @@ mod tests {
         );
     }
 
+    // 전환 시각은 Node 22(ICU tzdata 2026a)의 `SystemV/EST5EDT`·`SystemV/YST9YDT` 에서 뽑았다.
+    #[test]
+    fn systemv_dst_matches_icu() {
+        let est = parse_tz("SystemV/EST5EDT").unwrap();
+        let hour = |at: &str, tz| wall_clock(ms(at), tz).map(|w| (w.d, w.h, w.mi));
+        assert_eq!(hour("2026-04-26T06:59:00Z", est), Some((26, 1, 59)));
+        assert_eq!(hour("2026-04-26T07:00:00Z", est), Some((26, 3, 0)));
+        assert_eq!(hour("2026-10-25T05:59:00Z", est), Some((25, 1, 59)));
+        assert_eq!(hour("2026-10-25T06:00:00Z", est), Some((25, 1, 0)));
+        assert_eq!(hour("2027-10-31T05:59:00Z", est), Some((31, 1, 59)));
+        assert_eq!(hour("2027-10-31T06:00:00Z", est), Some((31, 1, 0)));
+        assert_eq!(hour("2028-04-30T07:00:00Z", est), Some((30, 3, 0)));
+        let yst = parse_tz("SystemV/YST9YDT").unwrap();
+        assert_eq!(hour("2026-04-26T10:59:00Z", yst), Some((26, 1, 59)));
+        assert_eq!(hour("2026-04-26T11:00:00Z", yst), Some((26, 3, 0)));
+        assert_eq!(hour("2026-10-25T10:00:00Z", yst), Some((25, 1, 0)));
+        // 매일 09:00 — 서머타임 안(13:00Z)과 밖(14:00Z), 그리고 약칭(JST = 00:00Z).
+        let daily = |tz: &str| json!({"kind":"schedule","freq":"daily","time":"09:00","tz":tz});
+        assert_eq!(
+            next(daily("SystemV/EST5EDT"), "2026-07-01T00:00:00Z"),
+            "2026-07-01T13:00:00.000Z"
+        );
+        assert_eq!(
+            next(daily("SystemV/EST5EDT"), "2026-12-01T00:00:00Z"),
+            "2026-12-01T14:00:00.000Z"
+        );
+        assert_eq!(
+            next(daily("SystemV/EST5"), "2026-07-01T00:00:00Z"),
+            "2026-07-01T14:00:00.000Z"
+        );
+        assert_eq!(
+            next(daily("JST"), "2026-07-01T00:30:00Z"),
+            "2026-07-02T00:00:00.000Z"
+        );
+    }
+
     #[test]
     fn parse_rejects_what_zod_or_chrono_tz_would() {
         assert!(
@@ -530,6 +666,30 @@ mod tests {
             Some("US/Eastern")
         );
         assert_eq!(parse_tz("Factory"), None);
+        // ICU 만 아는 옛 이름 — Node 22 `Intl` 이 받는 것(대소문자 무시)과 거절하는 것.
+        assert_eq!(parse_tz("JST"), Some(Zone::Iana(chrono_tz::Asia::Tokyo)));
+        assert_eq!(parse_tz("jst"), Some(Zone::Iana(chrono_tz::Asia::Tokyo)));
+        assert_eq!(
+            parse_tz("PST"),
+            Some(Zone::Iana(chrono_tz::America::Los_Angeles))
+        );
+        assert_eq!(
+            parse_tz("SystemV/HST10").map(|t| t.name()).as_deref(),
+            Some("-10:00")
+        );
+        assert_eq!(parse_tz("systemv/est5edt"), Some(Zone::SystemV(-5 * 3600)));
+        for z in [
+            "KST",
+            "EDT",
+            "PDT",
+            "UT",
+            "SystemV/",
+            "SystemV/EST",
+            "SystemV/한국",
+            "Etc/Unknown",
+        ] {
+            assert_eq!(parse_tz(z), None, "{z}");
+        }
         assert_eq!(parse_tz("Nope/X"), None);
         assert!(
             Schedule::parse(

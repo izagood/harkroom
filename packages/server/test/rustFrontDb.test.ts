@@ -11345,6 +11345,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                 ['① 정상(소유자 기본) · weekly dedupe·sort·모르는 키 버림', 'ok', { body: '정리해', trigger: WEEKLY }, apCh, 1],
                 ['② forHandle(@ 붙임) · daily · debounce', 'fh', { body: '본문', trigger: { kind: 'schedule', freq: 'daily', time: '00:00', tz: 'UTC' }, forHandle: `@${adminHandle}`, debounceSec: 30 }, apCh, 1],
                 ['③ monthly', 'mo', { body: '본문', trigger: { kind: 'schedule', freq: 'monthly', monthDay: 31, time: '23:59', tz: 'America/Los_Angeles' } }, apCh, 1],
+                // tz 표(IANA)에는 없고 ICU 만 아는 옛 이름 — `Intl` 이 받으므로 Rust 도 TS 로 넘기지 않고 받는다.
+                ['③b ICU 옛 약칭 시간대', 'jst', { body: '본문', trigger: { kind: 'schedule', freq: 'daily', time: '09:00', tz: 'JST' } }, apCh, 1],
+                ['③c ICU SystemV 시간대', 'sysv', { body: '본문', trigger: { kind: 'schedule', freq: 'daily', time: '09:00', tz: 'SystemV/EST5EDT' } }, apCh, 1],
                 ['④ github(선택 칸 전부)', 'gh', { body: '본문', trigger: { kind: 'github', repo: 'o/r.x', event: 'pull_request.merged', branch: 'main', paths: ['a/**', 'b'], change: 'added' } }, apCh, 1],
                 ['⑤ webhook', 'wh', { body: '본문', trigger: { kind: 'webhook' } }, apCh, 1],
                 ['⑥ 이름 앞뒤 공백 깎음', '  sp  ', { body: '본문', trigger: { kind: 'webhook' } }, apCh, 1],

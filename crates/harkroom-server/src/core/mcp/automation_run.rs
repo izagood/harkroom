@@ -209,8 +209,8 @@ pub async fn answer(
 }
 
 /// TS `runAutomationNow` 의 `vars` — 일정 트리거면 `timeVars(now, tz)`(프로세스 시각, TS 와 같다), 아니면 빈 객체.
-/// 계산은 [`automation_time`](crate::core::automation_time) 이 TS 산법 그대로 한다. `chrono-tz` 가 모르는 tz 이름
-/// (TS `Intl` 은 대소문자 무시·별칭으로 받을 수 있다)만 TS 로 넘긴다(`None`).
+/// 계산은 [`automation_time`](crate::core::automation_time) 이 TS 산법 그대로 한다. `Intl` 이 받는 tz 이름은
+/// 다 풀리므로(`parse_tz`) `None` 은 저장된 trigger 가 깨졌을 때뿐이다(그때는 TS 로 넘긴다).
 pub(crate) fn vars_for(trigger: &str) -> Option<Value> {
     let t: Value = serde_json::from_str(trigger).ok()?;
     if t.get("kind").and_then(Value::as_str) == Some("schedule") {
