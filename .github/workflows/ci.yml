@@ -2,6 +2,10 @@ name: CI
 
 on:
   pull_request:
+  # merge queue 가 만든 임시 브랜치(`gh-readonly-queue/main/…`)에서도 같은 잡을 돈다 — 큐를 켜면 GitHub 은 이 사건의
+  # 체크 결과로 머지를 정한다. 이 줄이 없으면 필수 체크가 영영 보고되지 않아 큐가 선다. 큐를 켜지 않은 동안에는
+  # 이 사건이 오지 않으므로 아무 일도 없다.
+  merge_group:
   push:
     branches: [main]
   # PR 을 열지 않은 브랜치에서도 macOS 빌드를 돌려 볼 수 있어야 한다 — 이 잡을 처음 검증한
