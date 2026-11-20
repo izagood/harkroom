@@ -2758,7 +2758,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           const a = await mcpCall(tsUrl, agent.pat, 'delegation.close', ta);
           const b = await mcpCall(rsUrl4, agent.pat, 'delegation.close', ra);
           expect({ status: b.status, type: b.type, text: b.text }, `delegation.close ${name}`).toEqual({ status: a.status, type: a.type, text: a.text });
-          expect(b.core, `delegation.close ${name} — 누가 답했나`).toBe(name.endsWith('→ TS') && !zodRejects('delegation.close', ra) ? null : 'mcp');
+          // 이 앞단(rsUrl4)은 env 에 HARKROOM_DELEGATION_V2 가 없다(스위치 모름) — zod 공통 검증은 delegation.close 를 스위치가 「싣는다」일 때만
+          // 보므로(route.rs `zod_reply`) zodRejects 와 상관없이 「→ TS」 꼴은 TS 가 답한다.
+          expect(b.core, `delegation.close ${name} — 누가 답했나`).toBe(name.endsWith('→ TS') ? null : 'mcp');
         }
         // W7 — 거부·빈 길을 Rust 쪽에서 따로 본다(bot2 는 이 위임 묶음의 리드가 아니다 — 픽스처에서 확인).
         expect((await db.pool.query(`select 1 from team_delegation where id = $1 and lead_account_id = $2`, [DR.theirs, agent.accountId])).rowCount).toBe(0);
