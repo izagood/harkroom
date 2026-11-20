@@ -2747,6 +2747,19 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             .toEqual({ status: a.status, type: a.type, text: a.text.split(DT.root).join('<root>') });
           expect(b.core, 'V2 꺼짐 — Rust 는 답하지 않는다').toBeNull();
           expect(b.text).toContain('delegation.close');
+          // 0-2 ⑤ — 첫 인사의 `tools/list`: 이 앞단(rsUrl4)은 스위치 값이 없다 → TS 기본값(꺼짐)의 목록을 Rust 가 답한다(TS 로 넘기지 않는다).
+          const list = async (base: string) => {
+            const res = await fetch(`${base}/mcp`, {
+              method: 'POST',
+              headers: { authorization: `Bearer ${agent.pat}`, accept: 'application/json, text/event-stream', 'content-type': 'application/json' },
+              body: JSON.stringify({ jsonrpc: '2.0', id: 31, method: 'tools/list' }),
+            });
+            return { status: res.status, type: res.headers.get('content-type'), text: await res.text(), core: res.headers.get('x-harkroom-core') };
+          };
+          const [la, lb] = [await list(tsUrl), await list(rsUrl4)];
+          expect({ status: lb.status, type: lb.type, text: lb.text }, 'tools/list 스위치 값 없음 = TS 꺼짐').toEqual({ status: la.status, type: la.type, text: la.text });
+          expect(lb.text).not.toContain('"delegation.close"');
+          expect(lb.core, 'tools/list 스위치 값 없음 — Rust 가 답한다').toBe('mcp');
         }
         process.env.HARKROOM_DELEGATION_V2 = '1';
         const steps = (d: typeof DT) => [
