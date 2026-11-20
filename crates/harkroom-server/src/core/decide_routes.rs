@@ -671,6 +671,7 @@ pub async fn answer_bundle_approve(
     bundle: &str,
     root: &str,
     option: &str,
+    body_once: Option<&super::decide_merge_once::Once>,
 ) -> Taken {
     let Some(pool) = st.approve.as_ref() else {
         return Taken::Hand;
@@ -704,9 +705,13 @@ pub async fn answer_bundle_approve(
         Ok(None) => return Taken::Hand,
         Err(e) => return Taken::Done(internal(e)),
     };
-    let (has_once, once) = match card_has_once(&st.read, root, option).await {
-        Ok(b) => b,
-        Err(e) => return Taken::Done(internal(e)),
+    // TS `decide`: 본문의 `once` 가 먼저고(입구가 `approve_once` 일 때만 넘긴다), 없으면 카드가 보인 값이다.
+    let (has_once, once) = match body_once {
+        Some(o) => (true, Some(o.clone())),
+        None => match card_has_once(&st.read, root, option).await {
+            Ok(b) => b,
+            Err(e) => return Taken::Done(internal(e)),
+        },
     };
     let args = ApproveArgs {
         agent_id: &agent,

@@ -7776,6 +7776,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           const toolCard = await preq('tool', `Bash(echo ${tag} card:*)`, TOOL);
           const toolBundle = await preq('tool', `Bash(echo ${tag} bundle:*)`, TOOL);
           const toolMember = await preq('tool', `Bash(echo ${tag} member:*)`, TOOL);
+          const toolBundleOnce = await preq('tool', `Bash(echo ${tag} bundleonce:*)`, TOOL);
           const cmdRest = await preq('command', `${KUBE} get pod ${tag}-rest`, CMD);
           const cmdCard = await preq('command', `${KUBE} get pod ${tag}-card`, CMD);
           const cmdOld = await preq('command', `${KUBE} get pod ${tag}-old`, ['approve', 'deny']);
@@ -7783,9 +7784,10 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           const cmdOnce = await preq('command', `${KUBE} get pod ${tag}-once`, CMD, { once: { number: 1, headSha: 'b'.repeat(40) } });
           const B = await say('묶음', {
             author: admin.accountId,
-            meta: { kind: 'askBundle', askBundle: { items: [toolBundle.card].map((rootId) => ({ rootId, askerId: null, channelId: todayId, threadRootId: null, prompt: '허락할까요?', options: TOOL.map((id) => ({ id, label: id })) })) } },
+            meta: { kind: 'askBundle', askBundle: { items: [toolBundle.card, toolBundleOnce.card].map((rootId) => ({ rootId, askerId: null, channelId: todayId, threadRootId: null, prompt: '허락할까요?', options: TOOL.map((id) => ({ id, label: id })) })) } },
           });
           return {
+            toolBundleOnceReq: toolBundleOnce.req, toolBundleOnceCard: toolBundleOnce.card,
             toolRestReq: toolRest.req, toolRestCard: toolRest.card, toolOldReq: toolOld.req, toolOldCard: toolOld.card,
             toolCardReq: toolCard.req, toolCardCard: toolCard.card, toolBundleReq: toolBundle.req, toolBundleCard: toolBundle.card,
             toolMemberReq: toolMember.req, toolMemberCard: toolMember.card, cmdRestReq: cmdRest.req, cmdRestCard: cmdRest.card,
@@ -7834,6 +7836,11 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           await step('REST command approve(옛 앱) → 1회 grant', restP(sd.cmdOldReq, 'approve'), {});
           await step('REST command 판정 안 맞음 → 409 not_grantable', restP(sd.cmdBadReq, 'approve_hour'), {});
           await step('카드 command approve_once + 카드 once → TS 409 not_once', ansP(sd.cmdOnceCard), { optionId: 'approve_once' });
+          // 0-1 — 묶음 답 본문의 `once`: 꼴이 틀리면(null 포함) 400, 선택지가 approve_once 가 아니면 버리고 그대로 정한다.
+          const ONCE = { number: 1, headSha: 'b'.repeat(40) };
+          await step('묶음 once 꼴 틀림 → 400', bAnsP(sd.B), { rootId: sd.toolBundleOnceCard, optionId: 'approve', once: { number: 'x' } });
+          await step('묶음 once null → 400', bAnsP(sd.B), { rootId: sd.toolBundleOnceCard, optionId: 'approve', once: null });
+          await step('묶음 tool approve + 본문 once(버림)', bAnsP(sd.B), { rootId: sd.toolBundleOnceCard, optionId: 'approve', once: ONCE });
           return out;
         };
         const gc = () => busEvents.filter((e) => (e as { type?: string; accountId?: string }).type === 'grant.changed'
@@ -7848,6 +7855,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         }
         expect(st('REST command 판정 안 맞음 → 409 not_grantable')?.code).toBe('not_grantable');
         expect(st('REST 다시 → 409')?.code).toBe('already_decided');
+        expect(st('묶음 once 꼴 틀림 → 400')?.status).toBe(400);
+        expect(st('묶음 once null → 400')?.status).toBe(400);
+        expect(st('묶음 tool approve + 본문 once(버림)')?.status).toBe(200);
         const ids = (sd: Side) => JSON.stringify(sd);
         const rows = async (sd: Side) => (await db.pool.query(
           `select k, p.status, p.decided_by::text as by, p.grant_mode as mode, p.grant_expires_at is not null as has_exp,
@@ -7890,8 +7900,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect(await wakes(R)).toEqual(await wakes(T));
         // Rust 가 맡았다 — grant.changed 가 outbox(`busEvents`)에 있다.
         const until6 = Date.now() + 10_000;
-        while (gc() - gc0 < 7 && Date.now() < until6) await new Promise((res) => setTimeout(res, 100));
-        expect(gc() - gc0, 'Rust 승인 일곱의 grant.changed(옛 command approve 포함)').toBeGreaterThanOrEqual(7);
+        while (gc() - gc0 < 8 && Date.now() < until6) await new Promise((res) => setTimeout(res, 100));
+        expect(gc() - gc0, 'Rust 승인 여덟의 grant.changed(옛 command approve·본문 once 묶음 포함)').toBeGreaterThanOrEqual(8);
       }
       // S5.5 d — 권한 카드를 그 **거울 카드**로 정한다(`decide_routes.rs` `card_target`). 서버가 세운 꼴의 거울(에이전트 글·사람 앞·
       // 선택지 id 같음)로 거절·승인하면 원본 요청이 정해지고(`via: mirror`) 원본 카드에 답이 적히며 거울이 같이 닫힌다. 응답은 누른 거울이다.

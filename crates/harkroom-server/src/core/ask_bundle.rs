@@ -257,7 +257,9 @@ async fn answer_root(
 }
 
 /// 본문: `rootId` uuid, `optionId` 1..=64(UTF-16), `once` 는 있으면 TS 로.
-fn parse_answer(v: &Value) -> Option<(String, String, bool)> {
+/// TS 라우트의 zod — `{ rootId: uuid, optionId: string(1..64), once?: onceBody }`. `once` 칸이 있으면(null 포함) `onceBody` 꼴이어야
+/// 한다(아니면 400). 돌려주는 `once` 는 그 칸의 값 그대로다.
+fn parse_answer(v: &Value) -> Option<(String, String, Option<Value>)> {
     let Value::Object(o) = v else { return None };
     let root = o
         .get("rootId")
@@ -267,7 +269,10 @@ fn parse_answer(v: &Value) -> Option<(String, String, bool)> {
     if !(1..=64).contains(&option.encode_utf16().count()) {
         return None;
     }
-    let once = o.get("once").is_some_and(|v| !v.is_null());
+    let once = o.get("once").cloned();
+    if once.is_some() && !super::decide_routes::once_body_ok(once.as_ref()) {
+        return None;
+    }
     Some((root.to_owned(), option.to_owned(), once))
 }
 
@@ -309,10 +314,15 @@ pub async fn answer(
         Err(r) => return r,
     };
     let (root, option, once) = parsed;
-    // 머지 카드 [이번 한 번] 값(`once`)은 모양 검사부터 TS 가 한다 — 판정 전에 넘긴다.
-    if once {
-        return to_ts(st.up.clone(), peer, parts, bytes).await;
-    }
+    // 0-1 — 머지 카드 [이번 한 번] 값(`once`)도 Rust 가 읽는다. TS `answerBundleItem` 처럼 선택지가 `approve_once` 일 때만 쓰고
+    // 그 밖의 선택지에서는 버린다. number 가 정수로 안 읽히는 드문 꼴만 쓰기 전에 TS 로 넘긴다(REST `approve-once` 와 같다).
+    let body_once = match once.as_ref().filter(|_| option == "approve_once") {
+        None => None,
+        Some(v) => match super::decide_routes::once_from_body(Some(v)) {
+            Some(o) => Some(o),
+            None => return to_ts(st.up.clone(), peer, parts, bytes).await,
+        },
+    };
     if let Some(r) = visible_or_403(&st, &me.id, &id).await {
         return r;
     }
@@ -335,8 +345,16 @@ pub async fn answer(
         return r;
     }
     // S5.3 B2 — 같은 W1 확인 뒤의 소유자 승인.
-    if let super::decide_routes::Taken::Done(r) =
-        super::decide_routes::answer_bundle_approve(&st, &me, &auth, &bundle, &root, &option).await
+    if let super::decide_routes::Taken::Done(r) = super::decide_routes::answer_bundle_approve(
+        &st,
+        &me,
+        &auth,
+        &bundle,
+        &root,
+        &option,
+        body_once.as_ref(),
+    )
+    .await
     {
         return r;
     }
@@ -482,6 +500,33 @@ mod tests {
     }
 
     #[test]
+    fn answer_once_like_zod() {
+        let root = "11111111-1111-4111-8111-111111111111";
+        let sha = "b".repeat(40);
+        let p = |v: Value| parse_answer(&v);
+        let (r, o, once) = p(json!({ "rootId": root, "optionId": "approve" })).unwrap();
+        assert_eq!((r.as_str(), o.as_str(), once), (root, "approve", None));
+        // `once` 칸이 있으면 `onceBody` 꼴이어야 한다 — null·빈 객체·모르는 칸은 400.
+        let ok = json!({ "number": 7, "headSha": sha, "ghUser": null, "relaxChecks": true });
+        let got = p(json!({ "rootId": root, "optionId": "approve_once", "once": ok.clone() }));
+        assert_eq!(got.unwrap().2, Some(ok));
+        for bad in [
+            json!(null),
+            json!({}),
+            json!({ "number": "7", "headSha": sha }),
+            json!({ "number": 7, "headSha": "B".repeat(40) }),
+            json!({ "number": 7, "headSha": sha, "extra": 1 }),
+        ] {
+            assert!(
+                p(json!({ "rootId": root, "optionId": "approve_once", "once": bad })).is_none(),
+                "{bad}"
+            );
+        }
+        assert!(p(json!({ "rootId": "x", "optionId": "approve" })).is_none());
+        assert!(p(json!({ "rootId": root, "optionId": "" })).is_none());
+    }
+
+    #[test]
     fn bundle_meta_like_ts() {
         let ok = json!({ "kind": "askBundle", "askBundle": { "items": [{ "rootId": "r", "options": [], "link": "x" }, { "rootId": "q", "options": [] }] } });
         let items = read_bundle_meta(&ok).unwrap();
@@ -531,10 +576,10 @@ mod tests {
         assert!(parse_answer(&json!({ "rootId": u, "optionId": "" })).is_none());
         assert!(parse_answer(&json!({ "rootId": u, "optionId": "a".repeat(65) })).is_none());
         assert!(parse_answer(&json!({ "rootId": "x", "optionId": "a" })).is_none());
-        assert_eq!(
+        // 0-1 — `once` 는 `onceBody` 꼴이어야 한다(headSha 없음 → 400).
+        assert!(
             parse_answer(&json!({ "rootId": u, "optionId": "a", "once": { "number": 1 } }))
-                .map(|p| p.2),
-            Some(true)
+                .is_none()
         );
     }
 }
