@@ -255,11 +255,11 @@ describe('PR 검증 빌드(ci.yml)는 서명 키를 요구하지 않는다', () 
     // #441: 사이드카가 빌드보다 먼저다
     expect(ci).toContain('build:sidecar');
     expect(ci.indexOf('build:sidecar')).toBeLessThan(ci.indexOf('tauri build'));
-    // #441: 번들 안에 사이드카 둘이 들어갔는지 본다
-    expect(ci).toContain('Contents/MacOS/harkroom-runner');
-    expect(ci).toContain('Contents/MacOS/harkroom-operator');
-    // #470: node-pty 는 Resources 에 있고, 번들에 링크를 만들지 않는다
-    expect(ci).toContain('Contents/Resources/node_modules/node-pty');
+    // #441: 번들 안에 사이드카 둘(Rust 오퍼레이터·Rust 러너)이 들어갔는지 본다
+    expect(ci).toContain('Contents/MacOS/harkroom-runner-rs');
+    expect(ci).toContain('Contents/MacOS/harkroom-operator-rs');
+    // Node 러너와 그 node-pty 는 번들에 없어야 한다 — CI 가 「없음」을 본다
+    expect(ci).toContain('Contents/Resources/node_modules');
   });
 });
 

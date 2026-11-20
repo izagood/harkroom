@@ -507,7 +507,7 @@ where a.kind = 'agent';
 | 사람이 정하던 설정 | harkroom repository path · pnpm path | **없어졌다** — 물음 자체가 사라졌다 |
 
 사이드카는 앱 실행 파일과 **같은 디렉터리**에 놓인다(macOS `.app` 이면
-`Contents/MacOS/harkroom-runner`). 그래서 앱도 daemon 도 러너를 `PATH` 에서 찾지 않고 자기
+`Contents/MacOS/harkroom-runner-rs`). 그래서 앱도 daemon 도 러너를 `PATH` 에서 찾지 않고 자기
 옆에서 찾는다 — 저장소 경로를 지어내던 옛 문제가 통째로 사라진 이유다.
 
 daemon 을 앞에 세운 것은 `#430` 의 실측 때문이다: 앱이 러너의 부모이면 앱이 죽을 때 러너도
@@ -530,8 +530,9 @@ daemon 을 앞에 세운 것은 `#430` 의 실측 때문이다: 앱이 러너의
 적어 뒀다. 단계 4(스펙 2026-09-20 §5)에서 그 길이 닫혔다: **러너는 서버를 모른다.** 러너가
 받는 env 는 이 머신의 오퍼레이터 소켓과 자기 id·secret, 그리고 `harkroom-operator` 경로뿐이고,
 서버 URL 도 PAT 도 없다. 서버에 말하는 것은 오퍼레이터이며 인증은 오퍼레이터 토큰 +
-`X-Harkroom-Agent` 다(배정이 곧 인가). 사이드카(`/Applications/Harkroom.app/Contents/MacOS/harkroom-runner`)
-는 그대로 배포되지만 그것을 실행하는 것은 사람이 아니라 옆에 놓인 `harkroom-operator` 다.
+`X-Harkroom-Agent` 다(배정이 곧 인가). 사이드카(`/Applications/Harkroom.app/Contents/MacOS/harkroom-runner-rs`)
+는 그대로 배포되지만 그것을 실행하는 것은 사람이 아니라 옆에 놓인 `harkroom-operator-rs` 다. 앱 번들에는 Rust 러너만
+들어 있다(Node 러너 `harkroom-runner` 는 번들에서 빠졌다).
 
 배정되지 않은 에이전트는 **돌지 않는다** — 그것이 이제 정상 상태이고, 화면(에이전트 상세의
 "어디서 돌리나")이 그 사실을 말한다. 저장소 안의 `pnpm --filter @harkroom/agent start` 는 개발용으로
@@ -611,8 +612,8 @@ harkroom-operator-rs register https://<host> <코드> --name lab-mac
 #    설정 › 에이전트 상세의 "이 머신" 절이 같은 파일에 같은 것을 쓴다 — 손으로는 앱 없는 머신에서만.
 #    { "communities": { "https://<host>": { "agents": { "<agentId>": { "workingDir": "~/dev/x" } } } } }
 # 4. 상주시킨다 — register 가 보여 준 명령 그대로. 같은 머신에 앱이 나중에 떠도 같은 소켓을 보고
-#    "이미 서비스 중"으로 물러난다. --runner-command 가 없으면 배정을 받아도 러너를 못 띄운다.
-harkroom-operator-rs serve --base-url https://<host> --runner-command <harkroom-runner 절대 경로>
+#    "이미 서비스 중"으로 물러난다. 러너는 오퍼레이터 옆의 harkroom-runner-rs 로 뜬다(없으면 배정을 받아도 못 띄운다).
+harkroom-operator-rs serve --base-url https://<host>
 # 5. 설정 › 에이전트 상세에서 그 오퍼레이터를 배정한다. 러너가 뜬다.
 ```
 

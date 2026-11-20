@@ -34,7 +34,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// 러너를 띄울 고정값. 기동 인자에서만 온다.
 #[derive(Debug, Clone)]
 pub struct RunnerLaunch {
-    pub command: String,
+    /// node 러너 프로그램(`--runner-command`). 앱 번들은 node 러너를 싣지 않으므로 앱이 띄운 오퍼레이터에서는 없다.
+    pub command: Option<String>,
     pub args: Vec<String>,
     /// Rust 러너 사이드카의 절대 경로(B4-5c) — 오퍼레이터 실행 파일 옆 고정 이름(`serve.rs`). 없으면 모든 러너가 node 다.
     pub rust_command: Option<String>,
@@ -264,12 +265,12 @@ pub const COORDINATOR_OWNED_ENV: &[&str] = &[
 /// `log` 가 있으면 자식의 stdout·stderr 를 그 파일에 붙인다(파이프 아님 — 오퍼레이터가 죽어도 러너가 EPIPE 로 죽지 않는다).
 /// 오퍼레이터 쪽 사본은 `Command` 가 spawn 뒤 떨굴 때 닫힌다(fd 가 쌓이지 않는다).
 fn runner_command(
+    program: &str,
     launch: &RunnerLaunch,
     env: &[(String, String)],
     log: Option<&std::fs::File>,
-    kind: crate::local_agents::RunnerKind,
 ) -> Command {
-    let mut cmd = Command::new(program_for(launch, kind));
+    let mut cmd = Command::new(program);
     cmd.args(&launch.args);
     for k in COORDINATOR_OWNED_ENV {
         cmd.env_remove(k);
@@ -286,10 +287,11 @@ fn runner_command(
 }
 
 /// 띄울 프로그램 — `Rust` 이고 `rust_command` 가 있을 때만 Rust 러너, 아니면 node 러너(B4-5c).
-fn program_for(launch: &RunnerLaunch, kind: crate::local_agents::RunnerKind) -> &str {
+/// node 러너 프로그램이 없으면(`--runner-command` 없이 뜬 오퍼레이터) `None` 이다.
+fn program_for(launch: &RunnerLaunch, kind: crate::local_agents::RunnerKind) -> Option<&str> {
     match (&launch.rust_command, kind) {
-        (Some(rs), crate::local_agents::RunnerKind::Rust) => rs,
-        _ => &launch.command,
+        (Some(rs), crate::local_agents::RunnerKind::Rust) => Some(rs),
+        _ => launch.command.as_deref(),
     }
 }
 
@@ -541,6 +543,19 @@ impl RunnerTable {
             Some(_) => return Err("러너 id 가 비었다".into()),
             None => new_incarnation_id().map_err(|e| e.to_string())?,
         };
+        // `rust` 는 고른 쪽(`runner_pick`)이 파일이 있는 것을 본 뒤에만 온다 — 여기서 다시 찾지 않는다.
+        let kind = if launch.rust_command.is_some() {
+            pick.kind
+        } else {
+            crate::local_agents::RunnerKind::Node
+        };
+        // node 러너 프로그램이 없는 오퍼레이터가 node 로 고른 러너를 받았다 — 배정 쪽(`node_present`)이 먼저 거절하므로
+        // 여기까지 오면 안 된다. 와도 엉뚱한 것을 띄우지 않고 실패로 돌린다(로그 파일도 만들지 않는다).
+        let Some(program) = program_for(launch, kind) else {
+            return Err(
+                "node 러너 프로그램이 없다(--runner-command) — 이 러너는 띄우지 않는다".into(),
+            );
+        };
         // 로그를 **spawn 보다 먼저** 연다 — 회전도 이 순간(러너가 아직 안 연 파일)에 한다(`runner_log.rs`).
         let log = self.log_dir.get().and_then(|dir| {
             crate::runner_log::open_runner_log(
@@ -550,13 +565,7 @@ impl RunnerTable {
                 &|l| eprintln!("{l}"),
             )
         });
-        // `rust` 는 고른 쪽(`runner_pick`)이 파일이 있는 것을 본 뒤에만 온다 — 여기서 다시 찾지 않는다.
-        let kind = if launch.rust_command.is_some() {
-            pick.kind
-        } else {
-            crate::local_agents::RunnerKind::Node
-        };
-        let mut cmd = runner_command(launch, env, log.as_ref().map(|(f, _)| f), kind);
+        let mut cmd = runner_command(program, launch, env, log.as_ref().map(|(f, _)| f));
         let spawned = cmd.spawn();
         // 오퍼레이터 쪽 사본은 spawn 성패와 상관없이 바로 닫는다 — 자식은 이미 자기 복제본을 받았다(TS `finally` close).
         drop(cmd);
@@ -753,6 +762,17 @@ impl RunnerTable {
             .is_ok_and(|m| m.file_type().is_file() && m.permissions().mode() & 0o111 != 0)
     }
 
+    /// node 러너 프로그램(`--runner-command`)이 실행할 수 있는 일반 파일로 있는가. 앱 번들은 node 러너를 싣지 않는다 —
+    /// 프로그램이 없는데 node 로 고르면 띄우는 족족 죽는다. 링크를 따라가지 않는다([`Self::rust_runner_present`] 와 같은 잣대).
+    pub fn node_runner_present(&self) -> bool {
+        use std::os::unix::fs::PermissionsExt;
+        let Some(path) = self.launch.as_ref().and_then(|l| l.command.as_deref()) else {
+            return false;
+        };
+        std::fs::symlink_metadata(path)
+            .is_ok_and(|m| m.file_type().is_file() && m.permissions().mode() & 0o111 != 0)
+    }
+
     /// 표의 기록 사본, 시작 순 — hello announce 가 쓴다.
     pub fn records(&self) -> Vec<RunnerRecord> {
         let mut rows: Vec<RunnerRecord> = self.table().values().cloned().collect();
@@ -875,7 +895,7 @@ mod tests {
         let tx = Mutex::new(tx);
         let t = RunnerTable::new(
             Some(RunnerLaunch {
-                command: "/bin/sh".into(),
+                command: Some("/bin/sh".into()),
                 args: vec!["-c".into(), script.into()],
                 rust_command: None,
             }),
@@ -1035,23 +1055,75 @@ mod tests {
     fn program_for_picks_rust_command_only_when_rust_and_present() {
         use crate::local_agents::RunnerKind;
         let with = RunnerLaunch {
-            command: "/app/harkroom-runner".into(),
+            command: Some("/app/harkroom-runner".into()),
             args: vec![],
             rust_command: Some("/app/harkroom-runner-rs".into()),
         };
         assert_eq!(
             program_for(&with, RunnerKind::Rust),
-            "/app/harkroom-runner-rs"
+            Some("/app/harkroom-runner-rs")
         );
-        assert_eq!(program_for(&with, RunnerKind::Node), "/app/harkroom-runner");
+        assert_eq!(
+            program_for(&with, RunnerKind::Node),
+            Some("/app/harkroom-runner")
+        );
         let without = RunnerLaunch {
             rust_command: None,
-            ..with
+            ..with.clone()
         };
         assert_eq!(
             program_for(&without, RunnerKind::Rust),
-            "/app/harkroom-runner"
+            Some("/app/harkroom-runner")
         );
+        // 앱 번들 꼴: node 러너 프로그램이 없다 — rust 는 그대로, node 는 띄울 것이 없다.
+        let rust_only = RunnerLaunch {
+            command: None,
+            ..with
+        };
+        assert_eq!(
+            program_for(&rust_only, RunnerKind::Rust),
+            Some("/app/harkroom-runner-rs")
+        );
+        assert_eq!(program_for(&rust_only, RunnerKind::Node), None);
+    }
+
+    /// node 러너 프로그램이 없는 오퍼레이터는 node 로 고른 러너를 띄우지 않는다 — 실패로 돌리고 표에도 안 남긴다.
+    #[test]
+    fn node_pick_without_node_program_is_refused() {
+        let t = RunnerTable::new(
+            Some(RunnerLaunch {
+                command: None,
+                args: vec![],
+                rust_command: Some("/bin/sh".into()),
+            }),
+            Arc::new(|_| {}),
+        );
+        assert!(!t.node_runner_present());
+        let err = t
+            .spawn_runner_with("a1", &[], None, crate::runner_pick::RunnerPick::NODE)
+            .unwrap_err();
+        assert!(err.contains("node 러너 프로그램이 없다"), "{err}");
+        assert!(t.records().is_empty());
+    }
+
+    /// 실행 가능한 일반 파일만 「있다」 — 프로그램이 안 정해졌거나 없는 파일이면 없다.
+    #[test]
+    fn node_runner_present_needs_executable_regular_file() {
+        let at = |c: Option<&str>| {
+            RunnerTable::new(
+                Some(RunnerLaunch {
+                    command: c.map(str::to_string),
+                    args: vec![],
+                    rust_command: None,
+                }),
+                Arc::new(|_| {}),
+            )
+            .node_runner_present()
+        };
+        assert!(at(Some("/bin/sh")));
+        assert!(!at(Some("/nonexistent/harkroom-runner")));
+        assert!(!at(None));
+        assert!(!RunnerTable::new(None, Arc::new(|_| {})).node_runner_present());
     }
 
     /// B4-5c: 실행 가능한 일반 파일만 「있다」 — 없는 파일·실행 비트 없음·링크는 없다.
@@ -1065,7 +1137,7 @@ mod tests {
         let at = |p: &std::path::Path| {
             RunnerTable::new(
                 Some(RunnerLaunch {
-                    command: "/x".into(),
+                    command: Some("/x".into()),
                     args: vec![],
                     rust_command: Some(p.to_string_lossy().into_owned()),
                 }),
@@ -1088,18 +1160,18 @@ mod tests {
     #[test]
     fn coordinator_owned_parent_env_is_removed_then_request_env_applies() {
         let launch = RunnerLaunch {
-            command: "/bin/sh".into(),
+            command: Some("/bin/sh".into()),
             args: vec![],
             rust_command: None,
         };
         let cmd = runner_command(
+            "/bin/sh",
             &launch,
             &[
                 ("HARKROOM_CHROME_HOST".into(), "0".into()),
                 ("X".into(), "1".into()),
             ],
             None,
-            crate::local_agents::RunnerKind::Node,
         );
         let envs: HashMap<String, Option<String>> = cmd
             .get_envs()
@@ -1151,7 +1223,7 @@ mod tests {
         let tx = Mutex::new(tx);
         let t = Arc::new(RunnerTable {
             launch: Some(RunnerLaunch {
-                command: "/bin/sh".into(),
+                command: Some("/bin/sh".into()),
                 args: vec!["-c".into(), script.into()],
                 rust_command: None,
             }),

@@ -7,8 +7,8 @@
 
   자리 채우기:
     @BIN@        Rust 오퍼레이터 실행 파일   예) /Applications/Harkroom.app/Contents/MacOS/harkroom-operator-rs
-    @RUNNER@     러너 사이드카(절대 경로)    예) /Applications/Harkroom.app/Contents/MacOS/harkroom-runner
-                 — 이 줄(runner-command 인자)을 빼면 오퍼레이터는 배정을 받아도 러너를 못 띄운다. Rust 러너는 @BIN@ 옆의 harkroom-runner-rs 를 쓴다.
+    @RUNNER@     Node 러너(절대 경로, 선택)  — 앱 번들에는 Node 러너가 없다. 그 경로에 파일이 없으면 오퍼레이터는 @BIN@ 옆의
+                 harkroom-runner-rs(Rust 러너)만 띄운다. 이 줄(runner-command 인자와 값)은 빼도 된다.
     @BASE_URL@   커뮤니티 주소               예) https://team.example.com
     @KEY@        커뮤니티 키(라벨용 이름)     — register 가 찍은 설정 경로의 `c/<8자>` 를 쓴다
     @USER@       로그인 사용자 이름

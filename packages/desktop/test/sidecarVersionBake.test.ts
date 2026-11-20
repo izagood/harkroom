@@ -60,9 +60,12 @@ describe('러너 사이드카에 버전을 굽는다', () => {
     expect(runnerDefines('0.1.80').__AGENT_VERSION__).toBe('"0.1.80"');
   });
 
-  it('Node 사이드카는 러너 하나이고 러너 이름으로 굽는다 — 오퍼레이터는 Rust 다(P2)', () => {
+  it('앱 번들 빌드는 Node 사이드카를 내지 않는다 — 오퍼레이터·러너 둘 다 Rust 다', () => {
     const script = read('packages/desktop/scripts/build-sidecars.mjs');
-    expect(script).toContain('runnerDefines(');
+    // Node 러너는 번들에서 뺐다 — 다시 생기면 번들에 Node 러너가 실린다.
+    expect(script).not.toContain('buildSidecar(');
+    expect(script).not.toContain("name: 'harkroom-runner'");
+    expect(script).toContain("buildRustSidecar(target, 'harkroom-runner', 'harkroom-runner-rs')");
     // 옛 Node 오퍼레이터(P3 에서 지움) 번들은 P2 에서 뺐다 — 다시 생기면 번들에 Node 오퍼레이터가 실린다.
     expect(script).not.toContain("name: 'harkroom-operator'");
     expect(script).not.toContain('operatorDefines(');

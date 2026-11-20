@@ -259,12 +259,12 @@ pub fn run_register(
     })
 }
 
-/// Node 러너 사이드카 이름 — Rust 오퍼레이터는 이것을 `--runner-command` 로 받는다(앱 `RUNNER_SIDECAR_FOR_OPERATOR`).
+/// Node 러너 사이드카 이름 — Rust 오퍼레이터는 이것을 `--runner-command` 로 받는다. 앱 번들에는 없다(옆에 있을 때만 쓴다).
 pub const RUNNER_SIDECAR_NAME: &str = "harkroom-runner";
 
 /// 앱 없이 이 커뮤니티의 오퍼레이터를 띄울 명령(P1b 안 A — `run` 대신 커뮤니티마다 `serve` 하나).
 /// - 뿌리가 계산한 자리가 아니면(색인 `operators.json` 이 정한 자리) `--app-data` 를 붙인다 — 없으면 `serve` 가 다른 뿌리를 본다.
-/// - 러너 사이드카를 알면 `--runner-command` 를 붙인다 — 없으면 `serve` 는 배정이 와도 러너를 못 띄운다.
+/// - node 러너 사이드카가 옆에 있으면 `--runner-command` 를 붙인다 — 없으면(앱 번들) `serve` 는 옆의 Rust 러너만 띄운다.
 pub fn serve_command(
     bin: &str,
     runner: Option<&str>,
@@ -321,7 +321,7 @@ pub fn success_lines(r: &Registered, serve_cmd: &str) -> String {
     let runner_note = if serve_cmd.contains(" --runner-command ") {
         ""
     } else {
-        "\n러너를 띄우려면 --runner-command <harkroom-runner 절대 경로> 를 붙인다(없으면 배정이 와도 러너를 못 띄운다)."
+        "\n러너는 이 실행 파일 옆의 harkroom-runner-rs 로 뜬다(그 파일이 없으면 배정이 와도 러너를 못 띄운다)."
     };
     format!(
         "{head}\n이 커뮤니티의 오퍼레이터가 떠 있지 않다. 앱을 열거나, 앱 없이 두려면 이 명령을 띄운다(상주는 ops/operator.*.template):\n  {serve_cmd}{runner_note}\n그다음 설정 › 에이전트 상세에서 이 오퍼레이터를 배정하면 러너가 뜬다."
@@ -565,7 +565,7 @@ mod tests {
         )));
         // 도는 오퍼레이터가 없었다 — `run` 이 아니라 이 커뮤니티의 `serve` 명령을 보인다(P1b 안 A).
         assert!(lines.contains(&format!("\n  /b/op serve --base-url {URL}\n")));
-        assert!(lines.contains("--runner-command <harkroom-runner"));
+        assert!(lines.contains("옆의 harkroom-runner-rs 로 뜬다"));
         assert!(!lines.contains(" run"));
     }
 

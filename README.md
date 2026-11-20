@@ -108,7 +108,7 @@ visible before it becomes a conflict.
   window when you log in. A machine without the app runs the operator on its own.
 - **Runner** — one per agent. It waits for a mention and runs that turn. Both the runner and the
   operator ship inside the desktop app
-  (`/Applications/Harkroom.app/Contents/MacOS/harkroom-runner`, next to `harkroom-operator`).
+  (`/Applications/Harkroom.app/Contents/MacOS/harkroom-runner-rs`, next to `harkroom-operator-rs`).
 - **Harness** — the AI CLI that does the work. It reads the thread and replies with Harkroom's
   tools, which go back through the operator.
 - **Database** keeps the hub's data. **AVCS** is optional and runs separately.
@@ -242,19 +242,19 @@ to a teammate. They install the app, enter your server URL and choose
 
 ### Run agents on another machine (optional)
 
-An always-on box can run agents too. Install Node.js 22+ and a harness CLI there, and get the
+An always-on box can run agents too. Install a harness CLI there, and get the
 operator: on a Mac, install the desktop app (the operator is
-`/Applications/Harkroom.app/Contents/MacOS/harkroom-operator-rs`, next to the runner `harkroom-runner`).
+`/Applications/Harkroom.app/Contents/MacOS/harkroom-operator-rs`, next to the runner `harkroom-runner-rs`).
 There is no packaged Linux build yet — build the operator with `cargo build --release` in
-`crates/harkroom-operator`, and the runner with `pnpm install` and
-`node packages/desktop/scripts/build-sidecars.mjs` (it lands in `packages/desktop/src-tauri/binaries/`).
+`crates/harkroom-operator` and the runner the same way in `crates/harkroom-runner`, then put
+`harkroom-runner-rs` in the same directory as `harkroom-operator-rs` (the operator looks for it there).
 Then under **Settings › Agents › Operators** mint a registration code and, within five minutes,
 run on that machine:
 
 ```sh
 harkroom-operator-rs register https://<your-server> <code>
 # it prints the command that keeps this community's operator running — one operator per community:
-harkroom-operator-rs serve --base-url https://<your-server> --runner-command /path/to/harkroom-runner
+harkroom-operator-rs serve --base-url https://<your-server>
 # to keep it running, see ops/operator@.service.template (systemd) or ops/operator.plist.template (launchd)
 ```
 

@@ -1,55 +1,26 @@
 #!/usr/bin/env node
-// 앱과 함께 배포되는 Node 사이드카를 **전부** 만든다.
+// 앱과 함께 배포되는 사이드카를 **전부** 만든다. 둘 다 Rust(Mach-O)다 — Node 사이드카는 없다.
 //
-// - `harkroom-runner` — 러너(#431 1단계 B, `#425`·`#429` 를 닫았다). `node-pty` 를 곁들인다.
-// - `harkroom-operator-rs` — 오퍼레이터(`crates/harkroom-operator`). Node 가 아니라 Mach-O 다. 앱이 띄우는 오퍼레이터는
-//   이것 하나다 — Node 오퍼레이터(P3 에서 지움)는 P2 에서 번들에서 뺐다(되돌리는 스위치도 없다). `sign-app.mjs` 가
-//   내용으로 Mach-O 를 찾아 서명하므로 서명 쪽은 손대지 않는다.
-// - `harkroom-runner-rs` — Rust 러너(B4-5b, `crates/harkroom-runner`). 역시 Mach-O 다. **싣기만 하고 아무도 띄우지 않는다** —
-//   오퍼레이터가 에이전트마다 러너를 고르는 것은 B4-5c 다. 그 전까지 앱의 모든 턴은 지금처럼 `harkroom-runner`(Node)로 돈다.
+// - `harkroom-operator-rs` — 오퍼레이터(`crates/harkroom-operator`). 앱이 띄우는 오퍼레이터는 이것 하나다.
+// - `harkroom-runner-rs` — 러너(`crates/harkroom-runner`). 오퍼레이터가 자기 옆의 이 파일을 에이전트마다 띄운다.
 //
-// ## 왜 스크립트를 둘로 나누지 않고 하나로 묶었는가
+// Node 러너(`harkroom-runner` + `node-pty`)는 번들에서 뺐다 — 앱의 턴은 전부 Rust 러너로 돈다.
+// `sign-app.mjs` 가 내용으로 Mach-O 를 찾아 서명하므로 서명 쪽은 손대지 않는다.
 //
-// 두 산출물은 **같은 디렉터리**(`src-tauri/binaries/`)로 나가고, 그 디렉터리는 빌드마다
-// 통째로 비워야 한다(옛 triple 산출물·옛 prebuilds 가 남으면 배포에 섞인다). 스크립트를
-// 둘로 나누면 각자가 그 디렉터리를 비우게 되고 — 나중에 실행한 쪽이 먼저 실행한 쪽의
-// 산출물을 지운다. 그래서 **비우는 것은 여기 한 번**이고, 그 다음 두 산출물을 차례로 낸다.
-//
-// `tauri.conf.json` 의 `externalBin` 이 둘 다 요구하므로 "러너만 빌드된 상태"는 어차피
-// 유효한 중간 상태가 아니다 — 명령 하나가 둘 다 내는 것이 그 계약과도 맞는다.
+// `binaries/` 는 빌드마다 통째로 비운다(옛 triple 산출물이 남으면 배포에 섞인다) — 비우는 것은 여기 한 번이다.
 import { execFileSync } from 'node:child_process';
 import { copyFileSync, chmodSync, rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { appVersion, binariesDir, buildSidecar, repoRoot, resolveTarget, runnerDefines } from './sidecar.mjs';
+import { binariesDir, repoRoot, resolveTarget } from './sidecar.mjs';
 
 async function main() {
   const target = resolveTarget();
-  // 러너는 **자기 번들의 버전을 안고 나간다**. 앱이 spawn 할 때 심어 주는
-  // `AGENT_VERSION` 은 그 위의 오버라이드일 뿐이고, 앱 밖에서 뜬 러너에는 아무도 심어
-  // 주지 않는다 — 구운 값이 없으면 그런 러너는 영원히 `unknown` 이다.
-  const version = appVersion();
-
   // 옛 산출물을 통째로 걷어낸다(위 주석 — 이 자리가 유일한 청소 지점이다).
   rmSync(binariesDir, { recursive: true, force: true });
-
-  const agentRoot = join(repoRoot, 'packages', 'agent');
-
-  const runner = await buildSidecar({
-    name: 'harkroom-runner',
-    entry: join(agentRoot, 'src', 'main.ts'),
-    resolveFrom: agentRoot,
-    // PTY 를 여는 것은 러너의 일이다 — 그래서 `node-pty` 는 **러너만** 곁들인다.
-    nativeDeps: ['node-pty'],
-    define: runnerDefines(version),
-    target,
-  });
 
   const operatorRs = buildRustSidecar(target, 'harkroom-operator', 'harkroom-operator-rs');
   const runnerRs = buildRustSidecar(target, 'harkroom-runner', 'harkroom-runner-rs');
 
-  console.log(`러너 사이드카 빌드 완료: ${runner.outfile}`);
-  console.log(`  구워 넣은 버전: ${version}`);
-  console.log(`  node-pty prebuild: ${target.platform}-${target.arch}`);
   console.log(`Rust operator 사이드카 빌드 완료: ${operatorRs}`);
   console.log(`Rust runner 사이드카 빌드 완료: ${runnerRs}`);
 }
@@ -58,7 +29,7 @@ async function main() {
  * Rust 사이드카(`crates/<crate>` 의 `<bin>`)를 `tauri build` 와 **같은 triple** 로 만들어 `binaries/<bin>-<triple>` 에 둔다.
  *
  * `crates/*` 는 cargo workspace 가 아니다 — crate 디렉터리에서 자기 `Cargo.lock` 으로 `--locked` 빌드한다.
- * triple 을 명시하는 이유는 `node-pty` prebuild 와 같다: `tauri build --target` 과 갈리면 다른 아키텍처가 실린다.
+ * triple 을 명시하는 이유: `tauri build --target` 과 갈리면 다른 아키텍처가 실린다.
  */
 function buildRustSidecar(target, crate, bin) {
   const crateDir = join(repoRoot, 'crates', crate);

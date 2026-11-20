@@ -163,9 +163,10 @@ impl AssignmentDeps for SystemDeps {
     fn chrome_host(&self) -> bool {
         crate::chrome_host::chrome_host_on_disk(self.app_launched, &self.home)
     }
-    /// node 러너가 물려받는 PATH(이 프로세스의 PATH)에 실행할 수 있는 `node` 가 있는가(s9).
+    /// node 러너를 띄울 수 있는가 — node 러너 프로그램이 있고(앱 번들은 싣지 않는다), 그것이 물려받는 PATH(이 프로세스의
+    /// PATH)에 실행할 수 있는 `node` 가 있는가(s9). 프로그램이 없으면 PATH 를 볼 것도 없다.
     fn node_present(&self) -> bool {
-        node_on_path(std::env::var_os("PATH").as_deref())
+        self.runners.node_runner_present() && node_on_path(std::env::var_os("PATH").as_deref())
     }
     /// 러너와 같은 풀 해석(`harkroom-accounts::claude_account_use`, L3c-3e) — 러너 env 는 이 프로세스 env 위에 얹히므로 같은 env 로 잰다.
     /// HOME 을 모르면 닫힌 쪽(`Unreadable`).
