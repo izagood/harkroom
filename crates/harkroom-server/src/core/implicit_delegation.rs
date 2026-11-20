@@ -2,8 +2,7 @@
 //! (그림자 모드는 판정만). TS `services/implicitDelegation.ts`(`implicitDelegationMode`·`implicitBodyFacts`·`planStepFor`·
 //! `recordImplicitDelegations`)와 `createDelegation` 의 `kind = 'mention'` 갈래를 옮긴다.
 //!
-//! - 모드는 TS 와 같은 낱말로 읽되, 위임 스위치(`HARKROOM_DELEGATION_V2`)를 **모르면** `None` 이다 — 그때 부름이 든 에이전트 글은
-//!   지금처럼 TS 로 넘긴다([`super::msg_post`]).
+//! - 모드는 TS 와 같은 낱말로 읽는다. 값이 없으면 글 쓰기([`super::msg_post`])는 TS 기본값으로 맡는다([`mode_or_default`]).
 //! - 문장은 전부 TS 상수를 골든(`implicit_*`·`delegation_insert`·`delegation_item_insert`)으로 받는다.
 //! - 암묵 위임은 앞 위임을 대체하지 않고(`supersedePrevious` 없음) 담당의 `mention` inbox 도 바꾸지 않는다 — TS 와 같다.
 use super::mention_parse::head_mention_run_end;
@@ -19,7 +18,7 @@ pub const DELEGATION_DEADLINE_DEFAULT_SEC: i64 = 10 * 60;
 /// TS `DELEGATION_MAX_AGE_SEC` — 그림자 판정을 열린 것으로 치는 수명.
 pub const DELEGATION_MAX_AGE_SEC: i32 = 24 * 60 * 60;
 
-/// 이 갈래가 [`super::msg_post::MESSAGE_POST_PRIVILEGES`] 위에 더 쓰는 권한. 빠지면 부름이 든 에이전트 글은 TS 에 남는다.
+/// 이 갈래가 [`super::msg_post::MESSAGE_POST_PRIVILEGES`] 위에 더 쓰는 권한. 빠지면 (암묵 위임이 꺼짐이 아닐 때) 부름이 든 에이전트 글은 TS 에 남는다.
 pub const IMPLICIT_DELEGATION_PRIVILEGES: &[(&str, &str)] = &[
     ("delegation_implicit_log", "INSERT"),
     ("team_delegation", "INSERT"),
@@ -61,6 +60,12 @@ pub fn mode(v2: Option<bool>, implicit: Option<&str>) -> Option<Mode> {
             })
         }
     }
+}
+
+/// 글 쓰기가 쓰는 모드 — 스위치 값이 없을 때 TS `implicitDelegationMode` 가 고르는 값 그대로다(v2 꺼짐 → off, 켜짐인데
+/// 값이 없거나 비면 → shadow). [`mode`] 의 「모름」을 TS 로 넘기는 대신 TS 가 골랐을 값으로 맡는다.
+pub fn mode_or_default(v2: bool, implicit: Option<&str>) -> Mode {
+    mode(Some(v2), implicit).unwrap_or(Mode::Shadow)
 }
 
 /// JS `String.prototype.trim` 의 공백(유니코드 공백 + BOM).
@@ -284,6 +289,16 @@ mod tests {
         assert_eq!(mode(Some(true), Some(" ON ")), Some(Mode::On));
         assert_eq!(mode(Some(true), Some("0")), Some(Mode::Off));
         assert_eq!(mode(Some(true), Some("weird")), Some(Mode::Shadow));
+    }
+
+    #[test]
+    fn mode_or_default_follows_ts_when_unset() {
+        assert_eq!(mode_or_default(false, None), Mode::Off);
+        assert_eq!(mode_or_default(false, Some("on")), Mode::Off);
+        assert_eq!(mode_or_default(true, None), Mode::Shadow);
+        assert_eq!(mode_or_default(true, Some(" ")), Mode::Shadow);
+        assert_eq!(mode_or_default(true, Some("on")), Mode::On);
+        assert_eq!(mode_or_default(true, Some("off")), Mode::Off);
     }
 
     #[test]
