@@ -1120,7 +1120,20 @@ mod tests {
             )
             .node_runner_present()
         };
-        assert!(at(Some("/bin/sh")));
+        // `/bin/sh` 는 리눅스에서 링크라(dash) 「일반 파일」이 아니다 — 시험이 직접 만든 파일로 본다.
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("op-node-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("harkroom-runner");
+        let path = file.to_string_lossy().into_owned();
+        assert!(!at(Some(&path)));
+        std::fs::write(&file, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(!at(Some(&path)));
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(at(Some(&path)));
+        let _ = std::fs::remove_dir_all(&dir);
         assert!(!at(Some("/nonexistent/harkroom-runner")));
         assert!(!at(None));
         assert!(!RunnerTable::new(None, Arc::new(|_| {})).node_runner_present());
