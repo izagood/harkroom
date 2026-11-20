@@ -38,13 +38,16 @@ export async function setPlanAuto(pool: Pool, args: {
   const root = await threadRootChannel(pool, args.rootId);
   if (root === 'not_found' || root === 'not_root') return { ok: false, error: { code: root } };
   const now = args.now ?? new Date();
+  // uuid 는 표기가 여럿이다. 저장된 꼴(소문자)로 맞춰 쓰고, 이미 쓴 근거인지는 DB 가 uuid 로 견준다.
+  const sourceMessageId = args.sourceMessageId.toLowerCase();
   const client = await pool.connect();
   let row: ThreadPlanRow;
   let by: string;
   try {
     await client.query('begin');
-    const cur = (await client.query<{ doc: PlanDoc; flag_reason: string | null; auto_used_sources: string[] }>(
-      `select doc, flag_reason, auto_used_sources from thread_plan where root_id = $1 for update`, [args.rootId])).rows[0];
+    const cur = (await client.query<{ doc: PlanDoc; flag_reason: string | null; used: boolean }>(
+      `select doc, flag_reason, $2::uuid = any(auto_used_sources) as used from thread_plan where root_id = $1 for update`,
+      [args.rootId, sourceMessageId])).rows[0];
     const refuse = async (code: PlanAutoError['code']): Promise<PlanAutoResult> => {
       await client.query('rollback');
       return { ok: false, error: { code } as PlanAutoError };
@@ -57,7 +60,7 @@ export async function setPlanAuto(pool: Pool, args: {
     const lease = await client.query(
       `select 1 from secret_turn_lease
         where agent_id = $1 and cause_message_id = $2 and ended_at is null and expires_at > $3 limit 1`,
-      [args.agentId, args.sourceMessageId, now]);
+      [args.agentId, sourceMessageId, now]);
     if (!lease.rowCount) return await refuse('source_not_cause');
     const source = (await client.query<{ authorId: string; mandateId: string | null; visible: boolean }>(
       `select m.author_id as "authorId", m.mandate_id as "mandateId", ${channelVisibleSql('c', 'm.author_id')} as visible
@@ -67,10 +70,10 @@ export async function setPlanAuto(pool: Pool, args: {
         where m.id = $1 and coalesce(m.thread_root_id, m.id) = $2 and m.deleted_at is null
           and m.kind = 'user' and not (m.meta ? 'automation')
           and a.kind = 'human' and a.deleted_at is null and a.disabled_at is null`,
-      [args.sourceMessageId, args.rootId])).rows[0];
+      [sourceMessageId, args.rootId])).rows[0];
     if (!source) return await refuse('invalid_source');
     if (!source.visible) return await refuse('source_hidden');
-    if (cur.auto_used_sources.includes(args.sourceMessageId)) return await refuse('source_used');
+    if (cur.used) return await refuse('source_used');
     const res = await client.query(
       `update thread_plan
           set auto_until = $2, auto_source = $3, auto_by = $4, auto_mandate = $5, auto_at = $6, auto_woken = '{}'::jsonb, auto_range = $7::jsonb,
@@ -79,7 +82,7 @@ export async function setPlanAuto(pool: Pool, args: {
         where root_id = $1
         returning ${THREAD_PLAN_COLUMNS}`,
       // 범위는 여기서 고정한다. 사람이 허락한 것은 지금 이 단계들까지다.
-      [args.rootId, args.until, args.sourceMessageId, source.authorId, source.mandateId, now, JSON.stringify(planAutoRangeOf(cur.doc, args.until))]);
+      [args.rootId, args.until, sourceMessageId, source.authorId, source.mandateId, now, JSON.stringify(planAutoRangeOf(cur.doc, args.until))]);
     await client.query('commit');
     row = toRow(res.rows[0]);
     by = source.authorId;
@@ -91,8 +94,8 @@ export async function setPlanAuto(pool: Pool, args: {
   }
   await emitPlanChanged(pool, row.channelId, row.rootId, row);
   // 사람이 잘못 읽힌 것을 바로 보게 근거 글 링크를 함께 쓴다. 멘션은 만들지 않는다(noMentions).
-  await notice(pool, row, args.agentId, `▶ 자동 진행 켜짐 · ${args.until}까지 · 근거 harkroom://message/${args.sourceMessageId}`, {
-    planAutoState: { on: true, until: args.until, sourceMessageId: args.sourceMessageId, by },
+  await notice(pool, row, args.agentId, `▶ 자동 진행 켜짐 · ${args.until}까지 · 근거 harkroom://message/${sourceMessageId}`, {
+    planAutoState: { on: true, until: args.until, sourceMessageId, by },
     i18n: systemI18n('system.plan.autoOn', { accountId: by, until: args.until }),
   });
   return { ok: true, row, changed: true };

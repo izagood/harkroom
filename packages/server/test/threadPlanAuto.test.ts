@@ -143,6 +143,20 @@ describe('켜기', () => {
     expect(codeOf(await auto(root, source))).toBe('source_used');
   });
 
+  it('근거 글 id 는 표기가 달라도 같은 글로 견준다', async () => {
+    const root = await plan();
+    const source = await called(root);
+    expect(source).not.toBe(source.toUpperCase());
+    expect(codeOf(await auto(root, source.toUpperCase()))).toBe('ok');
+    const stored = await pool.query<{ src: string; used: string[] }>(
+      `select auto_source::text as src, auto_used_sources::text[] as used from thread_plan where root_id = $1`, [root]);
+    expect(stored.rows[0]).toEqual({ src: source, used: [source] });
+    expect(codeOf(await auto(root, source))).toBe('source_used');
+    expect(codeOf(await auto(root, source.toUpperCase()))).toBe('source_used');
+    await clearPlanAuto(pool, { rootId: root, actor: { kind: 'human', accountId: member.accountId } });
+    expect(codeOf(await auto(root, source.toUpperCase()))).toBe('source_used');
+  });
+
   it('없는 끝점·걸린 판·계획 없음은 거절한다', async () => {
     const root = await plan();
     const source = await called(root);
