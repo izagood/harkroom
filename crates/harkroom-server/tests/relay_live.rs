@@ -85,6 +85,7 @@ fn opts(epoch: Option<String>, errors: Arc<Mutex<Vec<String>>>) -> LiveOpts {
             mark(format!("on_error {what}: {e}"));
             errors.lock().unwrap().push(what.to_owned())
         }),
+        signal: false,
     }
 }
 
@@ -608,4 +609,144 @@ async fn attention_goes_to_owner_only() {
     assert_eq!(ev[1]["type"], "agent.attention.cleared");
     assert_eq!(ev[1]["audience"], json!([owner]));
     mark("attention: end");
+}
+
+/// R1 — 세션 행이 생기거나 사라지면 그 스레드에 `thread.turns.changed` 가 한 줄씩 나간다. 값은 싣지 않는다.
+#[tokio::test]
+async fn turn_signal_follows_session_rows() {
+    let Ok(url) = std::env::var("HARKROOM_TEST_DATABASE_URL") else {
+        eprintln!("skip: HARKROOM_TEST_DATABASE_URL unset");
+        return;
+    };
+    let _serial = write_role_lock().lock().await;
+    mark("signal: start");
+    let admin = PgPool::connect(&url).await.unwrap();
+    let write = match std::env::var("HARKROOM_TEST_WRITE_DATABASE_URL") {
+        Ok(w) => {
+            let w = PgPool::connect(&w).await.unwrap();
+            use harkroom_server::core::thread_turns as t;
+            let missing = harkroom_server::write::missing_in(
+                &w,
+                t::THREAD_TURNS_SIGNAL_PRIVILEGES,
+                t::THREAD_TURNS_SIGNAL_SEQUENCE_PRIVILEGES,
+            )
+            .await
+            .unwrap();
+            assert!(missing.is_empty(), "write role missing {missing:?}");
+            w
+        }
+        Err(_) => admin.clone(),
+    };
+    let tag = format!("rs{}", std::process::id());
+    let human = account(&admin, &format!("{tag}-h"), "human").await;
+    let agent = account(&admin, &format!("{tag}-a"), "agent").await;
+    let op: String = sqlx::query_scalar(
+        "insert into operator(owner_account_id, name, token_hash) values ($1::uuid, 'op', md5(random()::text)) returning id::text",
+    )
+    .bind(&human)
+    .fetch_one(&admin)
+    .await
+    .unwrap();
+    let ch: String = sqlx::query_scalar(
+        "insert into channel(name, kind, visibility) values ($1, 'standard', 'private') returning id::text",
+    )
+    .bind(format!("{tag}-c"))
+    .fetch_one(&admin)
+    .await
+    .unwrap();
+    for a in [&agent, &human] {
+        sqlx::query(
+            "insert into channel_member(channel_id, account_id) values ($1::uuid, $2::uuid)",
+        )
+        .bind(&ch)
+        .bind(a)
+        .execute(&admin)
+        .await
+        .unwrap();
+    }
+    let root: String = sqlx::query_scalar(
+        "insert into message(channel_id, author_id, body, kind) values ($1::uuid, $2::uuid, 'hi', 'user') returning id::text",
+    )
+    .bind(&ch)
+    .bind(&human)
+    .fetch_one(&admin)
+    .await
+    .unwrap();
+    let top: i64 = sqlx::query_scalar("select coalesce(max(id), 0) from event_outbox")
+        .fetch_one(&admin)
+        .await
+        .unwrap();
+    let signals = || {
+        let admin = admin.clone();
+        let root = root.clone();
+        async move {
+            let ev: Vec<String> = sqlx::query_scalar(
+                "select event::text from event_outbox
+                  where id > $1 and event->>'type' = 'thread.turns.changed' and event->>'rootId' = $2 order by id",
+            )
+            .bind(top)
+            .bind(&root)
+            .fetch_all(&admin)
+            .await
+            .unwrap();
+            ev.iter()
+                .map(|s| serde_json::from_str::<Value>(s).unwrap())
+                .collect::<Vec<_>>()
+        }
+    };
+
+    let errors = Arc::new(Mutex::new(vec![]));
+    let live = SessionLive::start(
+        write.clone(),
+        LiveOpts {
+            signal: true,
+            ..opts(None, errors.clone())
+        },
+    )
+    .await
+    .unwrap();
+
+    // 시작 → 한 줄. 받는 사람은 비공개 채널의 멤버이고, 값(에이전트·세션)은 싣지 않는다.
+    live.started(&op, &agent, &session("s1", &ch, Some(&root)));
+    live.flush().await;
+    let ev = signals().await;
+    assert_eq!(ev.len(), 1, "{ev:?}");
+    assert_eq!(ev[0]["channelId"], json!(ch));
+    let mut aud: Vec<String> = serde_json::from_value(ev[0]["audience"].clone()).unwrap();
+    aud.sort();
+    let mut want = vec![agent.clone(), human.clone()];
+    want.sort();
+    assert_eq!(aud, want);
+    let mut keys: Vec<&String> = ev[0].as_object().unwrap().keys().collect();
+    keys.sort();
+    assert_eq!(keys, ["audience", "channelId", "rootId", "type"]);
+
+    // 같은 세션을 다시 알려도(announce) 행이 새로 생기지 않으면 줄이 없다.
+    live.replaced(&op, &agent, &[session("s1", &ch, Some(&root))]);
+    live.flush().await;
+    assert_eq!(signals().await.len(), 1);
+
+    // 뿌리가 없는 세션(채널 최상위)은 신호를 내지 않는다.
+    live.started(&op, &agent, &session("s0", &ch, None));
+    live.flush().await;
+    assert_eq!(signals().await.len(), 1);
+
+    // 끝 → 한 줄 더.
+    live.ended(&agent, "s1");
+    live.flush().await;
+    assert_eq!(signals().await.len(), 2);
+
+    // 러너가 끊겨 지워질 때도 한 줄(같은 스레드의 두 세션은 한 줄로).
+    live.started(&op, &agent, &session("s2", &ch, Some(&root)));
+    live.started(&op, &agent, &session("s3", &ch, Some(&root)));
+    live.flush().await;
+    assert_eq!(signals().await.len(), 4);
+    live.runner_gone(&op, &agent);
+    live.flush().await;
+    assert_eq!(signals().await.len(), 5);
+    assert!(rows(&admin, &agent).await.is_empty());
+
+    live.stop().await;
+    assert!(errors.lock().unwrap().is_empty(), "{}", timeline_dump());
+    mark("signal: end");
 }

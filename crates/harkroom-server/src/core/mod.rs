@@ -175,6 +175,7 @@ pub mod thread_plan_auto_off;
 pub mod thread_plan_manager;
 pub mod thread_plan_read;
 pub mod thread_plan_start;
+pub mod thread_turns;
 pub mod tickets;
 pub mod turn_lease;
 pub mod turn_lease_routes;

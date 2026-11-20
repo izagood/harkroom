@@ -197,6 +197,19 @@ struct Worker {
     /// r1b — 쓰기가 실패해 다음 박동에 다시 쓸 세션(그때 쓸 꼴).
     retry: HashMap<String, Write>,
     on_error: ErrorHook,
+    /// R1 — 세션 행이 생기거나 사라지면 그 스레드에 신호를 낸다([`super::thread_turns::signal`]).
+    signal: bool,
+}
+
+/// 쓰기 한 번의 결과.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Wrote {
+    /// 행이 새로 들어갔다.
+    New,
+    /// 행이 이미 있었다(고쳤거나, 되살리기에서 자리가 차 있었다).
+    Had,
+    /// 멤버가 아니거나 남의 주인이라 안 쓰였다.
+    No,
 }
 
 macro_rules! write_sql_head {
@@ -217,19 +230,23 @@ const WRITE_UPSERT_SQL: &str = concat!(
        started_at = excluded.started_at, status = excluded.status,
        claude_pool_rank = excluded.claude_pool_rank, claude_account_rank = excluded.claude_account_rank,
        hub_epoch = excluded.hub_epoch, updated_at = now()
-     where agent_session_live.agent_account_id = excluded.agent_account_id"
+     where agent_session_live.agent_account_id = excluded.agent_account_id
+     returning (xmax = 0)"
 );
-const WRITE_FILL_SQL: &str = concat!(write_sql_head!(), " on conflict (session_id) do nothing");
+const WRITE_FILL_SQL: &str = concat!(
+    write_sql_head!(),
+    " on conflict (session_id) do nothing returning true"
+);
 
 impl Worker {
-    /// 한 행을 쓴다. Ok(true) = 행이 있다(쓰였거나, 되살리기에서 이미 자리가 차 있었다), Ok(false) = 멤버가 아니거나 남의 주인이라 안 쓰였다.
-    async fn write(&self, m: &Mine, how: Write) -> Result<bool, sqlx::Error> {
+    /// 한 행을 쓴다([`Wrote`]).
+    async fn write(&self, m: &Mine, how: Write) -> Result<Wrote, sqlx::Error> {
         let sql = match how {
             Write::Upsert => WRITE_UPSERT_SQL,
             Write::FillOnly => WRITE_FILL_SQL,
         };
         let r = &m.row;
-        let n = sqlx::query(sql)
+        let new: Option<bool> = sqlx::query_scalar(sql)
             .bind(&r.session_id)
             .bind(&m.agent)
             .bind(&m.operator_id)
@@ -241,28 +258,55 @@ impl Worker {
             .bind(r.pool_rank)
             .bind(r.account_rank)
             .bind(&*self.epoch)
-            .execute(&self.pool)
-            .await?
-            .rows_affected();
-        if n == 1 || how == Write::Upsert {
-            return Ok(n == 1);
+            .fetch_optional(&self.pool)
+            .await?;
+        match (new, how) {
+            (Some(true), _) => return Ok(Wrote::New),
+            (Some(false), _) => return Ok(Wrote::Had),
+            (None, Write::Upsert) => return Ok(Wrote::No),
+            (None, Write::FillOnly) => {}
         }
-        // do nothing 은 자리가 차 있어도 0 이다 — 다른 허브가 이미 든 행이면 「있다」로 친다(사본에서는 지우지 않는다).
-        sqlx::query_scalar::<_, bool>(
+        // do nothing 은 자리가 차 있어도 행을 돌려주지 않는다 — 다른 허브가 이미 든 행이면 「있다」로 친다(사본에서는 지우지 않는다).
+        let had = sqlx::query_scalar::<_, bool>(
             "select exists (select 1 from agent_session_live where session_id = $1)",
         )
         .bind(&r.session_id)
         .fetch_one(&self.pool)
-        .await
+        .await?;
+        Ok(if had { Wrote::Had } else { Wrote::No })
+    }
+
+    /// R1 — 행이 생기거나 사라진 자리에 신호를 낸다. 뿌리가 없는 세션은 건너뛴다. 실패는 기록만 한다(사본 쓰기는 이미 끝났다).
+    async fn tell(&self, spots: Vec<(String, Option<String>)>) {
+        if !self.signal {
+            return;
+        }
+        let spots = super::thread_turns::distinct(
+            spots
+                .into_iter()
+                .filter_map(|(c, r)| Some((c, r?)))
+                .collect(),
+        );
+        if let Err(e) = super::thread_turns::signal(&self.pool, &spots).await {
+            (self.on_error)("turn_signal", &e);
+        }
     }
 
     async fn put(&mut self, m: Mine, how: Write) {
         let sid = m.row.session_id.clone();
         match self.write(&m, how).await {
-            Ok(true) => {
+            Ok(Wrote::New) => {
+                self.retry.remove(&sid);
+                self.tell(vec![(
+                    m.row.channel_id.clone(),
+                    m.row.thread_root_id.clone(),
+                )])
+                .await;
+            }
+            Ok(Wrote::Had) => {
                 self.retry.remove(&sid);
             }
-            Ok(false) => {
+            Ok(Wrote::No) => {
                 // r2 멤버가 아니거나 남의 주인이다 — 이 허브가 든 세션이 아니다.
                 self.retry.remove(&sid);
                 if self.mine.get(&sid).is_some_and(|x| x.agent == m.agent) {
@@ -305,15 +349,17 @@ impl Worker {
         if !is_uuid(&agent) {
             return;
         }
-        if let Err(e) = sqlx::query(
-            "delete from agent_session_live where session_id = $1 and agent_account_id = $2::uuid",
+        match sqlx::query_as::<_, (String, Option<String>)>(
+            "delete from agent_session_live where session_id = $1 and agent_account_id = $2::uuid
+              returning channel_id::text, thread_root_id::text",
         )
         .bind(&sid)
         .bind(&agent)
-        .execute(&self.pool)
+        .fetch_all(&self.pool)
         .await
         {
-            (self.on_error)("session_end", &e);
+            Ok(gone) => self.tell(gone).await,
+            Err(e) => (self.on_error)("session_end", &e),
         }
     }
 
@@ -333,15 +379,17 @@ impl Worker {
             return;
         }
         // announce 는 러너가 진실의 원천이다(같은 에이전트의 러너는 하나 — 4409). 허브를 가리지 않고 목록 밖을 지운다.
-        if let Err(e) = sqlx::query(
-            "delete from agent_session_live where agent_account_id = $1::uuid and not (session_id = any($2::text[]))",
+        match sqlx::query_as::<_, (String, Option<String>)>(
+            "delete from agent_session_live where agent_account_id = $1::uuid and not (session_id = any($2::text[]))
+              returning channel_id::text, thread_root_id::text",
         )
         .bind(&agent)
         .bind(&keep)
-        .execute(&self.pool)
+        .fetch_all(&self.pool)
         .await
         {
-            (self.on_error)("session_replace", &e);
+            Ok(gone) => self.tell(gone).await,
+            Err(e) => (self.on_error)("session_replace", &e),
         }
         for r in rows {
             self.upsert(operator_id.clone(), agent.clone(), r).await;
@@ -362,29 +410,49 @@ impl Worker {
         if !is_uuid(&agent) || !is_uuid(&operator_id) {
             return;
         }
-        if let Err(e) = sqlx::query(
+        match sqlx::query_as::<_, (String, Option<String>)>(
             "delete from agent_session_live
-              where agent_account_id = $1::uuid and operator_id = $2::uuid and hub_epoch = $3::uuid",
+              where agent_account_id = $1::uuid and operator_id = $2::uuid and hub_epoch = $3::uuid
+              returning channel_id::text, thread_root_id::text",
         )
         .bind(&agent)
         .bind(&operator_id)
         .bind(&*self.epoch)
-        .execute(&self.pool)
+        .fetch_all(&self.pool)
         .await
         {
-            (self.on_error)("session_gone", &e);
+            Ok(gone) => self.tell(gone).await,
+            Err(e) => (self.on_error)("session_gone", &e),
         }
     }
 
     async fn sweep_dead(&self) -> Result<u64, sqlx::Error> {
-        Ok(sqlx::query(
+        // R1 — 죽은 허브의 행은 cascade 로 사라져 돌려받지 못한다. 지우기 전에 그 자리를 읽어 둔다(신호를 켰을 때만).
+        let gone: Vec<(String, Option<String>)> = if self.signal {
+            sqlx::query_as(
+                "select distinct l.channel_id::text, l.thread_root_id::text from agent_session_live l
+                   join relay_hub h on h.hub_epoch = l.hub_epoch
+                  where h.hub_epoch <> $1::uuid and h.seen_at < now() - make_interval(secs => $2)",
+            )
+            .bind(&*self.epoch)
+            .bind(self.ttl_sec as f64)
+            .fetch_all(&self.pool)
+            .await?
+        } else {
+            Vec::new()
+        };
+        let n = sqlx::query(
             "delete from relay_hub where hub_epoch <> $1::uuid and seen_at < now() - make_interval(secs => $2)",
         )
         .bind(&*self.epoch)
         .bind(self.ttl_sec as f64)
         .execute(&self.pool)
         .await?
-        .rows_affected())
+        .rows_affected();
+        if n > 0 {
+            self.tell(gone).await;
+        }
+        Ok(n)
     }
 
     /// 박동 한 번(TS `beatOnce`). 줄이 쓸려 나갔다 다시 넣었으면 true.
@@ -429,6 +497,8 @@ pub struct LiveOpts {
     /// 없으면 DB 가 만든다(`gen_random_uuid()`).
     pub epoch: Option<String>,
     pub on_error: ErrorHook,
+    /// R1 — 세션 행이 생기거나 사라질 때 `thread.turns.changed` 신호를 낸다. 기본은 끔(쓰는 풀에 권한이 있을 때만 `main.rs` 가 켠다).
+    pub signal: bool,
 }
 
 impl Default for LiveOpts {
@@ -438,6 +508,7 @@ impl Default for LiveOpts {
             ttl_sec: RELAY_HUB_TTL_SEC,
             epoch: None,
             on_error: Arc::new(|what, e| eprintln!("relay live: {what} failed: {e}")),
+            signal: false,
         }
     }
 }
@@ -469,6 +540,7 @@ impl SessionLive {
             mine: HashMap::new(),
             retry: HashMap::new(),
             on_error: opts.on_error.clone(),
+            signal: opts.signal,
         };
         if let Err(e) = w.sweep_dead().await {
             (w.on_error)("hub_sweep", &e);
