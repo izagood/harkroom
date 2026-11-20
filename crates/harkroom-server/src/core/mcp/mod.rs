@@ -32,6 +32,7 @@ pub mod msg_post;
 pub mod note;
 pub mod operator_only;
 pub mod permission_request;
+pub mod plan_auto;
 pub mod plan_input;
 pub mod plan_read;
 pub mod plan_write;

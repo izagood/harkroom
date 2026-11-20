@@ -59,7 +59,7 @@ pub struct AutoOffState {
 const LOCK_SQL: &str =
     "select (auto_until is not null) from thread_plan where root_id = $1::uuid for update";
 /// TS `clearPlanAuto` 의 끄기.
-const OFF_SQL: &str = "update thread_plan \
+pub(crate) const OFF_SQL: &str = "update thread_plan \
      set auto_until = null, auto_source = null, auto_by = null, auto_mandate = null, auto_at = null, \
          auto_woken = '{}'::jsonb, auto_range = '{}'::jsonb, \
          rev = rev + 1, updated_at = greatest(now(), updated_at + interval '1 millisecond') \

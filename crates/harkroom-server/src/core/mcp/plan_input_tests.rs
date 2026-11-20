@@ -159,3 +159,52 @@ fn schema_follows_ts_source() {
     assert!(shared.contains("export const PLAN_GROUP_ID_RE = /^g[1-9][0-9]{0,3}$/;"));
     assert!(shared.contains("export const PLAN_STEP_ID_RE = /^s[1-9][0-9]{0,3}$/;"));
 }
+
+#[test]
+fn auto_arg_like_zod() {
+    const R: &str = "00000000-0000-4000-8000-000000000001";
+    const M: &str = "00000000-0000-4000-8000-000000000002";
+    let off = parse_auto(&json!({ "threadRootId": R, "type": "plan", "auto": null })).unwrap();
+    assert_eq!(
+        (off.auto, off.alone, off.root.as_str()),
+        (AutoArg::Off, true, R)
+    );
+    let on = parse_auto(&json!({ "threadRootId": R, "type": "plan", "auto": { "until": "g2", "sourceMessageId": M, "x": 1 } }))
+        .unwrap();
+    assert_eq!(
+        on.auto,
+        AutoArg::On {
+            until: "g2".into(),
+            source: M.into()
+        }
+    );
+    assert!(on.alone);
+    // 다른 칸이 있거나 type 이 plan 이 아니면 `auto_alone` 거절감이다(zod 는 지난다).
+    for v in [
+        json!({ "threadRootId": R, "auto": null }),
+        json!({ "threadRootId": R, "type": "step", "auto": null }),
+        json!({ "threadRootId": R, "type": "plan", "managerId": null, "auto": null }),
+    ] {
+        assert!(!parse_auto(&v).unwrap().alone, "{v}");
+    }
+    // 모르는 키는 zod 가 벗긴다.
+    assert!(
+        parse_auto(&json!({ "threadRootId": R, "type": "plan", "auto": null, "zzz": 1 }))
+            .unwrap()
+            .alone
+    );
+    // zod 가 거절할 꼴 — TS 가 답한다.
+    for v in [
+        json!({ "threadRootId": R, "type": "plan" }),
+        json!({ "threadRootId": "x", "type": "plan", "auto": null }),
+        json!({ "threadRootId": R, "type": "plan", "auto": 1 }),
+        json!({ "threadRootId": R, "type": "plan", "auto": { "until": "s0", "sourceMessageId": M } }),
+        json!({ "threadRootId": R, "type": "plan", "auto": { "until": "s1", "sourceMessageId": "m" } }),
+        json!({ "threadRootId": R, "type": "plan", "auto": { "until": "s1" } }),
+        json!({ "threadRootId": R, "type": "x", "auto": null }),
+    ] {
+        assert!(parse_auto(&v).is_none(), "{v}");
+    }
+    // `auto` 가 있으면 보통 칸 갈래는 받지 않는다.
+    assert!(parse_item(&json!({ "threadRootId": R, "type": "plan", "auto": null })).is_none());
+}

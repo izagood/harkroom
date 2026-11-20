@@ -141,6 +141,8 @@ pub struct McpWrites {
     pub plan_write: Option<PgPool>,
     /// MCP 계획 쓰기에서 관리자가 바뀌어 자동 진행을 끌 때의 알림 글 경로(S5.4 TP3 끄기 칸 권한 + 글 올리기). 없으면 그 갈래는 TS 로.
     pub plan_auto_off: Option<std::sync::Arc<crate::core::msg_post::PostState>>,
+    /// `thread.plan.item` 의 `auto` 칸(자동 진행 켜기·끄기) — 끄기 칸·글 올리기 권한에 더해 `plan_auto::PLAN_AUTO_PRIVILEGES`. 없으면 TS 로.
+    pub plan_auto: Option<std::sync::Arc<crate::core::msg_post::PostState>>,
     /// `pr.watch`(S5.4 MCP 2) — `pr_watch::PR_WATCH_PRIVILEGES`.
     pub pr_watch: Option<PgPool>,
     /// `automation.propose`(S5.4 MCP 4) — `automation_propose::AUTOMATION_PROPOSE_PRIVILEGES`.
@@ -301,6 +303,12 @@ pub async fn answer(
             );
         }
         return Some(super::plan_read::answer(read, me, args).await);
+    }
+    if tool == "thread.plan.item" && args.get("auto").is_some() {
+        let Some(post) = writes.plan_auto.as_deref().filter(|_| writes.plan_read) else {
+            return Some(None);
+        };
+        return Some(super::plan_auto::answer(read, post, me, args).await);
     }
     if tool == "thread.plan.item" {
         let Some(w) = writes.plan_write.as_ref().filter(|_| writes.plan_read) else {

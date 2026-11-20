@@ -760,7 +760,11 @@ fn written_text(
 }
 
 /// 루트·가시성(트랜잭션 앞, 읽기 풀). `Err` 는 거절 글자. DB 오류는 `None` → TS.
-async fn gate(read: &PgPool, me: &Account, root: &str) -> Option<Result<String, String>> {
+pub(super) async fn gate(
+    read: &PgPool,
+    me: &Account,
+    root: &str,
+) -> Option<Result<String, String>> {
     let row: Option<(String, bool)> = sqlx::query_as(crate::core::thread_plan_read::ROOT_SQL)
         .bind(root)
         .fetch_optional(read)
