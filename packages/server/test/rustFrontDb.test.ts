@@ -5428,7 +5428,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           expect(text('켜기')).toContain('sourceMessageId\\":\\"<src>');
           expect(text('끄기')).toContain('auto\\":null,\\"changed\\":true');
           expect(text('꺼진 판 끄기 → changed false')).toContain('changed\\":false');
-          for (const code of ['no_plan', 'not_manager', 'unknown_until', 'source_not_cause', 'invalid_source', 'auto_alone', 'agents_only', 'source_used']) {
+          // agents_only 는 여기서 세지 않는다 — 사람 계정 걸음은 TS 가 답하고(위), 그 답 글자는 양쪽이 같다는 것만 본다.
+          for (const code of ['no_plan', 'not_manager', 'unknown_until', 'source_not_cause', 'invalid_source', 'auto_alone', 'source_used']) {
             expect(R.out.some((o) => o.text.includes(`code\\":\\"${code}`)), code).toBe(true);
           }
         }
