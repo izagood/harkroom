@@ -715,6 +715,8 @@ impl Call<'_> {
                 format!(" 비필수 체크 무시: {}", names_of(ignored))
             },
         ));
+        // 머지 직후 정리 회차를 당긴다(깃발만 세운다 — 머지 결과를 기다리게 하지 않는다).
+        crate::workspace_cleanup::wire::sweep_kick().kick();
         let mut v = json!({
             "merged": true, "queued": false, "repo": self.repo, "number": self.number, "headSha": self.head_sha,
             "mergeSha": merge_sha, "grantedBy": self.granted_by, "viaApproval": via_approval, "ghUser": t.login,

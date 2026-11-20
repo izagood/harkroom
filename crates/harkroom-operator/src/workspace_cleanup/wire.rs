@@ -10,7 +10,7 @@ use crate::runner_link::RunnerLinkServer;
 use harkroom_proto::p1::RunnerLinkKind;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::Duration;
 
 /// TS `GIT_PATH`.
@@ -19,6 +19,39 @@ pub const GIT_PATH: &str = "/usr/bin/git";
 const BOOT_DELAY: Duration = Duration::from_secs(60);
 /// 그 뒤 1시간마다(TS `setInterval(runCleanup, 60 * 60_000)`).
 const EVERY: Duration = Duration::from_secs(60 * 60);
+/// 머지 뒤 회차를 당길 때 두는 틈 — 원격 브랜치 삭제·PR 상태가 자리 잡고, 잇달아 머지되는 PR 을 한 회차로 묶는다.
+const KICK_SETTLE: Duration = Duration::from_secs(30);
+
+/// 「회차를 당겨라」 신호 하나. 여러 번 울려도 한 회차다(깃발 하나).
+#[derive(Default)]
+pub struct SweepKick {
+    asked: Mutex<bool>,
+    wake: Condvar,
+}
+
+impl SweepKick {
+    /// 다음 회차를 지금으로 당긴다. 막지 않는다 — 깃발만 세우고 돌아온다.
+    pub fn kick(&self) {
+        *self.asked.lock().unwrap_or_else(|e| e.into_inner()) = true;
+        self.wake.notify_all();
+    }
+
+    /// `every` 만큼 기다리되 그 사이 신호가 오면 바로 깬다. 신호로 깼으면 `true`(깃발은 내린다).
+    pub fn wait(&self, every: Duration) -> bool {
+        let g = self.asked.lock().unwrap_or_else(|e| e.into_inner());
+        let (mut g, _) = self
+            .wake
+            .wait_timeout_while(g, every, |asked| !*asked)
+            .unwrap_or_else(|e| e.into_inner());
+        std::mem::take(&mut *g)
+    }
+}
+
+/// 프로세스 하나에 하나 — 머지 길(`turn_merge`)이 울리고 sweep 스레드가 듣는다.
+pub fn sweep_kick() -> &'static SweepKick {
+    static KICK: OnceLock<SweepKick> = OnceLock::new();
+    KICK.get_or_init(SweepKick::default)
+}
 
 /// 지키는 자리(security c5 조건 2). `protected` = 같거나 조상이면 거절, `deny_inside` = 안쪽도 거절.
 /// 모두 실제 경로(canonicalize)로 넣는다 — 없는 자리는 뺀다(없는 것은 지울 수도 없다).
@@ -153,7 +186,13 @@ pub fn wire(w: WireInputs) -> Arc<WorkspaceCleanup> {
                     eprintln!("cleanup 실패: {e}");
                 }
                 drop(s);
-                std::thread::sleep(EVERY);
+                // 머지가 되면 한 시간을 기다리지 않는다 — 방금 머지된 PR 의 워크트리가 곧바로 목록에 선다.
+                // 회차가 하는 일은 그대로다(설정이 꺼져 있으면 지우지 않고, 켜져 있어도 유예 기간을 지킨다).
+                if sweep_kick().wait(EVERY) {
+                    std::thread::sleep(KICK_SETTLE);
+                    // 틈 사이에 또 울린 신호는 이 회차가 같이 본다.
+                    sweep_kick().wait(Duration::ZERO);
+                }
             }
         })
         .ok();
@@ -163,6 +202,24 @@ pub fn wire(w: WireInputs) -> Arc<WorkspaceCleanup> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn kick_wakes_the_wait_once_and_timeout_reports_no_kick() {
+        let k = Arc::new(SweepKick::default());
+        // 신호가 없으면 시한까지 기다리고 false.
+        assert!(!k.wait(Duration::from_millis(10)));
+        // 기다리기 전에 울린 신호도 잃지 않는다. 여러 번 울려도 한 번이다.
+        k.kick();
+        k.kick();
+        assert!(k.wait(Duration::from_secs(30)));
+        assert!(!k.wait(Duration::from_millis(10)));
+        // 기다리는 중에 울리면 시한 전에 깬다.
+        let k2 = Arc::clone(&k);
+        let t = std::thread::spawn(move || k2.wait(Duration::from_secs(30)));
+        std::thread::sleep(Duration::from_millis(50));
+        k.kick();
+        assert!(t.join().unwrap());
+    }
 
     #[test]
     fn protected_roots_are_real_paths_and_skip_missing() {
