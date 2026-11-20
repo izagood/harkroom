@@ -10397,6 +10397,20 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
               dl(() => ({ to: ['c3b2c4del'], planRootId: randomUUID(), planGroupId: 'g0' }), false, 'delegate 계획판 틀린 그룹 꼴 → TS'),
             ];
           })(),
+          // 원인 헤더가 있는 사람 앞 카드도 Rust 가 세운다 — 차례 주인(원인 글을 쓴 사람)에게 글 뒤 푸시 한 번, 차례 주인이 에이전트면 없음.
+          // 스레드 밖에 세운다 — 스레드 답글로 inbox 를 받으면 그 job 이 가고 'ask' job 은 넣지 않는다.
+          ['ask 사람 앞 · 오퍼레이터 원인(차례 주인 푸시)', async (ch) => {
+            const { call } = await chainBy(member.accountId, 0, 0)(ch);
+            return { tool: 'message.ask', args: { channelId: ch, body: '고를까요', options: AD }, via: viaOp, cause: call, turn: turnId };
+          }, true],
+          ['ask 사람 앞 · PAT 원인 · 스레드 밖', async (ch) => {
+            const { call } = await chainBy(member.accountId, 0, 0)(ch);
+            return { tool: 'message.ask', args: { channelId: ch, body: '고를까요', options: AD }, via: viaPat, cause: call, turn: turnId };
+          }, true],
+          ['ask 사람 앞 · 에이전트 원인(차례 주인 없음)', async (ch) => {
+            const { root, call } = await chainBy(bot2.accountId, 1, 0)(ch);
+            return { tool: 'message.ask', args: { channelId: ch, threadRootId: root, body: '고를까요', options: AD }, via: viaOp, cause: call, turn: turnId };
+          }, true],
           ['ask 권한 거울 · tool(같은 카드)', mirrorAsk({ kind: 'tool', target: 'Bash(echo e:*)', reason: '빌드에 필요' }), true],
           ['ask 권한 거울 · command', mirrorAsk({ kind: 'command', target: 'kubectl --context rc get pod', reason: '확인' }), true],
           ['ask 권한 거울 · merge 1회(CI 실패)', mirrorAsk({ kind: 'merge', target: 'repo:acme/app', reason: 'x', once: { number: 7, headSha: 'c'.repeat(40), reason: 'ci_not_green', failedChecks: ['secrets'] } }), true],
@@ -10536,6 +10550,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         const wakesOf = async (ch: string) => (await db.pool.query(
           `select m.body, w.canceled_at is not null as canceled, m.meta->'wake' ? 'canceledAt' as stamped
              from agent_wake w join message m on m.id = w.message_id where w.channel_id = $1 order by m.body`, [ch])).rows;
+        // 사람 앞 카드의 차례 주인 푸시(`enqueueAskPush`) — 그 카드로 넣은 'ask' job 의 받는 사람.
+        const askPushOf = async (id: string | undefined) => id ? shape((await db.pool.query(
+          `select account_id::text as account from push_job where message_id = $1 and reason = 'ask' order by account_id`, [id])).rows) : null;
         // S5.5 e·f — 그 채널의 권한 요청 줄과 이어진 카드의 표지(요청·카드가 같이 섰는가).
         const permsOf = async (ch: string) => shape((await db.pool.query(
           `select p.kind, p.target, p.status, p.denial_id is not null as from_denial, p.card_message_id is not null as linked, p.mandate_id is not null as mandated,
@@ -10571,10 +10588,15 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             const r = await mcpCall(base, st.via.token, st.tool ?? 'message.post', st.args, 7, extra);
             const body = sse(r.text) as { message?: { id?: string }; foldedWakes?: { wakeAt: string }[] } | null;
             out.push({ name, status: r.status, rust: base === tsUrl ? rust : r.core === 'mcp', body: shape(body), row: await facts(body?.message?.id, st.cause),
-              wakes: await wakesOf(ch), perms: await permsOf(ch), wakeAt: body?.foldedWakes?.map((w) => w.wakeAt) ?? null });
+              wakes: await wakesOf(ch), perms: await permsOf(ch), wakeAt: body?.foldedWakes?.map((w) => w.wakeAt) ?? null,
+              askPush: await askPushOf(body?.message?.id) });
           }
           return out;
         };
+        // 차례 주인 푸시를 받을 사람(member)의 기기 — 두 서버 회차 모두 같은 상태에서 돈다.
+        await db.pool.query(
+          `insert into push_device (account_id, session_token_hash, platform, apns_env, token, prefs)
+           values ($1, $2, 'ios', 'production', $3, '{}') on conflict do nothing`, [member.accountId, hashToken(member.token), 'd'.repeat(64)]);
         const tsOut = await run(tsUrl);
         const rsOut = await run(rsUrl);
         // 장면마다 이름을 달아 비교한다 — 통째 비교는 어긋난 장면 이름을 diff 문맥 밖으로 밀어낸다.
@@ -10592,6 +10614,10 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect(row('사람이 답한 카드 원인 → 깊이 1·사슬 시작 지금')).toMatchObject({ depth: 1, stall: 1, started: true, linked: true });
         expect(row('같은 대화 링크 → 정체 +1')).toMatchObject({ depth: 3, stall: 2, link_reset: false });
         expect(row('다른 스레드 링크 → 정체 0 · linkReset')).toMatchObject({ depth: 3, stall: 0, link_reset: true });
+        // 원인 헤더가 있는 사람 앞 카드 — 차례 주인(사람)에게 푸시 한 번, 에이전트가 원인이면 없음(둘 다 비어 같아지지 않게).
+        type P = { askPush: { account: string }[] | null };
+        expect((by('ask 사람 앞 · 오퍼레이터 원인(차례 주인 푸시)') as unknown as P).askPush).toEqual([{ account: 'MEM' }]);
+        expect((by('ask 사람 앞 · 에이전트 원인(차례 주인 없음)') as unknown as P).askPush).toEqual([]);
         expect(by('없는 머리 → bad_thread').body.error?.code).toBe('bad_thread');
         expect(by('남의 업로드 → bad_attachment').body.error?.code).toBe('bad_attachment');
         expect(by('보관된 채널도 올린다').row).not.toBeNull();
