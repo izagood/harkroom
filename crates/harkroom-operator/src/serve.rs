@@ -508,6 +508,8 @@ pub fn spawn_server_link(
     );
     // PR 감시 폴러(위임 재설계 P5, TS run.ts `createPrWatchPoller(...).start()`) — `pr.status` 와 같은 gh 길·같은 「처음 본 시각」.
     // 서버 스위치가 꺼지면 due 가 비어 gh 를 부르지 않는다. 프로세스와 함께 산다(TS 처럼 멈추지 않는다).
+    // hello 세대 — due 403 을 받은 에이전트는 다음 hello 까지 건너뛴다(링크가 다시 붙으면 다시 묻는다).
+    let hello_gen = crate::pr_watch_poller::HelloGeneration::default();
     crate::pr_watch_poller::PrWatchPoller {
         pr: merge_handlers.pr_status.clone(),
         http: crate::pr_watch_poller::agent_http(
@@ -517,6 +519,8 @@ pub fn spawn_server_link(
         ),
         agent_ids: std::sync::Arc::new(move || watch_cfg.agent_ids()),
         log: std::sync::Arc::new(|line: &str| eprintln!("{line}")),
+        hello: hello_gen.clone(),
+        denied: std::sync::Arc::default(),
     }
     .start();
     state.set_runner_link(std::sync::Arc::clone(&bridge.runner_link));
@@ -784,6 +788,7 @@ pub fn spawn_server_link(
     let runners_state = state.clone();
     let hello_mux = std::sync::Arc::clone(&mux);
     let hello = Box::new(move || {
+        hello_gen.bump();
         build_hello(
             caps(),
             announce_of(&runners_state.runners),
