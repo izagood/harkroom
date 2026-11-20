@@ -1859,7 +1859,7 @@ async fn main() {
             harkroom_server::core::invite_mail::load_mail_config(|k| std::env::var(k).ok()),
             Ok(None)
         ) {
-            eprintln!("front: invite mail (issue with email, resend) to TS — mail env unset");
+            eprintln!("front: invite mail off (409 mail_disabled) — mail env unset");
         }
     }
     let merge_checks_deny = match (&core_mode, &state.write) {
@@ -4292,7 +4292,6 @@ async fn main() {
                     write,
                     trust: state.trust.clone(),
                     mailer,
-                    up: state.up.clone(),
                 },
                 auth.clone(),
                 state.cors.clone(),

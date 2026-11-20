@@ -622,8 +622,9 @@ async fn write(
             "chain_limit",
             "이 사슬은 에이전트끼리의 호출 상한에 닿았다 — 사람에게 넘겨라",
         )),
-        // 아무것도 쓰지 않았다 — 그 오류 글자는 TS 가 낸다.
-        Outcome::BadThread => to_ts("bad_thread"),
+        // 아무것도 쓰지 않았다. TS 위임 도구는 `postMessage` 의 실패를 그대로 싣는다 —
+        // `{ code: 'post_failed', message: posted.failure }`(`message.post` 의 400 bad_thread 와 다르다).
+        Outcome::BadThread => Some(err("post_failed", "bad_thread")),
         Outcome::BadAttachment => to_ts("bad_attachment"),
         Outcome::Posted {
             row,
