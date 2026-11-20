@@ -9808,6 +9808,20 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           }
           return root;
         };
+        // 배너 B안 — 머리 하나와 그 스레드에 이미 정해진 권한 카드 하나(BOT2 = 관리자 소유, 열린 카드 없음).
+        const withSettledPerm = async () => {
+          const root = await direct(member.accountId, '머지 일');
+          const req = (await db.pool.query<{ id: string }>(
+            `insert into permission_request (agent_id, kind, target, reason, channel_id, thread_root_id, expires_at, status)
+             values ($1, 'merge', 'repo:acme/app', 'x', $2, $3, now() + interval '1 hour', 'granted') returning id::text as id`,
+            [bot2.accountId, todayId, root])).rows[0]!.id;
+          const card = (await db.pool.query<{ id: string }>(
+            `insert into message (channel_id, thread_root_id, author_id, body, kind, meta) values ($1, $2, $3, '정해진 권한 카드', 'user', $4::jsonb) returning id::text as id`,
+            [todayId, root, bot2.accountId, JSON.stringify({ kind: 'ask', ask: { prompt: '허락할까요?', options: [{ id: 'approve', label: '허락' }, { id: 'deny', label: '거절' }], to: { kind: 'human' }, answeredWith: 'approve', answeredBy: admin.accountId },
+              permissionRequest: { requestId: req, status: 'granted' } })])).rows[0]!.id;
+          await db.pool.query(`update permission_request set card_message_id = $2 where id = $1`, [req, card]);
+          return root;
+        };
         // [이름, 머리 만들기(base → 머리 id), 답 본문(머리 id → payload), 답하는 사람]
         type Scene = [string, (base: string) => Promise<string>, (root: string) => Record<string, unknown>, string, ('ts' | undefined)?, (string | (() => Promise<string>))?];
         // C1c-4a — 에이전트 최상위 글은 채널의 최상위 글들을 사슬 고리로 훑는다(`mentionDepthFor`). 앞 장면·앞 실행이 그 에이전트를 깨운 글이
@@ -9817,6 +9831,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           await db.pool.query(`insert into channel_member (channel_id, account_id) select $1, account_id from channel_member where channel_id = $2 on conflict do nothing`, [c, todayId]);
           return c;
         };
+        const SETTLED_SCENE = '배너 B: 정해진 카드뿐인 스레드에 머지해 → Rust 는 줄 없음';
         const SCENES: Scene[] = [
           ['남의 머리에 답 → thread_reply', async () => direct(member.accountId, '질문'), (r) => ({ body: '답', threadRootId: r }), A],
           ['자기 머리에 답 → 아무도', async () => direct(admin.accountId, '혼잣말'), (r) => ({ body: '덧붙임', threadRootId: r }), A],
@@ -9854,6 +9869,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           ['P3c: T1 링크 + 없는 번호 → 거절 줄', withAskCard({ to: { kind: 'human' } }), (c) => ({ body: `harkroom://message/${c} 3번` }), A],
           // 물어본 에이전트(BOT2)를 부르며 고르면 그 부름으로 이미 깨어난다 — 답 깨움(ask_answered)을 또 넣지 않는다(`skipWakeIfInboxFor`).
           ['P3c: 물어본 에이전트를 부르며 고름 → 깨움 한 번', withAsk({ to: { kind: 'human' } }), (r) => ({ body: '@bot2 A 로', threadRootId: r }), A],
+          // 배너 B안 — 열린 카드가 없는 스레드의 「머지해」: TS 는 `settled` 거절 줄을 달고 Rust 는 아무 줄도 달지 않는다(아래에서 그 차이만 걷어 견준다).
+          [SETTLED_SCENE, withSettledPerm, (r) => ({ body: '머지해', threadRootId: r }), A],
           ['DM 최상위 → 상대에게 dm', async () => '', () => ({ body: '안녕' }), A, undefined, dmMem],
           ['DM 답글 → 머리 주인 thread_reply 만', async () => direct(member.accountId, 'DM 질문', dmMem), (r) => ({ body: '답', threadRootId: r }), A, undefined, dmMem],
           ['DM 답글(자기 머리) → 상대에게 dm', async () => direct(admin.accountId, 'DM 혼잣말', dmMem), (r) => ({ body: '덧붙임', threadRootId: r }), A, undefined, dmMem],
@@ -9942,6 +9959,19 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         const tsGet = () => tsEvents;
         const tsOut = await run(tsUrl, tsGet, tsGet);
         const rsOut = await run(rsUrl, () => busEvents, tsGet);
+        // 배너 B안 — Rust 만 다른 차이를 못 박는다. TS 는 `settled` 거절 줄 하나, Rust 는 줄 0. 그 칸(과 줄이 일으킨 머리 갱신)만 걷고 나머지는 같아야 한다.
+        {
+          type SL = { name: string; lines: { ca: { reason?: string } }[]; events: { type: string }[] };
+          const ti = (tsOut as SL[]).findIndex((x) => x.name === SETTLED_SCENE);
+          const ri = (rsOut as SL[]).findIndex((x) => x.name === SETTLED_SCENE);
+          const t = tsOut[ti] as SL;
+          const r = rsOut[ri] as SL;
+          expect(t.lines.map((l) => l.ca.reason), 'TS 는 settled 줄을 단다').toEqual(['settled']);
+          expect(r.lines, 'Rust 는 열린 카드가 없으면 줄을 달지 않는다').toEqual([]);
+          const strip = (x: SL): SL => ({ ...x, lines: [], events: x.events.filter((e) => e.type !== 'message.updated') });
+          tsOut[ti] = strip(t);
+          rsOut[ri] = strip(r);
+        }
         // 어느 장면이 다른지 이름으로 먼저 — 큰 diff 는 장면 이름을 보여 주지 않는다.
         // 키 차례·undefined 칸은 toEqual 처럼 무시한다(JSON 글자 비교는 키 차례로 갈린다).
         const differs = tsOut.filter((t, i) => { try { expect(rsOut[i]).toEqual(t); return false; } catch { return true; } }).map((t) => (t as { name: string }).name);

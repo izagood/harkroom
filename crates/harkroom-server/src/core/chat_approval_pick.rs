@@ -53,6 +53,8 @@ pub enum Refusal {
     Hidden,
     HeadChanged,
     CiWord,
+    /// TS `settled` — Rust 는 더 내지 않는다(열린 카드 없음 = 조용히). i18n·TS 키 대조에만 남긴다.
+    #[allow(dead_code)]
     Settled,
     NoRequest,
     NotBefore,
@@ -438,8 +440,10 @@ pub async fn select(
                 card_ids: open.into_iter().map(|c| c.card_message_id).collect(),
             });
         }
+        // 열린 카드가 하나도 없으면 줄을 달지 않는다(소유자 결정 2026-11-20 B안). TS 는 `settled` 거절 줄을 단다 —
+        // 에이전트에게 머지를 시키는 글이 정해진 카드 스레드에 서면 그 줄이 곧 설 새 카드 위에 붙어 카드 오류처럼 보였다.
         if open.is_empty() {
-            return Ok(Selection::Refuse(Refusal::Settled));
+            return Ok(Selection::Silent);
         }
         if !is_explicit_approval(body) {
             return Ok(Selection::Refuse(Refusal::NeedsExplicit));
