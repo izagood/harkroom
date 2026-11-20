@@ -10366,7 +10366,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           // 위임 스위치(env)가 없는 앞단은 암묵 위임 모드를 모른다 — 부름은 Rust 가 답하지 않고 TS 로 넘긴다.
           ['부름(암묵 위임 모름) → TS', async (ch) => ({ args: { channelId: ch, body: '@mem 봐 줘' }, via: viaPat }), false],
           ['ASCII 밖 모델', async (ch) => ({ args: { channelId: ch, body: '보고', model: '오푸스' }, via: viaPat }), true],
-          // C3b-2c-1 — `message.fail`(표지 없는 실패). 표지·차례 주인 재료가 있으면 TS 몫이다(fail-closed).
+          // C3b-2c-1 — `message.fail`(표지 없는 실패). 표지(`code`·`laneCode`)가 있으면 TS 몫이다(fail-closed).
           ['fail 원인 없음 · what/reason · 옛 account', async (ch) => ({ tool: 'message.fail', args: { channelId: ch, body: '못 했다', retryable: true, what: '빌드', reason: '권한', account: 'old', model: 'claude-opus-5' }, via: viaPat }), true],
           ['fail 오퍼레이터 원인 → 깊이·고리·턴 id', async (ch) => {
             const { root, call } = await chainBy(bot2.accountId, 2, 1)(ch);
@@ -10374,6 +10374,10 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           }, true],
           ['fail 없는 머리 → bad_thread', async (ch) => ({ tool: 'message.fail', args: { channelId: ch, threadRootId: randomUUID(), body: '답', retryable: true }, via: viaPat }), true],
           ['fail code → TS', async (ch) => ({ tool: 'message.fail', args: { channelId: ch, body: '지정 모델 거절', retryable: true, code: 'thread_model_rejected' }, via: viaPat }), false],
+          // 표지 없는 차례 주인 재료(러너의 침묵·혼자 꺼짐·보고 누락 통지가 싣는 `mentionId`)는 TS 처럼 꼴만 보고 버린다 — Rust 가 답한다.
+          ['fail 표지 없는 mentionId·순번 → Rust', async (ch) => ({ tool: 'message.fail', args: { channelId: ch, body: '답을 남기지 못하고 끝났다', retryable: true, what: '침묵', mentionId: randomUUID(), claudePoolRank: 2, claudeAccountRank: 1 }, via: viaOp, turn: turnId }), true],
+          ['fail mentionId 꼴 틀림 → TS(zod 오류)', async (ch) => ({ tool: 'message.fail', args: { channelId: ch, body: '못 했다', retryable: true, mentionId: 'nope' }, via: viaPat }), false],
+          ['fail 순번 범위 밖 → TS(zod 오류)', async (ch) => ({ tool: 'message.fail', args: { channelId: ch, body: '못 했다', retryable: true, mentionId: randomUUID(), claudePoolRank: 100 }, via: viaPat }), false],
           ['fail account_gate·mentionId → TS', async (ch) => ({ tool: 'message.fail', args: { channelId: ch, body: '관문', retryable: true, code: 'account_gate', mentionId: randomUUID(), claudePoolRank: 1 }, via: viaPat }), false],
           ['fail retryable 없음 → TS(zod 오류)', async (ch) => ({ tool: 'message.fail', args: { channelId: ch, body: '못 했다' }, via: viaPat }), false],
           // C3b-2c-4a — `message.delegate` 의 게이트·상한 거절만 Rust. 지나면(접속 확인·글·위임 행) TS 몫이다.

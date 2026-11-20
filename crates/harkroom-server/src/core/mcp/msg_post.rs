@@ -554,19 +554,25 @@ fn opt_str(o: &Map<String, Value>, key: &str, max: usize) -> Option<Option<Strin
     }
 }
 
-/// zod `message.fail` 의 `inputSchema`. **TS 로 넘기는 것**(fail-closed): 표지 칸(`code`·`laneCode`)·차례 주인 재료(`mentionId`·
-/// `claudePoolRank`·`claudeAccountRank`)가 하나라도 있으면 — `thread_model_rejected` 의 keepCode(스레드 모델 지정의 stale 판정)·
-/// `account_gate` 의 차례 주인·inbox·`provider_lane` 의 까닭 코드 허용 목록은 아직 TS 몫이다. 옛 러너의 `account` 는 zod 처럼 받고 버린다.
+/// zod `message.fail` 의 `inputSchema`. **TS 로 넘기는 것**(fail-closed): 표지 칸(`code`·`laneCode`)이 있으면 — `thread_model_rejected` 의
+/// keepCode(스레드 모델 지정의 stale 판정)·`account_gate` 의 차례 주인·inbox·`provider_lane` 의 까닭 코드 허용 목록은 아직 TS 몫이다.
+/// 차례 주인 재료(`mentionId`·`claudePoolRank`·`claudeAccountRank`)는 TS 가 `account_gate` 일 때만 읽는다 — 표지가 없으면 zod 꼴만
+/// 보고 버린다(러너의 침묵·혼자 꺼짐·보고 누락 통지가 `mentionId` 만 싣는다). 꼴이 틀리면 zod 오류 글자를 위해 TS 로 넘긴다.
+/// 옛 러너의 `account` 도 zod 처럼 받고 버린다.
 fn parse_fail(args: &Value) -> Option<FailArgs> {
     let Value::Object(o) = args else { return None };
-    for k in [
-        "code",
-        "laneCode",
-        "mentionId",
-        "claudePoolRank",
-        "claudeAccountRank",
-    ] {
+    for k in ["code", "laneCode"] {
         if o.contains_key(k) {
+            return None;
+        }
+    }
+    match o.get("mentionId") {
+        None => {}
+        Some(Value::String(m)) if is_uuid(m) => {}
+        _ => return None,
+    }
+    for k in ["claudePoolRank", "claudeAccountRank"] {
+        if o.get(k).is_some_and(|v| !zod_rank(v)) {
             return None;
         }
     }
@@ -595,6 +601,12 @@ fn parse_fail(args: &Value) -> Option<FailArgs> {
         what,
         reason,
     })
+}
+
+/// zod `z.number().int().min(1).max(99)` — JSON 수 중 소수부 없는 1~99(`3.0` 도 int 로 받는다).
+fn zod_rank(v: &Value) -> bool {
+    v.as_f64()
+        .is_some_and(|f| f.fract() == 0.0 && (1.0..=99.0).contains(&f))
 }
 
 /// TS `FailureMeta` 의 `failure` — `{ retryable, what?, reason? }`(표지 없는 갈래).
@@ -1413,14 +1425,19 @@ mod tests {
             json!({ "kind": "failure", "failure": { "retryable": true, "what": "w" } })
         );
         for bad in [
-            // 표지·차례 주인 재료는 TS 로(fail-closed).
+            // 표지는 TS 로(fail-closed) — 차례 주인 재료가 같이 와도.
             json!({ "channelId": C, "body": "x", "retryable": true, "code": "account_gate" }),
+            json!({ "channelId": C, "body": "x", "retryable": true, "code": "account_gate", "mentionId": R, "claudePoolRank": 1 }),
             json!({ "channelId": C, "body": "x", "retryable": true, "code": "thread_model_rejected" }),
             json!({ "channelId": C, "body": "x", "retryable": true, "code": "inject_unconfirmed" }),
             json!({ "channelId": C, "body": "x", "retryable": true, "laneCode": "unknown" }),
-            json!({ "channelId": C, "body": "x", "retryable": true, "mentionId": R }),
-            json!({ "channelId": C, "body": "x", "retryable": true, "claudePoolRank": 1 }),
-            json!({ "channelId": C, "body": "x", "retryable": true, "claudeAccountRank": 1 }),
+            // 차례 주인 재료의 zod 꼴 오류는 TS 가 낸다.
+            json!({ "channelId": C, "body": "x", "retryable": true, "mentionId": "not-a-uuid" }),
+            json!({ "channelId": C, "body": "x", "retryable": true, "mentionId": null }),
+            json!({ "channelId": C, "body": "x", "retryable": true, "claudePoolRank": 0 }),
+            json!({ "channelId": C, "body": "x", "retryable": true, "claudePoolRank": 100 }),
+            json!({ "channelId": C, "body": "x", "retryable": true, "claudeAccountRank": 1.5 }),
+            json!({ "channelId": C, "body": "x", "retryable": true, "claudeAccountRank": "1" }),
             // zod 오류는 TS 가 낸다.
             json!({ "channelId": C, "body": "x" }),
             json!({ "channelId": C, "body": "x", "retryable": "yes" }),
@@ -1432,6 +1449,16 @@ mod tests {
         ] {
             assert!(parse_fail(&bad).is_none(), "{bad}");
         }
+        // 표지 없는 차례 주인 재료(러너의 침묵·혼자 꺼짐·보고 누락 통지)는 zod 꼴만 보고 버린다 — meta 는 표지 없는 실패와 같다.
+        let f = parse_fail(&json!({
+            "channelId": C, "body": "x", "retryable": false, "what": "w",
+            "mentionId": R, "claudePoolRank": 1, "claudeAccountRank": 99.0
+        }))
+        .expect("mentionId without code");
+        assert_eq!(
+            Value::Object(failure_meta(&f)),
+            json!({ "kind": "failure", "failure": { "retryable": false, "what": "w" } })
+        );
         // agentModels 는 fail 에 없는 칸 — zod 처럼 버린다.
         assert!(
             parse_fail(
