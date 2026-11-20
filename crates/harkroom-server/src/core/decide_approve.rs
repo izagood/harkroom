@@ -599,7 +599,10 @@ pub async fn approve_write(
         );
     let (ttl, grant_mode, candidates) = match (locked.kind.as_str(), decision) {
         ("command", Decision::ApproveHour) => (COMMAND_GRANT_TTL, Some("hour"), ANSWER_HOUR),
-        ("command", Decision::ApproveOnce) => (COMMAND_GRANT_TTL, Some("once"), ANSWER_ONCE),
+        // 0-1 — 옛 앱의 command `approve` 는 [이번 한 번]과 같다(TS 도 1회 `command_grant`·`grantMode: once` 로 답한다).
+        ("command", Decision::ApproveOnce | Decision::Approve) => {
+            (COMMAND_GRANT_TTL, Some("once"), ANSWER_ONCE)
+        }
         ("tool", Decision::Approve) => (TOOL_GRANT_TTL, None, ANSWER_TOOL),
         // S5.4 12e — merge 7일 승인. 14d — 위임장이 있어도(TS `writesStandingGrant`: `approve` 는 grant + 그 위임장에 merge 줄).
         ("merge", Decision::Approve) => (TOOL_GRANT_TTL, None, ANSWER_TOOL),

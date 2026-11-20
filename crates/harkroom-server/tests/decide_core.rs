@@ -75,6 +75,8 @@ fn who_takes_it() {
         ("approve", "merge", Decision::Approve),
         ("approve_once", "command", Decision::ApproveOnce),
         ("approve_hour", "command", Decision::ApproveHour),
+        // 0-1 — 옛 앱의 command `approve`(approve_once 와 같은 쓰기).
+        ("approve", "command", Decision::Approve),
         // S5.4 — tool 카드의 approve_once 는 Rust 가 409 not_once(쓰기 없음).
         ("approve_once", "tool", Decision::ApproveOnce),
         // C1 — 위임장 없는 approve_mandate 는 TS 처럼 grant 만(approve 와 같음).
@@ -88,7 +90,6 @@ fn who_takes_it() {
     }
     // 승인 kind 는 허용 목록 — merge(7일 승인 밖)·모르는 kind 는 TS.
     for (o, k) in [
-        ("approve", "command"),
         ("approve", "future_kind"),
         ("approve_once", "merge"),
         ("approve_turn", "merge"),
@@ -341,8 +342,18 @@ fn recheck_after_request_lock() {
     assert_eq!(recheck_locked("a", None, Some(&base), sh), Recheck::Restart);
     // 잠근 값의 kind·mandate·denial 로 rust_takes 를 다시 — 바뀌면 TS.
     assert_eq!(
-        recheck_locked("a", Some("c"), Some(&locked("a", Some("c"), "command")), sh),
+        recheck_locked(
+            "a",
+            Some("c"),
+            Some(&locked("a", Some("c"), "future_kind")),
+            sh
+        ),
         Recheck::HandToTs
+    );
+    // 0-1 — 잠근 줄이 command 로 읽혀도 `approve` 는 Rust(옛 앱, approve_once 와 같은 쓰기).
+    assert_eq!(
+        recheck_locked("a", Some("c"), Some(&locked("a", Some("c"), "command")), sh),
+        Recheck::Go(Decision::Approve)
     );
     // C1 — 위임장이 생겨도 tool approve 는 Rust(있는 위임장에 줄). C3 — command 승인도 Rust. P3 B2 — deny 도 Rust.
     let mut m = base.clone();
