@@ -4,7 +4,7 @@
 //! (`golden/mcp_tools_list.json` — TS 가 등록한 zod 스키마를 SDK 가 JSON 스키마로 옮긴 것)을 읽어 **모든 도구**에 같은 규칙으로 낸다.
 //!
 //! - 답은 셋이다: [`Verdict::Reject`](zod 가 거절 — 그 글자), [`Verdict::Pass`](zod 가 받음 — 지금처럼 처리기·TS), [`Verdict::Unsure`]
-//!   (JSON 스키마만으로는 zod 의 글자를 확정할 수 없음 — 숨은 `refine`·`url()`·시간대 있는 `datetime` 등. 지금처럼 TS).
+//!   (JSON 스키마만으로는 zod 의 글자를 확정할 수 없음 — `url()`·시간대 있는 `datetime` 등. 지금처럼 TS).
 //! - 정본은 TS 다: `packages/server/test/rustMcpZodGolden.test.ts` 가 도구마다 틀린 꼴 수천 개를 **실제 zod 스키마**로 돌린 결과를
 //!   `golden/mcp_zod_cases.json` 에 굽고, 이 파일의 시험이 Rust 가 같은 글자를 내는지(못 내면 `Unsure`) 본다 — 다른 글자는 0 이어야 한다.
 //! - 이슈 순서는 zod 와 같다: 객체는 스키마 키 순서, 배열은 길이 검사 → 원소. 객체·배열은 한 칸이라도 형이 틀리면 「중단」, 길이·범위만
@@ -126,9 +126,13 @@ fn schemas() -> &'static HashMap<String, Oj> {
 /// zod 가 패턴 불일치에 내는 문구가 기본(`Invalid`)이 아닌 패턴 — TS 의 `.regex(re, '<문구>')`. 골든 시험이 맞춘다.
 const PATTERN_MESSAGES: &[(&str, &str)] = &[(r"^[\w.-]+\/[\w.-]+$", "owner/name")];
 
-/// JSON 스키마에 실리지 않는 검사(`refine`·`superRefine`)가 걸린 칸 — 이 칸에 문자열이 닿으면 글자를 확정하지 못한다(`Unsure`).
-/// (도구, 점 경로). 골든 시험이 「Rust 는 통과라는데 TS 는 거절」인 꼴을 여기 없이 찾아낸다.
-const HIDDEN_CHECKS: &[(&str, &str)] = &[("automation.propose", "trigger.tz")];
+/// JSON 스키마에 실리지 않는 검사 가운데 Rust 가 같은 판정을 내는 것 — TS `tzSchema` 의 `.refine(isTimeZone, 'unknown time zone')`.
+/// (도구, 점 경로). 판정은 [`parse_tz`](crate::core::automation_time::parse_tz)가 한다(`Intl` 이 받는 이름과 같다 — 그 모듈 머리 참고).
+/// 골든 시험이 「Rust 는 통과라는데 TS 는 거절」인 꼴을 여기 없이 찾아낸다.
+const TZ_CHECKS: &[(&str, &str)] = &[("automation.propose", "trigger.tz")];
+
+/// JSON 스키마에 실리지 않는 `.transform()` 이 붙은 칸(도구, 점 경로) — TS `scheduleSchema` 의 `weekdays`(중복 걷고 정렬).
+const TRANSFORMS: &[(&str, &str)] = &[("automation.propose", "trigger.weekdays")];
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Verdict {
@@ -331,6 +335,19 @@ impl<'a> Cx<'a> {
     }
 
     fn node(&mut self, s0: &'a Oj, v: Option<&Value>, path: &mut Vec<Seg>) -> St {
+        let st = self.node_raw(s0, v, path);
+        // `.transform()` 은 안쪽이 「더러움」(길이·범위만 틀림)이어도 값을 못 만들어 「중단」으로 끝난다(이슈는 그대로 실린다).
+        if st == St::Dirty
+            && TRANSFORMS
+                .iter()
+                .any(|(t, p)| *t == self.tool && *p == dot_path(path))
+        {
+            return St::Aborted;
+        }
+        st
+    }
+
+    fn node_raw(&mut self, s0: &'a Oj, v: Option<&Value>, path: &mut Vec<Seg>) -> St {
         let Some(s) = self.resolve(s0) else {
             self.unsure = true;
             return St::Ok;
@@ -486,11 +503,14 @@ impl<'a> Cx<'a> {
                 Some(_) => {}
             }
         }
-        if HIDDEN_CHECKS
+        if TZ_CHECKS
             .iter()
             .any(|(t, p)| *t == self.tool && *p == dot_path(path))
+            && crate::core::automation_time::parse_tz(x).is_none()
         {
-            self.unsure = true;
+            // `.refine(isTimeZone, 'unknown time zone')` — refine 은 길이 검사 뒤에 돌고, 길이만 틀린 값(더러움)에도 돈다.
+            self.issue(path, "unknown time zone");
+            st = St::Dirty;
         }
         st
     }
