@@ -448,7 +448,12 @@ pub struct McpOAuth {
     last_reject_refresh: Mutex<HashMap<String, f64>>,
     /// 지금 정의의 `oauth.clientId`(security F2). 다르면 1분 refresh·거절 refresh 가 그 토큰을 돌리지 않는다.
     current_client_id: Option<ClientIdLookup>,
+    /// 새 토큰이 생겼을 때(인증 완료) 부른다 — 이미 쓴 러너 설정에 넣는 자리(TS `deps.onToken`). serve 가 건다.
+    on_token: std::sync::OnceLock<OnToken>,
 }
+
+/// (이름, url, access token) — 새 토큰이 저장된 뒤 부른다. 값을 로그에 찍지 않는다.
+pub type OnToken = Box<dyn Fn(&str, &str, &str) + Send + Sync>;
 
 /// 이름 → 지금 정의의 clientId(모르면 None).
 pub type ClientIdLookup = Box<dyn Fn(&str) -> Option<String> + Send + Sync>;
@@ -614,7 +619,13 @@ impl McpOAuth {
             reject_cooldown_ms: 5.0 * 60_000.0,
             last_reject_refresh: Mutex::new(HashMap::new()),
             current_client_id: None,
+            on_token: std::sync::OnceLock::new(),
         }
+    }
+
+    /// 새 토큰 통지를 단다(한 번만 — 두 번째는 무시). TS `deps.onToken`.
+    pub fn set_on_token(&self, f: OnToken) {
+        let _ = self.on_token.set(f);
     }
 
     /// 지금 정의의 clientId 를 묻는 길을 단다(TS `deps.currentClientId`).
@@ -839,10 +850,15 @@ impl McpOAuth {
         rec.insert("status".into(), json!("ok"));
         rec.insert("updatedAt".into(), num(now));
         let name = ex.name.clone();
+        let new_token = body["access_token"].as_str().map(str::to_string);
         match self.update(|s| {
             s.insert(name, Value::Object(rec));
         }) {
             Ok(()) => {
+                // 성공 페이지보다 먼저 러너 설정에 넣는다 — 사람이 「인증됨」을 보고 바로 부른 턴이 옛 헤더를 읽지 않게.
+                if let (Some(f), Some(t)) = (self.on_token.get(), new_token.as_deref()) {
+                    f(&ex.name, &ex.url, t);
+                }
                 page(Kind::Ok, None);
                 // 이 흐름이 아직 그 이름의 것일 때만 닫는다(다시 누른 새 흐름을 지우지 않는다).
                 let mut flows = self.flows();
@@ -1337,6 +1353,12 @@ mod tests {
             std::env::temp_dir().join(format!("hk-oauth-{}-{}", std::process::id(), now_ms()));
         let store = dir.join("secrets").join("mcp-oauth.json");
         let o = Arc::new(McpOAuth::new(store.clone()));
+        // 인증 완료 통지 — 러너 설정 재작성 자리(P3 에서 빠졌던 배선).
+        let pushed: Arc<Mutex<Vec<(String, String, String)>>> = Arc::default();
+        let sink = Arc::clone(&pushed);
+        o.set_on_token(Box::new(move |n, u, t| {
+            sink.lock().unwrap().push((n.into(), u.into(), t.into()));
+        }));
         let mcp = format!("http://127.0.0.1:{port}/mcp");
         assert_eq!(o.status("s", &mcp, None).unwrap(), json!({"state":"none"}));
         let r = o.start("s", &mcp, None, None).unwrap();
@@ -1392,6 +1414,14 @@ mod tests {
         );
         let saved: Value = serde_json::from_str(&std::fs::read_to_string(&store).unwrap()).unwrap();
         let keys: Vec<&String> = saved["s"].as_object().unwrap().keys().collect();
+        assert_eq!(
+            *pushed.lock().unwrap(),
+            vec![(
+                "s".to_string(),
+                mcp.clone(),
+                saved["s"]["accessToken"].as_str().unwrap().to_string()
+            )]
+        );
         assert_eq!(
             keys,
             [

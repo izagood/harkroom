@@ -562,20 +562,22 @@ pub fn spawn_server_link(
         use crate::community::{AssignmentFrames, SystemDeps};
         let mcp = state.local_mcp();
         let started_link = link.clone();
+        let oauth = mcp.map_or_else(
+            || {
+                std::sync::Arc::new(crate::mcp_oauth::McpOAuth::new(
+                    operator_dir.join("secrets").join("mcp-oauth.json"),
+                ))
+            },
+            |m| m.oauth(),
+        );
+        crate::mcp_token_push::start(std::sync::Arc::clone(&oauth), operator_dir.join("mcp"));
         let deps = SystemDeps {
             runners: std::sync::Arc::clone(&state.runners),
             link: std::sync::Arc::clone(&bridge.runner_link),
             local: assign_cfg.clone(),
             mcp_registry: operator_dir.join("mcp-servers.json"),
             claude_config: mcp.and_then(|m| m.claude_config_path().map(Path::to_path_buf)),
-            oauth: mcp.map_or_else(
-                || {
-                    std::sync::Arc::new(crate::mcp_oauth::McpOAuth::new(
-                        operator_dir.join("secrets").join("mcp-oauth.json"),
-                    ))
-                },
-                |m| m.oauth(),
-            ),
+            oauth,
             mcp_dir: operator_dir.join("mcp"),
             operator_bin: std::env::current_exe()
                 .map(|p| p.to_string_lossy().into_owned())

@@ -57,6 +57,7 @@ pub mod local_terminal;
 pub mod mcp_bridge;
 pub mod mcp_config;
 pub mod mcp_oauth;
+pub mod mcp_token_push;
 pub mod merge;
 pub mod op_token;
 pub mod pr_gate;
