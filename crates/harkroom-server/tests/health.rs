@@ -5,7 +5,7 @@ mod common;
 use axum::http::{Method, StatusCode};
 use common::{send, serve};
 use harkroom_server::auth::hash_token;
-use harkroom_server::health::canonical_avcs;
+use harkroom_server::health::{AVCS_STALL_MS, avcs_connected, canonical_avcs};
 use harkroom_server::proxy::Upstream;
 use harkroom_server::routes::{self, AppState, MOVED, OPEN, TsOverrides};
 use serde_json::Value;
@@ -99,8 +99,8 @@ async fn healthz_is_open_and_does_not_borrow_version_from_ts() {
     );
     let v: Value = serde_json::from_str(&t).unwrap();
     assert_eq!(v["ok"], true);
-    // avcs 소켓 상태만 TS 에서 옮겨 싣는다.
-    assert_eq!(v["avcs"]["connected"], true);
+    // avcs 도 TS 에서 옮겨 싣지 않는다 — 가짜 TS 는 `connected: true` 지만 앞단은 `projection_status` 를 본다(DB 가 죽었으니 false).
+    assert_eq!(v["avcs"], serde_json::json!({ "connected": false }));
     // 가짜 TS 의 push·mail·version·commit(ok·off·9.9.9·abc1234)은 싣지 않는다.
     assert_ne!(v["version"], "9.9.9");
     assert_ne!(v["commit"], "abc1234");
@@ -245,4 +245,22 @@ async fn metrics_and_readyz_with_db() {
         "{t}"
     );
     assert!(!t.contains("} 7\n"), "{t}");
+}
+
+/// `avcs.connected` 는 투영 루프가 쓴 줄에서 — 설정됐고·붙었고·마지막 폴링이 5분 안일 때만 true.
+#[test]
+fn avcs_connected_needs_configured_connected_and_fresh_poll() {
+    let now = 10_000_000;
+    assert!(avcs_connected(true, true, Some(now - 1_000), now));
+    assert!(avcs_connected(true, true, Some(now - AVCS_STALL_MS), now));
+    // 루프가 멈춘 뒤 남은 낡은 true 는 믿지 않는다.
+    assert!(!avcs_connected(
+        true,
+        true,
+        Some(now - AVCS_STALL_MS - 1),
+        now
+    ));
+    assert!(!avcs_connected(true, true, None, now));
+    assert!(!avcs_connected(false, true, Some(now), now));
+    assert!(!avcs_connected(true, false, Some(now), now));
 }
