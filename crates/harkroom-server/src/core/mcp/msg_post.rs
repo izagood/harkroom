@@ -540,7 +540,23 @@ struct FailArgs {
     retryable: bool,
     what: Option<String>,
     reason: Option<String>,
+    /// zod `z.enum(FAILURE_CODES)` 중 Rust 가 맡는 셋(`account_gate` 는 차례 주인·inbox 라 아직 TS).
+    code: Option<&'static str>,
+    /// zod `z.enum(PROVIDER_LANE_FAILURE_CODES)` — `code` 와 상관없이 받되 meta 에는 `provider_lane` 일 때만 붙는다.
+    lane_code: Option<&'static str>,
 }
+
+/// TS `FAILURE_CODES` 중 Rust 가 답하는 것. `account_gate` 는 빠져 있다 — 그 표지는 TS 로 넘긴다(fail-closed).
+const RUST_FAILURE_CODES: &[&str] = &[
+    "thread_model_rejected",
+    "provider_lane",
+    "inject_unconfirmed",
+];
+
+/// TS `getThreadAgentModel(...)?.stale` — 그 스레드에 이 에이전트의 모델 지정이 있으면 `Some(stale)`.
+const THREAD_AGENT_MODEL_STALE_SQL: &str = "select (t.harness is distinct from coalesce(c.harness, 'claude-code')) \
+     from thread_agent_model t left join agent_config c on c.account_id = t.agent_id \
+     where t.thread_root_id = $1::uuid and t.agent_id = $2::uuid";
 
 /// 문자열 칸 `z.string().min(1).max(n).optional()` — 없으면 `Some(None)`, 틀린 꼴이면 `None`(→ TS 가 검증 오류를 낸다).
 fn opt_str(o: &Map<String, Value>, key: &str, max: usize) -> Option<Option<String>> {
@@ -554,18 +570,27 @@ fn opt_str(o: &Map<String, Value>, key: &str, max: usize) -> Option<Option<Strin
     }
 }
 
-/// zod `message.fail` 의 `inputSchema`. **TS 로 넘기는 것**(fail-closed): 표지 칸(`code`·`laneCode`)이 있으면 — `thread_model_rejected` 의
-/// keepCode(스레드 모델 지정의 stale 판정)·`account_gate` 의 차례 주인·inbox·`provider_lane` 의 까닭 코드 허용 목록은 아직 TS 몫이다.
-/// 차례 주인 재료(`mentionId`·`claudePoolRank`·`claudeAccountRank`)는 TS 가 `account_gate` 일 때만 읽는다 — 표지가 없으면 zod 꼴만
+/// zod `message.fail` 의 `inputSchema`. 표지(`code`)는 `thread_model_rejected`·`provider_lane`·`inject_unconfirmed` 를 Rust 가 맡는다.
+/// **TS 로 넘기는 것**(fail-closed): `account_gate`(차례 주인·inbox 는 아직 TS 몫), 목록 밖 `code`·`laneCode`(zod 오류 글자).
+/// 차례 주인 재료(`mentionId`·`claudePoolRank`·`claudeAccountRank`)는 TS 가 `account_gate` 일 때만 읽는다 — 그 밖에는 zod 꼴만
 /// 보고 버린다(러너의 침묵·혼자 꺼짐·보고 누락 통지가 `mentionId` 만 싣는다). 꼴이 틀리면 zod 오류 글자를 위해 TS 로 넘긴다.
 /// 옛 러너의 `account` 도 zod 처럼 받고 버린다.
 fn parse_fail(args: &Value) -> Option<FailArgs> {
     let Value::Object(o) = args else { return None };
-    for k in ["code", "laneCode"] {
-        if o.contains_key(k) {
-            return None;
-        }
-    }
+    let code = match o.get("code") {
+        None => None,
+        Some(Value::String(c)) => Some(*RUST_FAILURE_CODES.iter().find(|k| **k == c)?),
+        _ => return None,
+    };
+    let lane_code = match o.get("laneCode") {
+        None => None,
+        Some(Value::String(c)) => Some(
+            *harkroom_proto::p1::PROVIDER_LANE_FAILURE_CODES
+                .iter()
+                .find(|k| **k == c)?,
+        ),
+        _ => return None,
+    };
     match o.get("mentionId") {
         None => {}
         Some(Value::String(m)) if is_uuid(m) => {}
@@ -600,6 +625,8 @@ fn parse_fail(args: &Value) -> Option<FailArgs> {
         retryable,
         what,
         reason,
+        code,
+        lane_code,
     })
 }
 
@@ -609,8 +636,9 @@ fn zod_rank(v: &Value) -> bool {
         .is_some_and(|f| f.fract() == 0.0 && (1.0..=99.0).contains(&f))
 }
 
-/// TS `FailureMeta` 의 `failure` — `{ retryable, what?, reason? }`(표지 없는 갈래).
-fn failure_meta(f: &FailArgs) -> Map<String, Value> {
+/// TS `FailureMeta` 의 `failure` — `{ retryable, what?, reason?, code?, laneCode? }`. `keep_code` 는 TS `keepCode`
+/// (`thread_model_rejected` 는 살아 있는 스레드 모델 지정이 있을 때만, 다른 표지는 늘 참). `laneCode` 는 `provider_lane` 에만 붙는다.
+fn failure_meta(f: &FailArgs, keep_code: bool) -> Map<String, Value> {
     let mut failure = Map::new();
     failure.insert("retryable".into(), Value::Bool(f.retryable));
     if let Some(w) = &f.what {
@@ -618,6 +646,12 @@ fn failure_meta(f: &FailArgs) -> Map<String, Value> {
     }
     if let Some(r) = &f.reason {
         failure.insert("reason".into(), Value::String(r.clone()));
+    }
+    if let Some(c) = f.code.filter(|_| keep_code) {
+        failure.insert("code".into(), Value::String(c.into()));
+        if let Some(l) = f.lane_code.filter(|_| c == "provider_lane") {
+            failure.insert("laneCode".into(), Value::String(l.into()));
+        }
     }
     let mut meta = Map::new();
     meta.insert("kind".into(), Value::String("failure".into()));
@@ -636,7 +670,20 @@ pub async fn answer_fail(
     operator: bool,
 ) -> Option<String> {
     let f = parse_fail(args)?;
-    let meta = failure_meta(&f);
+    let keep_code = match f.code {
+        Some("thread_model_rejected") => match &f.args.post.thread_root {
+            None => false,
+            Some(root) => sqlx::query_scalar::<_, bool>(THREAD_AGENT_MODEL_STALE_SQL)
+                .bind(root)
+                .bind(&me.id)
+                .fetch_optional(&st.read)
+                .await
+                .ok()?
+                .is_some_and(|stale| !stale),
+        },
+        _ => true,
+    };
+    let meta = failure_meta(&f, keep_code);
     post(
         st,
         me,
@@ -1419,7 +1466,7 @@ mod tests {
         assert_eq!(f.reason, None);
         // fail 에 없는 칸(alsoInChannel)은 zod 가 버린다.
         assert!(!f.args.post.also_in_channel);
-        let m = Value::Object(failure_meta(&f));
+        let m = Value::Object(failure_meta(&f, true));
         assert_eq!(
             m,
             json!({ "kind": "failure", "failure": { "retryable": true, "what": "w" } })
@@ -1428,9 +1475,11 @@ mod tests {
             // 표지는 TS 로(fail-closed) — 차례 주인 재료가 같이 와도.
             json!({ "channelId": C, "body": "x", "retryable": true, "code": "account_gate" }),
             json!({ "channelId": C, "body": "x", "retryable": true, "code": "account_gate", "mentionId": R, "claudePoolRank": 1 }),
-            json!({ "channelId": C, "body": "x", "retryable": true, "code": "thread_model_rejected" }),
-            json!({ "channelId": C, "body": "x", "retryable": true, "code": "inject_unconfirmed" }),
-            json!({ "channelId": C, "body": "x", "retryable": true, "laneCode": "unknown" }),
+            // 목록 밖 표지·까닭 코드는 zod 오류 글자를 위해 TS 로.
+            json!({ "channelId": C, "body": "x", "retryable": true, "code": "nope" }),
+            json!({ "channelId": C, "body": "x", "retryable": true, "code": null }),
+            json!({ "channelId": C, "body": "x", "retryable": true, "code": "provider_lane", "laneCode": "nope" }),
+            json!({ "channelId": C, "body": "x", "retryable": true, "laneCode": 1 }),
             // 차례 주인 재료의 zod 꼴 오류는 TS 가 낸다.
             json!({ "channelId": C, "body": "x", "retryable": true, "mentionId": "not-a-uuid" }),
             json!({ "channelId": C, "body": "x", "retryable": true, "mentionId": null }),
@@ -1456,8 +1505,55 @@ mod tests {
         }))
         .expect("mentionId without code");
         assert_eq!(
-            Value::Object(failure_meta(&f)),
+            Value::Object(failure_meta(&f, true)),
             json!({ "kind": "failure", "failure": { "retryable": false, "what": "w" } })
+        );
+        // Rust 가 맡는 표지 셋. keepCode 가 참이면 붙고, laneCode 는 provider_lane 에만 따라 붙는다.
+        let meta = |v: Value, keep: bool| {
+            Value::Object(failure_meta(&parse_fail(&v).expect("code"), keep))
+        };
+        assert_eq!(
+            meta(
+                json!({ "channelId": C, "body": "x", "retryable": true, "code": "inject_unconfirmed", "mentionId": R, "claudePoolRank": 2 }),
+                true
+            ),
+            json!({ "kind": "failure", "failure": { "retryable": true, "code": "inject_unconfirmed" } })
+        );
+        assert_eq!(
+            meta(
+                json!({ "channelId": C, "body": "x", "retryable": true, "code": "provider_lane", "laneCode": "unknown" }),
+                true
+            ),
+            json!({ "kind": "failure", "failure": { "retryable": true, "code": "provider_lane", "laneCode": "unknown" } })
+        );
+        assert_eq!(
+            meta(
+                json!({ "channelId": C, "body": "x", "retryable": true, "code": "inject_unconfirmed", "laneCode": "unknown" }),
+                true
+            ),
+            json!({ "kind": "failure", "failure": { "retryable": true, "code": "inject_unconfirmed" } })
+        );
+        assert_eq!(
+            meta(
+                json!({ "channelId": C, "body": "x", "retryable": true, "laneCode": "unknown" }),
+                true
+            ),
+            json!({ "kind": "failure", "failure": { "retryable": true } })
+        );
+        // thread_model_rejected 인데 살아 있는 지정이 없으면(keepCode 거짓) 글은 올리고 표지만 뺀다.
+        assert_eq!(
+            meta(
+                json!({ "channelId": C, "body": "x", "retryable": false, "code": "thread_model_rejected" }),
+                false
+            ),
+            json!({ "kind": "failure", "failure": { "retryable": false } })
+        );
+        assert_eq!(
+            meta(
+                json!({ "channelId": C, "body": "x", "retryable": false, "code": "thread_model_rejected" }),
+                true
+            ),
+            json!({ "kind": "failure", "failure": { "retryable": false, "code": "thread_model_rejected" } })
         );
         // agentModels 는 fail 에 없는 칸 — zod 처럼 버린다.
         assert!(
