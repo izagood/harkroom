@@ -15,7 +15,8 @@
 //! avcs 주소는 `http://`·`https://` 둘 다 여기서 읽는다(`crate::avcs_http` 가 scheme 으로 고른다).
 //!
 //! TS 로 넘기는 것(아무것도 읽기 전에):
-//! - 저장소가 둘 이상인데 이름에 `[a-z0-9/.-]` 밖의 글자가 있을 때 — TS 는 `localeCompare`(ICU)로 줄을 세우고 그 순서를 여기서 못 낸다.
+//! - 저장소가 둘 이상인데 이름에 `[A-Za-z0-9_./-]`(GitHub 이름 글자) 밖의 글자가 있을 때 — TS 는 `localeCompare`(ICU)로 줄을 세우고,
+//!   그 순서는 이 글자들에 대해서만 여기서 낸다([`icu_cmp`], 골든 `golden/collab_repo_order.json`). TS 를 끌 때 Rust 순서로 확정한다.
 //!
 //! **읽기만 한다.** 필요한 SELECT 는 [`COLLAB_READ_PRIVILEGES`], 없으면 `main.rs` 가 TS 에 남긴다.
 use crate::auth::RequireAccount;
@@ -689,10 +690,36 @@ async fn read_repo(
     Ok(build(entries, reduced.as_ref(), keys))
 }
 
-/// TS 의 `localeCompare` 줄 세우기를 바이트 순서로 낼 수 있는 이름인가.
+/// 이름 글자의 ICU 뿌리 순서 1차 무게 — 기호(`_` `-` `.` `/`) < 숫자 < 글자(대소문자 같은 자리). 모르는 글자는 `None`.
+fn icu_primary(b: u8) -> Option<u8> {
+    Some(match b {
+        b'_' => 0,
+        b'-' => 1,
+        b'.' => 2,
+        b'/' => 3,
+        b'0'..=b'9' => 10 + (b - b'0'),
+        b'a'..=b'z' => 20 + (b - b'a'),
+        b'A'..=b'Z' => 20 + (b - b'A'),
+        _ => return None,
+    })
+}
+
+/// TS 의 `localeCompare` 줄 세우기를 여기서 낼 수 있는 이름인가 — GitHub 이름에 쓰는 ASCII 글자뿐일 때다.
 fn plain_name(repo: &str) -> bool {
-    repo.bytes()
-        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"/.-".contains(&b))
+    repo.bytes().all(|b| icu_primary(b).is_some())
+}
+
+/// [`plain_name`] 인 두 이름을 TS `a.localeCompare(b)`(ICU 뿌리 순서)와 같게 견준다.
+///
+/// 1차: 글자 무게를 앞에서부터(짧은 쪽이 앞). 1차가 전부 같으면(대소문자만 다른 이름) 3차: 처음 다른 자리에서 소문자가 앞.
+/// 이 글자들에는 2차(악센트) 차이가 없다. 근거는 Node 로 구운 `golden/collab_repo_order.json` 이다.
+fn icu_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    let key = |s: &str| s.bytes().map(icu_primary).collect::<Vec<_>>();
+    key(a).cmp(&key(b)).then_with(|| {
+        a.bytes()
+            .map(|c| c.is_ascii_uppercase())
+            .cmp(b.bytes().map(|c| c.is_ascii_uppercase()))
+    })
 }
 
 /// 바인딩 줄(나온 순서)을 저장소로 접는다 — `None` 이면 줄 세우기를 TS 에 맡긴다.
@@ -707,7 +734,7 @@ fn fold_repos(bound: Vec<(String, String)>) -> Option<Vec<(String, Vec<String>)>
     if out.len() > 1 && !out.iter().all(|(r, _)| plain_name(r)) {
         return None;
     }
-    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out.sort_by(|a, b| icu_cmp(&a.0, &b.0));
     // 채널 행은 ORDER BY 없이 읽힌다 — 답의 `channelIds` 순서가 DB 계획에 따라 흔들리지 않게 정렬한다(TS 도 순서를 약속하지 않는다).
     for (_, ids) in &mut out {
         ids.sort();
@@ -948,12 +975,69 @@ mod tests {
             )]),
             "채널 id 는 읽힌 순서가 아니라 정렬해 낸다"
         );
-        assert_eq!(fold_repos(b(&[("o/B", "1"), ("o/a", "2")])), None);
-        assert_eq!(fold_repos(b(&[("o/a_b", "1"), ("o/a", "2")])), None);
+        let order = |v: &[(&str, &str)]| {
+            fold_repos(b(v)).map(|o| o.into_iter().map(|(r, _)| r).collect::<Vec<_>>())
+        };
+        assert_eq!(
+            order(&[
+                ("o/B", "1"),
+                ("o/b", "2"),
+                ("o/a_b", "3"),
+                ("o/a", "4"),
+                ("o/a-b", "5")
+            ]),
+            Some(vec![
+                "o/a".into(),
+                "o/a_b".into(),
+                "o/a-b".into(),
+                "o/b".into(),
+                "o/B".into()
+            ]),
+            "대문자·밑줄은 TS(ICU) 순서로 — 바이트 순서가 아니다"
+        );
+        for odd in ["o/한글", "o/a b", "o/a@b", "o/é", "o/a+b", ""] {
+            let got = fold_repos(b(&[(odd, "1"), ("o/a", "2")]));
+            assert_eq!(
+                got.is_none(),
+                !odd.is_empty(),
+                "{odd:?}: 그 밖의 글자는 TS 로"
+            );
+        }
         assert!(
             fold_repos(b(&[("O/Weird_", "1")])).is_some(),
             "하나뿐이면 순서가 없다"
         );
         assert!(reduced_of(&Value::Null, None).is_err());
+    }
+
+    /// 골든은 `packages/server/test/rustCollabRepoOrderGolden.test.ts` 가 Node 의 `localeCompare` 로 굽는다.
+    #[test]
+    fn repo_order_matches_ts_golden() {
+        let v: Value = serde_json::from_str(include_str!("../../golden/collab_repo_order.json"))
+            .expect("golden/collab_repo_order.json");
+        let sorted: Vec<&str> = v["sorted"]
+            .as_array()
+            .expect("sorted")
+            .iter()
+            .map(|x| x.as_str().expect("name"))
+            .collect();
+        assert!(sorted.len() > 700, "골든이 비었다");
+        assert!(sorted.iter().all(|n| plain_name(n)));
+        // 모든 쌍 — 골든에서 앞선 이름은 여기서도 앞선다(같다고 치는 쌍도 없다).
+        for (i, a) in sorted.iter().enumerate() {
+            for b in &sorted[i + 1..] {
+                assert_eq!(icu_cmp(a, b), std::cmp::Ordering::Less, "{a:?} < {b:?}");
+                assert_eq!(icu_cmp(b, a), std::cmp::Ordering::Greater, "{b:?} > {a:?}");
+            }
+        }
+        // 실제 길(`fold_repos`)로도 — 뒤집어 넣어도 골든 순서로 나온다.
+        let bound = sorted
+            .iter()
+            .rev()
+            .map(|r| ((*r).to_owned(), "c".to_owned()))
+            .collect();
+        let got = fold_repos(bound).expect("전부 아는 글자");
+        let got: Vec<&str> = got.iter().map(|(r, _)| r.as_str()).collect();
+        assert_eq!(got, sorted);
     }
 }
