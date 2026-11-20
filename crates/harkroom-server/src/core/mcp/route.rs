@@ -335,9 +335,14 @@ pub async fn handle(
     if let Some(r) = serve_pre(&up, ci, &parts.headers, &bytes, served, &tools, &pre).await {
         return r;
     }
-    // Rust 가 답하지 않은 도구 호출 — 도구 이름만 한 줄 남긴다(인자·본문은 싣지 않는다). TS 로 가는 `/mcp` 를 운영 로그로 셀 수 있게.
+    // Rust 가 답하지 않은 도구 호출 — 도구 이름과 인자 **키 이름**만 한 줄 남긴다(값·본문은 싣지 않는다). TS 로 가는 `/mcp` 를
+    // 운영 로그로 셀 수 있게, 그리고 어떤 인자 꼴이 Rust 를 빗나갔는지 바로 보이게.
     if let Some(name) = ts_tool_name(&bytes) {
-        eprintln!("front: mcp tool to TS tool={name} agent={}", me.id);
+        let keys = ts_arg_keys(&bytes);
+        eprintln!(
+            "front: mcp tool to TS tool={name} agent={} keys={keys}",
+            me.id
+        );
     }
     // TS 가 꺼졌거나 닿지 않으면(앞단 프록시의 502) 맨 502 대신 JSON-RPC 꼴로 답한다([`super::ts_down`]).
     let res = proxy::forward(
@@ -369,6 +374,38 @@ fn ts_tool_name(bytes: &[u8]) -> Option<String> {
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
     Some(if ok { name.to_owned() } else { "?".to_owned() })
+}
+
+/// `tools/call` 본문의 `params.arguments` 키 이름들(값 없이) — 로그용. 키는 [`ts_tool_name`] 과 같은 글자(64자까지·영숫자와 `._-`)만,
+/// 아니면 `?`. 16개까지 쉼표로 잇고 넘으면 `,…`. 인자가 없으면 `-`, 객체가 아니면 그 형(`null`·`array`·`string`·`number`·`boolean`).
+fn ts_arg_keys(bytes: &[u8]) -> String {
+    let Ok(v) = serde_json::from_slice::<serde_json::Value>(bytes) else {
+        return "-".to_owned();
+    };
+    let o = match v.pointer("/params/arguments") {
+        None => return "-".to_owned(),
+        Some(serde_json::Value::Object(o)) => o,
+        Some(serde_json::Value::Null) => return "null".to_owned(),
+        Some(serde_json::Value::Array(_)) => return "array".to_owned(),
+        Some(serde_json::Value::String(_)) => return "string".to_owned(),
+        Some(serde_json::Value::Number(_)) => return "number".to_owned(),
+        Some(serde_json::Value::Bool(_)) => return "boolean".to_owned(),
+    };
+    if o.is_empty() {
+        return "{}".to_owned();
+    }
+    let clean = |k: &String| {
+        let ok = !k.is_empty()
+            && k.len() <= 64
+            && k.chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
+        if ok { k.clone() } else { "?".to_owned() }
+    };
+    let mut out: Vec<String> = o.keys().take(16).map(clean).collect();
+    if o.len() > 16 {
+        out.push("…".to_owned());
+    }
+    out.join(",")
 }
 
 fn lifecycle_reply(
@@ -792,6 +829,29 @@ pub fn routes(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 넘김 로그는 인자 키 이름만 — 값은 싣지 않는다.
+    #[test]
+    fn ts_arg_keys_names_only() {
+        let call = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"message.read","arguments":{"channelId":"secret-a","since":"59958","threadRootId":"secret-b"}}}"#;
+        let got = ts_arg_keys(call);
+        assert_eq!(got, "channelId,since,threadRootId");
+        assert!(!got.contains("secret") && !got.contains("59958"));
+        let k = |a: &str| {
+            ts_arg_keys(
+                format!(r#"{{"method":"tools/call","params":{{"name":"x"{a}}}}}"#).as_bytes(),
+            )
+        };
+        assert_eq!(k(""), "-");
+        assert_eq!(k(r#","arguments":null"#), "null");
+        assert_eq!(k(r#","arguments":[1]"#), "array");
+        assert_eq!(k(r#","arguments":{}"#), "{}");
+        assert_eq!(k(r#","arguments":{"a b":1,"ok":2}"#), "?,ok");
+        let many: Vec<String> = (0..20).map(|i| format!(r#""k{i:02}":0"#)).collect();
+        let got = k(&format!(r#","arguments":{{{}}}"#, many.join(",")));
+        assert_eq!(got.split(',').count(), 17);
+        assert!(got.ends_with(",…"));
+    }
 
     /// AC5 안전판 — `turn.cancel` 만 고르고, 다른 도구는 이 목록으로 Rust 에 오지 않는다.
     #[test]
