@@ -130,18 +130,32 @@ fn delegated_fails_and_human_falls_back_to_quote() {
 }
 
 #[test]
-fn delegation_outcome_quotes_on_its_own_line() {
+fn delegation_outcome_turn_leaves_no_thread_line() {
     let none: Vec<String> = vec![];
+    // 끝말이 있든 없든, 화면 답이 있든 글을 만들지 않는다 — 반응 하나뿐이다.
     let mut i = input(NudgeCaller::DelegationOutcome, &none);
     i.last_said = Some("결말 확인");
+    i.screen_answer = Some("화면 답");
+    i.screen_ended = true;
     assert_eq!(
         silent_turn_notice(&i),
-        SilentTurnNotice::Post {
-            body: "넘긴 일의 결말을 확인한 턴이 글 없이 끝났습니다 — 마지막 말:\n> 결말 확인"
-                .into(),
-            proxied: false
+        SilentTurnNotice::React {
+            emoji: SILENT_ACK_EMOJI
         }
     );
+    let i = input(NudgeCaller::DelegationOutcome, &none);
+    assert_eq!(
+        silent_turn_notice(&i),
+        SilentTurnNotice::React {
+            emoji: SILENT_ACK_EMOJI
+        }
+    );
+    // 담당 쪽은 그대로 실패로 닫는다.
+    let i = input(NudgeCaller::Delegated, &none);
+    assert!(matches!(
+        silent_turn_notice(&i),
+        SilentTurnNotice::Fail { .. }
+    ));
 }
 
 #[test]
