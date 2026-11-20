@@ -7831,7 +7831,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           await step('묶음 tool approve', bAnsP(sd.B), { rootId: sd.toolBundleCard, optionId: 'approve' });
           await step('REST command approve_once', restP(sd.cmdRestReq, 'approve_once'), {});
           await step('카드 command approve_hour', ansP(sd.cmdCardCard), { optionId: 'approve_hour' });
-          await step('REST command approve(옛 앱) → TS 가 1회 grant', restP(sd.cmdOldReq, 'approve'), {});
+          await step('REST command approve(옛 앱) → 1회 grant', restP(sd.cmdOldReq, 'approve'), {});
           await step('REST command 판정 안 맞음 → 409 not_grantable', restP(sd.cmdBadReq, 'approve_hour'), {});
           await step('카드 command approve_once + 카드 once → TS 409 not_once', ansP(sd.cmdOnceCard), { optionId: 'approve_once' });
           return out;
@@ -7843,7 +7843,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         const rsOut = await run(rsUrl, R);
         expect(rsOut).toEqual(tsOut);
         const st = (s: string) => tsOut.find((o) => o.step === s);
-        for (const s of ['REST tool approve', 'REST tool approve — 만료 grant 덮기', '카드 tool approve', '묶음 tool approve', 'REST command approve_once', '카드 command approve_hour']) {
+        for (const s of ['REST tool approve', 'REST tool approve — 만료 grant 덮기', '카드 tool approve', '묶음 tool approve', 'REST command approve_once', '카드 command approve_hour', 'REST command approve(옛 앱) → 1회 grant']) {
           expect(st(s)?.status, s).toBe(200);
         }
         expect(st('REST command 판정 안 맞음 → 409 not_grantable')?.code).toBe('not_grantable');
@@ -7871,9 +7871,12 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
              from command_grant where agent_id = $1 and command like $2 order by command`,
           [agent.accountId, `% ${tag}-%`, ids(sd)])).rows.map((r) => shape(sd)(r));
         const tC = await cmds('tside', T);
-        expect(tC.length, 'command grant 셋(1회·1시간 Rust, 옛 approve 는 TS)').toBe(3);
+        expect(tC.length, 'command grant 셋(1회·1시간·옛 approve 의 1회)').toBe(3);
         expect(JSON.stringify(tC), '②-5 — 요청 줄의 file_digests 를 옮긴다').toContain('a'.repeat(64));
         expect(await cmds('rside', R)).toEqual(tC);
+        // 0-1 — 옛 앱의 command `approve` 는 Rust 에서 [이번 한 번]과 같은 쓰기다: 1회 `command_grant` 하나뿐이고 `account_grant` 줄은 없다.
+        expect(JSON.stringify(tC), '옛 approve 도 1회(single_use)').toContain('-old","single_use":true');
+        expect((await db.pool.query(`select 1 from account_grant where account_id = $1 and scope like '% rside-old'`, [agent.accountId])).rowCount).toBe(0);
         const audits = async (sd: Side) => (await db.pool.query(
           `select action, actor_id::text as actor, target, detail from audit_log
             where action in ('permission.approved', 'grant.given') and detail->>'requestId' = any($1::text[])`,
@@ -7887,8 +7890,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect(await wakes(R)).toEqual(await wakes(T));
         // Rust 가 맡았다 — grant.changed 가 outbox(`busEvents`)에 있다.
         const until6 = Date.now() + 10_000;
-        while (gc() - gc0 < 6 && Date.now() < until6) await new Promise((res) => setTimeout(res, 100));
-        expect(gc() - gc0, 'Rust 승인 여섯의 grant.changed').toBeGreaterThanOrEqual(6);
+        while (gc() - gc0 < 7 && Date.now() < until6) await new Promise((res) => setTimeout(res, 100));
+        expect(gc() - gc0, 'Rust 승인 일곱의 grant.changed(옛 command approve 포함)').toBeGreaterThanOrEqual(7);
       }
       // S5.5 d — 권한 카드를 그 **거울 카드**로 정한다(`decide_routes.rs` `card_target`). 서버가 세운 꼴의 거울(에이전트 글·사람 앞·
       // 선택지 id 같음)로 거절·승인하면 원본 요청이 정해지고(`via: mirror`) 원본 카드에 답이 적히며 거울이 같이 닫힌다. 응답은 누른 거울이다.

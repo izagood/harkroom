@@ -546,7 +546,7 @@ pub struct Shape<'a> {
 ///   (`approve`·`approve_mandate`·`approve_turn`, C1)과 command `approve_once`·`approve_hour`(C3)·deny(P3 B2)는 Rust.
 ///   `approve_new_mandate`(tool)는 C2, merge 는 P3 B3.
 /// - deny 는 kind 와 관계없이 Rust(머지 거절 카드의 deny 포함, grant 를 쓰지 않음). 같은 카드의 approve_once·approve 는 TS(②-6).
-/// - 승인은 `tool`→approve, `command`→approve_once·approve_hour 만. 소유자가 아닌 승인(asOwner=false)은 판정 뒤
+/// - 승인은 `tool`→approve, `command`→approve_once·approve_hour(옛 앱의 `approve` 는 approve_once 와 같다). 소유자가 아닌 승인(asOwner=false)은 판정 뒤
 ///   [`after_verdict`] 가 TS 로 돌린다.
 pub fn rust_takes(s: Shape<'_>) -> Option<Decision> {
     // S5.5 d — 거울 카드(진짜 거울·원본 채널 보기는 입구가 확인)는 원본 카드 버튼과 같은 허용 목록을 탄다.
@@ -570,6 +570,9 @@ pub fn rust_takes(s: Shape<'_>) -> Option<Decision> {
         // C1 — [이번 턴만]은 위임장이 있는 tool 카드만 승인이다(없으면 409 `bad_decision` — 11d 부터 그 답도 Rust, 아래).
         // C3 — command 는 위임장이 있어도 Rust(1시간 command_grant + 그 위임장에 command 줄).
         (Decision::ApproveOnce | Decision::ApproveHour, "command") => !s.has_denial,
+        // 0-1 — 옛 앱은 command 카드에도 `approve` 를 보낸다. 명령 승인은 1회·1시간 둘뿐이라 [이번 한 번]과 같은 쓰기로 맡는다
+        // (1회 `command_grant`, 위임장이 있으면 uses 1 줄). 7일 `account_grant` 는 쓰지 않는다 — 명령은 그 표의 범위가 아니다.
+        (Decision::Approve, "command") => !s.has_denial,
         // S5.4 12e — merge 카드의 7일 [승인](위임장 없음)은 Rust(`repo.merge` account_grant). 위임장 있는 merge 는 TS.
         // 13d — 거절 기록이 붙은 카드도 Rust(TS: CI 거절이면 400 `ci_card_once_only`, 아니면 같은 7일 grant). 칸이 없으면 쓰기 전에 TS.
         // 14d — 위임장이 있어도 Rust(grant + 그 위임장에 merge 줄). C1 칸이 없으면 쓰기 전에 TS.
