@@ -326,6 +326,10 @@ pub async fn handle(
     if let Some(r) = serve_pre(&up, ci, &parts.headers, &bytes, served, &tools, &pre).await {
         return r;
     }
+    // Rust 가 답하지 않은 도구 호출 — 도구 이름만 한 줄 남긴다(인자·본문은 싣지 않는다). TS 로 가는 `/mcp` 를 운영 로그로 셀 수 있게.
+    if let Some(name) = ts_tool_name(&bytes) {
+        eprintln!("front: mcp tool to TS tool={name} agent={}", me.id);
+    }
     // TS 가 꺼졌거나 닿지 않으면(앞단 프록시의 502) 맨 502 대신 JSON-RPC 꼴로 답한다([`super::ts_down`]).
     let res = proxy::forward(
         State(up),
@@ -344,6 +348,20 @@ pub async fn handle(
 /// P2b — 도구 부르기가 아닌 본문(`initialize`·`ping`·`tools/list`·알림·그것들만 든 배치)을 Rust 가 답한다([`super::lifecycle`]).
 /// TS 는 `/mcp` 요청마다 presence 를 mark 한다 — 그 표가 없으면 생존 신호를 잃으므로 답하지 않고 TS 로 넘긴다.
 /// 전송 조건(Accept·Content-Type·판 헤더)이 SDK 와 다르면 그 거절 글자도 TS 가 낸다.
+/// 본문이 `tools/call` 하나면 그 도구 이름(로그용, 128자까지·영숫자와 `._-` 만). 배치·그 밖의 메서드는 `None`.
+fn ts_tool_name(bytes: &[u8]) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_slice(bytes).ok()?;
+    if v.get("method").and_then(serde_json::Value::as_str) != Some("tools/call") {
+        return None;
+    }
+    let name = v.pointer("/params/name")?.as_str()?;
+    let ok = name.len() <= 128
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
+    Some(if ok { name.to_owned() } else { "?".to_owned() })
+}
+
 fn lifecycle_reply(
     headers: &axum::http::HeaderMap,
     bytes: &[u8],
@@ -758,6 +776,16 @@ mod tests {
     use super::*;
 
     /// AC5 안전판 — `turn.cancel` 만 고르고, 다른 도구는 이 목록으로 Rust 에 오지 않는다.
+    #[test]
+    fn ts_tool_name_only_tools_call() {
+        let call = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"message.delegate","arguments":{"body":"secret"}}}"#;
+        assert_eq!(ts_tool_name(call).as_deref(), Some("message.delegate"));
+        let list = br#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
+        assert_eq!(ts_tool_name(list), None);
+        let odd = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"a b\nc"}}"#;
+        assert_eq!(ts_tool_name(odd).as_deref(), Some("?"));
+    }
+
     #[test]
     fn turn_cancel_list_picks_only_turn_cancel() {
         let call = |n: &str| serde_json::json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":n,"arguments":{}}});

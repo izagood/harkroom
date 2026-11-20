@@ -241,6 +241,17 @@ fn service_call_for(is_agent: bool) -> bool {
     !is_agent
 }
 
+/// TS 로 넘기는 갈래 이름을 한 줄 남기고 `None` — 앞단은 요청을 하나하나 기록하지 않아 이 줄이 없으면 운영에서 갈래를 가를 수 없다.
+fn to_ts<T>(branch: &str) -> Option<T> {
+    eprintln!("front: message.delegate to TS branch={branch}");
+    None
+}
+
+/// `.ok()?` 로 삼키던 DB 오류를 갈래 이름과 함께 남긴다(그 뒤 `.ok()?` 로 TS 에 넘긴다).
+fn ts_err<E: std::fmt::Display>(branch: &'static str) -> impl FnOnce(E) {
+    move |e| eprintln!("front: message.delegate to TS branch={branch} error={e}")
+}
+
 /// `message.delegate` — 거절·위임 결과면 그 글자, 그 밖은 `None`(TS 가 같은 요청을 돈다). `st` 는 쓰기 칸이 있을 때만 있다.
 #[allow(clippy::too_many_arguments)]
 pub async fn answer(
@@ -253,15 +264,20 @@ pub async fn answer(
     turn: Option<&str>,
     operator: bool,
 ) -> Option<String> {
-    let a = parse(args)?;
+    let Some(a) = parse(args) else {
+        return to_ts("parse");
+    };
     // 고르기는 하네스 목록·고르기 쓰기 권한이 다 있을 때만 — 아니면 아무것도 답하지 않고 TS.
     if !a.picks.is_empty() && !picks_ok {
-        return None;
+        return to_ts("picks_not_allowed");
     }
     match channel_visible(pool, &me.id, &a.channel).await {
         Ok(true) => {}
         Ok(false) => return Some(err("forbidden", "not a member of this dm channel")),
-        Err(_) => return None,
+        Err(e) => {
+            ts_err("channel_visible")(e);
+            return None;
+        }
     }
     // TS: 가시성 뒤, 자기 위임 앞 — 계획판 칸의 짝·자기 연결.
     match &a.plan {
@@ -273,7 +289,7 @@ pub async fn answer(
     }
     // TS `h.toLowerCase() === account.handle.toLowerCase()` — ASCII 밖 handle 은 JS 소문자 규칙을 맞추지 않고 넘긴다.
     if !me.handle.is_ascii() || a.to.iter().any(|h| !h.is_ascii()) {
-        return None;
+        return to_ts("non_ascii_handle");
     }
     let mine = me.handle.to_ascii_lowercase();
     let wanted: Vec<String> = a.to.iter().map(|h| h.to_ascii_lowercase()).collect();
@@ -285,6 +301,7 @@ pub async fn answer(
         .bind(&me.id)
         .fetch_all(pool)
         .await
+        .map_err(ts_err("lead_team"))
         .ok()?;
     let rows: Vec<(String, String, String, bool)> = rows
         .into_iter()
@@ -321,11 +338,12 @@ async fn gate(
     a: &Args,
     wanted: &[String],
 ) -> Option<Result<Members, String>> {
-    let mut conn = pool.acquire().await.ok()?;
+    let mut conn = pool.acquire().await.map_err(ts_err("gate_acquire")).ok()?;
     let rows: Vec<(String, String, bool)> = sqlx::query_as(&*sql().targets)
         .bind(wanted)
         .fetch_all(&mut *conn)
         .await
+        .map_err(ts_err("gate_targets"))
         .ok()?;
     let by_handle: HashMap<&str, &str> = rows
         .iter()
@@ -337,7 +355,10 @@ async fn gate(
         .iter()
         .map(|(id, h, off)| (h.clone(), (id.clone(), *off)))
         .collect();
-    let facts = invoke_gate::invoke_facts(&mut conn, &ids).await.ok()?;
+    let facts = invoke_gate::invoke_facts(&mut conn, &ids)
+        .await
+        .map_err(ts_err("invoke_facts"))
+        .ok()?;
     let ctx = Ctx {
         caller_id: &me.id,
         channel_id: &a.channel,
@@ -348,7 +369,10 @@ async fn gate(
     for (i, h) in wanted.iter().enumerate() {
         let fact = by_handle.get(h.as_str()).and_then(|id| facts.get(*id));
         let ok = match fact {
-            Some(f) => invoke_gate::may_invoke(&mut conn, f, &ctx).await.ok()?,
+            Some(f) => invoke_gate::may_invoke(&mut conn, f, &ctx)
+                .await
+                .map_err(ts_err("may_invoke"))
+                .ok()?,
             None => false,
         };
         if !ok {
@@ -392,6 +416,7 @@ async fn rounds_then_write(
         .bind(vec![me.id.clone()])
         .fetch_one(pool)
         .await
+        .map_err(ts_err("rounds_used"))
         .ok()?;
     let used = i64::from(used);
     if used >= TEAM_ROUND_LIMIT {
@@ -403,7 +428,9 @@ async fn rounds_then_write(
         ));
     }
     // 게이트·상한을 다 지났다 — 쓰기 칸이 있으면 위임을 쓴다(C3b-2c-4b).
-    let st = st?;
+    let Some(st) = st else {
+        return to_ts("write_core_off");
+    };
     write(
         st, me, a, wanted, members, team_id, used, cause, turn, operator,
     )
@@ -432,12 +459,16 @@ async fn write(
 ) -> Option<String> {
     let mut ids: Vec<String> = Vec::with_capacity(wanted.len());
     for w in wanted {
-        ids.push(members.get(w)?.0.clone());
+        let Some(m) = members.get(w) else {
+            return to_ts("member_missing");
+        };
+        ids.push(m.0.clone());
     }
     let online: Vec<String> = sqlx::query_scalar(ONLINE_SQL)
         .bind(&ids)
         .fetch_all(&st.read)
         .await
+        .map_err(ts_err("online"))
         .ok()?;
     let mut delegated: Vec<String> = Vec::new();
     let mut delegate_ids: Vec<String> = Vec::new();
@@ -455,7 +486,7 @@ async fn write(
     // `delegation_failed` 로 답한다(글만 남는다). Rust 는 글과 의무가 한 tx 라 그 꼴을 만들 수 없으므로 TS 로 넘긴다.
     // 겹친 담당이 접속하지 않았으면 TS 도 `unreachable` 에 두 번 싣고 끝난다 — 그 꼴은 Rust 가 그대로 답한다(P6-5b).
     if has_dup(&delegate_ids) {
-        return None;
+        return to_ts("duplicate_delegate");
     }
     // 계획 잇기는 위임 글 **뒤**라 되돌릴 수 없다 — 계획 쓰기 권한이 없으면 글을 쓰기 전에 TS 로 넘긴다.
     if matches!(a.plan, PlanArg::Link(..)) {
@@ -466,10 +497,20 @@ async fn write(
             PLAN_WRITE_SEQUENCE_PRIVILEGES,
         )
         .await
+        .map_err(ts_err("plan_privileges"))
         .ok()?;
         if !missing.is_empty() {
-            return None;
+            return to_ts("plan_privileges_missing");
         }
+    }
+    // Rust 가 직접 「접속 안 함」으로 답한다 — TS 가 낸 `unreachable`(메모리 presence)과 운영에서 가를 수 있게 남긴다.
+    if !unreachable.is_empty() {
+        eprintln!(
+            "front: message.delegate unreachable from Rust online={}/{} delegated={}",
+            online.len(),
+            ids.len(),
+            delegated.len()
+        );
     }
     if delegated.is_empty() {
         return Some(super::respond::text_result(&format!(
@@ -478,7 +519,10 @@ async fn write(
         )));
     }
     // TS `preparePicks` — 접속 확인 뒤, 글 앞.
-    if let Some(refused) = super::msg_post::check_picks(st, &a.picks).await? {
+    let Some(picked) = super::msg_post::check_picks(st, &a.picks).await else {
+        return to_ts("check_picks");
+    };
+    if let Some(refused) = picked {
         return Some(refused);
     }
     let hook = (!a.picks.is_empty()).then(|| {
@@ -514,9 +558,17 @@ async fn write(
         &mut meta,
     )
     .await
+    .map_err(ts_err("reported_model_meta"))
     .ok()?;
-    let is_dm = msg_post::channel_is_dm(&st.read, &a.channel).await.ok()?;
-    let audience = audience_for(&st.read, &a.channel).await.ok()?.to_json();
+    let is_dm = msg_post::channel_is_dm(&st.read, &a.channel)
+        .await
+        .map_err(ts_err("channel_is_dm"))
+        .ok()?;
+    let audience = audience_for(&st.read, &a.channel)
+        .await
+        .map_err(ts_err("audience"))
+        .ok()?
+        .to_json();
     let origin = Origin {
         plan_auto_stamp: None,
         defer_inbox_events: false,
@@ -559,15 +611,20 @@ async fn write(
         &origin,
     )
     .await
+    .map_err(ts_err("post_in_tx"))
     .ok()?;
     match out {
-        Outcome::ToTs | Outcome::Replayed(_) | Outcome::Rejected(_) => None,
+        // `ToTs` 의 갈래 이름은 [`msg_post::post_in_tx`] 가 이미 남겼다.
+        Outcome::ToTs => to_ts("post_to_ts"),
+        Outcome::Replayed(_) => to_ts("replayed"),
+        Outcome::Rejected(_) => to_ts("rejected"),
         Outcome::ChainLimit => Some(err(
             "chain_limit",
             "이 사슬은 에이전트끼리의 호출 상한에 닿았다 — 사람에게 넘겨라",
         )),
         // 아무것도 쓰지 않았다 — 그 오류 글자는 TS 가 낸다.
-        Outcome::BadThread | Outcome::BadAttachment => None,
+        Outcome::BadThread => to_ts("bad_thread"),
+        Outcome::BadAttachment => to_ts("bad_attachment"),
         Outcome::Posted {
             row,
             delegation_id,

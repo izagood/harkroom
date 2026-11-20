@@ -182,7 +182,7 @@ struct Sql {
 /// 작성자가 담당인 열린·보고된 위임 항목인데 위임 스위치를 모름(`$4` 가 거짓 — [`delegation_v2`] 가 `None`. 알면 C1c-3d 부터 Rust 가
 /// `closeDelegationsForReply` 의 사람 글 갈래를 한다) ·
 /// (지워진 머리는 C1c-3d 부터 Rust 가 `rootBack` 까지 맡는다.) 열린 선택 카드인데 글이 **카드 답으로 읽힐 수 있음**(`$3` 이 거짓 — TS `applyChatApproval` 의 글로 고르기, 받는 쪽·종류와
-/// 무관하게 카드 전부). 글이 물음뿐이면([`question_only`]) 고르기가 될 수 없어 Rust 가 맡고 카드를 `replied` 로 닫는다(C1c-3c).
+/// 무관하게 카드 전부). 에이전트 글은 `$3` 이 참이다 — TS 라우트가 카드 고르기·접기를 사람 글에만 한다. 글이 물음뿐이면([`question_only`]) 고르기가 될 수 없어 Rust 가 맡고 카드를 `replied` 로 닫는다(C1c-3c).
 /// 쓰기 트랜잭션 안 seq 락 뒤에서 읽는다 — TS 가 같은 판정을 하는 때와 같은 창이다.
 const TS_THREAD_SQL: &str = "select (not $4::bool and exists(select 1 from team_delegation_item i join team_delegation d on d.id = i.delegation_id \
                 where d.thread_root_id = $1::uuid and i.delegate_account_id = $2::uuid \
@@ -211,6 +211,15 @@ fn question_only(body: &str) -> bool {
         return false;
     }
     body.contains('?') || body.contains('？')
+}
+
+/// 글을 TS 로 넘기는 갈래를 한 줄 남긴다 — 앞단은 요청을 하나하나 기록하지 않아서, 이 줄이 없으면 어느 갈래로 넘어갔는지 운영에서
+/// 가를 수 없다. 본문·헤더 값은 싣지 않는다(작성자·스레드 id 만).
+fn ts_reason(reason: &str, author: &str, root: Option<&str>) {
+    eprintln!(
+        "front: post to TS reason={reason} author={author} thread={}",
+        root.unwrap_or("-")
+    );
 }
 
 /// TS `delegationV2Enabled`(`HARKROOM_DELEGATION_V2`)을 Rust 가 읽는 법 — **값이 없으면 모른다**(`None`).
@@ -798,6 +807,7 @@ pub(crate) async fn post_tx(
     // 위임 글(C3b-2c-4b)은 v1 이면 앞 의무를 대체한다 — 스위치를 모르면 어느 쪽인지 정할 수 없으니 TS 로 넘긴다(fail-closed).
     if origin.delegation.is_some() && v2.is_none() {
         tx.rollback().await?;
+        ts_reason("delegation_v2_unknown", author, root);
         return Ok((Outcome::ToTs, None));
     }
     // TS `mentionDepthFor` — 사람 글은 언제나 사슬 밖이다. 원인이 있으면 먼저 그 원인에서 물려받고(C1c-4c), 원인이 나를 깨운
@@ -891,6 +901,7 @@ pub(crate) async fn post_tx(
     // 원인 제공자 대행이 걸린 부름인데 앞단에 `HARKROOM_PRINCIPAL_INVOKE` 가 없다 — TS 가 어느 쪽인지 모르니 TS 로 넘긴다.
     if calls.principal_switch_unknown {
         tx.rollback().await?;
+        ts_reason("principal_switch_unknown", author, root);
         return Ok((Outcome::ToTs, None));
     }
     // 에이전트 글의 아직 TS 몫인 부수효과 — 상한에 막힌 부름(백스톱 카드). 암묵 위임(C1c-4d)은 모드를 알고 쓰기 칸이 있을 때만
@@ -913,6 +924,7 @@ pub(crate) async fn post_tx(
         }
     {
         tx.rollback().await?;
+        ts_reason("capped_call_implicit_unknown", author, root);
         return Ok((Outcome::ToTs, None));
     }
     sqlx::query(s.lock.as_str())
@@ -926,14 +938,21 @@ pub(crate) async fn post_tx(
             .bind(r)
             .bind(author)
             // 시스템 줄은 카드 답이 되지 않는다(TS `closeAsksByReply` 는 라우트 몫) — ask 갈래를 끈다.
+            // 에이전트 글도 그렇다 — TS 라우트는 카드 고르기(`applyChatApproval`)·카드 접기(`closeAsksByReply`)를 사람 글에만 하고,
+            // MCP 도구는 서비스 `postMessage` 를 바로 부른다. 넘겨도 TS 가 할 카드 일이 없으니 Rust 가 맡는다.
             .bind(
-                origin.system || origin.service_call || origin.chat_ask_rust || question_only(body),
+                author_is_agent
+                    || origin.system
+                    || origin.service_call
+                    || origin.chat_ask_rust
+                    || question_only(body),
             )
             .bind(v2.is_some())
             .fetch_one(&mut *tx)
             .await?;
         if ts {
             tx.rollback().await?;
+            ts_reason("thread_delegation_or_open_ask", author, root);
             return Ok((Outcome::ToTs, None));
         }
     }
@@ -945,6 +964,7 @@ pub(crate) async fn post_tx(
             .await?;
         if closes {
             tx.rollback().await?;
+            ts_reason("closes_delegation_v2_unknown", author, root);
             return Ok((Outcome::ToTs, None));
         }
     }

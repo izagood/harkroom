@@ -9848,7 +9848,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           ['정체 한도 → 그림자 기록', withChainBy(() => bot2.accountId, 1, 3), (r) => ({ body: '@bot2 @mem 다시 봐', threadRootId: r }), agent.pat],
           // C1c-4d-2 — 사슬 상한(8홉)에 막힌 부름: 글은 나가고, 커밋 뒤 BOT 의 소유자(ADMIN)에게만 백스톱 카드(+ ask 푸시)를 세운다.
           ['백스톱: 상한에 막힌 부름 → 소유자 카드', withChainBy(() => bot2.accountId, chainLimit - 1), (r) => ({ body: '@bot2 @mem 다시 봐', threadRootId: r }), agent.pat],
-          // 열린 카드가 있는 스레드라 본문이 카드 답으로 읽히면 TS 몫이다(`TS_THREAD_SQL`) — 물음으로 쓴다.
+          // 열린 카드가 있는 스레드 — 에이전트 글은 카드 답이 되지 않아 Rust 가 맡는다(`TS_THREAD_SQL` 의 ask 갈래는 사람 글만).
           ['백스톱: 열린 카드 있음 → 재사용', withBackstop, (r) => ({ body: '@bot2 또 볼래?', threadRootId: r }), agent.pat],
           ['백스톱: 최상위 글이 막힘 → 그 글 아래 카드', async () => '', () => ({ body: '@bot2 이어서' }), agent.pat, undefined, cappedTop],
         ];
@@ -10335,6 +10335,13 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             return { args: { channelId: ch, threadRootId: root, body: `봤다 harkroom://message/${elsewhere}` }, via: viaOp, cause: call };
           }, true],
           ['URL 이 든 글도 Rust(링크 미리보기 없음)', async (ch) => ({ args: { channelId: ch, body: '여기 https://example.com/x 봐' }, via: viaPat }), true],
+          // 열린 사람 앞 카드가 있는 스레드 — TS 는 카드 고르기·접기를 사람 라우트 글에만 한다. 에이전트 글·보고·실패는 Rust 가 끝까지 답한다.
+          ...(['message.post', 'message.report', 'message.fail'] as const).map((tool): [string, (ch: string) => Promise<Setup>, boolean] => [`열린 카드 스레드 ${tool} → Rust`, async (ch: string) => {
+            const root = await ins({ ch, author: member.accountId, body: '일' });
+            await ins({ ch, root, author: bot2.accountId, body: '고를래', meta: { kind: 'ask', ask: { prompt: '고를래', options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }], to: { kind: 'human' } } } });
+            const extra = tool === 'message.report' ? { checks: ['봤다'] } : tool === 'message.fail' ? { retryable: true } : {};
+            return { tool, args: { channelId: ch, threadRootId: root, body: 'A 로 했다', ...extra }, via: viaPat };
+          }, true]),
           ['보관된 채널도 올린다', async (ch) => {
             await db.pool.query(`update channel set archived_at = now() where id = $1`, [ch]);
             return { args: { channelId: ch, body: '보관 뒤' }, via: viaPat };
@@ -11354,6 +11361,11 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             };
             const DW: [string, (ch: string, root: string) => Promise<{ args: Record<string, unknown>; cause?: string; plan?: boolean; ts?: boolean }>][] = [
               ['delegate 접속한 담당 → 글·의무·부름', async () => ({ args: { to: ['C3B2C4DEL'], body: '맡아 줘', deadlineSec: 900, model: 'claude-opus-5' } })],
+              // 열린 사람 앞 카드가 있는 스레드 — 위임은 카드와 무관하다(TS 위임 도구는 서비스 `postMessage` 를 바로 부른다). Rust 가 답한다.
+              ['delegate 열린 카드 스레드 → Rust 위임', async (ch, root) => {
+                await ins({ ch, root, author: bot2.accountId, body: '고를래', meta: { kind: 'ask', ask: { prompt: '고를래', options: [{ id: 'a', label: 'A' }], to: { kind: 'human' } } } });
+                return { args: { to: ['c3b2c4del'], body: '맡아 줘' } };
+              }],
               ['delegate 본문 멘션 → mention 부름을 위임 부름으로', async () => ({ args: { to: ['c3b2c4del'], body: '@c3b2c4del 맡아 줘' } })],
               ['delegate 접속 안 한 담당 섞임 → unreachable', async () => ({ args: { to: ['c3b2c4off', 'c3b2c4del'], body: '둘이 맡아 줘' } })],
               // P6-5b — `to` 에 같은 담당이 두 번(대소문자만 다름). 접속 안 한 담당이 겹치면 unreachable 에 두 번 실린다(Rust).
@@ -11434,6 +11446,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
               expect((rsW as { name: string; rust: boolean }[]).find((x) => x.name === n)!.rust, n).toBe(true);
             }
             expect((rsW as { name: string; rust: boolean }[]).find((x) => x.name === 'delegate 접속한 같은 이름 둘 → TS delegation_failed')!.rust).toBe(false);
+            expect((rsW as { name: string; rust: boolean }[]).find((x) => x.name === 'delegate 열린 카드 스레드 → Rust 위임')!.rust).toBe(true);
+            expect(w('delegate 열린 카드 스레드 → Rust 위임').body).toMatchObject({ delegated: ['c3b2c4del'], unreachable: [] });
             expect(w('delegate 사슬 상한 → chain_limit(아무것도 안 씀)').body).toMatchObject({ error: { code: 'chain_limit' } });
             expect(w('delegate 사슬 상한 → chain_limit(아무것도 안 씀)').deleg).toEqual([]);
             type PW = WO & { planRow: { doc: { groups: { id: string; linkedRootId?: string }[] }; rev: number; links: string[] } | null };
