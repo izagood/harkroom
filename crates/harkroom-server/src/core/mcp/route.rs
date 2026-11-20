@@ -729,10 +729,17 @@ pub async fn serve_pre(
     answer: &Answer<'_>,
     pre: &Pre<'_>,
 ) -> Option<Response<Body>> {
-    if served.is_empty() || !super::respond::transport_ok(headers) {
+    if !super::respond::transport_ok(headers) {
         return None;
     }
     let v = serde_json::from_slice::<serde_json::Value>(bytes).ok()?;
+    // SDK 는 어떤 처리기(입장 확인·leakGuard·회차 관문 포함)보다 먼저 zod 로 인자를 본다 — 같은 자리에서 같은 글자로 답한다.
+    if let Some(r) = zod_reply(&v, pre) {
+        return Some(r);
+    }
+    if served.is_empty() {
+        return None;
+    }
     let super::Dispatch::Rust(name) = super::dispatch(&v, served) else {
         return None;
     };
@@ -795,6 +802,30 @@ pub async fn serve_pre(
         None => answer(name, args).await,
     }?;
     Some(super::respond::sse(&id, &result))
+}
+
+/// 공통 인자 검증([`super::zod_gate`]) — 단일 `tools/call` 의 인자가 zod 가 거절할 꼴이면 SDK 와 같은 도구 오류로 답한다.
+/// presence 가 있으면 TS 처럼 mark 한다. 없어도 답한다 — 거절될 호출 하나의 생존 신호보다, TS 를 끈 뒤에도 같은 답이 나가는 쪽이
+/// 정본이다(그 에이전트의 다른 호출이 신호를 남긴다). 시험 줄([`serve`], `Pre::NONE`)도 같은 길을 탄다.
+/// 조건부 등록 도구(`delegation.close`)는 앞단 스위치가 「싣는다」일 때만 — 아니면 TS 의 「도구 없음」 답을 그대로 둔다.
+fn zod_reply(v: &serde_json::Value, pre: &Pre<'_>) -> Option<Response<Body>> {
+    if v.get("method")?.as_str()? != "tools/call" {
+        return None;
+    }
+    let id = super::respond::id_text(v.get("id")?)?;
+    let name = v.pointer("/params/name")?.as_str()?;
+    if name == "delegation.close" && pre.switches.delegation_v2 != Some(true) {
+        return None;
+    }
+    let super::zod_gate::Verdict::Reject(text) =
+        super::zod_gate::check(name, v.pointer("/params/arguments")?)
+    else {
+        return None;
+    };
+    if let Some(p) = pre.presence {
+        p.mark(pre.agent_id);
+    }
+    Some(super::respond::sse(&id, &text))
 }
 
 /// 코어 라우터 줄 — 표(`route_table`)로 붙여 CORS 대조 목록에 실린다. 같은 경로의 다른 메서드는 `ts_fallback` 으로 TS.

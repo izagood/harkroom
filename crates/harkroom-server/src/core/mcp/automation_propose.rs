@@ -158,7 +158,7 @@ fn str_len<'a>(o: &'a Map<String, Value>, k: &str, min: usize, max: usize) -> Op
 }
 
 fn int_in(v: &Value, min: i64, max: i64) -> Option<i64> {
-    v.as_i64().filter(|n| (min..=max).contains(n))
+    super::tools::js_int(v).filter(|n| (min..=max).contains(n))
 }
 
 /// TS `HHMM` `^([01]\d|2[0-3]):[0-5]\d$`.

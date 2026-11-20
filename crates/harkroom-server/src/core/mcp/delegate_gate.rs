@@ -153,9 +153,9 @@ fn parse(args: &Value) -> Option<Args> {
     }
     let deadline_sec = match o.get("deadlineSec") {
         None => DEADLINE_DEFAULT,
-        Some(Value::Number(d)) => d
-            .as_i64()
-            .filter(|d| (DEADLINE_MIN..=DEADLINE_MAX).contains(d))?,
+        Some(d @ Value::Number(_)) => {
+            super::tools::js_int(d).filter(|d| (DEADLINE_MIN..=DEADLINE_MAX).contains(d))?
+        }
         _ => return None,
     };
     let model = match o.get("model") {

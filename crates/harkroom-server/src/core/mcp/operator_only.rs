@@ -46,7 +46,7 @@ fn is_int(v: &Value) -> bool {
 }
 
 fn is_int_in(v: &Value, lo: i64, hi: i64) -> bool {
-    v.as_i64().is_some_and(|n| (lo..=hi).contains(&n))
+    super::tools::js_int(v).is_some_and(|n| (lo..=hi).contains(&n))
 }
 
 fn is_enum(v: &Value, set: &[&str]) -> bool {

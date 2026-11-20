@@ -419,10 +419,7 @@ fn inbox_ids(args: &Value) -> Option<Vec<i64>> {
         return None;
     }
     a.iter()
-        .map(|v| {
-            v.as_i64()
-                .filter(|n| (-JS_SAFE_INT..=JS_SAFE_INT).contains(n))
-        })
+        .map(|v| super::tools::js_int(v).filter(|n| (-JS_SAFE_INT..=JS_SAFE_INT).contains(n)))
         .collect()
 }
 
@@ -634,7 +631,7 @@ mod tests {
             Some(vec![-JS_SAFE_INT])
         );
         assert_eq!(inbox_ids(&json!({"ids": []})), None);
-        assert_eq!(inbox_ids(&json!({"ids": [1.0]})), None);
+        assert_eq!(inbox_ids(&json!({"ids": [1.0]})), Some(vec![1]));
         assert_eq!(
             inbox_ids(&json!({"ids": [9_007_199_254_740_992_i64]})),
             None
