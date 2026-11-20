@@ -481,11 +481,18 @@ describe('깨우기', () => {
 
   it('그 사람이 관리자를 부를 수 없으면 끈다', async () => {
     const root = await plan2([step('s1')]);
-    await on(root, 's1');
+    // 켜기 **전에** 부를 수 없게 만든다. 켜면 구독기(판 변화 300ms 뒤)도 같은 깨우기를 돈다 — 켠 뒤에 막으면 구독기가 먼저
+    // 돌아 「부를 수 있던 때」의 깨움 줄을 남기고, 아래 깨우기는 깨울 단계가 없어 그대로 돌아온다(자동 진행이 켜진 채 남는다).
+    const source = await called(root, admin.token);
     const before = (await pool.query<{ invoke_scope: string; owner_account_id: string }>(`select invoke_scope, owner_account_id from agent_config where account_id = $1`, [manager.accountId])).rows[0]!;
     await pool.query(`update agent_config set invoke_scope = 'owner', owner_account_id = $2 where account_id = $1`, [manager.accountId, member.accountId]);
-    await wakePlanAuto(pool, root);
-    await pool.query(`update agent_config set invoke_scope = $2, owner_account_id = $3 where account_id = $1`, [manager.accountId, before.invoke_scope, before.owner_account_id]);
+    try {
+      expect(codeOf(await auto(root, source, manager.accountId, 's1'))).toBe('ok');
+      await wakePlanAuto(pool, root);
+      await settle(); // 구독기가 먼저 깨움 줄을 냈으면 끄는 것도 구독기다 — 그것이 끝난 뒤에 되돌리고 본다.
+    } finally {
+      await pool.query(`update agent_config set invoke_scope = $2, owner_account_id = $3 where account_id = $1`, [manager.accountId, before.invoke_scope, before.owner_account_id]);
+    }
     expect((await getThreadPlan(pool, root))!.auto).toBeNull();
     expect(await offReason(root)).toMatchObject({ on: false, reason: 'unreachable' });
   });
