@@ -161,21 +161,28 @@ export function toolRegisteredNow(tool: string): boolean {
 }
 
 /**
- * P2b — `tools/list` 답의 `result` 글자(SDK 가 `/mcp` 에서 내는 그대로). Rust 코어는 이것을 `golden/mcp_tools_list.json` 으로 받아
- * 스스로 답하고, `test/rustMcpToolsListGolden.test.ts` 가 그 파일이 이 값과 같은지 본다. 도구 목록은 계정·요청과 무관하고
- * 조건부 등록은 [`toolRegisteredNow`] 의 env 하나뿐이라 `delegationV2` 로만 갈린다. 만들기만 하고 도구를 부르지 않으므로 풀·저장소는 빈 껍데기다.
+ * 도구 등록만 한 서버(풀·저장소는 빈 껍데기 — 도구를 부르지 않는다). `tools/list` 스냅숏과 Rust 앞단의 인자 검증 골든
+ * (`test/rustMcpZodGolden.test.ts`)이 같은 등록을 본다.
  */
-export async function mcpToolsListResult(delegationV2: boolean): Promise<string> {
+export function mcpSnapshotServer(delegationV2: boolean): McpServer {
   const prev = process.env.HARKROOM_DELEGATION_V2;
   process.env.HARKROOM_DELEGATION_V2 = delegationV2 ? '1' : '0';
-  let server: McpServer;
   try {
-    server = buildMcpServer({} as Pool, { id: '00000000-0000-0000-0000-000000000000', kind: 'agent' } as AccountView,
+    return buildMcpServer({} as Pool, { id: '00000000-0000-0000-0000-000000000000', kind: 'agent' } as AccountView,
       {} as Lifecycle, {} as StorageBackend, { online: () => [] });
   } finally {
     if (prev === undefined) delete process.env.HARKROOM_DELEGATION_V2;
     else process.env.HARKROOM_DELEGATION_V2 = prev;
   }
+}
+
+/**
+ * P2b — `tools/list` 답의 `result` 글자(SDK 가 `/mcp` 에서 내는 그대로). Rust 코어는 이것을 `golden/mcp_tools_list.json` 으로 받아
+ * 스스로 답하고, `test/rustMcpToolsListGolden.test.ts` 가 그 파일이 이 값과 같은지 본다. 도구 목록은 계정·요청과 무관하고
+ * 조건부 등록은 [`toolRegisteredNow`] 의 env 하나뿐이라 `delegationV2` 로만 갈린다. 만들기만 하고 도구를 부르지 않으므로 풀·저장소는 빈 껍데기다.
+ */
+export async function mcpToolsListResult(delegationV2: boolean): Promise<string> {
+  const server = mcpSnapshotServer(delegationV2);
   const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   await server.connect(transport);
   try {

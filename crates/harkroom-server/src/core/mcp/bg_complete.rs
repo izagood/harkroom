@@ -91,7 +91,7 @@ pub fn parse(args: &Value) -> Option<Args> {
         match o.get(k) {
             None => Some(None),
             Some(v) => {
-                let n = v.as_i64()?;
+                let n = super::tools::js_int(v)?;
                 (0..=JS_SAFE_INT).contains(&n).then_some(Some(n))
             }
         }
@@ -227,12 +227,16 @@ mod tests {
             json!({"jobId": J, "status": "done", "error": "a".repeat(201)}),
             json!({"jobId": J, "status": "done", "tokens": -1}),
             json!({"jobId": J, "status": "done", "tokens": 1.5}),
-            json!({"jobId": J, "status": "done", "tokens": 1.0}),
             json!({"jobId": J, "status": "done", "durationMs": JS_SAFE_INT + 1}),
             json!({"jobId": J, "status": "done", "extra": 1}),
         ] {
             assert_eq!(parse(&v), None, "{v}");
         }
+        // JS 에서 정수인 소수(`1.0`)는 zod `.int()` 가 받는다.
+        assert_eq!(
+            parse(&json!({"jobId": J, "status": "done", "tokens": 1.0})).and_then(|a| a.tokens),
+            Some(1)
+        );
     }
 
     #[test]

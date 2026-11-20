@@ -237,15 +237,15 @@ fn parse(args: &Value) -> Option<Args> {
     if !(1..=300).contains(&utf16_len(path)) {
         return None;
     }
-    // 정수 칸 — `2.0` 같은 소수 꼴은 TS 에 맡긴다.
-    let days = o.get("days")?.as_i64()?;
+    // 정수 칸 — `2.0` 처럼 JS 에서 정수인 소수도 zod 가 받는다.
+    let days = super::tools::js_int(o.get("days")?)?;
     if !(1..=30).contains(&days) {
         return None;
     }
     let delegate_depth = match o.get("delegateDepth") {
         None => 0,
         Some(v) => {
-            let d = v.as_i64()?;
+            let d = super::tools::js_int(v)?;
             if !(0..=1).contains(&d) {
                 return None;
             }

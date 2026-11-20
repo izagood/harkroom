@@ -1154,10 +1154,7 @@ async fn restore(write: &PgPool, me: &Account, turn: Option<&str>, args: &Value)
     let slug = args.get("slug")?.as_str().filter(|s| !s.is_empty())?;
     let revision = match args.get("revisionId") {
         None => None,
-        Some(v) => Some(
-            v.as_i64()
-                .filter(|n| *n > 0 && *n <= 9_007_199_254_740_991)?,
-        ),
+        Some(v) => Some(super::tools::js_int(v).filter(|n| *n > 0 && *n <= 9_007_199_254_740_991)?),
     };
     if !valid_slug(slug) {
         return Some(err("invalid_slug", SLUG_HINT));

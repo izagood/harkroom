@@ -1,8 +1,7 @@
 //! C4a-3 — Rust 가 답하는 읽기 도구. TS `mcpPlugin.ts` 의 같은 이름 도구와 **같은 글자**를 낸다(대조: `tests/contrast.rs` 의 MCP 줄).
 //!
-//! - 인자 모양은 TS zod 가 받는 것만 받는다. 모양이 조금이라도 다르면(객체 아님·uuid 아님·타입 다름) Rust 는 답하지 않고 TS 로 넘긴다
-//!   — SDK 의 검증 오류 글자(`Input validation error: …`)를 따라 쓰지 않고 정본을 하나로 둔다. zod `z.object` 는 모르는 키를 버리므로
-//!   더 붙은 키는 받는다. 예외: `message.read` 는 zod 거절도 SDK 글자로 답한다(`thread.note` 와 같이, TS 를 끌 때 그 길이 남지 않게).
+//! - 인자 모양은 TS zod 가 받는 것만 받는다. zod 가 거절할 꼴은 이 도구들에 오기 전에 공통 검증([`super::zod_gate`])이 SDK 글자로
+//!   답한다. 그 갈래가 확정하지 못한 꼴만 여기서 `None`(TS)이 된다. zod `z.object` 는 모르는 키를 버리므로 더 붙은 키는 받는다.
 //! - DB 오류도 TS 로 넘긴다(같은 요청을 TS 가 다시 답한다 — 읽기라 두 번 돌아도 바뀌는 것이 없다).
 //! - 결과 글자: 행은 Postgres 가 짓고(`json`, 열 순서 = 키 순서) [`super::respond::minify`] 로 공백만 지운다. TS 는 node-pg 가 읽은
 //!   객체를 `JSON.stringify` 하므로 키 순서·값이 같고 공백이 없다.
@@ -102,8 +101,19 @@ const ACCOUNT_LIST_SQL: &str = "select json_build_object(\
 pub(super) fn opt_int(args: &Value, key: &str, lo: i64, hi: i64) -> Option<Option<i64>> {
     match args.get(key) {
         None => Some(None),
-        Some(v) => v.as_i64().filter(|n| (lo..=hi).contains(n)).map(Some),
+        Some(v) => js_int(v).filter(|n| (lo..=hi).contains(n)).map(Some),
     }
+}
+
+/// JS 에서 정수인 수 — `5` 와 `5.0` 은 JSON 에서 다르게 읽히지만 zod `.int()` 에는 같다. i64 밖·소수면 `None`.
+pub(super) fn js_int(v: &Value) -> Option<i64> {
+    if let Some(i) = v.as_i64() {
+        return Some(i);
+    }
+    let f = v.as_f64()?;
+    #[allow(clippy::cast_possible_truncation)]
+    (v.is_f64() && f.fract() == 0.0 && f >= i64::MIN as f64 && f < i64::MAX as f64)
+        .then_some(f as i64)
 }
 
 /// `z.string().uuid().optional()`.

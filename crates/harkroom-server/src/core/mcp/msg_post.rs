@@ -431,13 +431,10 @@ fn parse_notice(args: &Value) -> Option<NoticeArgs> {
         Some(Value::String(h)) if h.encode_utf16().count() <= 64 => Some(h.clone()),
         _ => return None,
     };
-    // zod `int().min(1).max(9999)` — 소수 꼴(3.0)은 TS 에 맡긴다.
+    // zod `int().min(1).max(9999)` — `3.0` 처럼 JS 에서 정수인 소수도 받는다.
     let pending = match o.get("pending") {
         None => None,
-        Some(v) => Some(
-            v.as_i64()
-                .filter(|n| (1..=NOTICE_MAX_PENDING).contains(n))?,
-        ),
+        Some(v) => Some(super::tools::js_int(v).filter(|n| (1..=NOTICE_MAX_PENDING).contains(n))?),
     };
     Some(NoticeArgs {
         channel,

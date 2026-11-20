@@ -49,6 +49,7 @@ pub mod turn_cancel;
 pub mod turn_wake;
 pub mod workitem;
 pub mod writes;
+pub mod zod_gate;
 
 use serde_json::{Value, json};
 

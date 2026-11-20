@@ -456,7 +456,8 @@ async fn serve_pre_retries_covered_reads_on_a_dead_pool() {
         ..Pre::NONE
     };
     let up = admit_upstream("yes", Default::default()).await;
-    let read = r#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"message.read","arguments":{}}}"#;
+    // 인자는 zod 를 지나는 꼴이어야 한다 — 빈 `{}` 는 앞단 공통 검증(`zod_gate`)이 처리기보다 먼저 답한다.
+    let read = r#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"message.read","arguments":{"channelId":"11111111-1111-4111-8111-111111111111"}}}"#;
     let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let h = hits.clone();
     let counting = move |_: &'static str, _: serde_json::Value| -> AnswerFut {
