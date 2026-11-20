@@ -3,9 +3,10 @@
 //! **자동화 행 잠금 아래 한 트랜잭션**에서 에이전트 쿼터(10분 1회·1시간 3회)·원인 한 번·회차 INSERT(`runAutomationNow` → `enqueueRun`).
 //! 글은 Rust 도 쓰지 않는다 — 회차만 넣고 발송은 sweeper(TS) 몫이다(TS 도 같다).
 //!
-//! - **TS 로 넘기는 것**(`None`): zod 가 받지 않을 인자 · 일정 트리거의 시간대를 `chrono-tz` 가 모름(정확한 IANA 이름이 아님) ·
-//!   1시간 회차가 `RATE_LIMIT_PER_HOUR` 에 닿은 경우(자동화를 끄고 위임장을 닫는 쓰기는 TS 만 한다 — 롤백한 뒤 넘기므로 TS 가 같은 판정을
-//!   처음부터 다시 한다) · DB 오류(롤백 뒤) · 회차 행 해석 실패(커밋 **전**에 롤백하므로 이중 INSERT 가 없다).
+//! - **TS 로 넘기는 것**(`None`): zod 가 받지 않을 인자 · 1시간 회차가 `RATE_LIMIT_PER_HOUR` 에 닿은 경우(자동화를 끄고 위임장을
+//!   닫는 쓰기는 TS 만 한다 — 롤백한 뒤 넘기므로 TS 가 같은 판정을 처음부터 다시 한다). 이 둘뿐이다.
+//! - **DB 오류·깨진 행은 넘기지 않는다**: 트랜잭션 앞의 읽기 실패는 `temporarily_unavailable`([`super::db_retry::read_failed`]),
+//!   트랜잭션(시작·문장·커밋) 실패와 회차 행 해석 실패·저장된 트리거 해석 실패는 `internal`. 해석 실패는 커밋 **전**에 롤백한다.
 //! - 쓰기 칸은 `automation_run` INSERT 여덟 칸뿐이다. `automation` 에는 쓰지 않는다 — `for update` 잠금이 표의 UPDATE 칸 하나를
 //!   요구해 `automation.updated_at` UPDATE 를 받지만 그 칸에 쓰는 문장은 없다(`decide_approve::MANDATE_LINE_PRIVILEGES` 의 `for share` 와 같은 꼴).
 use super::tools::err;
@@ -120,6 +121,14 @@ struct Automation {
     trigger: String,
 }
 
+const TOOL: &str = "automation.run";
+
+/// 회차를 넣지 못했다 — 흔적(고정 문구뿐, 값은 싣지 않는다)을 남기고 `internal`. TS 로 넘겨 다시 넣지 않는다.
+fn broken(what: &str) -> String {
+    eprintln!("front: mcp tool failed tool={TOOL} at={what}");
+    err("internal", "the run was not queued; it was not retried")
+}
+
 pub async fn answer(
     read: &PgPool,
     write: &PgPool,
@@ -132,12 +141,14 @@ pub async fn answer(
         return refuse("no_cause");
     };
     type W = (String, bool, bool, bool);
-    let who: Option<W> = sqlx::query_as(super::reads3::RUN_OWNER_SQL)
+    let Ok(who) = sqlx::query_as::<_, W>(super::reads3::RUN_OWNER_SQL)
         .bind(cause)
         .bind(&me.id)
         .fetch_optional(read)
         .await
-        .ok()?;
+    else {
+        return Some(super::db_retry::read_failed(TOOL));
+    };
     let Some((owner, author_is_agent, from_automation, fresh)) = who else {
         return refuse("no_cause");
     };
@@ -151,12 +162,14 @@ pub async fn answer(
         return refuse("automation_reentry");
     }
     type A = (String, String, String, String, String, bool);
-    let row: Option<A> = sqlx::query_as(AUTOMATION_SQL)
+    let Ok(row) = sqlx::query_as::<_, A>(AUTOMATION_SQL)
         .bind(&automation_id)
         .bind(&owner)
         .fetch_optional(read)
         .await
-        .ok()?;
+    else {
+        return Some(super::db_retry::read_failed(TOOL));
+    };
     let Some((id, owner, channel, name, trigger, approved)) = row else {
         return refuse("not_found");
     };
@@ -170,20 +183,27 @@ pub async fn answer(
         name,
         trigger,
     };
-    let chain_limit: i32 = sqlx::query_scalar(CHAIN_LIMIT_SQL)
+    let Ok(chain_limit) = sqlx::query_scalar::<_, i32>(CHAIN_LIMIT_SQL)
         .bind(MENTION_CHAIN_LIMIT)
         .fetch_one(read)
         .await
-        .ok()?;
+    else {
+        return Some(super::db_retry::read_failed(TOOL));
+    };
     if AGENT_RUN_CHAIN_DEPTH >= chain_limit {
         return refuse("chain_capped");
     }
-    let vars = vars_for(&a.trigger)?;
+    let Some(vars) = vars_for(&a.trigger) else {
+        return Some(broken("stored trigger did not yield time vars"));
+    };
     // TS `manual:${randomUUID()}` — v4 를 DB 에서 받는다(크레이트에 uuid 가 없다).
-    let event_key: String = sqlx::query_scalar("select 'manual:' || gen_random_uuid()::text")
-        .fetch_one(read)
-        .await
-        .ok()?;
+    let Ok(event_key) =
+        sqlx::query_scalar::<_, String>("select 'manual:' || gen_random_uuid()::text")
+            .fetch_one(read)
+            .await
+    else {
+        return Some(super::db_retry::read_failed(TOOL));
+    };
     // TS `enqueueRun` payload — `eventSummary` 는 PR·sha·제목 변수가 없으니 이벤트 키 그대로다.
     let payload = serde_json::json!({
         "vars": vars,
@@ -204,13 +224,14 @@ pub async fn answer(
             Some(super::respond::text_result(&text))
         }
         Enq::Refused(code) => refuse(code),
-        Enq::ToTs => None,
+        Enq::RateLimited => None,
+        Enq::Failed(what) => Some(broken(what)),
     }
 }
 
 /// TS `runAutomationNow` 의 `vars` — 일정 트리거면 `timeVars(now, tz)`(프로세스 시각, TS 와 같다), 아니면 빈 객체.
 /// 계산은 [`automation_time`](crate::core::automation_time) 이 TS 산법 그대로 한다. `Intl` 이 받는 tz 이름은
-/// 다 풀리므로(`parse_tz`) `None` 은 저장된 trigger 가 깨졌을 때뿐이다(그때는 TS 로 넘긴다).
+/// 다 풀리므로(`parse_tz`) `None` 은 저장된 trigger 가 깨졌을 때뿐이다(부른 쪽이 `internal` 로 답한다).
 pub(crate) fn vars_for(trigger: &str) -> Option<Value> {
     let t: Value = serde_json::from_str(trigger).ok()?;
     if t.get("kind").and_then(Value::as_str) == Some("schedule") {
@@ -231,7 +252,10 @@ pub(crate) fn vars_for(trigger: &str) -> Option<Value> {
 pub enum Enq {
     Queued(String),
     Refused(&'static str),
-    ToTs,
+    /// 1시간 회차 상한 — 자동화를 끄는 쓰기는 TS 몫이라 롤백하고 넘긴다.
+    RateLimited,
+    /// DB 오류·행 해석 실패(롤백됨). 값은 로그에 남길 고정 문구다.
+    Failed(&'static str),
 }
 
 async fn enqueue(
@@ -243,7 +267,7 @@ async fn enqueue(
     payload: &Value,
 ) -> Enq {
     let Ok(mut tx) = write.begin().await else {
-        return Enq::ToTs;
+        return Enq::Failed("begin");
     };
     let out = enqueue_tx(&mut tx, &a.id, cause, agent, event_key, payload).await;
     match out {
@@ -251,7 +275,8 @@ async fn enqueue(
             if tx.commit().await.is_ok() {
                 Enq::Queued(run)
             } else {
-                Enq::ToTs
+                // 커밋이 됐는지 알 수 없다 — 넘겨서 한 번 더 넣지 않는다.
+                Enq::Failed("commit")
             }
         }
         // 거절도 TS 처럼 롤백한다(`inactive`·`duplicate` 는 TS 가 커밋하지만 쓴 것이 없어 같다).
@@ -268,7 +293,7 @@ async fn enqueue(
             if cause_conflict {
                 Enq::Refused("cause_used")
             } else {
-                Enq::ToTs
+                Enq::Failed("statement")
             }
         }
     }
@@ -315,7 +340,7 @@ pub async fn enqueue_tx(
         .await?;
     if recent >= RATE_LIMIT_PER_HOUR {
         // 끄기·위임장 닫기는 TS 만 한다 — 롤백하고 넘긴다.
-        return Ok(Enq::ToTs);
+        return Ok(Enq::RateLimited);
     }
     let ins = sqlx::query(INSERT_SQL)
         .bind(automation_id)
@@ -329,8 +354,8 @@ pub async fn enqueue_tx(
     let Some(ins) = ins else {
         return Ok(Enq::Refused("duplicate"));
     };
-    // 해석 실패는 커밋 전에 넘긴다 — 롤백되므로 TS 가 다시 넣어도 회차는 하나다.
-    Ok(run_view(&ins).map_or(Enq::ToTs, Enq::Queued))
+    // 해석 실패는 커밋 전에 돌려준다 — 부른 쪽이 롤백하므로 회차는 남지 않는다.
+    Ok(run_view(&ins).map_or(Enq::Failed("run row"), Enq::Queued))
 }
 
 fn opt_iso(ms: Option<i64>) -> Value {
@@ -367,6 +392,62 @@ pub(crate) fn run_view(row: &sqlx::postgres::PgRow) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn dead_pool() -> PgPool {
+        sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(std::time::Duration::from_millis(200))
+            .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+            .unwrap()
+    }
+
+    fn agent() -> Account {
+        Account {
+            id: "11111111-1111-4111-8111-111111111111".into(),
+            handle: "a".into(),
+            display_name: "a".into(),
+            kind: "agent".into(),
+            is_admin: false,
+            role: "member".into(),
+            status: "active".into(),
+            status_text: None,
+            avatar_attachment_id: None,
+        }
+    }
+
+    /// DB 에 닿지 못해도 TS 로 넘기지(`None`) 않는다 — 읽기 실패는 다시 부를 수 있는 도구 오류다.
+    #[tokio::test]
+    async fn db_down_answers_instead_of_handing_to_ts() {
+        let pool = dead_pool();
+        let args = serde_json::json!({ "automationId": "0b9f6c1e-1d2a-4c3b-9e8f-7a6b5c4d3e2f" });
+        let cause = "22222222-2222-4222-8222-222222222222";
+        let r = answer(&pool, &pool, &agent(), &args, Some(cause))
+            .await
+            .expect("answered");
+        assert!(r.contains("temporarily_unavailable"), "{r}");
+        // zod 가 거절할 인자만 여전히 넘긴다.
+        assert!(
+            answer(&pool, &pool, &agent(), &serde_json::json!({}), Some(cause))
+                .await
+                .is_none()
+        );
+    }
+
+    /// 트랜잭션을 못 열면 `internal` — 값은 싣지 않는다.
+    #[tokio::test]
+    async fn enqueue_failure_is_internal() {
+        let a = Automation {
+            id: "0b9f6c1e-1d2a-4c3b-9e8f-7a6b5c4d3e2f".into(),
+            owner: "o".into(),
+            channel: "c".into(),
+            name: "n".into(),
+            trigger: "{}".into(),
+        };
+        let out = enqueue(&dead_pool(), &a, "x", "y", "manual:k", &Value::Null).await;
+        assert!(matches!(out, Enq::Failed("begin")));
+        let r = broken("begin");
+        assert!(r.contains("internal"), "{r}");
+        assert!(!r.contains("begin"), "{r}");
+    }
 
     #[test]
     fn parse_matches_zod() {
