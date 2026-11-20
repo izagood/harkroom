@@ -66,11 +66,9 @@ async fn main() {
         .and_then(|p| p.parse().ok())
         .unwrap_or(3500);
 
-    // 읽기 풀 4 · 연결 기다리는 시한 3초(쓰기 풀과 같다 — 막히면 30초 매달리지 않고 500). outbox 리스너는 이 풀 밖의 전용 연결이다
-    // (`core::events::spawn_outbox_listener`). 파드당 연결: 읽기 4 + 리스너 1 + 쓰기 2 = 7 — DB 역할 한도는 그보다 커야 한다.
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(4)
-        .acquire_timeout(std::time::Duration::from_secs(3))
+    // 읽기 풀 — [`request_pool_options`]. outbox 리스너는 이 풀 밖의 전용 연결이다(`core::events::spawn_outbox_listener`).
+    // 파드당 최대 연결은 [`request_pool_options`] 의 표를 본다(역할이 둘이라 한도도 역할마다 따로다).
+    let pool = request_pool_options(READ_POOL_CONNECTIONS)
         .connect(&db)
         .await
         .expect("database");
@@ -5528,17 +5526,14 @@ fn require_grants(v: Option<&str>) -> bool {
     matches!(v, Some("1" | "true"))
 }
 
-/// `DATABASE_WRITE_URL` 이 있으면 쓰기 풀(2)을 연다. 연결이 안 되거나 [`write::REQUIRED_PRIVILEGES`] 중 빠진 것이 있으면
+/// `DATABASE_WRITE_URL` 이 있으면 쓰기 풀([`WRITE_POOL_CONNECTIONS`])을 연다. 연결이 안 되거나 [`write::REQUIRED_PRIVILEGES`] 중 빠진 것이 있으면
 /// 쓰는 줄을 켜지 않는다(`None`) — 반쯤 되는 쓰기보다 TS 로 넘기는 편이 안전하다. 읽는 줄은 그대로 뜬다.
 async fn open_write_pool() -> Option<sqlx::PgPool> {
     let url = std::env::var("DATABASE_WRITE_URL")
         .ok()
         .filter(|u| !u.is_empty())?;
-    let pool = match sqlx::postgres::PgPoolOptions::new()
-        .max_connections(2)
-        // 연결을 기다리는 시한(sqlx 기본 30초) — 쓰기 풀이 막히면 쓰는 요청이 30초 매달리는 대신 3초 뒤 500 으로 끝난다.
-        // 인증 기록은 이 풀을 기다리지 않는다(`auth::record` 가 응답 뒤로 돌린다). P4a, security 가용성 권고.
-        .acquire_timeout(std::time::Duration::from_secs(3))
+    // 인증 기록은 이 풀을 기다리지 않는다(`auth::record` 가 응답 뒤로 돌린다). P4a, security 가용성 권고.
+    let pool = match request_pool_options(WRITE_POOL_CONNECTIONS)
         .connect(&url)
         .await
     {
@@ -5571,7 +5566,7 @@ async fn open_write_pool() -> Option<sqlx::PgPool> {
     }
 }
 
-/// 서버 루프 전용 풀(3)을 따로 연다 — 루프 tick 은 문지기 연결 1 + sweep 연결 1 + 이벤트 연결 1 을 쓰는데 쓰기 풀은 2 이고
+/// 서버 루프 전용 풀(문지기·sweep)을 따로 연다 — 루프 tick 은 문지기 연결 1 + sweep 연결 1 + 이벤트 연결 1 을 쓰는데 쓰기 풀은
 /// 요청과 나눠 쓴다. 이 풀이 막혀도 요청은 막히지 않는다. 권한([`loops::wake::WAKE_PRIVILEGES`])이 모자라면 띄우지 않는다(TS 에 남는다).
 async fn spawn_loops() {
     use harkroom_server::loops::{
@@ -5921,9 +5916,35 @@ async fn push_sweeper(
 const LOOP_GATE_CONNECTIONS: u32 = 15;
 /// sweep 풀 크기.
 const LOOP_SWEEP_CONNECTIONS: u32 = 3;
-/// 루프 풀에서 쉬는 연결을 닫기까지. 루프 대부분은 주인이 `rust` 가 아니면 tick 마다 잠깐 잠금만 보고 놓는다 —
-/// sqlx 기본(10분)이면 그 잠깐 쓴 연결이 풀 크기만큼 남아 쓰기 역할의 연결 한도를 평소에도 차지한다.
-const LOOP_POOL_IDLE: std::time::Duration = std::time::Duration::from_secs(30);
+/// 루프 풀에서 쉬는 연결을 닫기까지 — 가장 긴 루프 주기(retention 1시간)보다 길게 둔다. 짧으면(옛 30초) 주기가 그보다 긴
+/// 루프는 tick 마다 연결을 새로 맺는다. 쉬는 연결은 쓰던 것부터 다시 쓰므로 평소 쥐는 수는 tick 이 겹치는 만큼이고,
+/// 최대는 풀 크기 그대로다. 오래된 연결은 sqlx `max_lifetime`(기본 30분)으로 갈린다.
+const LOOP_POOL_IDLE: std::time::Duration = std::time::Duration::from_secs(65 * 60);
+
+/// 요청이 쓰는 읽기 풀(`DATABASE_URL`, 앞단 읽기 역할) 크기.
+const READ_POOL_CONNECTIONS: u32 = 4;
+/// 요청이 쓰는 쓰기 풀(`DATABASE_WRITE_URL`, 앞단 쓰기 역할) 크기. s39 B — 2 에서 4 로(운영 쓰기 역할 한도 32).
+const WRITE_POOL_CONNECTIONS: u32 = 4;
+
+/// 요청 풀(읽기·쓰기) 설정 — 최대 `max`, **평소 1 개를 쥔다**(`min_connections 1`). 0 이면 한가한 뒤(sqlx 기본 idle 10분)
+/// 연결이 다 닫혀 다음 요청이 연결을 새로 맺는 시간만큼 늦는다(s39 측정). 연결 기다리는 시한은 3초(sqlx 기본 30초) —
+/// 풀이 막히면 요청이 30초 매달리는 대신 3초 뒤 500 으로 끝난다.
+///
+/// 파드당 역할별 최대 연결(기동 때 한 번 쓰고 닫는 연결 제외):
+///
+/// | 역할 | 몫 | 파드 1 | 파드 2 |
+/// |---|---|---|---|
+/// | 읽기(`DATABASE_URL`) | 읽기 풀 4 + core outbox 리스너 1 | 5 | 10 |
+/// | 쓰기(`DATABASE_WRITE_URL`) | 쓰기 풀 4 + 루프 문지기 15 + sweep 3 + 루프 outbox 리스너 1 | 23 | 46 |
+// 파드 2 대에서도 읽기 역할 한도(운영 12) 안 — 읽기 풀 + core 리스너 1. 늘리면 컴파일이 멈춘다.
+const _: () = assert!(2 * (READ_POOL_CONNECTIONS + 1) <= 12);
+
+fn request_pool_options(max: u32) -> sqlx::postgres::PgPoolOptions {
+    sqlx::postgres::PgPoolOptions::new()
+        .max_connections(max)
+        .min_connections(1)
+        .acquire_timeout(std::time::Duration::from_secs(3))
+}
 
 /// 루프 풀(문지기·sweep) 설정 — 최대 `max`, 평소 0 개(`min_connections 0`)로 시작해 쉬는 연결은 [`LOOP_POOL_IDLE`] 뒤 닫는다.
 /// 풀 크기(최대)는 그대로라 루프가 겹칠 때 쓸 몫은 줄지 않는다.
@@ -5952,16 +5973,49 @@ async fn shutdown() {
 mod loop_pool_tests {
     use super::*;
 
-    /// 루프 풀은 평소 연결을 쥐지 않고(최소 0), 쉬는 연결을 짧게 닫으며, 최대 크기는 그대로다(s24 S7 — 쓰기 역할 연결 한도).
+    /// 루프 풀은 평소 연결을 쥐지 않고(최소 0), 쉬는 연결은 가장 긴 루프 주기보다 오래 두며, 최대 크기는 그대로다.
     #[test]
-    fn loop_pools_start_empty_and_drop_idle_connections() {
+    fn loop_pools_start_empty_and_keep_idle_past_longest_tick() {
+        use harkroom_server::loops::*;
         for max in [LOOP_GATE_CONNECTIONS, LOOP_SWEEP_CONNECTIONS] {
             let o = loop_pool_options(max);
             assert_eq!(o.get_max_connections(), max);
             assert_eq!(o.get_min_connections(), 0);
             assert_eq!(o.get_idle_timeout(), Some(LOOP_POOL_IDLE));
         }
-        assert!(LOOP_POOL_IDLE <= std::time::Duration::from_secs(60));
+        for every in [
+            wake::WAKE_SWEEP_INTERVAL,
+            retention::RETENTION_SWEEP_INTERVAL,
+            retention::RETENTION_FIRST_DELAY,
+            mandate_idle::MANDATE_IDLE_SWEEP_INTERVAL,
+            permission_expire::PERMISSION_EXPIRE_SWEEP_INTERVAL,
+            delegation_deadline::DELEGATION_SWEEP_INTERVAL,
+            outbox_prune::OUTBOX_PRUNE_INTERVAL,
+            projection::POLL,
+            scheduled::SWEEP_INTERVAL,
+            automation::SWEEP_INTERVAL,
+            bg::BG_SWEEP_INTERVAL,
+            push::PUSH_SWEEP_INTERVAL,
+            stale::STALE_SWEEP_INTERVAL,
+        ] {
+            assert!(
+                LOOP_POOL_IDLE > every,
+                "idle {LOOP_POOL_IDLE:?} <= tick {every:?}"
+            );
+        }
+    }
+
+    /// 요청 풀(읽기·쓰기)은 평소 연결 1 개를 쥐고, 쓰기 풀은 4, 연결 기다리는 시한은 3초다(s39 B).
+    #[test]
+    fn request_pools_keep_one_connection() {
+        for max in [READ_POOL_CONNECTIONS, WRITE_POOL_CONNECTIONS] {
+            let o = request_pool_options(max);
+            assert_eq!(o.get_max_connections(), max);
+            assert_eq!(o.get_min_connections(), 1);
+            assert_eq!(o.get_acquire_timeout(), std::time::Duration::from_secs(3));
+        }
+        assert_eq!(READ_POOL_CONNECTIONS, 4);
+        assert_eq!(WRITE_POOL_CONNECTIONS, 4);
     }
 }
 
