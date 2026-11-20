@@ -238,6 +238,32 @@ export const COLS = `id, seq::int as seq, channel_id as "channelId", thread_root
   ${statusReactionOf('message')} as "statusReaction",
   also_in_channel as "alsoInChannel", deleted_at as "deletedAt"`;
 
+/** 마지막 말 하나(`thread_last`). `THREAD_STATE_FACTS` 의 끝 lateral 이고, 머리 전용 문장(`THREAD_HEADS_SQL`)도 그대로 붙인다. */
+const THREAD_LAST = `LEFT JOIN LATERAL (
+  -- 마지막 말 하나. 그것이 진행이고 저자가 살아 있는 에이전트일 때만 '도는 중'이므로,
+  -- 화면은 이 둘(kind·저자)에 자기가 아는 생존을 곱해 판정한다.
+  --
+  -- 「가장 최근의 살아 있는 답글」과 「루트 자신」 둘 중 seq 가 큰 것이다(2026-10-13 쿼리 개선 Q4). 예전 꼴
+  -- WHERE (t.id = m.id OR t.thread_root_id = m.id) ORDER BY seq DESC LIMIT 1 은 OR 때문에 색인 순서를 못 써서
+  -- 스레드 전체를 모아 정렬했다(답글 2,600개 스레드면 2,600행 정렬). 답글 쪽은 (thread_root_id, seq) 색인을
+  -- 거꾸로 한 줄만 읽고, 루트는 이미 손에 있는 m 이다. 둘을 seq 로 견주므로 뜻은 같다.
+  SELECT x.kind as last_kind, x.author_id as last_author_id
+  FROM (
+    (SELECT t.kind, t.author_id::text as author_id, t.seq
+       FROM message t
+      WHERE t.thread_root_id = m.id AND t.deleted_at IS NULL
+        -- 시스템 줄은 누구의 말도 아니다 — 「마지막 말」에서 뺀다(시스템 줄 C안 c3).
+        AND t.kind <> 'system'
+        -- 루트에서만 계산한다 — 근거는 THREAD_STATS 위 주석.
+        AND m.thread_root_id IS NULL
+      ORDER BY t.seq DESC LIMIT 1)
+    UNION ALL
+    (SELECT m.kind, m.author_id::text, m.seq
+      WHERE m.deleted_at IS NULL AND m.thread_root_id IS NULL)
+  ) x
+  ORDER BY x.seq DESC LIMIT 1
+) thread_last ON true`;
+
 /**
  * 스레드 상태 판정의 **재료**(Task 6 Step 2). 판정 자체는 여기서 하지 않는다.
  *
@@ -405,30 +431,7 @@ LEFT JOIN LATERAL (
     -- 루트에서만 계산한다 — 근거는 THREAD_STATS 위 주석.
     AND m.thread_root_id IS NULL
 ) thread_open ON true
-LEFT JOIN LATERAL (
-  -- 마지막 말 하나. 그것이 진행이고 저자가 살아 있는 에이전트일 때만 '도는 중'이므로,
-  -- 화면은 이 둘(kind·저자)에 자기가 아는 생존을 곱해 판정한다.
-  --
-  -- 「가장 최근의 살아 있는 답글」과 「루트 자신」 둘 중 seq 가 큰 것이다(2026-10-13 쿼리 개선 Q4). 예전 꼴
-  -- WHERE (t.id = m.id OR t.thread_root_id = m.id) ORDER BY seq DESC LIMIT 1 은 OR 때문에 색인 순서를 못 써서
-  -- 스레드 전체를 모아 정렬했다(답글 2,600개 스레드면 2,600행 정렬). 답글 쪽은 (thread_root_id, seq) 색인을
-  -- 거꾸로 한 줄만 읽고, 루트는 이미 손에 있는 m 이다. 둘을 seq 로 견주므로 뜻은 같다.
-  SELECT x.kind as last_kind, x.author_id as last_author_id
-  FROM (
-    (SELECT t.kind, t.author_id::text as author_id, t.seq
-       FROM message t
-      WHERE t.thread_root_id = m.id AND t.deleted_at IS NULL
-        -- 시스템 줄은 누구의 말도 아니다 — 「마지막 말」에서 뺀다(시스템 줄 C안 c3).
-        AND t.kind <> 'system'
-        -- 루트에서만 계산한다 — 근거는 THREAD_STATS 위 주석.
-        AND m.thread_root_id IS NULL
-      ORDER BY t.seq DESC LIMIT 1)
-    UNION ALL
-    (SELECT m.kind, m.author_id::text, m.seq
-      WHERE m.deleted_at IS NULL AND m.thread_root_id IS NULL)
-  ) x
-  ORDER BY x.seq DESC LIMIT 1
-) thread_last ON true`;
+${THREAD_LAST}`;
 
 // 스레드 메타데이터: 루트 메시지에만 계산. LATERAL join으로 같은 쿼리에서 계산한다 (N+1 방지).
 //
@@ -3330,8 +3333,145 @@ async function listThreadHeads(pool: Pool, accountId: string, ids: string[]): Pr
  * 스레드 머리 문장(S5.4 MS2c). Rust 앞단(`core/inbox_threads.rs`)이 골든으로 받는다 — 그래서 계정 자리는 `$2::uuid` 로 적는다
  * (Rust 는 글자로 묶는다, #2316 교훈. node-pg 에는 뜻이 같다). 순서는 `m.seq` 로 못 박는다 — 예전에는 `order by` 가 없어
  * 계획에 맡겼다(앱은 순서를 쓰지 않는다). 두 서버가 같은 글자를 내려면 순서가 정해져야 한다.
+ *
+ * **스레드 줄을 한 번만 읽는다**(2026-11-20, s39 E2 E1). 예전 꼴은 머리마다 `THREAD_STATS` 의 lateral 셋(stats·state·open)이
+ * 같은 스레드 줄을 따로 다시 읽었다 — 운영 보드 한 번에 머리 1,348개 × 평균 56줄 × 3번(656ms·buffers 352k). 이제 머리(`hd`)의
+ * 스레드 줄을 `tr` 로 한 번 모으고 `group by` 루트로 집계 넷을 낸다. 판정 문장은 `THREAD_STATE_FACTS`·`THREAD_STATS` 와 같고,
+ * 집계가 빈 머리의 값(0·`'{}'`·`'[]'`)은 coalesce 로 옛 lateral 이 빈 입력에 내던 값과 맞춘다. 마지막 말(`thread_last`)은
+ * 색인 한 줄 읽기라 그대로 붙인다. 응답은 옛 문장(`THREAD_HEADS_LATERAL_SQL`)과 한 글자도 다르지 않아야 한다 — 시험이 견준다.
+ * **판정이 바뀌면 세 자리(`THREAD_STATE_FACTS`·`THREAD_STATS`·여기)를 함께 고친다.**
  */
-export const THREAD_HEADS_SQL = `select ${LIST_COLS} from message m ${THREAD_STATS}
+export const THREAD_HEADS_SQL = `with hd as materialized (
+  select ${PAGE_COLS}
+    from message m join channel c on c.id = m.channel_id
+   where m.id = any($1::uuid[]) and m.thread_root_id is null and ${LIST_VISIBLE}
+     and ${channelVisibleSql('c', '$2::uuid')}
+),
+tr as materialized (
+  select t.thread_root_id as root_id, t.id, t.seq, t.kind, t.author_id, t.created_at, t.meta, false as is_root
+    from message t
+   where t.thread_root_id = any (array(select id from hd)) and t.deleted_at is null
+  union all
+  select h.id, h.id, h.seq, h.kind, h.author_id, h.created_at, h.meta, true
+    from hd h where h.deleted_at is null
+),
+st as (
+  select root_id, COUNT(*) FILTER (WHERE kind NOT IN ('progress', 'wake'))::int as reply_count,
+    COUNT(*)::int as activity_count,
+    MAX(created_at) FILTER (WHERE kind NOT IN ('progress', 'wake'))::text as last_reply_at
+    from tr where not is_root group by root_id
+),
+pa as (
+  select root_id, ARRAY_AGG(author_id ORDER BY last_at DESC) as participant_ids
+    from (
+      select root_id, author_id, MAX(created_at) as last_at
+        from tr where not is_root and author_id IS NOT NULL and kind <> 'system'
+       group by root_id, author_id
+    ) recent
+   group by root_id
+),
+sf as (
+  select t.root_id,
+    ARRAY_AGG(DISTINCT t.meta->'ask'->'to'->>'accountId') FILTER (
+      WHERE t.meta->>'kind' = 'ask'
+        AND t.meta->'ask'->>'answeredWith' IS NULL
+        AND t.meta->'ask'->>'closedAt' IS NULL
+        AND t.meta->'ask'->'to'->>'kind' = 'account'
+        AND t.meta->'ask'->'to'->>'accountId' IS NOT NULL
+    ) as open_ask_account_ids,
+    COUNT(*) FILTER (WHERE t.meta->>'kind' = 'failure')::int as failure_count,
+    JSONB_AGG(
+      JSONB_BUILD_OBJECT(
+        'waiter', t.author_id::text,
+        'blockedBy', CASE WHEN t.meta->'ask'->'to'->>'kind' = 'account'
+          THEN t.meta->'ask'->'to'->>'accountId' END,
+        'askedAt', t.created_at
+      ) ORDER BY t.seq
+    ) FILTER (
+      WHERE t.meta->>'kind' = 'ask'
+        AND t.meta->'ask'->>'answeredWith' IS NULL
+        AND t.meta->'ask'->>'closedAt' IS NULL
+        AND t.author_id IS NOT NULL
+        AND (t.meta->'ask'->'to'->>'kind' = 'human'
+          OR (t.meta->'ask'->'to'->>'kind' = 'account'
+            AND t.meta->'ask'->'to'->>'accountId' IS NOT NULL))
+    ) as ask_links
+    from tr t group by t.root_id
+),
+dl as (
+  select d.root_id, JSONB_AGG(
+      JSONB_BUILD_OBJECT('waiter', d.author_id::text, 'blockedBy', o.id, 'askedAt', d.created_at)
+      ORDER BY d.seq
+    ) as links
+    from tr d, LATERAL JSONB_ARRAY_ELEMENTS_TEXT(d.meta->'delegation'->'open') AS o(id)
+   where d.meta->>'kind' = 'delegation' and d.author_id IS NOT NULL
+   group by d.root_id
+),
+op as (
+  select t.root_id,
+    (COUNT(*) FILTER (
+      WHERE t.meta->>'kind' = 'ask'
+        AND t.meta->'ask'->>'answeredWith' IS NULL
+        AND t.meta->'ask'->>'closedAt' IS NULL
+        AND t.meta->'ask'->'to'->>'kind' = 'human'
+        AND NOT ${bundledRootSql('t')}
+    ) + COUNT(*) FILTER (WHERE ${openBundleSql('t')}))::int as open_ask_human_count,
+    COUNT(*) FILTER (
+      WHERE CASE WHEN t.meta->>'kind' = 'failure' THEN NOT EXISTS (
+          SELECT 1 FROM message r
+          WHERE (r.id = t.root_id OR r.thread_root_id = t.root_id)
+            AND r.deleted_at IS NULL
+            AND r.seq > t.seq
+            AND (r.kind IN ('progress', 'wake')
+              OR r.meta->>'kind' = 'report'
+              OR r.author_id = t.author_id)
+        ) ELSE false END
+    )::int as unresolved_failure_count,
+    ARRAY_AGG(DISTINCT t.meta->'failure'->>'awaitingAccountId') FILTER (
+      WHERE CASE WHEN t.meta->>'kind' = 'failure'
+        AND t.meta->'failure'->>'code' = 'account_gate'
+        AND t.meta->'failure'->>'awaitingAccountId' IS NOT NULL
+        THEN NOT EXISTS (
+          SELECT 1 FROM message r
+          WHERE (r.id = t.root_id OR r.thread_root_id = t.root_id)
+            AND r.deleted_at IS NULL
+            AND r.seq > t.seq
+            AND (r.kind IN ('progress', 'wake')
+              OR r.meta->>'kind' = 'report'
+              OR r.author_id = t.author_id)
+        ) ELSE false END
+    ) as open_gate_account_ids
+    from tr t where t.meta->>'kind' IN ('ask', 'askBundle', 'failure')
+   group by t.root_id
+),
+h as (
+  select hd.id,
+    COALESCE(st.reply_count, 0) as reply_count,
+    COALESCE(st.activity_count, 0) as activity_count,
+    st.last_reply_at,
+    COALESCE(pa.participant_ids, '{}'::uuid[]) as participant_ids,
+    COALESCE(sf.open_ask_account_ids, '{}'::text[]) as open_ask_account_ids,
+    COALESCE(sf.failure_count, 0) as failure_count,
+    COALESCE(sf.ask_links, '[]'::jsonb) || COALESCE(dl.links, '[]'::jsonb) as open_ask_links,
+    COALESCE(op.open_ask_human_count, 0) as open_ask_human_count,
+    COALESCE(op.unresolved_failure_count, 0) as unresolved_failure_count,
+    COALESCE(op.open_gate_account_ids, '{}'::text[]) as open_gate_account_ids
+    from hd
+    left join st on st.root_id = hd.id
+    left join pa on pa.root_id = hd.id
+    left join sf on sf.root_id = hd.id
+    left join dl on dl.root_id = hd.id
+    left join op on op.root_id = hd.id
+)
+select ${listCols({ stats: 'h', state: 'h', open: 'h', last: 'thread_last' })}
+  from hd m join h on h.id = m.id ${THREAD_LAST}
+ order by m.seq`;
+
+/**
+ * 옛 머리 문장 — 머리마다 `THREAD_STATS` 의 lateral 넷을 붙이던 꼴(E1 전). **시험의 기준값으로만** 남긴다:
+ * `threadHeadsGroupBy.test.ts` 가 같은 픽스처에서 이것과 위 `THREAD_HEADS_SQL` 의 행을 한 줄씩 견준다.
+ */
+export const THREAD_HEADS_LATERAL_SQL = `select ${LIST_COLS} from message m ${THREAD_STATS}
        join channel c on c.id = m.channel_id
       where m.id = any($1::uuid[]) and m.thread_root_id is null and ${LIST_VISIBLE}
         and ${channelVisibleSql('c', '$2::uuid')}
