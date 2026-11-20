@@ -5749,6 +5749,8 @@ async fn spawn_loops() {
     match push_sweeper(&pool).await {
         Ok(Some(s)) => {
             eprintln!("front: loop push on (runs only while server_loop owner is rust)");
+            // `/healthz` 의 `push` 칸(TS `pushSweeper.health` 와 같은 낱말).
+            let _ = harkroom_server::health::PUSH_HEALTH.set(s.health.clone());
             harkroom_server::loops::push::spawn(gate.clone(), s);
         }
         Ok(None) => eprintln!("front: loop push off — APNS_* not set"),

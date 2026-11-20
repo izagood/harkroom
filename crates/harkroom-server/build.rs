@@ -27,4 +27,56 @@ fn main() {
         files.join(", ")
     );
     fs::write(out.join("migrations_sql.rs"), sql).unwrap();
+    bake_release_version();
+}
+
+/// 릴리스 버전의 정본(`packages/desktop/src-tauri/tauri.conf.json` 의 `version`, TS `version.ts` 와 같은 자리)을
+/// `HARKROOM_BUILD_VERSION` 으로 굽는다 — `/healthz` 의 `version`(`src/health.rs`). 파일이 없거나 칸을 못 읽으면 굽지 않는다
+/// (그때 `/healthz` 는 env `HARKROOM_VERSION` 이 없으면 `null` 을 낸다 — 지어내지 않는다). 이미지 빌드는 이 파일 하나를 넘긴다(`Dockerfile`).
+fn bake_release_version() {
+    let conf = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../packages/desktop/src-tauri/tauri.conf.json");
+    println!("cargo:rerun-if-changed={}", conf.display());
+    if let Some(v) = fs::read_to_string(&conf)
+        .ok()
+        .as_deref()
+        .and_then(top_level_version)
+    {
+        println!("cargo:rustc-env=HARKROOM_BUILD_VERSION={v}");
+    }
+}
+
+/// 맨 바깥 객체의 `"version": "<값>"` — 빌드 스크립트라 JSON 파서 의존을 들이지 않는다. 값에 백슬래시가 있으면 굽지 않는다.
+fn top_level_version(json: &str) -> Option<&str> {
+    let b = json.as_bytes();
+    let mut depth = 0usize;
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'{' | b'[' => depth += 1,
+            b'}' | b']' => depth = depth.saturating_sub(1),
+            b'"' => {
+                // 문자열 끝(이스케이프 건너뜀).
+                let mut end = i + 1;
+                while end < b.len() && b[end] != b'"' {
+                    end += if b[end] == b'\\' { 2 } else { 1 };
+                }
+                let s = json.get(i + 1..end)?;
+                let after = json.get(end + 1..)?.trim_start();
+                if depth == 1
+                    && s == "version"
+                    && let Some(rest) = after.strip_prefix(':')
+                    && let Some(rest) = rest.trim_start().strip_prefix('"')
+                    && let Some(close) = rest.find('"')
+                {
+                    let v = &rest[..close];
+                    return (!v.is_empty() && !v.contains('\\')).then_some(v);
+                }
+                i = end;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
 }

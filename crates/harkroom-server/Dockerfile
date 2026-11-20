@@ -20,6 +20,8 @@ COPY crates/harkroom-server/Cargo.toml crates/harkroom-server/Cargo.lock crates/
 RUN cd crates/harkroom-server && cargo fetch --locked
 
 COPY packages/server/src/db/migrations packages/server/src/db/migrations
+# 릴리스 판의 정본(TS 이미지와 같은 파일). `build.rs` 가 그 `version` 을 바이너리에 굽는다 — `/healthz` 의 `version`.
+COPY packages/desktop/src-tauri/tauri.conf.json packages/desktop/src-tauri/tauri.conf.json
 COPY crates/harkroom-server crates/harkroom-server
 RUN cd crates/harkroom-server \
  && cargo build --locked --release --bin harkroom-server-rs \
@@ -35,4 +37,10 @@ COPY --from=build /harkroom-server-rs /usr/local/bin/harkroom-server-rs
 ENV PORT=3500
 EXPOSE 3500
 USER 65532:65532
+
+# **맨 끝에 둔다**(TS 이미지와 같은 방식·같은 이름). `.git` 은 빌드 컨텍스트에 없어 이미지가 스스로 sha 를 모른다 —
+# 빌드하는 쪽(`image.yml` 의 `build-args`)이 심는다. 안 심으면 `/healthz` 의 `commit` 은 `null` 이다.
+ARG HARKROOM_COMMIT=""
+ENV HARKROOM_COMMIT=$HARKROOM_COMMIT
+
 ENTRYPOINT ["/usr/local/bin/harkroom-server-rs"]

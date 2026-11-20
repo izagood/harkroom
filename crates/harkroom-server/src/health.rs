@@ -1,10 +1,14 @@
 //! S5.4 H1 — `GET /healthz`·`GET /readyz`·`GET /metrics` 를 앞단이 답한다(TS `buildServer.ts` 와 같은 경로·꼴·코드·인증).
 //!
 //! - `/healthz`·`/readyz` 는 인증 **앞**(TS 와 같다 — 배포가 낡았는지는 로그인 전에도 물어야 한다). `routes::OPEN` 참고.
-//! - `/healthz` 의 `version`·`commit`·`startedAt` 은 **답하는 프로세스(앞단)** 의 것이다(env `HARKROOM_VERSION`·`HARKROOM_COMMIT`,
-//!   TS `version.ts` 와 같은 이름). 앞단 env 에 없으면 TS 가 낸 값을 그대로 싣는다 — 지어내지 않는다.
-//!   `avcs`·`push`·`mail` 은 TS 프로세스 안 상태(소켓·푸시 worker·SMTP)라 TS `/healthz` 를 1초 안에 물어 옮겨 싣는다.
-//!   TS 가 답하지 않으면 TS 의 기본값(`avcs: { connected: false }`)만 싣고 선택 필드(`push`·`mail`)는 뺀다.
+//! - `/healthz` 는 TS 없이 낸다(TS 를 끈 뒤에도 같은 칸 — 운영 TS 끄기 전 의존을 걷었다). 칸은 TS `ServerHealth` 와 같고,
+//!   키 순서는 앞단이 지금껏 내던 대로(`serde_json::Map`, 이름순)다 — 앱은 이름으로 읽는다.
+//!   - `version`: env `HARKROOM_VERSION` → 빌드 때 구운 `tauri.conf.json` 의 판(`build.rs`, TS `version.ts` 와 같은 정본·같은 순서) → `null`.
+//!   - `commit`: env `HARKROOM_COMMIT`(이미지가 빌드 인자로 굽는다 — `Dockerfile`, TS 이미지와 같은 방식) → `null`. 지어내지 않는다.
+//!   - `startedAt`: 앞단 프로세스가 뜬 시각.
+//!   - `push`: 앞단 푸시 sweeper(C5e)가 섰으면 `ok`/`degraded`, 아니면 `off`(TS `pushSweeper.health` 와 같은 낱말).
+//!   - `mail`: TS `loadMailConfig` 와 같은 env(`HARKROOM_SMTP_*`·`HARKROOM_MAIL_FROM`·`HARKROOM_PUBLIC_URL`)로 `on`/`off`.
+//!   - `avcs`: 소켓 상태는 TS 프로세스 안에 있다 — TS `/healthz` 를 1초 안에 물어 옮겨 싣고, 답이 없으면 TS 기본값 `{ connected: false }`.
 //! - `/metrics` 는 계정 인증(TS `requireAccount`). DB 로 셀 수 있는 게이지만 같은 이름으로 낸다 — 빠진 것은 PR 본문 참고.
 //! - `/projection/status` 는 여기 없다: Rust 투영 루프가 쓰는 `projection_status` 줄을 `directory::projection_status` 가 읽는다.
 use crate::auth::RequireAccount;
@@ -78,30 +82,56 @@ async fn ts_health(state: &AppState) -> Option<Map<String, Value>> {
     }
 }
 
+/// 빌드 때 구운 릴리스 판(`build.rs`). 정본 파일을 못 읽었으면 `None`.
+pub const BUILD_VERSION: Option<&str> = option_env!("HARKROOM_BUILD_VERSION");
+
+/// 앞단 푸시 sweeper 의 상태 — `main.rs` 가 sweeper 를 세울 때 한 번 건다. 안 걸렸으면 푸시는 `off`.
+pub static PUSH_HEALTH: std::sync::OnceLock<std::sync::Arc<crate::loops::push::PushHealth>> =
+    std::sync::OnceLock::new();
+
+/// 메일 켜짐 — 기동 때 env 로 한 번(TS 는 `buildServer` 때 한 번 읽는다). 설정이 틀리면(Err) 보낼 수 없으니 `off`.
+static MAIL_ON: LazyLock<bool> = LazyLock::new(|| {
+    matches!(
+        crate::core::invite_mail::load_mail_config(|k| std::env::var(k).ok()),
+        Ok(Some(_))
+    )
+});
+
+/// TS `version.ts` 의 `readReleaseVersion` — env 가 먼저, 다음 구운 판.
+fn release_version() -> Option<String> {
+    env_str("HARKROOM_VERSION").or_else(|| BUILD_VERSION.map(str::to_string))
+}
+
+fn push_word() -> &'static str {
+    match PUSH_HEALTH.get() {
+        None => "off",
+        Some(h) if h.degraded() => "degraded",
+        Some(_) => "ok",
+    }
+}
+
 /// TS `GET /healthz` — `ServerHealth`.
 pub async fn healthz(State(state): State<AppState>) -> Response {
-    let ts = ts_health(&state).await.unwrap_or_default();
+    let avcs = ts_health(&state)
+        .await
+        .and_then(|mut m| m.remove("avcs"))
+        .unwrap_or_else(|| json!({ "connected": false }));
     let mut out = Map::new();
     out.insert("ok".into(), Value::Bool(true));
+    out.insert("avcs".into(), avcs);
+    out.insert("push".into(), Value::from(push_word()));
     out.insert(
-        "avcs".into(),
-        ts.get("avcs")
-            .cloned()
-            .unwrap_or_else(|| json!({ "connected": false })),
+        "mail".into(),
+        Value::from(if *MAIL_ON { "on" } else { "off" }),
     );
-    for k in ["push", "mail"] {
-        if let Some(v) = ts.get(k) {
-            out.insert(k.into(), v.clone());
-        }
-    }
-    for (k, env) in [
-        ("version", "HARKROOM_VERSION"),
-        ("commit", "HARKROOM_COMMIT"),
-    ] {
-        let v =
-            env_str(env).map_or_else(|| ts.get(k).cloned().unwrap_or(Value::Null), Value::String);
-        out.insert(k.into(), v);
-    }
+    out.insert(
+        "version".into(),
+        release_version().map_or(Value::Null, Value::String),
+    );
+    out.insert(
+        "commit".into(),
+        env_str("HARKROOM_COMMIT").map_or(Value::Null, Value::String),
+    );
     out.insert("startedAt".into(), Value::String(STARTED_AT.clone()));
     json_reply(StatusCode::OK, &Value::Object(out))
 }
