@@ -801,7 +801,7 @@ pub(super) async fn answer_ask(
         operator,
         None,
         supersedes,
-        plan_step,
+        plan_step.map(PlanHook::LinkCard),
         None,
         push_to,
         None,
@@ -1006,7 +1006,10 @@ fn str_list(o: &Map<String, Value>, key: &str, max: usize) -> Option<Vec<String>
 /// 갱신·머리 없음 `bad_request` 는 TS 몫) · zod 가 받지 않을 꼴 · 안전한 정수가 아닌 `durationMs`.
 fn parse_report(args: &Value) -> Option<(Args, Map<String, Value>)> {
     let Value::Object(o) = args else { return None };
-    if o.contains_key("planStepId") {
+    // `planStepId` 는 [`answer_report`] 가 따로 읽는다 — 여기서는 zod 꼴만 본다.
+    if o.get("planStepId")
+        .is_some_and(|v| !super::message_ask::plan_step_ok(v))
+    {
         return None;
     }
     let checks = match o.get("checks") {
@@ -1077,7 +1080,25 @@ pub async fn answer_report(
     operator: bool,
 ) -> Option<String> {
     let (a, meta) = parse_report(args)?;
-    post(
+    let step = args.get("planStepId").and_then(Value::as_str);
+    if step.is_some() {
+        // TS 순서: 채널 가시성 → `planStepId` 인데 스레드 없음 `bad_request`.
+        if a.post.thread_root.is_none() {
+            return match channel_visible(&st.read, &me.id, &a.channel).await {
+                Ok(true) => Some(err(
+                    "bad_request",
+                    "planStepId 는 threadRootId 와 함께 준다(그 스레드의 계획 단계)",
+                )),
+                Ok(false) => Some(err("forbidden", "not a member of this dm channel")),
+                Err(_) => None,
+            };
+        }
+        // 계획 쓰기 권한이 모자란 풀이면 지금처럼 TS(`message.ask` 의 `planStepId` 와 같은 관문).
+        if !super::message_ask::plan_step_ready(st).await? {
+            return None;
+        }
+    }
+    post_with(
         st,
         me,
         a,
@@ -1089,8 +1110,22 @@ pub async fn answer_report(
         turn,
         operator,
         None,
+        &[],
+        step.map(PlanHook::Complete),
+        None,
+        None,
+        None,
     )
     .await
+}
+
+/// 글이 선 뒤 계획판을 고치는 갈래(TS `threadPlanHooks.ts`).
+#[derive(Clone, Copy)]
+pub(super) enum PlanHook<'a> {
+    /// `message.ask` 의 `planStepId` — 그 단계에 카드를 잇는다.
+    LinkCard(&'a str),
+    /// `message.report` 의 `planStepId` — 그 단계를 done 으로.
+    Complete(&'a str),
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1144,7 +1179,7 @@ async fn post_with(
     operator: bool,
     artifact: Option<&super::artifact_write::NewArtifact>,
     supersedes: &[&str],
-    plan_step: Option<&str>,
+    plan_hook: Option<PlanHook<'_>>,
     picks: Option<&crate::core::agent_model_picks::AgentPicks>,
     push_to: Option<&str>,
     gate: Option<&GateNotify>,
@@ -1245,7 +1280,7 @@ async fn post_with(
                 .ok()
                 .and_then(|v| v.get("id").and_then(Value::as_str).map(str::to_owned));
             let mut plan_extra = String::new();
-            if let Some(new_id) = new_id {
+            if let Some(new_id) = new_id.clone() {
                 if let Some(root) = &mirror_root {
                     let r: Result<(), sqlx::Error> = async {
                         let mut conn = st.write.acquire().await?;
@@ -1275,18 +1310,6 @@ async fn post_with(
                 {
                     eprintln!("message.ask: ask push for {new_id} failed: {e}");
                 }
-                // TS `postedResult(message, notified, { plan: planHookOut(await linkPlanCard(…)) })` — 재생이 아닐 때만(재생은 TS 가 답한다).
-                if let (Some(step), Some(root)) = (plan_step, a.post.thread_root.as_deref()) {
-                    match super::plan_write::link_plan_card(
-                        &st.write, &me.id, root, &a.channel, step, &new_id,
-                    )
-                    .await
-                    {
-                        Ok(plan) => plan_extra = format!(",\"plan\":{plan}"),
-                        // 다름(기록): TS 는 이 DB 오류를 도구 오류로 던진다. Rust 는 카드가 이미 섰으므로 기록만 하고 `plan` 칸 없이 답한다.
-                        Err(e) => eprintln!("message.ask: plan link {step} failed: {e}"),
-                    }
-                }
             }
             // TS `message.report` — 보고가 선 **뒤**(커밋 뒤) 따로 예약을 접는다. 접기가 막혀도 보고는 되돌리지 않는다(TS `.catch(() => [])`).
             let extra = match (fold, a.post.thread_root.as_deref()) {
@@ -1309,7 +1332,34 @@ async fn post_with(
                     None => String::new(),
                 },
             };
-            posted_result(&row, &notified, &format!("{extra}{plan_extra}"))
+            // 계획 단계 갱신은 보고·예약 접기 **뒤**(TS 순서). 답 칸 순서도 TS `{ plan, ...foldedExtra }` 대로 plan 이 먼저다.
+            // 재생이 아닐 때만(재생은 TS 가 답한다).
+            if let (Some(hook), Some(root), Some(new_id)) =
+                (plan_hook, a.post.thread_root.as_deref(), new_id.as_deref())
+            {
+                let r = match hook {
+                    // TS `linkPlanCard`(`message.ask` 의 `planStepId`).
+                    PlanHook::LinkCard(step) => {
+                        super::plan_write::link_plan_card(
+                            &st.write, &me.id, root, &a.channel, step, new_id,
+                        )
+                        .await
+                    }
+                    // TS `completePlanStep`(`message.report` 의 `planStepId`).
+                    PlanHook::Complete(step) => {
+                        super::plan_write::complete_plan_step(
+                            &st.write, &me.id, root, &a.channel, step,
+                        )
+                        .await
+                    }
+                };
+                match r {
+                    Ok(plan) => plan_extra = format!(",\"plan\":{plan}"),
+                    // 다름(기록): TS 는 이 DB 오류를 도구 오류로 던진다. Rust 는 글이 이미 섰으므로 기록만 하고 `plan` 칸 없이 답한다.
+                    Err(e) => eprintln!("mcp: plan hook failed: {e}"),
+                }
+            }
+            posted_result(&row, &notified, &format!("{plan_extra}{extra}"))
         }
     }
 }
@@ -1491,8 +1541,15 @@ mod tests {
             Value::Object(m),
             json!({ "kind": "report", "report": { "checks": ["c"], "remaining": ["r"], "durationMs": 5, "next": [{ "id": "n", "label": "l" }] } })
         );
+        // `planStepId` 는 Rust 가 맡는다(계획 단계 done) — 꼴만 zod 와 같이 본다.
+        assert!(
+            parse_report(&json!({ "channelId": C, "body": "x", "threadRootId": R, "checks": ["c"], "planStepId": "s33" }))
+                .is_some()
+        );
         for bad in [
-            json!({ "channelId": C, "body": "x", "checks": ["c"], "planStepId": "s1" }),
+            json!({ "channelId": C, "body": "x", "checks": ["c"], "planStepId": "s0" }),
+            json!({ "channelId": C, "body": "x", "checks": ["c"], "planStepId": "s12345" }),
+            json!({ "channelId": C, "body": "x", "checks": ["c"], "planStepId": 1 }),
             json!({ "channelId": C, "body": "x", "checks": [] }),
             json!({ "channelId": C, "body": "x" }),
             json!({ "channelId": C, "body": "x", "checks": [""] }),

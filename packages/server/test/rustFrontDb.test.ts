@@ -10680,7 +10680,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             await db.pool.query(`insert into agent_wake (account_id, channel_id, message_id, wake_at) values ($1, $2, $3, now() + interval '1 hour')`, [bot3.accountId, ch, m]);
             return { tool: 'message.report', args: { channelId: ch, body: '보고', checks: ['봤다'] }, via: viaPat };
           }, true],
-          ['report planStepId → TS', async (ch) => ({ tool: 'message.report', args: { channelId: ch, body: '보고', checks: ['봤다'], planStepId: 's1' }, via: viaPat }), false],
+          // #2438 — planStepId 를 단 보고도 Rust 가 받는다. 스레드 없이 오면 채널을 본 뒤 bad_request. 꼴이 틀린 단계 id 만 TS(zod 오류).
+          ['report planStepId 스레드 없음 → bad_request', async (ch) => ({ tool: 'message.report', args: { channelId: ch, body: '보고', checks: ['봤다'], planStepId: 's1' }, via: viaPat }), true],
+          ['report planStepId 꼴 틀림 → TS(zod 오류)', async (ch) => ({ tool: 'message.report', args: { channelId: ch, body: '보고', checks: ['봤다'], planStepId: 's0' }, via: viaPat }), false],
           ['report checks 빈 목록 → TS(zod 오류)', async (ch) => ({ tool: 'message.report', args: { channelId: ch, body: '보고', checks: [] }, via: viaPat }), false],
           ['report durationMs 소수 → TS', async (ch) => ({ tool: 'message.report', args: { channelId: ch, body: '보고', checks: ['봤다'], durationMs: 1.5 }, via: viaPat }), false],
           // S5.4 A3 — MCP `turn.wake`. 대기 줄(kind 'wake')·예약 행·감시 대체·거절 갈래.
