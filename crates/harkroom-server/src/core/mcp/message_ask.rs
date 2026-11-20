@@ -1246,7 +1246,24 @@ async fn open_denial_card(
         &expires_iso,
         chip,
     );
-    let meta = pc::merge_card_meta(pr_meta, once.ci());
+    let mut meta = pc::merge_card_meta(pr_meta, once.ci());
+    // 위임장 없는 턴이면 [이 스레드로 위임장 만들고 더하기]가 서는데, 이 스레드의 머리 글이 소유자·소유자 에이전트 글이 아니면 그 버튼은
+    // 늘 409 `mandate_unavailable` 이다 — 세우지 않고 [이번 한 번]을 주 버튼으로 둔다.
+    if mandate.is_none() && !once.ci() {
+        let open: bool = match owner {
+            Some(ow) => sqlx::query_scalar(pc::CARD_THREAD_OPEN_SQL)
+                .bind(thread)
+                .bind(channel)
+                .bind(ow)
+                .fetch_one(read)
+                .await
+                .ok()?,
+            None => false,
+        };
+        if !open {
+            pc::drop_new_mandate(&mut meta);
+        }
+    }
     let card_body = pc::merge_card_body(short, Some(&once), &format!("@{}", me.handle), &why);
     let mut sub = Map::new();
     sub.insert("channelId".into(), Value::from(channel));
