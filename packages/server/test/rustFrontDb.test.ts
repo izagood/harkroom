@@ -3455,7 +3455,6 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           expect(fN.log()).toContain('thread note core off — missing privileges');
           // 가군 스위치를 주지 않은 앞단 — 스위치마다 값이 없다고 알리며 기동한다(값을 준 앞단은 이 줄을 남기지 않는다). 글 쓰기는 TS 기본값으로 맡는다.
           const UNSET_LINES = [
-            'front: principal-invoke edits to TS — HARKROOM_PRINCIPAL_INVOKE unset',
             // 위임 v2 값이 없으면 암묵 위임 줄 대신 v2 스위치 자체를 알린다(암묵 위임은 v2 가 켜졌을 때만 뜻이 있다).
             'front: delegation inbox to TS — HARKROOM_DELEGATION_V2 unset',
             'front: attachment upload to TS — ATTACHMENT_MAX_BYTES unset',
@@ -3466,6 +3465,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           expect(fN.log()).toContain('front: invite mail off (409 mail_disabled) — mail env unset');
           expect(fN.log()).not.toContain('invite mail (issue with email, resend) to TS');
           expect(fN.log()).not.toContain('HARKROOM_DELEGATION_IMPLICIT unset');
+          // 원인 제공자 부름 스위치는 값이 없어도 TS 로 넘기는 요청이 없다 — 알릴 것이 없다.
+          expect(fN.log()).not.toContain('HARKROOM_PRINCIPAL_INVOKE unset');
           expect(fN.log()).not.toContain('"POST /uploads"');
           expect(fN.log()).not.toContain('"GET /accounts/agents/{id}/background"');
           for (const line of UNSET_LINES.slice(0, 1).concat(UNSET_LINES.slice(2, 4))) expect(f.log(), line).not.toContain(line);
@@ -12039,14 +12040,15 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
               }
             }
           };
-          const PRINCIPAL_LINE = 'front: principal-invoke edits to TS — HARKROOM_PRINCIPAL_INVOKE unset';
+          // 이 스위치는 값이 없어도 TS 로 넘기는 요청이 없다 — 어느 앞단도 이 줄을 남기지 않는다.
+          const PRINCIPAL_LINE = 'HARKROOM_PRINCIPAL_INVOKE unset';
           const IMPLICIT_LINE = 'front: implicit delegation defaults to shadow — HARKROOM_DELEGATION_IMPLICIT unset';
           try {
             const K = await front({});
             const noPrincipal = await front({ HARKROOM_PRINCIPAL_INVOKE: '' });
             const noImplicit = await front({ HARKROOM_DELEGATION_IMPLICIT: '' });
             for (const line of [PRINCIPAL_LINE, IMPLICIT_LINE]) expect(K.log(), line).not.toContain(line);
-            expect(noPrincipal.log()).toContain(PRINCIPAL_LINE);
+            expect(noPrincipal.log()).not.toContain(PRINCIPAL_LINE);
             expect(noPrincipal.log()).not.toContain(IMPLICIT_LINE);
             expect(noImplicit.log()).toContain(IMPLICIT_LINE);
             expect(noImplicit.log()).not.toContain(PRINCIPAL_LINE);

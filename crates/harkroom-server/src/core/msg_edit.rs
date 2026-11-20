@@ -197,7 +197,7 @@ async fn edit_in_tx(
     body: &str,
     audience: &Value,
     now_ms: i64,
-    principal_invoke_enabled: Option<bool>,
+    principal_invoke_enabled: bool,
 ) -> Result<Outcome, sqlx::Error> {
     let s = sql();
     let mut tx = st.write.begin().await?;
@@ -354,8 +354,8 @@ pub async fn patch(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or_default();
-    // 고치기는 원인 제공자를 싣지 않는다(`principal: None`) — 이 스위치에 걸리는 판정이 없다. 모름이어도 답이 같다.
-    let enabled = mention_calls::principal_invoke_switch(crate::env_once::get(
+    // 고치기는 원인 제공자를 싣지 않는다(`principal: None`) — 이 스위치에 걸리는 판정이 없다. 글 쓰기와 같은 값(없으면 켬)을 준다.
+    let enabled = mention_calls::principal_invoke_enabled(crate::env_once::get(
         &crate::env_once::PRINCIPAL_INVOKE,
     ));
     match edit_in_tx(
