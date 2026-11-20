@@ -441,3 +441,54 @@ async fn serve_hands_to_ts_before_admit_when_not_ours() {
             .is_none()
     );
 }
+
+/// 읽기 풀이 막혔을 때 `message.read` 는 TS 로 넘기지 않고 다시 부른 뒤 `temporarily_unavailable` 로 답한다([`db_retry`]).
+/// 이 갈래 밖의 도구는 예전처럼 TS 로 넘긴다.
+#[tokio::test]
+async fn serve_pre_retries_covered_reads_on_a_dead_pool() {
+    use harkroom_server::core::mcp::route::{Pre, serve_pre};
+    let dead = sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(Duration::from_millis(100))
+        .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+        .unwrap();
+    let pre = Pre {
+        read_pool: Some(&dead),
+        ..Pre::NONE
+    };
+    let up = admit_upstream("yes", Default::default()).await;
+    let read = r#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"message.read","arguments":{}}}"#;
+    let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let h = hits.clone();
+    let counting = move |_: &'static str, _: serde_json::Value| -> AnswerFut {
+        h.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Box::pin(async { None })
+    };
+    let r = serve_pre(
+        &up,
+        ci(),
+        &mcp_headers(&[]),
+        read.as_bytes(),
+        &["message.read"],
+        &counting,
+        &pre,
+    )
+    .await
+    .expect("answered by rust, not handed to TS");
+    let (_, text) = sse_text(r).await;
+    assert!(text.contains("temporarily_unavailable"), "{text}");
+    assert_eq!(
+        hits.load(std::sync::atomic::Ordering::SeqCst),
+        harkroom_server::core::mcp::db_retry::ATTEMPTS
+    );
+    let other = serve_pre(
+        &up,
+        ci(),
+        &mcp_headers(&[]),
+        CALL.as_bytes(),
+        &["channel.list"],
+        &none,
+        &pre,
+    )
+    .await;
+    assert!(other.is_none(), "uncovered tool still goes to TS");
+}

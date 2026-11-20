@@ -327,6 +327,7 @@ pub async fn handle(
             .and_then(|v| v.to_str().ok()),
         presence: writes.presence.get(),
         switches: writes.switches,
+        read_pool: Some(&pool),
     };
     if let Some(r) = lifecycle_reply(&parts.headers, &bytes, &pre) {
         return r;
@@ -458,6 +459,8 @@ pub struct Pre<'a> {
     /// P2 — 있으면 입장 확인을 Rust 가 끝까지 한다([`local_admit`]). 없으면 TS `/mcp/admit`.
     pub presence: Option<&'a std::sync::Arc<crate::core::relay_live::PresenceMark>>,
     pub switches: AdmitSwitches,
+    /// 있으면 [`super::db_retry::COVERED`] 도구가 답하지 못했을 때 풀을 보고 다시 부른다([`super::db_retry`]). 없으면 곧바로 TS.
+    pub read_pool: Option<&'a sqlx::PgPool>,
 }
 
 /// TS `/mcp/admit` 답의 조건부 칸을 정하는 env 두 개 — 값이 있을 때만 `Some`(TS 와 같은 판정). 없으면 그 도구는 TS 에 묻는다.
@@ -536,6 +539,7 @@ impl Pre<'static> {
             delegation_v2: None,
             background: None,
         },
+        read_pool: None,
     };
 }
 
@@ -746,7 +750,13 @@ pub async fn serve_pre(
         }
         super::respond::Admit::Unknown => return None,
     }
-    let result = answer(name, args).await?;
+    let result = match pre
+        .read_pool
+        .filter(|_| super::db_retry::COVERED.contains(&name))
+    {
+        Some(pool) => super::db_retry::run(pool, name, || answer(name, args.clone())).await,
+        None => answer(name, args).await,
+    }?;
     Some(super::respond::sse(&id, &result))
 }
 
@@ -973,6 +983,7 @@ mod tests {
             cause_header: None,
             presence: None,
             switches: AdmitSwitches::default(),
+            read_pool: None,
         };
         let none = axum::http::HeaderMap::new();
         assert!(admit_refused("memory.set", &pre(true, true), &none));
