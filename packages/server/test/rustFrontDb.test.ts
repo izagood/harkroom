@@ -3469,7 +3469,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           expect(fN.log()).not.toContain('HARKROOM_PRINCIPAL_INVOKE unset');
           expect(fN.log()).not.toContain('"POST /uploads"');
           expect(fN.log()).not.toContain('"GET /accounts/agents/{id}/background"');
-          for (const line of UNSET_LINES.slice(0, 1).concat(UNSET_LINES.slice(2, 4))) expect(f.log(), line).not.toContain(line);
+          for (const line of UNSET_LINES.slice(1)) expect(f.log(), line).not.toContain(line);
           const viaTs = await mcpCall(`http://127.0.0.1:${portN}`, agent.pat, 'thread.note', { threadRootId: noteRootR, body: 'TS 가 받는다' });
           expect(viaTs.core, '권한이 없으면 TS 가 답한다').toBeNull();
           expect(viaTs.text).toContain('ok\\":true');
