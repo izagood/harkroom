@@ -97,6 +97,8 @@ enum PlanArg {
 const PLAN_PAIR_MSG: &str = "planRootId 와 planGroupId 는 함께 준다(부모 계획의 스레드와 그 그룹)";
 /// TS `PLAN_ERROR_MESSAGES.self_link`.
 const SELF_LINK_MSG: &str = "자기 스레드는 연결할 수 없다";
+/// TS `BAD_THREAD_MESSAGE` — 머리가 이 채널의 최상위 글이 아니다.
+const BAD_THREAD: &str = "threadRootId must be a top-level message in this channel";
 
 /// zod `planGroupId` — `/^g[1-9][0-9]{0,3}$/`.
 fn plan_group_ok(g: &str) -> bool {
@@ -622,8 +624,8 @@ async fn write(
             "chain_limit",
             "이 사슬은 에이전트끼리의 호출 상한에 닿았다 — 사람에게 넘겨라",
         )),
-        // 아무것도 쓰지 않았다 — 그 오류 글자는 TS 가 낸다.
-        Outcome::BadThread => to_ts("bad_thread"),
+        // 아무것도 쓰지 않았다 — `message.post` 와 같은 글자로 답한다(TS `BAD_THREAD_MESSAGE`).
+        Outcome::BadThread => Some(err("bad_thread", BAD_THREAD)),
         Outcome::BadAttachment => to_ts("bad_attachment"),
         Outcome::Posted {
             row,
