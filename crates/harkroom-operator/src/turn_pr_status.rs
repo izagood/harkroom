@@ -764,14 +764,22 @@ mod tests {
                 .iter()
                 .any(|c| c == "pr diff 5 -R o/other --color never")
         );
-        // base 를 merge 해 blob·줄 번호·함수 문맥만 바뀐 diff 는 같은 지문이다.
+        // base 를 merge 해 blob·줄 번호만 바뀐 diff 는 같은 지문이다(함수 문맥은 그대로).
         let moved = DIFF
             .replace("1111111..2222222", "aaaaaaa..bbbbbbb")
             .replace(
                 "@@ -10,3 +10,4 @@ fn old() {",
-                "@@ -42,3 +42,4 @@ fn other() {",
+                "@@ -42,3 +57,4 @@ fn old() {",
             );
+        assert_ne!(moved, DIFF);
         assert_eq!(diff_id_with(res(0, &moved, "")).0, a);
+        // 같은 줄을 다른 함수에서 바꾼 diff 는 다른 지문이다.
+        let elsewhere = DIFF.replace(
+            "@@ -10,3 +10,4 @@ fn old() {",
+            "@@ -42,3 +42,4 @@ fn other() {",
+        );
+        assert_ne!(elsewhere, DIFF);
+        assert_ne!(diff_id_with(res(0, &elsewhere, "")).0, a);
         // 변경 내용이 다르면 다르다.
         assert_ne!(
             diff_id_with(res(0, &DIFF.replace("+added", "+added!"), "")).0,

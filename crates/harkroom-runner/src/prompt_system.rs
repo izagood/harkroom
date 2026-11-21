@@ -661,7 +661,7 @@ pub const FEATURE_CATALOG: &[FeatureEntry] = &[
         lines: &[
             "`pr.status`(repo·number): 셸 없이 PR 의 상태·CI 를 볼 때 — state·draft·head·base·mergeState·체크별 이름/결론만 준다(읽기 전용).",
             "머지 권한을 받은 저장소만 읽힌다. `not_granted` 면 짐작하지 말고 사람에게 말한다.",
-            "`diffId` 는 지금 PR 변경(diff)의 지문이다 — 검토할 때 head 와 함께 적어 두고, head 가 바뀌었을 때 `diffId` 가 같으면 PR 변경이 같다. 빈 값이면 모름이니 다시 검토한다.",
+            "`diffId` 는 지금 PR 변경(diff)의 지문이다 — 검토할 때 head 와 함께 적어 두고, head 가 바뀌었을 때 `diffId` 가 같으면 같은 변경으로 본다(같은 함수 안의 위치는 견주지 않는다). 빈 값이면 모름이니 다시 검토한다.",
         ],
     },
     FeatureEntry {

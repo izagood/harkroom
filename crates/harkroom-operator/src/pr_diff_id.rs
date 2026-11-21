@@ -4,7 +4,12 @@
 //! 「같은 변경이어도 base 가 움직이면 달라지는 것」만 지우고 sha256 을 낸다:
 //! - `index <blob>..<blob>` 줄 — 파일의 다른 자리가 base 에서 바뀌면 blob 이 달라진다. **이진 파일은 지우지 않는다**
 //!   (내용이 diff 에 안 실려 blob id 가 유일한 증거다).
-//! - `@@ -a,b +c,d @@ <함수 문맥>` — 줄 번호와 꼬리 문맥은 위쪽이 밀리면 달라진다. `@@` 만 남긴다.
+//! - `@@ -a,b +c,d @@ <함수 문맥>` — 줄 번호는 위쪽이 밀리면 달라진다. **숫자만** 지우고 꼬리(함수 문맥)는
+//!   `@@ <꼬리>` 로 남긴다(git range-diff 와 같은 방식). 꼬리까지 지우면 위치가 하나도 안 남아, 앞뒤 문맥이 같은
+//!   두 함수에 한 같은 변경이 한 지문이 된다. 꼬리는 위쪽 줄이 밀려도 그대로이고, base 가 그 사이에 함수를
+//!   끼워 꼬리가 바뀌면 「다름」이 된다 — 다시 보는 쪽이라 괜찮다.
+//!
+//! 한계: 같은 함수 안에서 앞뒤 문맥까지 같은 두 자리는 구별하지 못한다(range-diff 도 같다).
 //!
 //! 문맥 줄(앞뒤 3줄)은 그대로 둔다 — base 가 그 근처를 고쳤으면 지문이 달라지고, 그때는 다시 보는 쪽이 맞다.
 //! 판정은 읽기 전용이다. 머지 승인(head 에 묶임)과는 무관하다.
@@ -19,6 +24,30 @@ fn is_binary_section(lines: &[&str]) -> bool {
         .any(|l| l.starts_with("Binary files ") || *l == "GIT binary patch")
 }
 
+/// hunk 머리 `@@ -a[,b] +c[,d] @@[ 꼬리]` 에서 줄 번호만 지운 꼴(`@@` 또는 `@@ 꼬리`). 그 꼴이 아니면 None —
+/// 부르는 쪽이 줄을 그대로 둔다(모르는 꼴은 지우지 않는 쪽).
+fn hunk_header(l: &str) -> Option<String> {
+    let rest = l.strip_prefix("@@ ")?;
+    let (ranges, tail) = rest.split_once(" @@")?;
+    let mut parts = ranges.split(' ');
+    let is_range = |p: &str, sign: char| {
+        p.strip_prefix(sign).is_some_and(|n| {
+            !n.is_empty()
+                && n.split(',').count() <= 2
+                && n.split(',')
+                    .all(|d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit()))
+        })
+    };
+    if !(is_range(parts.next()?, '-') && is_range(parts.next()?, '+') && parts.next().is_none()) {
+        return None;
+    }
+    if tail.is_empty() {
+        return Some("@@".to_string());
+    }
+    // 꼬리는 ` @@` 바로 뒤 빈칸 하나로 시작한다.
+    tail.starts_with(' ').then(|| format!("@@{tail}"))
+}
+
 fn push_section(out: &mut String, lines: &[&str]) {
     let binary = is_binary_section(lines);
     // 머리(첫 `@@` 앞)에서만 `index` 줄을 지운다 — 본문의 ` index …`·`+index …` 는 첫 글자가 달라 걸리지 않지만,
@@ -27,8 +56,11 @@ fn push_section(out: &mut String, lines: &[&str]) {
     for l in lines {
         if l.starts_with("@@ ") || *l == "@@" {
             in_header = false;
-            out.push_str("@@\n");
-            continue;
+            if let Some(h) = hunk_header(l) {
+                out.push_str(&h);
+                out.push('\n');
+                continue;
+            }
         }
         if in_header && !binary && l.starts_with("index ") {
             continue;
@@ -81,13 +113,52 @@ mod tests {
 
     #[test]
     fn base_moved_only_is_same() {
-        // base 가 위쪽에 줄을 더했다: blob·줄 번호·함수 문맥만 다르다.
+        // base 가 위쪽에 줄을 더했다: blob·줄 번호만 다르고 함수 문맥은 그대로다.
         let b = A.replace("1111111..2222222", "aaaaaaa..bbbbbbb").replace(
             "@@ -10,3 +10,4 @@ fn old_ctx() {",
-            "@@ -42,3 +42,4 @@ fn other() {",
+            "@@ -42,3 +57,4 @@ fn old_ctx() {",
         );
         assert_eq!(same_change(A, &b), Some(true));
         assert_eq!(diff_id(A).unwrap().len(), 64);
+        // 꼬리 없는 hunk 머리(파일 맨 위, 줄 수 생략 꼴 포함)도 숫자만 다르면 같다.
+        let top = A.replace("@@ -10,3 +10,4 @@ fn old_ctx() {", "@@ -1 +1,2 @@");
+        let top2 = A.replace("@@ -10,3 +10,4 @@ fn old_ctx() {", "@@ -3,3 +3,4 @@");
+        assert_eq!(same_change(&top, &top2), Some(true));
+    }
+
+    #[test]
+    fn same_lines_in_another_function_are_different() {
+        // 앞뒤 문맥·바뀐 줄이 글자까지 같아도 함수 문맥(꼬리)이 다르면 다른 변경이다 — 숫자가 같든 다르든.
+        let other = A.replace(
+            "@@ -10,3 +10,4 @@ fn old_ctx() {",
+            "@@ -42,3 +42,4 @@ fn other() {",
+        );
+        assert_eq!(same_change(A, &other), Some(false));
+        let same_numbers = A.replace("fn old_ctx() {", "fn other() {");
+        assert_eq!(same_change(A, &same_numbers), Some(false));
+        // 꼬리가 있는 것과 없는 것도 다르다.
+        let no_tail = A.replace(" fn old_ctx() {", "");
+        assert_eq!(same_change(A, &no_tail), Some(false));
+        assert_eq!(
+            normalize(A).lines().nth(3),
+            Some("@@ fn old_ctx() {"),
+            "숫자만 지우고 꼬리는 남긴다"
+        );
+        assert_eq!(normalize(&no_tail).lines().nth(3), Some("@@"));
+    }
+
+    #[test]
+    fn unknown_hunk_header_shapes_are_kept_whole() {
+        // hunk 머리 꼴이 아니면 숫자를 지우지 않는다(모르는 꼴은 「다름」 쪽).
+        for odd in [
+            "@@ -10,3 +10,4",
+            "@@ nonsense @@ fn old_ctx() {",
+            "@@ -10,3 +10,4 @@fn old_ctx() {",
+            "@@ -1,2,3 +1 @@",
+        ] {
+            let x = A.replace("@@ -10,3 +10,4 @@ fn old_ctx() {", odd);
+            assert!(normalize(&x).contains(&format!("{odd}\n")), "{odd}");
+        }
     }
 
     #[test]
