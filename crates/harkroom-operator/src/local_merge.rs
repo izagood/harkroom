@@ -31,7 +31,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 pub const REACH_TTL_MS: u64 = 10 * 60_000;
 /// gh 한 번의 시간 제한·출력 상한(TS `defaultExec` 의 `timeout`·`maxBuffer`).
 const EXEC_TIMEOUT: Duration = Duration::from_secs(120);
-const EXEC_MAX_BYTES: usize = 4 * 1024 * 1024;
+pub(crate) const EXEC_MAX_BYTES: usize = 4 * 1024 * 1024;
 /// `check` 에서 동시에 도는 gh 수.
 const CHECK_PARALLEL: usize = 8;
 
