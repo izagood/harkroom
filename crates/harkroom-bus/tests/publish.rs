@@ -5,8 +5,7 @@ use sqlx::postgres::{PgListener, PgPoolOptions};
 use sqlx::{AssertSqlSafe, Executor, PgPool, raw_sql};
 use std::time::Duration;
 
-const MIGRATION_168: &str =
-    include_str!("../../harkroom-server/migrations/168_event_outbox.sql");
+const MIGRATION_168: &str = include_str!("../../harkroom-server/migrations/168_event_outbox.sql");
 
 // NOTIFY 채널은 DB 전체에 하나라 시험끼리 서로의 알림을 듣는다 — DB 를 쓰는 시험은 하나씩 돈다.
 static DB: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
