@@ -59,7 +59,7 @@ pub const LOCK_FN: &str = "select permission_decide_lock($1::uuid, $2::uuid, $3:
 pub const LOCK_FN_SIGNATURE: &str = "permission_decide_lock(uuid, uuid, uuid)";
 /// 마이그레이션 본문(시험·골든용).
 pub const LOCK_FN_MIGRATION: &str =
-    include_str!("../../../../packages/server/src/db/migrations/173_permission_decide_lock.sql");
+    include_str!("../../migrations/173_permission_decide_lock.sql");
 
 /// 시험이 대조하는 잠금 순서(표 이름). 요청 줄은 호출자가 이 뒤에 `for update` 한다.
 pub const LOCK_ORDER: [&str; 5] = [

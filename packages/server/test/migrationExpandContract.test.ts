@@ -19,7 +19,7 @@ import { join } from 'node:path';
  * 인덱스 생성은 잡지 않는다 — §12 에 적은 주의로 갈음한다.
  */
 
-const MIGRATIONS = join(import.meta.dirname, '../src/db/migrations');
+const MIGRATIONS = join(import.meta.dirname, '../../../crates/harkroom-server/migrations');
 
 /**
  * 이 번호까지는 규칙 이전에 들어갔다(002·040·054·069 가 걸린다). 이미 모든 배포에 적용됐으므로

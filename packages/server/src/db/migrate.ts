@@ -89,7 +89,7 @@ export async function runMigrations(
       await new Promise((r) => setTimeout(r, LOCK_RETRY_MS));
     }
     await client.query(`create table if not exists schema_migrations (name text primary key)`);
-    const dir = new URL('./migrations/', import.meta.url);
+    const dir = new URL('../../../../crates/harkroom-server/migrations/', import.meta.url);
     const files = (await readdir(dir)).filter((f) => f.endsWith('.sql')).sort();
     for (const name of files) {
       const applied = await client.query('select 1 from schema_migrations where name = $1', [name]);

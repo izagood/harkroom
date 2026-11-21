@@ -1,5 +1,5 @@
 # Rust 앞단(`harkroom-server-rs`, S5.1) 이미지. 빌드 컨텍스트는 저장소 루트다 — `build.rs` 가 TS 서버의
-# 마이그레이션 파일 이름(`packages/server/src/db/migrations/*.sql`)을 바이너리에 굽기 때문이다.
+# 마이그레이션 파일 이름(`crates/harkroom-server/migrations/*.sql`)을 바이너리에 굽기 때문이다.
 #
 # 두 스테이지: `build` 에서 `cargo build --locked --release` 하고, 배포 이미지에는 바이너리 하나만 넘긴다.
 # 런타임은 distroless `cc`(glibc·libgcc 만, 셸 없음)에 nonroot(uid 65532)다 — 앞단은 파일을 쓰지 않는다.
@@ -19,7 +19,7 @@ COPY crates/harkroom-proto crates/harkroom-proto
 COPY crates/harkroom-server/Cargo.toml crates/harkroom-server/Cargo.lock crates/harkroom-server/
 RUN cd crates/harkroom-server && cargo fetch --locked
 
-COPY packages/server/src/db/migrations packages/server/src/db/migrations
+COPY crates/harkroom-server/migrations crates/harkroom-server/migrations
 # 릴리스 판의 정본(TS 이미지와 같은 파일). `build.rs` 가 그 `version` 을 바이너리에 굽는다 — `/healthz` 의 `version`.
 COPY packages/desktop/src-tauri/tauri.conf.json packages/desktop/src-tauri/tauri.conf.json
 COPY crates/harkroom-server crates/harkroom-server

@@ -161,7 +161,7 @@ describe('#836 에이전트 삭제', () => {
     const hexB = b.replace(/-/g, '');
     await pool.query(`update account set handle = $1 where id = $2`, [`deleted-${hexB.slice(0, 8)}`, live]);
 
-    const sql = await readFile(new URL('../src/db/migrations/143_deleted_agent_tombstone_handle.sql', import.meta.url), 'utf8');
+    const sql = await readFile(new URL('../../../crates/harkroom-server/migrations/143_deleted_agent_tombstone_handle.sql', import.meta.url), 'utf8');
     await pool.query(sql);
 
     const rows = await pool.query<{ id: string; handle: string }>(`select id, handle from account where id = any($1)`, [[a, b, live]]);
