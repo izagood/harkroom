@@ -72,7 +72,7 @@ fn flag(argv: &[String], name: &str) -> Result<Option<String>, String> {
 }
 
 /// http(s) URL 인가 — TS `new URL` + `^https?:$` 검사. 호스트가 비면 URL 이 아니다.
-fn check_url(raw: &str) -> Result<(), String> {
+pub(crate) fn check_url(raw: &str) -> Result<(), String> {
     let lower = raw.to_ascii_lowercase();
     let rest = if let Some(r) = lower.strip_prefix("https://") {
         r
