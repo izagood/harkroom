@@ -406,13 +406,6 @@ pub(crate) const PENDING_SQL: &str = "select id::text, card_message_id::text fro
        and status = 'pending' and expires_at > $6::timestamptz \
      order by created_at desc limit 1";
 
-/// TS `bundlesHolding` — 그 카드를 줄로 담은 묶음이 있나(`message_ask` 의 같은 판정). P6-2b: 새 요청이 **같은 tx 에서** 대체한
-/// 옛 요청([`SUPERSEDED_OLD_SQL`])의 카드마다 본다 — 하나라도 묶음에 담겨 있으면(TS `carryBundleItem` — 새 카드를 묶음 줄로 옮기기)
-/// tx 를 되돌리고 TS 로 넘긴다. tx 밖에서 미리 읽으면 그 사이 만료된 옛 요청의 카드를 놓친다(security 지적 ①).
-const CARD_BUNDLED_SQL: &str = "select exists(select 1 from message
-      where meta->>'kind' = 'askBundle' and deleted_at is null
-        and meta->'askBundle'->'items' @> jsonb_build_array(jsonb_build_object('rootId', $1::text)))";
-
 /// TS `closeSupersededCards` 의 옛 요청 읽기.
 pub(crate) const SUPERSEDED_OLD_SQL: &str = "select id::text, status, card_message_id::text from permission_request \
      where superseded_by = $1::uuid and card_message_id is not null";
@@ -441,6 +434,8 @@ pub(crate) const SUPERSEDE_CARD_PRIVILEGES: &[(&str, &str)] = &[
 
 /// TS `closeSupersededCards` — 새 카드가 커밋된 뒤 부른다. 대기였다가 대체된 요청은 카드의 `permissionRequest` 에 상태를 적고,
 /// 열린 옛 카드는 `superseded`(대신한 새 카드 id)로 닫는다. 바뀐 카드마다 `message.updated`, 닫힌 카드는 거울도 맞춘다.
+/// 닫힌 옛 카드를 담은 묶음에는 새 카드를 줄로 옮긴다(TS `carryBundleItem`, [`crate::core::ask_bundle_add::carry_bundle_item`] —
+/// `message.ask` 의 대신하기와 같은 함수). TS 처럼 그 실패는 삼키고 거울 닫기로 간다.
 /// TS 처럼 새 카드는 이미 섰으므로 실패는 기록만 한다.
 async fn close_superseded_cards(write: &PgPool, new_request: &str, new_card: &str) {
     use crate::core::ask_sync::{announce_updated, sync_ask_mirrors};
@@ -475,6 +470,11 @@ async fn close_superseded_cards(write: &PgPool, new_request: &str, new_card: &st
             }
             announce_updated(&mut conn, card).await?;
             if closed.is_some() {
+                if let Err(e) =
+                    crate::core::ask_bundle_add::carry_bundle_item(&mut conn, card, new_card).await
+                {
+                    eprintln!("permission.request: carry bundle item {card} -> {new_card} failed: {e}");
+                }
                 sync_ask_mirrors(&mut conn, "permission.request supersedes", card).await?;
             }
         }
@@ -799,7 +799,7 @@ fn refusal(code: &'static str) -> String {
 /// P6-2a — [`answer`] 가 `None`(받아들여지는 tool·merge 요청)일 때 TS `raisePermission`·`openPermissionRequest` 를 대신한다:
 /// 이미 있는 grant → `alreadyGranted` / 기다리는 요청 → `existing` / 그 밖은 하루 상한 → 요청 줄 → 감사 → 카드 글 → 잇기 → 푸시를
 /// **카드 글과 같은 tx** 로, 커밋 뒤 대체된 옛 카드 닫기(P6-2b). 위임 있는 턴이면 요청 줄에 `mandate_id`, 카드에 위임장 칩·[이 위임장 동안]
-/// 선택지(P6-2b). `None`(→ TS): kind=command · ASCII 밖 · 같은 tx 에서 대체한 옛 카드가 묶음에 담김(묶음 줄 옮기기) · 쓰기/읽기 칸 없음 ·
+/// 선택지(P6-2b). 대체한 옛 카드가 묶음에 담겨 있으면 새 카드를 그 묶음의 줄로 옮긴다(0-1 ④). `None`(→ TS): kind=command · ASCII 밖 · 쓰기/읽기 칸 없음 ·
 /// 글 올리기 풀 없음 · DB 오류.
 pub async fn accept(
     read: &PgPool,
@@ -1050,11 +1050,6 @@ struct RequestHook<'a> {
     closes_old: std::sync::OnceLock<bool>,
 }
 
-/// 대체한 옛 카드가 묶음에 담겨 있다 — 훅이 이 오류로 tx 를 되돌리면 `post_card` 가 `None`(→ TS)을 낸다.
-fn bundled_to_ts() -> sqlx::Error {
-    sqlx::Error::Protocol("permission.request: superseded card is in an askBundle → TS".into())
-}
-
 impl crate::core::msg_post::BeforeCommit for RequestHook<'_> {
     fn run<'b>(
         &'b self,
@@ -1081,15 +1076,6 @@ impl crate::core::msg_post::BeforeCommit for RequestHook<'_> {
                 .bind(&request_id)
                 .fetch_all(&mut **tx)
                 .await?;
-            for (_, _, card) in &old {
-                let bundled: bool = sqlx::query_scalar(CARD_BUNDLED_SQL)
-                    .bind(card)
-                    .fetch_one(&mut **tx)
-                    .await?;
-                if bundled {
-                    return Err(bundled_to_ts());
-                }
-            }
             let _ = self.closes_old.set(!old.is_empty());
             sqlx::query(DENIAL_CARD_PATCH_SQL)
                 .bind(message_id)
