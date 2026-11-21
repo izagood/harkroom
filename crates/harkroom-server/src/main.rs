@@ -273,16 +273,19 @@ async fn main() {
         }
         _ => None,
     };
-    // S5.4 MCP 5 — MCP `automation.run`. 쓰기 풀에 회차 INSERT·셈 칸과 잠금용 UPDATE 칸이 다 있을 때만 — 아니면 TS 에 남는다.
+    // S5.4 MCP 5 — MCP `automation.run`. 쓰기 풀에 회차 INSERT·셈 칸, 잠금용 UPDATE 칸, 시간당 상한에 닿았을 때의
+    // 끄기·위임장 끝내기 칸(「지금 한 번」과 같은 칸)이 다 있을 때만 — 아니면 TS 에 남는다.
     let automation_run_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
-            match write::missing_in(
-                w,
-                harkroom_server::core::mcp::automation_run::AUTOMATION_RUN_PRIVILEGES,
-                &[],
-            )
-            .await
-            {
+            let need: Vec<(&str, &str)> =
+                harkroom_server::core::mcp::automation_run::AUTOMATION_RUN_PRIVILEGES
+                    .iter()
+                    .chain(
+                        harkroom_server::core::automation_run_now::AUTOMATION_RUN_NOW_PAUSE_PRIVILEGES,
+                    )
+                    .copied()
+                    .collect();
+            match write::missing_in(w, &need, &[]).await {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: mcp automation.run core off — missing privileges {m:?}");
