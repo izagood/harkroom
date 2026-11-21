@@ -846,6 +846,90 @@ pub async fn answer_bundle_approve(
     })
 }
 
+/// 묶음 줄의 원본을 누가 답하나 — [`bundle_line`] 의 결과.
+pub enum BundleLine {
+    /// 권한 카드가 아니다(또는 TS 가 권한 판정 앞에서 거절하는 꼴: 원본 없음·원본 채널 못 봄·거울) — 보통 물음 길
+    /// (`ask_bundle::answer_root`)이 TS `answerBundleItem` 과 같은 답을 한다.
+    Plain,
+    /// 권한 카드 줄인데 TS 가 쓰기 없이 거절한다 — (상태, 코드, 문구).
+    Refuse(u16, &'static str, &'static str),
+    /// Rust 가 정하지 않는다 — 아는 선택지인데 결정 코어가 맡지 않았거나(권한이 빠진 서버·코어의 `HandToTs`), 거울 표지를 못 읽는 원본.
+    Hand,
+}
+
+/// 3⁰. 묶음 줄의 원본이 권한 카드일 때 TS 가 **쓰기 없이** 거절하는 꼴을 가른다(TS `answerBundleItem` + `decide` 의 차례 그대로:
+/// 원본 읽기 → 원본 채널 보기 → 거울 아님 → 권한 카드 → 사람 세션·일괄 아님 → 정할 사람 → 선택지). 모두 읽기다.
+/// - 사람 세션이 아니거나 「추천대로 일괄」(`bulk`)이면 403(`NOT_SESSION`).
+/// - 모르는 선택지: 정할 수 없는 사람이면 403, 아니면 400 `unknown_option`.
+///
+/// **W1:** 호출자가 묶음이 이 줄(`root`)을 담는다고 확인한 뒤에만 부른다(거절·승인 갈래와 같다).
+pub async fn bundle_line(
+    st: &AskState,
+    me: &Account,
+    session: bool,
+    bulk: bool,
+    root: &str,
+    option: &str,
+) -> sqlx::Result<BundleLine> {
+    let mut conn = st.read.acquire().await?;
+    let Some((ask, root_channel, meta)) = read_ask_row(&mut conn, root).await? else {
+        return Ok(BundleLine::Plain);
+    };
+    // 거울 표지가 문자열이 아니면 못 읽은 것이다 — TS 가 어떻게 읽는지 여기서 정하지 않는다.
+    if !matches!(
+        meta.get("ask").and_then(|a| a.get("mirrorOf")),
+        None | Some(Value::Null | Value::String(_))
+    ) {
+        return Ok(BundleLine::Hand);
+    }
+    if ask.mirror_of.is_some() || !channel_visible_conn(&mut conn, &root_channel, &me.id).await? {
+        return Ok(BundleLine::Plain);
+    }
+    let r = match resolve_decision(&mut conn, root).await {
+        Ok(r) => r,
+        Err(sqlx::Error::Protocol(_)) => return Ok(BundleLine::Hand),
+        Err(e) => return Err(e),
+    };
+    let Some(DecisionRef::Permission {
+        request_id,
+        agent_id,
+        mirror_message_id: None,
+        ..
+    }) = r
+    else {
+        return Ok(BundleLine::Plain);
+    };
+    if !session || bulk {
+        return Ok(BundleLine::Refuse(403, "forbidden", NOT_SESSION));
+    }
+    if super::decide_core::option_decision(option).is_some() {
+        return Ok(BundleLine::Hand);
+    }
+    let channel: Option<Option<String>> = sqlx::query_scalar(
+        "select channel_id::text from permission_request where id = $1::uuid and agent_id = $2::uuid",
+    )
+    .bind(&request_id)
+    .bind(&agent_id)
+    .fetch_optional(&mut *conn)
+    .await?;
+    let v = super::decide_core::may_decide_for_unlocked(
+        &mut conn,
+        &agent_id,
+        &me.id,
+        channel.flatten().as_deref(),
+    )
+    .await?;
+    Ok(if v.ok.is_none() {
+        BundleLine::Refuse(403, "forbidden", super::decide_core::FORBIDDEN_MESSAGE)
+    } else {
+        BundleLine::Refuse(
+            400,
+            "unknown_option",
+            super::decide_core::UNKNOWN_OPTION_MESSAGE,
+        )
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 /// 승인 REST 핸들러 셋을 한 꼴로 — 경로 마지막 낱말이 선택지다(라우트 표에 정확한 글자만 적는다).
 async fn approve_route_with(
