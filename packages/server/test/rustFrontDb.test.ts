@@ -1368,7 +1368,11 @@ const GROUP_A_ENV: Record<string, string> = {
   HARKROOM_PRINCIPAL_INVOKE: 'on', ATTACHMENT_MAX_BYTES: '26214400', HARKROOM_BACKGROUND_ENABLED: '0',
 };
 
+/** 앞단 주소 → 그 앞단의 `UPSTREAM_URL`. 대조 시험의 닫힘 shim 이 「예전 넘김」을 흉내 낼 때 본 TS 가 아니라 그 앞단이 달고 뜬 위로 보낸다. */
+const FRONT_UPSTREAM = new Map<string, string>();
+
 async function startFront(bin: string, env: Record<string, string>): Promise<{ child: ChildProcess; log: () => string }> {
+  if (env.PORT && env.UPSTREAM_URL) FRONT_UPSTREAM.set(`http://127.0.0.1:${env.PORT}`, env.UPSTREAM_URL);
   const child = spawn(bin, [], { env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
   let log = '';
   child.stdout!.on('data', (b: Buffer) => { log += String(b); });
@@ -1446,8 +1450,13 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         }
         const key = `${method} ${url.pathname}${tool ? ` ${tool}` : ''}`;
         closedSeen.set(key, (closedSeen.get(key) ?? 0) + 1);
-        const ts = `${tsUrl}${url.pathname}${url.search}`;
-        return again ? realFetch(new Request(ts, again)) : realFetch(ts, init);
+        // 예전 넘김은 그 앞단의 `UPSTREAM_URL` 로 갔다(장면 전용 TS·닿지 않는 위). 닿지 않으면 예전 앞단의 502 고정 답을 그대로 낸다.
+        const ts = `${FRONT_UPSTREAM.get(url.origin) ?? tsUrl}${url.pathname}${url.search}`;
+        try {
+          return await (again ? realFetch(new Request(ts, again)) : realFetch(ts, init));
+        } catch {
+          return new Response('{"error":{"code":"front","message":"upstream unavailable"}}', { status: 502, headers: { 'content-type': 'application/json' } });
+        }
       }) as typeof fetch;
 
       // 픽스처 — 옮긴 라우트(GET /accounts·/dms·/mcp-servers·/audit)가 빈 목록이 아닌 값을 내도록.
