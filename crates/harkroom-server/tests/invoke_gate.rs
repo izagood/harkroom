@@ -109,22 +109,78 @@ async fn invoke_gate_decisions() {
     let o = Some(owner.as_str());
     let a_com = agent(&pool, "ig-com", Some(("community", o, true)), false, false).await;
     let a_own = agent(&pool, "ig-own", Some(("owner", o, false)), false, false).await;
-    let a_own_trust = agent(&pool, "ig-own-trust", Some(("owner", o, true)), false, false).await;
+    let a_own_trust = agent(
+        &pool,
+        "ig-own-trust",
+        Some(("owner", o, true)),
+        false,
+        false,
+    )
+    .await;
     let a_list = agent(&pool, "ig-list", Some(("list", o, true)), false, false).await;
     let a_chan = agent(&pool, "ig-chan", Some(("channel", o, true)), false, false).await;
     let a_off = agent(&pool, "ig-off", Some(("community", o, true)), true, false).await;
     let a_gone = agent(&pool, "ig-gone", Some(("owner", o, true)), false, true).await;
     let a_bare = agent(&pool, "ig-bare", None, false, false).await;
-    let a_orphan = agent(&pool, "ig-orphan", Some(("owner", None, true)), false, false).await;
+    let a_orphan = agent(
+        &pool,
+        "ig-orphan",
+        Some(("owner", None, true)),
+        false,
+        false,
+    )
+    .await;
     // 대리 호출자 후보 — 같은 소유자의 owner 에이전트(명단 밖·명단 안), 같은 소유자의 community, 남의 owner, 지운 형제.
     let sib = agent(&pool, "ig-sib", Some(("owner", o, true)), false, false).await;
-    let sib_listed = agent(&pool, "ig-sib-listed", Some(("owner", o, true)), false, false).await;
-    let sib_com = agent(&pool, "ig-sib-com", Some(("community", o, true)), false, false).await;
-    let sib_other = agent(&pool, "ig-sib-other", Some(("owner", Some(&other), true)), false, false).await;
+    let sib_listed = agent(
+        &pool,
+        "ig-sib-listed",
+        Some(("owner", o, true)),
+        false,
+        false,
+    )
+    .await;
+    let sib_com = agent(
+        &pool,
+        "ig-sib-com",
+        Some(("community", o, true)),
+        false,
+        false,
+    )
+    .await;
+    let sib_other = agent(
+        &pool,
+        "ig-sib-other",
+        Some(("owner", Some(&other), true)),
+        false,
+        false,
+    )
+    .await;
     let sib_gone = agent(&pool, "ig-sib-gone", Some(("owner", o, true)), false, true).await;
-    let replier = agent(&pool, "ig-replier", Some(("community", Some(&other), true)), false, false).await;
-    let expired = agent(&pool, "ig-expired", Some(("community", Some(&other), true)), false, false).await;
-    let closed = agent(&pool, "ig-closed", Some(("community", Some(&other), true)), false, false).await;
+    let replier = agent(
+        &pool,
+        "ig-replier",
+        Some(("community", Some(&other), true)),
+        false,
+        false,
+    )
+    .await;
+    let expired = agent(
+        &pool,
+        "ig-expired",
+        Some(("community", Some(&other), true)),
+        false,
+        false,
+    )
+    .await;
+    let closed = agent(
+        &pool,
+        "ig-closed",
+        Some(("community", Some(&other), true)),
+        false,
+        false,
+    )
+    .await;
     exec(
         &pool,
         "insert into agent_owner_delegate(agent_id, delegate_id) values ($1::uuid, $2::uuid), ($3::uuid, $2::uuid)",
@@ -149,7 +205,12 @@ async fn invoke_gate_decisions() {
         &[&ch, &member],
     )
     .await;
-    let dm = one(&pool, "insert into channel(kind, topic) values ('dm', '') returning id::text", &[]).await;
+    let dm = one(
+        &pool,
+        "insert into channel(kind, topic) values ('dm', '') returning id::text",
+        &[],
+    )
+    .await;
     exec(
         &pool,
         "insert into channel_member(channel_id, account_id) values ($1::uuid, $2::uuid), ($1::uuid, $3::uuid)",
@@ -210,7 +271,15 @@ async fn invoke_gate_decisions() {
 
     // ── facts: 사람·없는 id 는 빠지고, 설정 없는 에이전트는 community, 꺼짐·지움은 off.
     let agents = [
-        &a_com, &a_own, &a_own_trust, &a_list, &a_chan, &a_off, &a_gone, &a_bare, &a_orphan,
+        &a_com,
+        &a_own,
+        &a_own_trust,
+        &a_list,
+        &a_chan,
+        &a_off,
+        &a_gone,
+        &a_bare,
+        &a_orphan,
     ];
     let mut ids: Vec<String> = agents.iter().map(|s| s.to_string()).collect();
     ids.push(owner.clone());
@@ -221,7 +290,10 @@ async fn invoke_gate_decisions() {
     let mut want: Vec<&String> = agents.to_vec();
     want.sort();
     assert_eq!(got, want, "사람·없는 id 는 facts 에서 빠진다");
-    assert_eq!(facts[&a_bare].invoke_scope, "community", "설정 없는 에이전트는 community");
+    assert_eq!(
+        facts[&a_bare].invoke_scope, "community",
+        "설정 없는 에이전트는 community"
+    );
     assert!(!facts[&a_bare].off);
     assert!(facts[&a_off].off && facts[&a_gone].off, "꺼짐·지움은 off");
     assert!(!facts[&a_own].off);
@@ -232,28 +304,64 @@ async fn invoke_gate_decisions() {
     // ── community: 부름 길과 상관없이 통과, 꺼지면 거절.
     assert!(may(c, &f(&a_com), &other, "", AutoMention, None).await);
     assert!(may(c, &f(&a_com), &other, &ch, Group, None).await);
-    assert!(may(c, &f(&a_bare), &other, &ch, ChannelAll, None).await, "설정 없음 = community");
-    assert!(!may(c, &f(&a_off), &owner, &ch, Mention, None).await, "꺼진 에이전트는 소유자도 못 부른다");
-    assert!(!may(c, &f(&a_gone), &owner, &ch, Mention, None).await, "지운 에이전트는 소유자도 못 부른다");
+    assert!(
+        may(c, &f(&a_bare), &other, &ch, ChannelAll, None).await,
+        "설정 없음 = community"
+    );
+    assert!(
+        !may(c, &f(&a_off), &owner, &ch, Mention, None).await,
+        "꺼진 에이전트는 소유자도 못 부른다"
+    );
+    assert!(
+        !may(c, &f(&a_gone), &owner, &ch, Mention, None).await,
+        "지운 에이전트는 소유자도 못 부른다"
+    );
 
     // ── owner 범위: 소유자의 mention·team 만, 다른 부름 길·남은 거절, 소유자 없는 에이전트는 아무도.
     assert!(may(c, &f(&a_own), &owner, "", Mention, None).await);
     assert!(may(c, &f(&a_own), &owner, &ch, Team, None).await);
     assert!(!may(c, &f(&a_own), &other, &ch, Mention, None).await);
     for via in [Group, ChannelAll, AutoMention] {
-        assert!(!may(c, &f(&a_own), &owner, &ch, via, None).await, "owner 범위는 {via:?} 로 못 부른다");
+        assert!(
+            !may(c, &f(&a_own), &owner, &ch, via, None).await,
+            "owner 범위는 {via:?} 로 못 부른다"
+        );
     }
-    assert!(!may(c, &f(&a_orphan), &owner, &ch, Mention, None).await, "소유자 없는 owner 범위");
+    assert!(
+        !may(c, &f(&a_orphan), &owner, &ch, Mention, None).await,
+        "소유자 없는 owner 범위"
+    );
     assert!(!may(c, &f(&a_orphan), &other, &ch, Mention, None).await);
 
     // ── 대리 호출자(형제 신뢰 083·대리 명단 073).
-    assert!(!may(c, &f(&a_own), &sib, &ch, Mention, None).await, "신뢰 끔 + 명단 밖 형제는 거절");
-    assert!(may(c, &f(&a_own), &sib_listed, &ch, Mention, None).await, "명단 안 형제는 통과");
-    assert!(may(c, &f(&a_own_trust), &sib, &ch, Team, None).await, "형제 신뢰면 통과");
-    assert!(!may(c, &f(&a_own_trust), &sib_com, &ch, Mention, None).await, "community 형제는 대리가 아니다");
-    assert!(!may(c, &f(&a_own_trust), &sib_other, &ch, Mention, None).await, "남의 owner 에이전트");
-    assert!(!may(c, &f(&a_own_trust), &sib_gone, &ch, Mention, None).await, "지운 형제");
-    assert!(!may(c, &f(&a_own_trust), &sib, &ch, Group, None).await, "대리도 group 으로는 못 부른다");
+    assert!(
+        !may(c, &f(&a_own), &sib, &ch, Mention, None).await,
+        "신뢰 끔 + 명단 밖 형제는 거절"
+    );
+    assert!(
+        may(c, &f(&a_own), &sib_listed, &ch, Mention, None).await,
+        "명단 안 형제는 통과"
+    );
+    assert!(
+        may(c, &f(&a_own_trust), &sib, &ch, Team, None).await,
+        "형제 신뢰면 통과"
+    );
+    assert!(
+        !may(c, &f(&a_own_trust), &sib_com, &ch, Mention, None).await,
+        "community 형제는 대리가 아니다"
+    );
+    assert!(
+        !may(c, &f(&a_own_trust), &sib_other, &ch, Mention, None).await,
+        "남의 owner 에이전트"
+    );
+    assert!(
+        !may(c, &f(&a_own_trust), &sib_gone, &ch, Mention, None).await,
+        "지운 형제"
+    );
+    assert!(
+        !may(c, &f(&a_own_trust), &sib, &ch, Group, None).await,
+        "대리도 group 으로는 못 부른다"
+    );
 
     // ── list 범위.
     assert!(may(c, &f(&a_list), &lister, &ch, Mention, None).await);
@@ -262,19 +370,43 @@ async fn invoke_gate_decisions() {
 
     // ── channel 범위: 멤버인 일반 채널만, DM·채널 없음·비멤버는 거절.
     assert!(may(c, &f(&a_chan), &member, &ch, Mention, None).await);
-    assert!(!may(c, &f(&a_chan), &member, &dm, Mention, None).await, "DM 은 channel 범위가 아니다");
+    assert!(
+        !may(c, &f(&a_chan), &member, &dm, Mention, None).await,
+        "DM 은 channel 범위가 아니다"
+    );
     assert!(!may(c, &f(&a_chan), &other, &ch, Mention, None).await);
     assert!(!may(c, &f(&a_chan), &member, "", Mention, None).await);
 
     // ── 회신권(084): mention + 그 스레드 + 열린 권리만.
     let t = Some(thread.as_str());
-    assert!(may(c, &f(&a_own), &replier, &ch, Mention, t).await, "열린 회신권");
-    assert!(!may(c, &f(&a_own), &replier, &ch, Team, t).await, "회신권은 mention 만");
-    assert!(!may(c, &f(&a_own), &replier, &ch, Mention, Some(&other_thread)).await, "다른 스레드");
-    assert!(!may(c, &f(&a_own), &replier, &ch, Mention, None).await, "스레드 없음");
-    assert!(!may(c, &f(&a_own), &expired, &ch, Mention, t).await, "만료된 회신권");
-    assert!(!may(c, &f(&a_own), &closed, &ch, Mention, t).await, "닫힌 회신권");
-    assert!(!may(c, &f(&a_own_trust), &replier, &ch, Mention, t).await, "다른 대상의 회신권은 안 쓴다");
+    assert!(
+        may(c, &f(&a_own), &replier, &ch, Mention, t).await,
+        "열린 회신권"
+    );
+    assert!(
+        !may(c, &f(&a_own), &replier, &ch, Team, t).await,
+        "회신권은 mention 만"
+    );
+    assert!(
+        !may(c, &f(&a_own), &replier, &ch, Mention, Some(&other_thread)).await,
+        "다른 스레드"
+    );
+    assert!(
+        !may(c, &f(&a_own), &replier, &ch, Mention, None).await,
+        "스레드 없음"
+    );
+    assert!(
+        !may(c, &f(&a_own), &expired, &ch, Mention, t).await,
+        "만료된 회신권"
+    );
+    assert!(
+        !may(c, &f(&a_own), &closed, &ch, Mention, t).await,
+        "닫힌 회신권"
+    );
+    assert!(
+        !may(c, &f(&a_own_trust), &replier, &ch, Mention, t).await,
+        "다른 대상의 회신권은 안 쓴다"
+    );
     assert!(!may(c, &f(&a_off), &replier, &ch, Mention, t).await);
 
     // ── is_eligible_delegate(listed=true 는 신뢰·명단, false 는 같은 소유자의 살아 있는 owner 에이전트면 됨).
@@ -294,8 +426,13 @@ async fn invoke_gate_decisions() {
     .into_iter()
     .map(|((a, o), cand, listed, want)| (a, o, cand, listed, want))
     {
-        let got = is_eligible_delegate(c, &agent_id, own.as_deref(), cand, listed).await.unwrap();
-        assert_eq!(got, want, "delegate agent={agent_id} cand={cand} listed={listed}");
+        let got = is_eligible_delegate(c, &agent_id, own.as_deref(), cand, listed)
+            .await
+            .unwrap();
+        assert_eq!(
+            got, want,
+            "delegate agent={agent_id} cand={cand} listed={listed}"
+        );
     }
 
     // ── 팀 범위(068).
@@ -312,7 +449,9 @@ async fn invoke_gate_decisions() {
         ("ig-t-chan", &member, "", false),
         ("ig-t-chan", &other, ch.as_str(), false),
     ] {
-        let got = may_invoke_team(c, &tm(team), caller, channel).await.unwrap();
+        let got = may_invoke_team(c, &tm(team), caller, channel)
+            .await
+            .unwrap();
         assert_eq!(got, want, "team={team} caller={caller} channel={channel}");
     }
 }
