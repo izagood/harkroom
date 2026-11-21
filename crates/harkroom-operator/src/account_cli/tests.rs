@@ -107,6 +107,7 @@ fn quick() -> LoginTimeouts {
         url: Duration::from_secs(5),
         code: Duration::from_secs(5),
         done: Duration::from_secs(5),
+        grace: Duration::from_secs(5),
     }
 }
 
@@ -414,6 +415,103 @@ fn login_cancels_on_eof_interrupt_and_timeout() {
             json!({"id": "cancel", "type": "claudeAccountLoginCancel", "payload": {"loginId": "L2"}})
         );
     }
+}
+
+/// 시작 요청을 보낸 뒤 그 답(loginId) 전에 끝나게 돼도 취소가 간다 — 답을 잠깐 더 기다려 그 id 로 취소한다.
+#[test]
+fn login_cancels_when_interrupted_before_the_start_answer() {
+    let short_url = LoginTimeouts {
+        url: Duration::from_millis(50),
+        ..quick()
+    };
+    // (시작 요청을 받은 오퍼레이터가 넣는 것, 시한, 종료 코드, 끝 줄)
+    for (during, t, want_code, want) in [
+        (Some(Msg::Interrupt), quick(), 130, "취소했다"),
+        (Some(Msg::Stdin(None)), quick(), 1, "입력이 끝났다"),
+        (None, short_url, 1, "시한이 지났다"),
+    ] {
+        let d = Dir::new();
+        let (tx, rx) = channel();
+        let tx2 = tx.clone();
+        let srv = fake_operator(d.p(), move |r, w, seen| {
+            seen.push(read(r).unwrap());
+            // 시작 요청은 이미 왔고 답은 아직이다 — 이 틈에 신호가 온다.
+            if let Some(m) = during {
+                let _ = tx2.send(m);
+            }
+            std::thread::sleep(Duration::from_millis(300));
+            write(
+                w,
+                json!({"id": "start", "ok": true, "payload": {"loginId": "L9"}}),
+            );
+            seen.extend(read(r));
+        });
+        let conn = Conn::open(d.p(), Duration::from_secs(5)).unwrap();
+        let mut out = Vec::new();
+        let who = LoginTarget {
+            pool: "main",
+            account: "work",
+            reauth: false,
+        };
+        let (code, line) = run_login(conn, who, rx, tx, &mut out, t);
+        assert_eq!(code, want_code, "{line}");
+        assert!(line.contains(want), "{line}");
+        let seen = srv.join().unwrap();
+        assert_eq!(seen[1]["type"], "claudeAccountLoginStart");
+        assert_eq!(
+            seen.get(2),
+            Some(
+                &json!({"id": "cancel", "type": "claudeAccountLoginCancel", "payload": {"loginId": "L9"}})
+            ),
+            "늦게 온 loginId 로 취소한다"
+        );
+    }
+}
+
+/// 접속을 여는 동안 쌓인 신호·입력 끝이면 시작 요청을 보내지 않는다. 답이 끝내 안 오면 `grace` 뒤에 끝난다.
+#[test]
+fn login_does_not_start_after_an_early_interrupt_and_gives_up_after_grace() {
+    for (early, want_code) in [(Msg::Interrupt, 130), (Msg::Stdin(None), 1)] {
+        let d = Dir::new();
+        let srv = fake_operator(d.p(), |r, _, seen| seen.extend(read(r)));
+        let conn = Conn::open(d.p(), Duration::from_secs(5)).unwrap();
+        let (tx, rx) = channel();
+        tx.send(early).unwrap();
+        let who = LoginTarget {
+            pool: "main",
+            account: "work",
+            reauth: false,
+        };
+        let (code, _) = run_login(conn, who, rx, tx, &mut Vec::new(), quick());
+        assert_eq!(code, want_code);
+        assert_eq!(srv.join().unwrap().len(), 1, "hello 뒤에 아무것도 안 왔다");
+    }
+    // 시작 답을 끝내 안 주는 오퍼레이터 — 기다림은 grace 로 끝난다(멈추지 않는다).
+    let d = Dir::new();
+    let (tx, rx) = channel();
+    let tx2 = tx.clone();
+    let srv = fake_operator(d.p(), move |r, _, seen| {
+        seen.push(read(r).unwrap());
+        let _ = tx2.send(Msg::Interrupt);
+        seen.extend(read(r));
+    });
+    let conn = Conn::open(d.p(), Duration::from_secs(5)).unwrap();
+    let t = LoginTimeouts {
+        grace: Duration::from_millis(100),
+        ..quick()
+    };
+    let who = LoginTarget {
+        pool: "main",
+        account: "work",
+        reauth: false,
+    };
+    let (code, _) = run_login(conn, who, rx, tx, &mut Vec::new(), t);
+    assert_eq!(code, 130);
+    assert_eq!(
+        srv.join().unwrap().len(),
+        2,
+        "시작 요청뿐, 취소는 못 보냈다"
+    );
 }
 
 #[test]

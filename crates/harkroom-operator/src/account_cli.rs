@@ -11,12 +11,14 @@
 //! - 소켓 토큰은 **내 소유·0600·보통 파일(심링크 아님)** 일 때만 읽고, 소켓과 그 폴더도 내 소유일 때만 붙는다 —
 //!   토큰을 남이 듣는 소켓에 보내지 않게.
 //! - 오퍼레이터가 떠 있지 않으면 그 사실을 알리고 끝낸다(파일 길로 대신하지 않는다).
-//! - `login` 은 Ctrl-C·입력 끝(EOF)·시한에 `claudeAccountLoginCancel` 을 보내고 끝낸다 — 로그인 자식을 남기지 않는다.
+//! - `login` 은 Ctrl-C·TERM·HUP·입력 끝(EOF)·시한에 `claudeAccountLoginCancel` 을 보내고 끝낸다 — 로그인 자식을 남기지 않는다.
+//!   시작 요청을 보낸 뒤 그 답(loginId) 전에 끝나게 되면 답을 잠깐 더 기다려 취소한다. 보내기 전에 온 신호면 시작하지 않는다.
 use crate::register_cli::{check_url, default_app_data, register_root};
 use harkroom_roots::{DAEMON_PROTOCOL_VERSION, community_root_key, daemon_endpoint_paths};
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt};
+use std::os::unix::io::AsRawFd;
 use std::os::unix::net::UnixStream;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::time::{Duration, Instant};
@@ -37,6 +39,8 @@ pub struct LoginTimeouts {
     pub code: Duration,
     /// 코드를 보낸 뒤 끝 이벤트까지.
     pub done: Duration,
+    /// 시작 답(loginId) 전에 끝나게 됐을 때, 취소하려고 그 답을 더 기다리는 시간.
+    pub grace: Duration,
 }
 
 impl Default for LoginTimeouts {
@@ -45,6 +49,7 @@ impl Default for LoginTimeouts {
             url: Duration::from_secs(60),
             code: Duration::from_secs(600),
             done: Duration::from_secs(120),
+            grace: Duration::from_secs(2),
         }
     }
 }
@@ -205,6 +210,34 @@ fn check_socket_place(dir: &str, socket_path: &str, euid: u32) -> Result<(), Str
     Ok(())
 }
 
+/// 붙은 상대의 uid. 못 읽으면 `None`.
+fn peer_uid(sock: &UnixStream) -> Option<u32> {
+    let fd = sock.as_raw_fd();
+    #[cfg(target_os = "linux")]
+    {
+        // SAFETY: 0 으로 채운 `ucred` 와 그 크기를 넘기는 표준 호출이다.
+        let mut cred: libc::ucred = unsafe { std::mem::zeroed() };
+        let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+        let rc = unsafe {
+            libc::getsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_PEERCRED,
+                (&raw mut cred).cast(),
+                &raw mut len,
+            )
+        };
+        (rc == 0).then_some(cred.uid)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let (mut uid, mut gid): (libc::uid_t, libc::gid_t) = (0, 0);
+        // SAFETY: 열린 소켓 fd 와 받을 자리 둘을 넘기는 표준 호출이다.
+        let rc = unsafe { libc::getpeereid(fd, &raw mut uid, &raw mut gid) };
+        (rc == 0).then_some(uid)
+    }
+}
+
 /// 인증을 마친 앱 접속.
 pub struct Conn {
     writer: UnixStream,
@@ -251,6 +284,13 @@ impl Conn {
         };
         check_socket_place(&paths.dir, &paths.socket_path, euid)?;
         let sock = UnixStream::connect(&paths.socket_path).map_err(|_| NOT_RUNNING.to_string())?;
+        // 경로를 잰 뒤 붙기까지의 틈에 소켓이 바뀌었어도, 붙은 상대가 내 uid 가 아니면 토큰을 보내지 않는다.
+        if peer_uid(&sock) != Some(euid) {
+            return Err(format!(
+                "소켓의 상대가 내 계정의 프로세스가 아니다: {}",
+                paths.socket_path
+            ));
+        }
         let _ = sock.set_read_timeout(Some(timeout));
         let _ = sock.set_write_timeout(Some(timeout));
         let mut writer = sock
@@ -354,7 +394,7 @@ pub enum Msg {
     SockClosed,
     /// 입력 한 줄. `None` 은 입력 끝(EOF).
     Stdin(Option<String>),
-    /// Ctrl-C·TERM.
+    /// Ctrl-C·TERM·HUP.
     Interrupt,
 }
 
@@ -385,6 +425,39 @@ impl Drop for Hangup {
     }
 }
 
+/// 취소를 보낸다. id 를 아직 모르면(시작 답 전) 그 답을 `grace` 만큼 더 기다려 id 가 오면 취소한다 —
+/// 그냥 끊으면 오퍼레이터는 접속이 끊겨도 로그인을 거두지 않아 로그인 자식이 남는다.
+fn cancel_login(writer: &mut UnixStream, id: Option<&str>, rx: &Receiver<Msg>, grace: Duration) {
+    let late: Option<String>;
+    let id = match id {
+        Some(id) => id,
+        None => {
+            let until = Instant::now() + grace;
+            late = loop {
+                match rx.recv_timeout(until.saturating_duration_since(Instant::now())) {
+                    Ok(Msg::Sock(v)) if v.get("id").and_then(Value::as_str) == Some("start") => {
+                        // 거절된 시작이면 loginId 가 없다 — 거둘 것도 없다.
+                        break v
+                            .pointer("/payload/loginId")
+                            .and_then(Value::as_str)
+                            .map(str::to_string);
+                    }
+                    Ok(Msg::SockClosed) | Err(_) => break None,
+                    Ok(_) => {}
+                }
+            };
+            match late.as_deref() {
+                Some(id) => id,
+                None => return,
+            }
+        }
+    };
+    let _ = send(
+        writer,
+        &json!({ "id": "cancel", "type": "claudeAccountLoginCancel", "payload": { "loginId": id } }),
+    );
+}
+
 /// 로그인할 자리.
 #[derive(Debug, Clone, Copy)]
 pub struct LoginTarget<'a> {
@@ -410,6 +483,17 @@ pub fn run_login(
     let Conn { mut writer, reader } = conn;
     // 어느 길로 끝나든 접속을 닫는다 — 읽는 스레드가 소켓을 쥔 채 남지 않게.
     let _hangup = writer.try_clone().ok().map(Hangup);
+    // 접속을 여는 동안 쌓인 신호·입력 끝을 먼저 본다 — 시작 요청을 보내고 나면 그 답 전에는 취소할 id 가 없다.
+    loop {
+        match rx.try_recv() {
+            Ok(Msg::Interrupt) => return (130, "로그인을 취소했다".to_string()),
+            Ok(Msg::Stdin(None)) => {
+                return (1, "입력이 끝났다 — 로그인을 시작하지 않았다".to_string());
+            }
+            Ok(_) => {}
+            Err(_) => break,
+        }
+    }
     // 읽기 시한을 푼다 — 사람이 코드를 넣는 동안 조용한 것이 정상이다. 시한은 아래 루프가 잰다.
     let _ = reader.get_ref().set_read_timeout(None);
     {
@@ -440,12 +524,7 @@ pub fn run_login(
     let mut submitted = false;
     let mut deadline = Instant::now() + t.url;
     let cancel = |writer: &mut UnixStream, id: &Option<String>| {
-        if let Some(id) = id {
-            let _ = send(
-                writer,
-                &json!({ "id": "cancel", "type": "claudeAccountLoginCancel", "payload": { "loginId": id } }),
-            );
-        }
+        cancel_login(writer, id.as_deref(), &rx, t.grace);
     };
     loop {
         let msg = match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
@@ -562,7 +641,7 @@ pub fn run_login(
     }
 }
 
-/// INT·TERM 을 이 스레드부터 막고(뒤에 띄우는 스레드가 물려받는다) 전용 스레드가 기다렸다가 알린다.
+/// INT·TERM·HUP(터미널 닫힘)을 이 스레드부터 막고(뒤에 띄우는 스레드가 물려받는다) 전용 스레드가 기다렸다가 알린다.
 fn watch_signals(tx: Sender<Msg>) {
     // SAFETY: 초기화한 신호 집합을 넘기는 표준 호출이다. 다른 스레드를 띄우기 전에 부른다.
     let set = unsafe {
@@ -570,6 +649,7 @@ fn watch_signals(tx: Sender<Msg>) {
         libc::sigemptyset(&mut set);
         libc::sigaddset(&mut set, libc::SIGINT);
         libc::sigaddset(&mut set, libc::SIGTERM);
+        libc::sigaddset(&mut set, libc::SIGHUP);
         libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
         set
     };
