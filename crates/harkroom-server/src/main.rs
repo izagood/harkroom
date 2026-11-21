@@ -1541,9 +1541,11 @@ async fn main() {
     // MCP `artifact.publish` 새 안 게시가 쓸 첨부 저장소 — 업로드 줄과 같은 잠금(권한·저장소·상한)을 지났을 때만.
     let artifact_storage = attachment_upload.as_ref().map(|(_, s, _)| s.clone());
     // `/mcp` 입장 확인은 키링이 없는 가드도 받는다 — 그 에이전트에게 걸린 비밀이 없으면 검사할 것이 없으므로 Rust 가 끝까지 답하고,
-    // 걸린 비밀이 있으면 TS `/mcp/admit` 에 묻는다(`core/mcp/route.rs` `pre_admit`). 업로드는 지금처럼 키링이 있을 때만.
-    let leak_guard_any = match &attachment_upload {
-        Some((write, _, _)) => {
+    // 걸린 비밀이 있으면 닫는다(`core/mcp/route.rs` `pre_admit`). 업로드는 지금처럼 키링이 있을 때만.
+    // 가드는 첨부 저장소 env(`ATTACHMENT_ROOT`·`ATTACHMENT_MAX_BYTES`)와 무관하게 쓰기 풀에서 싣는다 — 예전에는 업로드 줄에 매달려 있어
+    // 첨부 env 가 없는 앞단은 가드가 없었고, 그 `/mcp` 는 TS `/mcp/admit` 에 물었다. 그 물음이 없어진 뒤로는 모든 MCP 호출이 닫혔다.
+    let leak_guard_any = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(write)) => {
             use harkroom_server::core::leak_guard as lg;
             match write::missing_in(write, &lg::privileges(), lg::LEAK_GUARD_SEQUENCES).await {
                 Ok(m) if m.is_empty() => match lg::LeakGuard::load(write.clone()).await {
@@ -1574,7 +1576,7 @@ async fn main() {
                 }
             }
         }
-        None => None,
+        _ => None,
     };
     let agent_upload_leak = leak_guard_any.clone().filter(|g| g.is_on());
     // S5.4 CT1 — 채널에 팀 넣기(`POST /channels/{id}/teams/{teamId}/add`). 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 그 칸 권한이 다 있을 때만.
