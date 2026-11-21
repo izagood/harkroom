@@ -7,10 +7,16 @@
 //! - 자리의 키는 `(runner_id, key)` 다. runner_id 는 링크 인증이 정한 값이다.
 //! - relay 가 끊기거나 **다시 붙으면** 그 러너의 자리를 전부 돌려받는다(`release_runner`, security #1127 L1).
 //! - 자리는 relay 소켓에서만 잡고 놓는다. 다른 소켓이면 403 이고 서버로도 넘기지 않는다(security #1127 L2).
-//! - 값이 없거나 0 이면 상한이 없다.
+//! - `HARKROOM_MAX_TURNS` 가 없으면 상한을 기기 메모리·디스크 여유로 계산한다([`crate::device_capacity`]) — 고정값이 없다.
+//!   값이 있으면 그 값이 덮는다. `0` 이면 상한이 없다(일부러 끈 것).
+//! - 계산한 상한은 기동 때 한 번 잡고, **새 자리를 줄 때마다 다시 잰다**([`PROBE_EVERY_MS`] 안에서는 앞 값을 쓴다).
+//!   가용 메모리·디스크가 줄면 새 턴이 인박스에서 기다리고, 도는 턴은 건드리지 않는다.
 
 use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
+
+use crate::device_capacity::{Capacity, decide, describe, measure};
 
 use harkroom_proto::p1::{RunnerLinkKind, RunnerLinkRequest, RunnerLinkResponse};
 use serde_json::{Value, json};
@@ -18,32 +24,58 @@ use serde_json::{Value, json};
 pub const TURN_SLOTS_PATH: &str = "/agent/turn-slots";
 pub const TURN_SLOTS_RELEASE_PATH: &str = "/agent/turn-slots/release";
 pub const MAX_TURNS_ENV: &str = "HARKROOM_MAX_TURNS";
+/// 계산한 상한을 다시 재는 간격. 이 안에서는 앞서 잰 상한을 그대로 쓴다 — 한꺼번에 몰린 요청이 같은 「가용 메모리」를
+/// 저마다 보고 전부 들어오는 것을 막는다(방금 받은 턴은 아직 메모리를 쓰지 않았다).
+pub const PROBE_EVERY_MS: u64 = 10_000;
+const LIMIT_LOG_EVERY_MS: u64 = 60_000;
 /// 러너가 보내는 키(스레드 키) 길이 상한. 비교에만 쓰고 어디에도 찍지 않는다.
 const KEY_MAX: usize = 512;
 const FULL_LOG_EVERY_MS: u64 = 60_000;
 
-/// TS `parseMaxTurns` — 없음·빈 값·0 은 상한 없음. 숫자(1~4자리)가 아니면 상한 없음 + 경고.
-pub fn parse_max_turns(raw: Option<&str>, log: &dyn Fn(&str)) -> Option<u32> {
-    let v = raw?.trim();
+/// `HARKROOM_MAX_TURNS` 를 읽은 결과.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MaxTurns {
+    /// 값이 없다 — 기기 자원으로 계산한다.
+    Auto,
+    /// `0` — 상한 없음(일부러 끈 것).
+    Unlimited,
+    Fixed(u32),
+}
+
+/// 없음·빈 값은 계산([`MaxTurns::Auto`]), `0` 은 상한 없음. 숫자(1~4자리)가 아니면 계산 + 경고 —
+/// 잘못 적은 값이 상한을 조용히 끄지 않는다.
+pub fn parse_max_turns(raw: Option<&str>, log: &dyn Fn(&str)) -> MaxTurns {
+    let v = raw.map(str::trim).unwrap_or_default();
     if v.is_empty() {
-        return None;
+        return MaxTurns::Auto;
     }
     if !(1..=4).contains(&v.len()) || !v.bytes().all(|b| b.is_ascii_digit()) {
         let shown: String = v.chars().take(20).collect();
         log(&format!(
-            "{MAX_TURNS_ENV}={} 는 0 이상의 정수가 아니다 — 동시 턴 상한 없이 돈다",
+            "{MAX_TURNS_ENV}={} 는 0 이상의 정수가 아니다 — 기기 자원으로 계산한 상한으로 돈다",
             Value::String(shown)
         ));
-        return None;
+        return MaxTurns::Auto;
     }
     match v.parse::<u32>() {
-        Ok(0) | Err(_) => None,
-        Ok(n) => Some(n),
+        Ok(0) => MaxTurns::Unlimited,
+        Ok(n) => MaxTurns::Fixed(n),
+        Err(_) => MaxTurns::Auto,
     }
+}
+
+type Probe = Box<dyn Fn() -> Capacity + Send + Sync>;
+
+/// 계산하는 상한의 상태 — `HARKROOM_MAX_TURNS` 가 없을 때만 있다.
+struct Dynamic {
+    probe: Probe,
+    probed_at: Option<u64>,
+    logged_at: u64,
 }
 
 pub struct TurnSlots {
     max: Option<u32>,
+    dynamic: Option<Dynamic>,
     held: HashMap<String, HashSet<String>>,
     count: usize,
     last_full_log_at: u64,
@@ -67,6 +99,7 @@ impl TurnSlots {
     ) -> Self {
         Self {
             max,
+            dynamic: None,
             held: HashMap::new(),
             count: 0,
             last_full_log_at: 0,
@@ -75,25 +108,89 @@ impl TurnSlots {
         }
     }
 
+    /// 상한을 기기 자원으로 계산한다. 만들 때 한 번 재서 그 근거를 로그에 남긴다.
+    pub fn dynamic(
+        probe: impl Fn() -> Capacity + Send + Sync + 'static,
+        now: impl Fn() -> u64 + Send + Sync + 'static,
+        log: impl Fn(&str) + Send + Sync + 'static,
+    ) -> Self {
+        let mut slots = Self::new(None, now, log);
+        let cap = probe();
+        let d = decide(&cap, 0);
+        let t = (slots.now)();
+        (slots.log)(&describe(&d, &cap, 0));
+        slots.max = Some(d.limit);
+        slots.dynamic = Some(Dynamic {
+            probe: Box::new(probe),
+            probed_at: Some(t),
+            logged_at: t,
+        });
+        slots
+    }
+
+    /// 계산하는 상한이면 다시 잰다. 간격([`PROBE_EVERY_MS`]) 안이면 앞 값을 둔다.
+    fn refresh_limit(&mut self) {
+        let Some(dy) = self.dynamic.as_mut() else {
+            return;
+        };
+        let t = (self.now)();
+        if dy
+            .probed_at
+            .is_some_and(|at| t.saturating_sub(at) < PROBE_EVERY_MS)
+        {
+            return;
+        }
+        dy.probed_at = Some(t);
+        let cap = (dy.probe)();
+        let d = decide(&cap, self.count);
+        if self.max != Some(d.limit) {
+            self.max = Some(d.limit);
+            // 도는 턴 수에 따라 오르내리므로 줄마다 찍지 않는다.
+            if t.saturating_sub(dy.logged_at) >= LIMIT_LOG_EVERY_MS {
+                dy.logged_at = t;
+                (self.log)(&describe(&d, &cap, self.count));
+            }
+        }
+    }
+
     /// 프로세스 하나에 하나 — 여러 커뮤니티의 러너를 합쳐 센다(TS run.ts 는 오퍼레이터당 하나를 만든다).
     pub fn process() -> Arc<Mutex<TurnSlots>> {
         static SLOTS: OnceLock<Arc<Mutex<TurnSlots>>> = OnceLock::new();
         Arc::clone(SLOTS.get_or_init(|| {
             let log = |line: &str| eprintln!("{line}");
-            let max = parse_max_turns(std::env::var(MAX_TURNS_ENV).ok().as_deref(), &log);
-            if let Some(m) = max {
-                eprintln!("동시 턴 상한: {m}");
-            }
-            Arc::new(Mutex::new(TurnSlots::new(
-                max,
-                || {
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_millis() as u64)
-                        .unwrap_or(0)
-                },
-                log,
-            )))
+            let now = || {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0)
+            };
+            let slots = match parse_max_turns(std::env::var(MAX_TURNS_ENV).ok().as_deref(), &log) {
+                MaxTurns::Fixed(m) => {
+                    eprintln!("동시 턴 상한: {m} ({MAX_TURNS_ENV} 로 정함)");
+                    TurnSlots::new(Some(m), now, log)
+                }
+                MaxTurns::Unlimited => {
+                    eprintln!("동시 턴 상한: 없음({MAX_TURNS_ENV}=0)");
+                    TurnSlots::new(None, now, log)
+                }
+                MaxTurns::Auto => {
+                    // 턴이 쓰는 자리(~/.harkroom-agent)의 디스크를 본다. 아직 없으면 홈.
+                    let home = std::env::var_os("HOME").map(PathBuf::from);
+                    TurnSlots::dynamic(
+                        move || {
+                            let agent = home.as_ref().map(|h| h.join(".harkroom-agent"));
+                            let paths: Vec<&Path> = [agent.as_deref(), home.as_deref()]
+                                .into_iter()
+                                .flatten()
+                                .collect();
+                            measure(&paths)
+                        },
+                        now,
+                        log,
+                    )
+                }
+            };
+            Arc::new(Mutex::new(slots))
         }))
     }
 
@@ -176,6 +273,7 @@ impl TurnSlots {
         if self.held.get(runner_id).is_some_and(|m| m.contains(&key)) {
             return Some(answer(req, 200, ok_body(self.count, self.max)));
         }
+        self.refresh_limit();
         // 백그라운드 회차는 `keepFree`(0~4 정수) 만큼 자리를 남겨 둔다. 옛 러너는 안 싣는다(0).
         let keep_free = Self::body_field(&parsed, "keepFree")
             .and_then(|v| {
@@ -253,23 +351,93 @@ mod tests {
     }
 
     #[test]
-    fn parse_max_turns_matches_ts() {
+    fn parse_max_turns_computes_when_unset_and_zero_turns_it_off() {
         let warned = Arc::new(AtomicUsize::new(0));
         let w = Arc::clone(&warned);
         let log = move |_: &str| {
             w.fetch_add(1, Ordering::SeqCst);
         };
-        assert_eq!(parse_max_turns(None, &log), None);
-        assert_eq!(parse_max_turns(Some(""), &log), None);
-        assert_eq!(parse_max_turns(Some("  "), &log), None);
-        assert_eq!(parse_max_turns(Some("0"), &log), None);
-        assert_eq!(parse_max_turns(Some(" 6 "), &log), Some(6));
-        assert_eq!(parse_max_turns(Some("9999"), &log), Some(9999));
+        assert_eq!(parse_max_turns(None, &log), MaxTurns::Auto);
+        assert_eq!(parse_max_turns(Some(""), &log), MaxTurns::Auto);
+        assert_eq!(parse_max_turns(Some("  "), &log), MaxTurns::Auto);
+        // 0 은 일부러 끈 것이다 — 경고 없이 상한 없음.
+        assert_eq!(parse_max_turns(Some("0"), &log), MaxTurns::Unlimited);
+        assert_eq!(parse_max_turns(Some(" 6 "), &log), MaxTurns::Fixed(6));
+        assert_eq!(parse_max_turns(Some("9999"), &log), MaxTurns::Fixed(9999));
         assert_eq!(warned.load(Ordering::SeqCst), 0);
-        assert_eq!(parse_max_turns(Some("10000"), &log), None);
-        assert_eq!(parse_max_turns(Some("-1"), &log), None);
-        assert_eq!(parse_max_turns(Some("3.5"), &log), None);
+        // 잘못 적은 값은 상한을 끄지 않는다 — 계산 + 경고.
+        assert_eq!(parse_max_turns(Some("10000"), &log), MaxTurns::Auto);
+        assert_eq!(parse_max_turns(Some("-1"), &log), MaxTurns::Auto);
+        assert_eq!(parse_max_turns(Some("3.5"), &log), MaxTurns::Auto);
         assert_eq!(warned.load(Ordering::SeqCst), 3);
+    }
+
+    const GIB: u64 = 1024 * 1024 * 1024;
+
+    fn acquire(s: &mut TurnSlots, key: &str) -> u16 {
+        status(s.maybe_handle(
+            "r",
+            &req(TURN_SLOTS_PATH, json!({"key": key})),
+            RunnerLinkKind::Relay,
+        ))
+    }
+
+    #[test]
+    fn dynamic_limit_follows_the_device_and_logs_why() {
+        // 가용 메모리를 시험이 바꾼다(GiB). 전체 8GB → 천장 8, 남겨 둘 몫 1GB.
+        let avail = Arc::new(Mutex::new(8u64));
+        let clock = Arc::new(Mutex::new(1_000_000u64));
+        let lines = Arc::new(Mutex::new(Vec::<String>::new()));
+        let (a, c, l) = (Arc::clone(&avail), Arc::clone(&clock), Arc::clone(&lines));
+        let mut s = TurnSlots::dynamic(
+            move || Capacity {
+                mem_total: Some(8 * GIB),
+                mem_available: Some(*a.lock().unwrap() * GIB),
+                disk_free: Some(100 * GIB),
+            },
+            move || *c.lock().unwrap(),
+            move |line| l.lock().unwrap().push(line.to_string()),
+        );
+        assert_eq!(s.max(), Some(8));
+        assert_eq!(
+            lines.lock().unwrap().as_slice(),
+            [
+                "동시 턴 상한: 8 (메모리 전체 8.0GB·가용 8.0GB, 디스크 여유 100.0GB, 도는 턴 0, 기준 전체 메모리)"
+            ]
+        );
+        assert_eq!(acquire(&mut s, "a"), 200);
+        assert_eq!(acquire(&mut s, "b"), 200);
+        // 가용이 2GB 로 줄었다 — 간격 안에서는 앞 상한을 쓴다.
+        *avail.lock().unwrap() = 2;
+        assert_eq!(acquire(&mut s, "c"), 200);
+        assert_eq!(s.max(), Some(8));
+        // 간격이 지나면 다시 잰다: 도는 3 + (2GB − 1GB) ÷ 512MB = 5.
+        *clock.lock().unwrap() += PROBE_EVERY_MS;
+        assert_eq!(acquire(&mut s, "d"), 200);
+        assert_eq!(s.max(), Some(5));
+        assert_eq!(acquire(&mut s, "e"), 200);
+        // 같은 간격 안의 요청은 잰 여유를 나눠 쓴다 — 여섯째는 기다린다. 이미 쥔 키의 재시도는 통과한다.
+        assert_eq!(acquire(&mut s, "f"), 409);
+        assert_eq!(acquire(&mut s, "a"), 200);
+        assert_eq!(s.in_use(), 5);
+        // 가용이 바닥이어도 도는 턴은 그대로고, 새 턴만 기다린다.
+        *avail.lock().unwrap() = 0;
+        *clock.lock().unwrap() += PROBE_EVERY_MS;
+        assert_eq!(acquire(&mut s, "f"), 409);
+        assert_eq!(s.max(), Some(5));
+        assert_eq!(s.in_use(), 5);
+        // 메모리가 돌아오면 다시 받는다. 바뀐 상한은 1분에 한 번만 찍는다.
+        *avail.lock().unwrap() = 8;
+        *clock.lock().unwrap() += LIMIT_LOG_EVERY_MS;
+        assert_eq!(acquire(&mut s, "f"), 200);
+        assert_eq!(s.max(), Some(8));
+        let lines = lines.lock().unwrap();
+        assert_eq!(
+            lines.last().unwrap(),
+            "동시 턴 상한: 8 (메모리 전체 8.0GB·가용 8.0GB, 디스크 여유 100.0GB, 도는 턴 5, 기준 전체 메모리)"
+        );
+        // 기동 줄 + 「찼다」 줄 + 바뀐 상한 줄.
+        assert_eq!(lines.len(), 3, "{lines:?}");
     }
 
     #[test]
