@@ -1002,15 +1002,15 @@ async fn approve_refusals_write_nothing() {
         .execute(&pool)
         .await
         .unwrap();
-    // 카드·스레드 머리 없는 요청 — 위임장을 세울 스레드가 없다.
+    // 카드 없고 스레드 머리 글도 없는 요청(thread_root_id 는 not null 이라 없는 글의 id 를 넣는다) — 위임장을 세울 머리 글이 없다.
     let request = |kind: &'static str, target: &'static str| {
         let pool = pool.clone();
         let agent = f.agent.clone();
         let channel = f.channel.clone();
         async move {
             sqlx::query_scalar::<_, String>(
-                "insert into permission_request(agent_id, kind, target, reason, channel_id, expires_at) \
-                 values ($1::uuid, $2, $3, 'r', $4::uuid, now() + interval '1 hour') returning id::text",
+                "insert into permission_request(agent_id, kind, target, reason, channel_id, thread_root_id, expires_at) \
+                 values ($1::uuid, $2, $3, 'r', $4::uuid, gen_random_uuid(), now() + interval '1 hour') returning id::text",
             )
             .bind(agent)
             .bind(kind)
