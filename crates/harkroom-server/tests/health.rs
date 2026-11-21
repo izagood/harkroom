@@ -148,22 +148,6 @@ async fn metrics_requires_an_account() {
     assert_eq!(s, StatusCode::UNAUTHORIZED, "{t}");
 }
 
-#[tokio::test]
-async fn ts_override_sends_health_rows_back_to_ts() {
-    let base = front(&ts().await, lazy_pool(DEAD_DB), "GET /readyz,GET /metrics").await;
-    assert_eq!(
-        send(&base, Method::GET, "/readyz", &[], "").await.2,
-        "ts /readyz"
-    );
-    assert_eq!(
-        send(&base, Method::GET, "/metrics", &[], "").await.2,
-        "ts /metrics"
-    );
-    // 되돌리지 않은 /healthz 는 그대로 앞단.
-    let (_, _, t) = send(&base, Method::GET, "/healthz", &[], "").await;
-    assert!(t.starts_with('{'), "{t}");
-}
-
 #[test]
 fn open_rows_are_in_the_table_and_projection_status_is_moved() {
     for k in OPEN {

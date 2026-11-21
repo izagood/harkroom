@@ -42,13 +42,13 @@ fn wrong_shape_refuses_start() {
 
 #[test]
 fn empty_value_skips_seeding() {
-    // 비면 심기를 건너뛰고 다음 단계(서버 env 읽기)로 간다 — 거기서 `UPSTREAM_URL` 이 없어 멈추는 것으로 본다.
+    // 비면 심기를 건너뛰고 다음 단계(서버 env 읽기)로 간다 — 거기서 `DATABASE_URL` 이 없어 멈추는 것으로 본다.
     for empty in ["", "   "] {
         let out = front().env("CLAIM_TOKEN_HASH", empty).output().unwrap();
         let err = String::from_utf8_lossy(&out.stderr);
         assert!(!err.contains("CLAIM_TOKEN_HASH"), "{err}");
         assert!(!err.contains("claim token"), "{err}");
-        assert!(err.contains("UPSTREAM_URL is required"), "{err}");
+        assert!(err.contains("DATABASE_URL is required"), "{err}");
     }
 }
 

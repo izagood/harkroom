@@ -1,5 +1,5 @@
-//! `harkroom-server-rs` — env: `UPSTREAM_URL`(TS 서버, 예 `http://harkroom:3400`) · `DATABASE_URL` · `PORT`(기본 3500) ·
-//! `CORS_ORIGINS`(TS 와 같은 허용 출처, 비면 요청 출처를 돌려줌 — `cors.rs`) · `HARKROOM_CORE`(`ts` 기본 · `rust` 면 `/ws`·`/ws-ticket` 을 답함, S5.3 C0) · `TRUST_PROXY`(감사 `ip` 규칙, TS 와 같은 꼴 — `trust_proxy.rs`) · `HARKROOM_FRONT_TS_ROUTES`(옮긴 줄을 TS 로 되돌림 — `"GET /accounts,GET /dms"` 또는 `*`, `routes.rs` 참고) ·
+//! `harkroom-server-rs` — env: `DATABASE_URL` · `PORT`(기본 3500) ·
+//! `CORS_ORIGINS`(TS 와 같은 허용 출처, 비면 요청 출처를 돌려줌 — `cors.rs`) · `HARKROOM_CORE`(`ts` 기본 · `rust` 면 `/ws`·`/ws-ticket` 을 답함, S5.3 C0) · `TRUST_PROXY`(감사 `ip` 규칙, TS 와 같은 꼴 — `trust_proxy.rs`) ·
 //! `DATABASE_WRITE_URL`(쓰기 역할, P3 — 없거나 권한이 모자라면 쓰는 줄을 켜지 않고 그 요청은 TS 로 간다, `write.rs` 참고) ·
 //! `HARKROOM_RUST_MIGRATE`(`1` 이면 기동 때 마이그레이션을 Rust 가 돌림, `only` 면 돌리고 서버로 뜨지 않고 끝남(성공 0·실패 1,
 //! 마이그레이션 Job 용 — 이때 `DATABASE_URL`·`UPSTREAM_URL` 은 없어도 된다), **기본 꺼짐** — S5.4 M1, `migrate.rs`) ·
@@ -59,7 +59,8 @@ async fn main() {
         }
     }
 
-    let upstream = std::env::var("UPSTREAM_URL").expect("UPSTREAM_URL is required");
+    // `UPSTREAM_URL`(옛 TS 서버)은 더 읽지 않는다 — 넘김을 닫았다(11-21). 남아 있어도 무시한다.
+    let upstream = String::new();
     let db = std::env::var("DATABASE_URL").expect("DATABASE_URL is required");
     let port: u16 = std::env::var("PORT")
         .ok()
@@ -98,16 +99,11 @@ async fn main() {
     if write.is_some() {
         spawn_loops().await;
     }
-    let ts = routes::TsOverrides::parse(std::env::var("HARKROOM_FRONT_TS_ROUTES").ok().as_deref());
-    let known: Vec<routes::Moved> = routes::MOVED
-        .iter()
-        .chain(routes::MOVED_WRITE)
-        .cloned()
-        .collect();
-    let unknown = ts.unknown(&known);
-    if !unknown.is_empty() {
-        eprintln!("front: HARKROOM_FRONT_TS_ROUTES names unknown route(s): {unknown:?}");
+    // `HARKROOM_FRONT_TS_ROUTES`(옮긴 줄을 TS 로 되돌림)는 더 읽지 않는다 — 되돌릴 TS 가 없어(11-21) 되돌린 줄은 404 가 될 뿐이다.
+    if std::env::var_os("HARKROOM_FRONT_TS_ROUTES").is_some() {
+        eprintln!("front: HARKROOM_FRONT_TS_ROUTES is ignored (TS server removed)");
     }
+    let ts = routes::TsOverrides::default();
     // 감사 `ip` 규칙 — TS `TRUST_PROXY` 와 같은 꼴. 모르는 값이면 기동하지 않는다(TS 와 같다).
     let trust =
         match harkroom_server::trust_proxy::parse(std::env::var("TRUST_PROXY").ok().as_deref()) {

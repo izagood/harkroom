@@ -1,4 +1,4 @@
-//! 라우트 표(`routes.rs`)가 옮긴 줄만 Rust 로 답하고 나머지는 TS 로 넘기는지, 그리고 대조 시험 틀이 어긋남을 잡는지 본다.
+//! 라우트 표(`routes.rs`)가 옮긴 줄만 Rust 로 답하고 나머지는 404 `not_found`(TS 넘김 닫음)인지, 그리고 대조 시험 틀이 어긋남을 잡는지 본다.
 //! DB 는 쓰지 않는다 — 풀은 연결하지 않는 lazy 풀이고, 익명 요청은 인증에서 DB 를 읽지 않는다.
 mod common;
 
@@ -56,36 +56,36 @@ async fn body(base: &str, m: Method, path: &str) -> (StatusCode, String) {
     (s, t)
 }
 
+/// 404 `not_found` 인지(넘김을 닫은 자리의 고정 답).
+async fn closed(base: &str, m: Method, path: &str) -> bool {
+    let (s, t) = body(base, m, path).await;
+    s == StatusCode::NOT_FOUND && t.contains("\"not_found\"")
+}
+
 #[tokio::test]
-async fn moved_rows_answer_here_and_everything_else_goes_to_ts() {
+async fn moved_rows_answer_here_and_everything_else_is_404() {
     let f = front(TABLE, "").await;
     assert_eq!(body(&f, Method::GET, "/moved").await.1, "rust moved");
-    assert_eq!(
-        body(&f, Method::POST, "/moved").await.1,
-        "ts POST /moved",
-        "옮기지 않은 메서드는 405 가 아니라 TS 로 간다"
+    assert!(
+        closed(&f, Method::POST, "/moved").await,
+        "옮기지 않은 메서드는 405 가 아니라 404 not_found(상류로 가지 않음)"
     );
     assert_eq!(body(&f, Method::POST, "/items/abc").await.1, "rust moved");
-    assert_eq!(
-        body(&f, Method::GET, "/items/abc").await.1,
-        "ts GET /items/abc"
-    );
-    assert_eq!(body(&f, Method::GET, "/other").await.1, "ts GET /other");
+    assert!(closed(&f, Method::GET, "/items/abc").await);
+    assert!(closed(&f, Method::GET, "/other").await);
     let (s, t) = body(&f, Method::GET, "/front/healthz").await;
     assert_eq!(s, 200);
     assert!(t.contains("\"front\":\"rust\""));
 }
 
+/// 라우터에 되돌림을 넘기면 그 줄은 마운트되지 않아 404 다(운영 `main.rs` 는 env 를 더 읽지 않는다).
 #[tokio::test]
-async fn env_override_sends_a_row_back_to_ts() {
+async fn overridden_row_is_unmounted_and_404() {
     let f = front(TABLE, " get  /moved ").await;
-    assert_eq!(body(&f, Method::GET, "/moved").await.1, "ts GET /moved");
+    assert!(closed(&f, Method::GET, "/moved").await);
     assert_eq!(body(&f, Method::POST, "/items/x").await.1, "rust moved");
     let f = front(TABLE, "*").await;
-    assert_eq!(
-        body(&f, Method::POST, "/items/x").await.1,
-        "ts POST /items/x"
-    );
+    assert!(closed(&f, Method::POST, "/items/x").await);
 }
 
 #[test]
