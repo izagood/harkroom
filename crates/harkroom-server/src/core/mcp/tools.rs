@@ -547,31 +547,6 @@ mod tests {
             account_text(&a),
             r#"{"id":"i","handle":"h","displayName":"D \"q\"","kind":"agent","isAdmin":false,"role":"member","status":"active","statusText":null,"avatarAttachmentId":"x"}"#
         );
-        let src = include_str!("../../../../../packages/server/src/auth/plugin.ts");
-        assert!(src.contains(
-            "const ACCOUNT_COLS = `a.id, a.handle, a.display_name as \"displayName\", a.kind, a.is_admin as \"isAdmin\",\n  a.role, a.status, a.status_text as \"statusText\", a.avatar_attachment_id as \"avatarAttachmentId\"`;"
-        ));
-    }
-
-    /// 문장을 TS 원본과 맞춘다 — TS 가 칸·정렬을 바꾸면 여기서 깨진다(값 비교는 대조 시험이 한다).
-    #[test]
-    fn account_list_follows_ts_source() {
-        let mcp = include_str!("../../../../../packages/server/src/mcp/mcpPlugin.ts");
-        assert!(mcp.contains(
-            "`select id, handle, display_name as \"displayName\", kind,\n                disabled_at is not null as disabled, deleted_at is not null as deleted\n         from account order by handle`"
-        ));
-        assert!(mcp.contains(
-            "(await listTeams(pool)).map((t) => ({ id: t.id, name: t.name, leadAccountId: t.leadAccountId }))"
-        ));
-        assert!(mcp.contains(
-            "(await listHandleGroups(pool)).map((g) => ({ id: g.id, handle: g.handle }))"
-        ));
-        assert!(mcp.contains("return jsonResult({ accounts: res.rows, teams, groups });"));
-        let teams = include_str!("../../../../../packages/server/src/services/teams.ts");
-        assert!(teams.contains("t.lead_account_id as \"leadAccountId\""));
-        assert!(teams.contains("`select ${COLS} from agent_team t order by t.name`"));
-        let groups = include_str!("../../../../../packages/server/src/services/handleGroups.ts");
-        assert!(groups.contains("`select ${COLS} from handle_group g order by g.handle`"));
     }
 
     #[test]

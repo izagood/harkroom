@@ -1,0 +1,22 @@
+╭────────────────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.154.0)                             │
+│                                                        │
+│ model:     lane-model   /model to change               │
+│ directory: /private/var/…/T/ws/ws │
+╰────────────────────────────────────────────────────────╯
+
+  Tip: Use /copy or press Ctrl+O to copy the latest agent response as Markdown.
+
+
+› run the probe
+
+
+⚠ Model metadata for `lane-model` not found. Defaulting to fallback metadata; this can degrade performance and cause
+  issues.
+ 
+• Working (40s • esc to interrupt) · 1 background terminal running · /ps to view · /stop to close
+ 
+ 
+› Ask Codex to do anything
+ 
+  lane-model default · /tmp/ws

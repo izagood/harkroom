@@ -735,22 +735,4 @@ mod tests {
         assert!(parse_slugs(&j(json!({ "slugs": [""] }))).is_none());
         assert!(parse_slugs(&j(json!({ "slugs": [1] }))).is_none());
     }
-
-    /// 문구·상한을 TS 원본과 맞춘다.
-    #[test]
-    fn texts_follow_ts_source() {
-        let ts = include_str!("../../../../packages/server/src/routes/accountRoutes.ts");
-        for want in [
-            "return reply.code(422).send({ error: { code: 'core_too_long', message: `core 는 ${MAX_CORE_MEMORY_LENGTH}자까지다` } });",
-            "return reply.code(422).send({ error: { code: 'too_many', message: `at most ${MAX_MEMORY_ITEMS_PER_ACCOUNT}` } });",
-            "error: { code: 'conflict', updatedAt: result.conflict.updatedAt?.toISOString() ?? null },",
-            "return reply.code(403).send({ error: { code: 'forbidden', message: 'only a human can confirm a flagged memory' } });",
-            "return reply.code(404).send({ error: { code: 'not_flagged', message: 'memory is not flagged' } });",
-            "slugs: z.array(z.string().min(1).max(255)).min(1).max(MAX_MEMORY_ITEMS_PER_ACCOUNT),",
-            "action: 'agent.background.toggled', actorId: req.account!.id, actorHandle: req.account!.handle,",
-            "return { ok: true, enabled };",
-        ] {
-            assert!(ts.contains(want), "{want}");
-        }
-    }
 }

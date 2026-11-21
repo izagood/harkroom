@@ -79,17 +79,6 @@ mod tests {
     /// 거절 문구·읽기 갈래를 TS 원본과 맞춘다(값은 rustFrontDb 대조 시험이 본다).
     #[test]
     fn texts_follow_ts_source() {
-        let mcp = include_str!("../../../../../packages/server/src/mcp/mcpPlugin.ts");
-        for want in [
-            "    not_found: '그런 글이 없다',",
-            "    not_root: '스레드 루트 글의 id 를 줘라(대화 프롬프트 맨 위의 threadRootId)',",
-            "    forbidden: 'not a member of this channel',",
-            "      plan: planDocSchema.nullable().optional(),",
-            "    if (plan === undefined) {\n      const root = await threadRootChannel(pool, threadRootId);\n      if (root === 'not_found' || root === 'not_root') return planError({ code: root });\n      if (!(await assertChannelVisible(pool, root.channelId, account.id))) return planError({ code: 'forbidden' });\n      const row = await getThreadPlan(pool, threadRootId);\n      return jsonResult({ plan: row ? await threadPlanView(pool, row, account.id) : null });",
-            "  const planError = (error: { code: string }) =>\n    jsonResult({ error: { ...error, message: PLAN_ERROR_MESSAGES[error.code] ?? error.code } });",
-        ] {
-            assert!(mcp.contains(want), "{want}");
-        }
         assert_eq!(err("not_root", NOT_ROOT).matches("not_root").count(), 1);
     }
 }

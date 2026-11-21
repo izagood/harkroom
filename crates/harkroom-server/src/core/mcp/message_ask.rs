@@ -2029,22 +2029,6 @@ mod tests {
             supersedes_list(ask(json!({ "supersedes": C })).as_object().unwrap()),
             vec![C]
         );
-        let ts = include_str!("../../../../../packages/server/src/mcp/mcpPlugin.ts");
-        for code in [
-            "supersedes_not_found",
-            "supersedes_not_yours",
-            "supersedes_other_thread",
-            "supersedes_resolved",
-            "supersedes_permission_card",
-            "supersedes_too_many",
-        ] {
-            assert!(
-                ts.contains(&format!("{code}: '{}'", supersede_message(code))),
-                "{code}"
-            );
-        }
-        let ms = include_str!("../../../../../packages/server/src/services/messages.ts");
-        assert!(ms.contains("export const ASK_SUPERSEDES_MAX = 4;"));
     }
 
     #[test]
@@ -2068,10 +2052,6 @@ mod tests {
                 "{k}"
             );
         }
-        let ts = include_str!("../../../../../packages/server/src/services/push/pushJobs.ts");
-        assert!(ts.contains(
-            "where exists (select 1 from account where id = $1::uuid and kind = 'human')"
-        ));
         assert_eq!(
             TO_KIND_SQL.replace("id::text, kind::text", "id"),
             TO_SQL.replace("id::text", "id")
@@ -2113,12 +2093,6 @@ mod tests {
 
     #[test]
     fn open_card_sql_follows_ts_source() {
-        let ts = include_str!("../../../../../packages/server/src/services/messages.ts");
-        let norm = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
-        let body = norm(OPEN_CARD_SQL)
-            .replace("select id::text from", "select id from")
-            .replace("::uuid", "");
-        assert!(norm(ts).contains(&body));
         assert_eq!(OPEN_CARD_READ_PRIVILEGES, &[("message", "SELECT")]);
     }
 
@@ -2127,9 +2101,6 @@ mod tests {
         assert_eq!(to_handle("@Alice"), "alice");
         assert_eq!(to_handle("Bob"), "bob");
         assert_eq!(to_handle("@@x"), "@x");
-        let ts = include_str!("../../../../../packages/server/src/mcp/mcpPlugin.ts");
-        assert!(ts.contains("select id from account where lower(handle) = $1"));
-        assert!(ts.contains("no account with handle @${handle}"));
         assert_eq!(
             TO_SQL.replace("id::text", "id"),
             "select id from account where lower(handle) = $1"

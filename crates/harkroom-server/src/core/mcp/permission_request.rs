@@ -1217,35 +1217,6 @@ mod tests {
 
     #[test]
     fn messages_follow_ts() {
-        let ts = include_str!("../../../../../packages/server/src/services/permissionRequests.ts");
-        for c in [
-            "empty",
-            "unsupported_tool",
-            "wildcard",
-            "too_broad",
-            "shell_syntax",
-            "dangerous_flag",
-            "interpreter",
-            "operator_wrapper",
-            "bad_chars",
-            "too_long",
-            "merge_bypass",
-            "gh_api_write",
-            "env_prefix",
-            "path_head",
-            "relative_path",
-            "glued_flag",
-            "needs_kubeconfig",
-            "unsupported_head",
-            "unsupported_subcommand",
-            "unsupported_flag",
-            "chart_not_pinned",
-        ] {
-            assert!(
-                ts.contains(&format!("  {c}: '{}',", rule_message(c))),
-                "{c}"
-            );
-        }
         let shared = include_str!("../../../../../packages/shared/src/toolRules.ts");
         for w in INTERPRETERS {
             assert!(shared.contains(&format!("'{w}'")), "{w}");

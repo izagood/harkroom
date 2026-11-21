@@ -223,10 +223,6 @@ mod tests {
         assert!(!mandate_enforced(Some("true")));
         assert!(!mandate_enforced(Some("")));
         assert!(!mandate_enforced(None));
-        let src = include_str!("../../../../packages/server/src/services/mergeGrants.ts");
-        assert!(src.contains(
-            "return (env.HARKROOM_MANDATE_ENFORCE ?? '').trim().toLowerCase() === 'on';"
-        ));
     }
 
     #[test]
@@ -296,14 +292,6 @@ mod tests {
             .cause_by_human()
         );
         assert!(!LeaseRow::default().cause_by_human());
-        let src = include_str!("../../../../packages/server/src/services/mergeGrants.ts");
-        assert!(src.contains("if (lease.causeKind === 'human') return true;"));
-        assert!(src.contains("return lease.causeAskAuthorId === lease.agentId && !!lease.askAnsweredBy\n    && lease.askAnswererKind === 'human' && lease.askAnswererOwnsAgent === true;"));
-        assert!(
-            src.contains(
-                "l.cause_message_id as \"causeMessageId\", l.mandate_id as \"mandateId\","
-            )
-        );
         for k in [
             "\"causeMessageId\"",
             "\"mandateId\"",

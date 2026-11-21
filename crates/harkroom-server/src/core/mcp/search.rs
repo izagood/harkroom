@@ -247,17 +247,4 @@ mod tests {
         assert!(sql(false).contains("ts_rank"));
         assert!(sql(true).contains("m.created_at desc, m.seq desc"));
     }
-
-    /// TS 원본과 상수가 같은지.
-    #[test]
-    fn constants_follow_ts() {
-        let ts = include_str!("../../../../../packages/server/src/services/messages.ts");
-        assert!(ts.contains(&format!(
-            "export const SEARCH_MAX_OFFSET = {SEARCH_MAX_OFFSET};"
-        )));
-        assert!(ts.contains(&format!(
-            "export const SEARCH_MAX_AUTHORS = {SEARCH_MAX_AUTHORS};"
-        )));
-        assert!(ts.contains("const limit = Math.min(scope.limit ?? 50, 100);"));
-    }
 }

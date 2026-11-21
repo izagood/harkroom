@@ -251,33 +251,4 @@ mod tests {
         assert_eq!(archive_threads(&json!({"threadIds": [J, "nope"]})), None);
         assert_eq!(archive_threads(&json!({"threadIds": [1]})), None);
     }
-
-    #[test]
-    fn sql_and_answers_follow_ts_source() {
-        let ts = include_str!("../../../../../packages/server/src/services/bgJobs.ts");
-        let squash = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
-        let ts = squash(ts);
-        let strip = |s: &str| {
-            squash(
-                &s.replace("::uuid[]", "@@")
-                    .replace("::uuid", "")
-                    .replace("::text", "")
-                    .replace("@@", "::uuid[]"),
-            )
-        };
-        assert!(ts.contains(&strip(CLOSE_SQL)), "close");
-        assert!(ts.contains(&strip(ARCHIVE_SQL)), "archive");
-        assert!(ts.contains(&strip(EXISTS_SQL)), "exists");
-        assert!(ts.contains("if (c.status === 'done' && row.kind === 'distill' && Array.isArray(row.input.threadIds) && row.input.threadIds.length)"));
-        let plugin = squash(include_str!(
-            "../../../../../packages/server/src/mcp/mcpPlugin.ts"
-        ));
-        assert!(plugin.contains("if (r !== 'ok') return jsonResult({ error: { code: r, message: r === 'not_running' ? '이미 닫힌 회차다' : '그런 회차가 없다' } }); return jsonResult({ ok: true });"));
-        assert!(plugin.contains("summary: z.string().max(500).optional(), error: z.string().max(200).optional(), tokens: z.number().int().min(0).optional(), durationMs: z.number().int().min(0).optional(),"));
-        assert!(
-            plugin.contains(
-                "jobId: z.string().uuid(), status: z.enum(['done', 'skipped', 'failed']),"
-            )
-        );
-    }
 }

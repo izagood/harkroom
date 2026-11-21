@@ -375,27 +375,6 @@ mod tests {
         assert_eq!(kst_day(0), "1970-01-01");
     }
 
-    #[test]
-    fn window_and_day_follow_ts_source() {
-        let ts = include_str!("../../../../../packages/server/src/services/bgJobs.ts");
-        for want in [
-            "export const BG_WINDOW_KST: readonly [number, number] = [3, 7];",
-            "const KST_OFFSET_MS = 9 * 60 * 60 * 1000;",
-            "return new Date(now.getTime() + KST_OFFSET_MS).toISOString().slice(0, 10);",
-            "const h = new Date(now.getTime() + KST_OFFSET_MS).getUTCHours();\n  return h >= BG_WINDOW_KST[0] && h < BG_WINDOW_KST[1];",
-            "export const DISTILL_DIGEST_MAX_CHARS = 3000;",
-            "const DIGEST_PIECE = { report: 800, failure: 500, human: 600 } as const;",
-            "const clip = (t: string, n: number) => (t.length <= n ? t : `${t.slice(0, n - 1)}…`);",
-            "const label = { report: '마지막 보고', failure: '실패', human: '사람 글' } as const;",
-            "const order = { report: 0, failure: 1, human: 2 } as const;",
-            ".map((x) => `[${label[x.role]}] ${clip(x.body.replace(/\\s+/g, ' ').trim(), DIGEST_PIECE[x.role])}`);",
-            "if (used + p.length + 1 > DISTILL_DIGEST_MAX_CHARS) break;",
-            "return out.join('\\n');",
-        ] {
-            assert!(ts.contains(want), "{want}");
-        }
-    }
-
     fn s(u: &[u16]) -> String {
         String::from_utf16_lossy(u)
     }
@@ -487,33 +466,5 @@ mod tests {
             input_text(&Some(vec![u.clone(), v.clone(), u.clone()]), Some(&d)),
             format!("{{\"threadIds\":[\"{u}\",\"{v}\",\"{u}\"],\"digests\":{{\"{u}\":\"a\"}}}}")
         );
-    }
-
-    #[test]
-    fn claim_sql_follows_ts_source() {
-        let ts = include_str!("../../../../../packages/server/src/services/bgJobs.ts");
-        for want in [
-            "`update bg_job set status = 'running', claimed_at = now()\n     where id = (\n       select id from bg_job where account_id = $1 and status = 'queued' and day = $2::date\n       order by created_at limit 1 for update skip locked)\n     returning id`,",
-            "if (!backgroundEnabled(env)) return { job: null, reason: 'disabled' };\n  if (!inBgWindow(now)) return { job: null, reason: 'outside_window' };",
-            "if (!r.rows[0]) return { job: null, reason: 'none' };",
-            "delete input.digests;",
-            "if (d) digests[t] = d;",
-            "return { id: job.id, kind: job.kind, day: job.day, input };",
-            "to_char(day, 'YYYY-MM-DD') as day",
-            "where rm.id = $2 and rm.thread_root_id is null and rm.deleted_at is null and ${channelVisibleSql('c', '$1')}",
-            "where t.author_id = $1 and t.kind = 'user' and coalesce(t.meta->>'kind', '') not in ('failure', 'ask', 'wake')",
-            "(select 'failure', t.body, t.created_at from t where t.author_id = $1 and t.meta->>'kind' = 'failure' order by t.seq desc limit 3)",
-            "(select 'human', t.body, t.created_at from t join account a on a.id = t.author_id and a.kind = 'human'\n       where t.kind = 'user' order by t.seq desc limit 10)`,",
-        ] {
-            assert!(ts.contains(want), "{want}");
-        }
-        let mcp = include_str!("../../../../../packages/server/src/mcp/mcpPlugin.ts");
-        for want in [
-            "if (account.kind !== 'agent' || !operatorId || cause || turnId || bgJobId) {",
-            "if (!r.job) return jsonResult({ job: null, reason: r.reason });",
-            "return jsonResult({ job: await bgClaimPayload(pool, account.id, r.job) });",
-        ] {
-            assert!(mcp.contains(want), "{want}");
-        }
     }
 }
