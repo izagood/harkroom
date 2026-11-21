@@ -9,7 +9,8 @@
 //! 문맥 줄(앞뒤 3줄)은 그대로 둔다 — base 가 그 근처를 고쳤으면 지문이 달라지고, 그때는 다시 보는 쪽이 맞다.
 //! 판정은 읽기 전용이다. 머지 승인(head 에 묶임)과는 무관하다.
 
-/// 지문을 내지 않는 크기(바이트). 이보다 큰 diff 는 「모름」으로 둔다.
+/// 지문을 내지 않는 크기(바이트). 이보다 큰 diff 는 「모름」으로 둔다. 실제로는 gh 출력 상한(`local_merge` 의
+/// `EXEC_MAX_BYTES`, 4MB)이 먼저 걸린다 — 부르는 쪽(`turn_pr_status`)이 그 상한에 닿은 출력을 버린다.
 pub const DIFF_MAX_BYTES: usize = 8 * 1024 * 1024;
 
 fn is_binary_section(lines: &[&str]) -> bool {

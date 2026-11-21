@@ -7,7 +7,10 @@
 //! 지키는 것: gh `-R` 과 관문에 넣는 저장소는 **서버가 200 에 돌려준 `repo`** 하나다. 1회 승인의 계정은 쓰지 않는다.
 //! 머지 보고·글 게시는 하지 않는다. 답에는 고정 칸과 판정 **코드**·체크 이름만 싣는다(문구·stderr·제목·URL 없음).
 //! 유예의 「처음 본 시각」은 머지 길과 같은 `FirstSeen` 이다(`TurnMerge.gate` 와 같은 `PrGate` 를 받는다).
-use crate::local_merge::gh_env;
+//!
+//! `diffId` — 열린 PR 이면 `gh pr diff` 를 한 번 더 읽어 지문(`pr_diff_id`)을 싣는다. 검토자가 head 와 함께 적어 두면
+//! head 만 바뀐 PR(base 를 merge)에서 「변경이 그대로인가」를 견줄 수 있다. 못 읽으면 빈 값(모름)이고 판정·머지와 무관하다.
+use crate::local_merge::{EXEC_MAX_BYTES, gh_env};
 use crate::merge::is_repo;
 use crate::pr_gate::{GhTokens, PrGate, PrInspection, PrView, ViewError, is_repo_access_error};
 use crate::turn_leases::TurnLease;
@@ -238,6 +241,26 @@ impl TurnPrStatus {
         }
     }
 
+    /// 지금 PR diff 의 지문. 모르면 빈 값 — gh 가 거절했거나(큰 diff 는 HTTP 406), 시간이 넘었거나, 출력이 gh 출력
+    /// 상한에 닿아 잘렸을 수 있을 때다. 잘린 diff 로 지문을 내면 뒤쪽이 달라도 같다고 나오므로 내지 않는다.
+    fn diff_id(&self, repo: &str, number: u64, env: &[(String, String)]) -> String {
+        let args = [
+            "pr",
+            "diff",
+            &number.to_string(),
+            "-R",
+            repo,
+            "--color",
+            "never",
+        ]
+        .map(str::to_string);
+        let r = (self.gate.gh)(&args, env);
+        if r.code != 0 || r.stdout.len() >= EXEC_MAX_BYTES {
+            return String::new();
+        }
+        crate::pr_diff_id::diff_id(&r.stdout).unwrap_or_default()
+    }
+
     fn run(
         &self,
         agent_id: &str,
@@ -301,6 +324,18 @@ impl TurnPrStatus {
                     .as_ref()
                     .map(|g| (names(&g.ignored), names(&g.failing)))
                     .unwrap_or_default();
+                // 닫힌·머지된 PR 은 검토할 것이 없다 — gh 를 더 부르지 않는다.
+                let diff_id = if pr.state.as_deref() == Some("OPEN") {
+                    let id = self.diff_id(&repo, number, &env);
+                    if id.is_empty() {
+                        log(&format!(
+                            "pr.status: {repo}#{number} diffId 모름(gh pr diff 를 못 읽음) agent={agent_id}"
+                        ));
+                    }
+                    id
+                } else {
+                    String::new()
+                };
                 let o = v.as_object_mut().expect("pick 은 객체");
                 o.insert("repo".into(), json!(repo));
                 o.insert("number".into(), json!(number));
@@ -309,6 +344,7 @@ impl TurnPrStatus {
                 o.insert("failing".into(), json!(failing));
                 o.insert("noPrChecks".into(), json!(no_pr_checks));
                 o.insert("queued".into(), json!(queued));
+                o.insert("diffId".into(), json!(diff_id));
                 Ok(v)
             }
         }
@@ -705,6 +741,66 @@ mod tests {
         assert_eq!(one_line_text("  x\r\n\r\ny  "), "x y");
     }
 
+    const DIFF: &str = "diff --git a/x.rs b/x.rs\nindex 1111111..2222222 100644\n--- a/x.rs\n+++ b/x.rs\n@@ -10,3 +10,4 @@ fn old() {\n ctx\n+added\n ctx2\n";
+
+    fn diff_id_with(diff: ExecResult) -> (Value, Calls) {
+        let mut sc = std_script(pr_json("OPEN", "CLEAN", "ci"));
+        sc.push(("pr diff", diff));
+        let (t, calls) = tps(sc, Some("u"));
+        let (v, err) = run(&t, &Server::ok("o/other"), &good(), Some(&lease()));
+        assert!(!err, "{v}");
+        (v["diffId"].clone(), calls)
+    }
+
+    #[test]
+    fn diff_id_follows_the_change_not_the_head() {
+        let (a, calls) = diff_id_with(res(0, DIFF, ""));
+        assert_eq!(a.as_str().unwrap().len(), 64);
+        // 서버가 돌려준 저장소로, 읽기 명령 하나만 더 부른다.
+        assert!(
+            calls
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|c| c == "pr diff 5 -R o/other --color never")
+        );
+        // base 를 merge 해 blob·줄 번호·함수 문맥만 바뀐 diff 는 같은 지문이다.
+        let moved = DIFF
+            .replace("1111111..2222222", "aaaaaaa..bbbbbbb")
+            .replace(
+                "@@ -10,3 +10,4 @@ fn old() {",
+                "@@ -42,3 +42,4 @@ fn other() {",
+            );
+        assert_eq!(diff_id_with(res(0, &moved, "")).0, a);
+        // 변경 내용이 다르면 다르다.
+        assert_ne!(
+            diff_id_with(res(0, &DIFF.replace("+added", "+added!"), "")).0,
+            a
+        );
+    }
+
+    #[test]
+    fn diff_id_is_empty_when_unknown_and_never_leaks_stderr() {
+        // gh 가 큰 diff 를 거절하는 실제 꼴(종료 1·출력 없음).
+        let (v, _) = diff_id_with(res(
+            1,
+            "",
+            "could not find pull request diff: HTTP 406: Sorry, the diff exceeded the maximum number of lines (20000) (https://api.github.com/repos/o/other/pulls/5)",
+        ));
+        assert_eq!(v, "");
+        // 출력 상한에 닿았으면 잘렸을 수 있다 — 지문을 내지 않는다.
+        let (v, _) = diff_id_with(res(0, &"x".repeat(EXEC_MAX_BYTES), ""));
+        assert_eq!(v, "");
+        // 답의 나머지는 그대로이고 gh 문구는 실리지 않는다.
+        let mut sc = std_script(pr_json("OPEN", "CLEAN", "ci"));
+        sc.push(("pr diff", res(1, "", "HTTP 406 https://api.github.com/x")));
+        let (t, _) = tps(sc, Some("u"));
+        let (v, err) = run(&t, &Server::ok("o/r"), &good(), Some(&lease()));
+        assert!(!err);
+        assert_eq!(v["verdict"], "ok");
+        assert!(!v.to_string().contains("406"));
+    }
+
     #[test]
     fn queued_and_merged_verdicts() {
         let mut sc = std_script(pr_json("OPEN", "CLEAN", "ci"));
@@ -720,6 +816,9 @@ mod tests {
         let (t, calls) = tps(std_script(pr_json("MERGED", "UNKNOWN", "ci")), Some("u"));
         let (v, _) = run(&t, &s, &good(), Some(&lease()));
         assert_eq!(v["verdict"], "not_open");
+        // 머지된 PR 은 diff 를 읽지 않는다 — 빈 값.
+        assert_eq!(v["diffId"], "");
+        assert!(calls.lock().unwrap().iter().all(|c| !c.contains("pr diff")));
         // 머지 보고(merge-closed) 없음 — 서버로 간 것은 허락 묻기 하나뿐.
         assert_eq!(s.seen.borrow().len(), 1);
         assert!(
