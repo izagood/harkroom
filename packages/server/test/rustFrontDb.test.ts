@@ -2775,6 +2775,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       const DT = await mkDelegations('TS');
       const DR = await mkDelegations('Rust');
       const prevV2 = process.env.HARKROOM_DELEGATION_V2;
+      let frontV2: ChildProcess | undefined;
       try {
         // 스위치 꺼짐 — TS 는 이 도구를 싣지 않는다 → Rust 도 답하지 않고 TS 의 「도구 없음」이 그대로 나간다.
         delete process.env.HARKROOM_DELEGATION_V2;
@@ -2800,6 +2801,17 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           expect(lb.core, 'tools/list 스위치 값 없음 — Rust 가 답한다').toBe('mcp');
         }
         process.env.HARKROOM_DELEGATION_V2 = '1';
+        // 켜진 쪽은 스위치를 env 로 받은 앞단(rsV2)이 답한다. 예전에는 스위치가 없는 앞단(rsUrl4)이 TS `/mcp/admit` 에 「지금 싣나」를
+        // 물어 답했는데, B(TS 넘김 닫기)에서 그 물음을 없앴다 — Rust 는 제 env 만 정본으로 본다(모르면 닫는다).
+        const portV2 = await freePort();
+        const fV2 = await startFront(bin, {
+          UPSTREAM_URL: tsUrl, DATABASE_URL: db.uri, PORT: String(portV2), HARKROOM_FRONT_TS_ROUTES: '', DATABASE_WRITE_URL: writeUrl.toString(),
+          TRUST_PROXY: TRUST.join(','), CORS_ORIGINS: CORS, HARKROOM_CORE: 'rust',
+          ATTACHMENT_ROOT: attRoot, HARKROOM_SECRET_KEYS_DIR: secretKeysDir, HARKROOM_SECRET_KEY_ID: 'ck1',
+          ...GROUP_A_ENV, HARKROOM_DELEGATION_V2: '1',
+        });
+        frontV2 = fV2.child;
+        const rsV2 = `http://127.0.0.1:${portV2}`;
         const steps = (d: typeof DT) => [
           ['모르는 담당 → not_found', { threadRootId: d.root, delegate: 'no-such-handle' }],
           ['담당 하나만(@ 붙임)', { threadRootId: d.root, delegate: '@bot2' }],
@@ -2815,18 +2827,17 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           const [name, ta] = tsSteps[i]!;
           const [, ra] = rsSteps[i]!;
           const a = await mcpCall(tsUrl, agent.pat, 'delegation.close', ta);
-          const b = await mcpCall(rsUrl4, agent.pat, 'delegation.close', ra);
+          const b = await mcpCall(rsV2, agent.pat, 'delegation.close', ra);
           expect({ status: b.status, type: b.type, text: b.text }, `delegation.close ${name}`).toEqual({ status: a.status, type: a.type, text: a.text });
-          // 이 앞단(rsUrl4)은 env 에 HARKROOM_DELEGATION_V2 가 없다(스위치 모름) — zod 공통 검증은 delegation.close 를 스위치가 「싣는다」일 때만
-          // 보므로(route.rs `zod_reply`) zodRejects 와 상관없이 「→ TS」 꼴은 TS 가 답한다.
-          expect(b.core, `delegation.close ${name} — 누가 답했나`).toBe(name.endsWith('→ TS') ? null : 'mcp');
+          // 이 앞단(rsV2)은 스위치가 「싣는다」 — zod 공통 검증(route.rs `zod_reply`)도 delegation.close 를 보므로 「→ TS」 꼴까지 Rust 가 답한다.
+          expect(b.core, `delegation.close ${name} — 누가 답했나`).toBe('mcp');
         }
         // W7 — 거부·빈 길을 Rust 쪽에서 따로 본다(bot2 는 이 위임 묶음의 리드가 아니다 — 픽스처에서 확인).
         expect((await db.pool.query(`select 1 from team_delegation where id = $1 and lead_account_id = $2`, [DR.theirs, agent.accountId])).rowCount).toBe(0);
-        const nf = await mcpCall(rsUrl4, agent.pat, 'delegation.close', { threadRootId: DR.root, delegate: 'no-such-handle' });
+        const nf = await mcpCall(rsV2, agent.pat, 'delegation.close', { threadRootId: DR.root, delegate: 'no-such-handle' });
         expect(nf.core).toBe('mcp');
         expect(nf.text).toContain('\\"code\\":\\"not_found\\"');
-        const theirs = await mcpCall(rsUrl4, agent.pat, 'delegation.close', { threadRootId: DR.root, delegationId: DR.theirs });
+        const theirs = await mcpCall(rsV2, agent.pat, 'delegation.close', { threadRootId: DR.root, delegationId: DR.theirs });
         expect(theirs.core).toBe('mcp');
         expect(theirs.text).toContain('closed\\":0');
         // 행 — TS 와 Rust 가 같은 결과(내 것 둘은 delegator_close·알림 처리, 남의 것은 그대로).
@@ -2837,7 +2848,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         const DW = await mkDelegations('W1');
         await db.pool.query(`revoke update (outcome) on team_delegation_item from ${rw}`);
         try {
-          const w1 = await mcpCall(rsUrl4, agent.pat, 'delegation.close', { threadRootId: DW.root });
+          const w1 = await mcpCall(rsV2, agent.pat, 'delegation.close', { threadRootId: DW.root });
           expect(w1.core, 'W1 — Rust 가 답한다').toBe('mcp');
           expect(w1.text).toContain('\\"code\\":\\"internal\\"');
           expect((await itemRows(DW)).every((r) => r.outcome === null && !r.closed), 'TS 가 대신 닫지 않았다').toBe(true);
@@ -2845,6 +2856,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           await db.pool.query(`grant update (outcome) on team_delegation_item to ${rw}`);
         }
       } finally {
+        frontV2?.kill();
         if (prevV2 === undefined) delete process.env.HARKROOM_DELEGATION_V2; else process.env.HARKROOM_DELEGATION_V2 = prevV2;
       }
 
