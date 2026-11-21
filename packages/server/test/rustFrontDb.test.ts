@@ -1453,7 +1453,20 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         // 예전 넘김은 그 앞단의 `UPSTREAM_URL` 로 갔다(장면 전용 TS·닿지 않는 위). 닿지 않으면 예전 앞단의 502 고정 답을 그대로 낸다.
         const ts = `${FRONT_UPSTREAM.get(url.origin) ?? tsUrl}${url.pathname}${url.search}`;
         try {
-          return await (again ? realFetch(new Request(ts, again)) : realFetch(ts, init));
+          const up = await (again ? realFetch(new Request(ts, again)) : realFetch(ts, init));
+          // 예전 넘김의 위 답은 앞단 CORS 층(`cors::add_common`)을 거쳐 나갔다 — `Vary` 에 `Origin` 을 덧붙이고 허용 출처·노출 머리를
+          // 앞단 값으로 덮었다. 닫힌 답은 그 층을 이미 거쳤으므로 그 머리를 위 답에 얹는다(TS `compressBody` 는 `Vary` 를 덮어 Origin 이 빠진다).
+          const h = new Headers(up.headers);
+          const vary = (s: string | null) => (s ?? '').split(',').map((v) => v.trim()).filter(Boolean);
+          const merged = vary(h.get('vary'));
+          for (const v of vary(res.headers.get('vary'))) if (!merged.some((m) => m.toLowerCase() === v.toLowerCase())) merged.push(v);
+          if (merged.length) h.set('vary', merged.join(', '));
+          for (const n of ['access-control-allow-origin', 'access-control-expose-headers']) {
+            const v = res.headers.get(n);
+            if (v !== null) h.set(n, v);
+          }
+          const nullBody = [101, 204, 205, 304].includes(up.status);
+          return new Response(nullBody ? null : up.body, { status: up.status, statusText: up.statusText, headers: h });
         } catch {
           return new Response('{"error":{"code":"front","message":"upstream unavailable"}}', { status: 502, headers: { 'content-type': 'application/json' } });
         }
