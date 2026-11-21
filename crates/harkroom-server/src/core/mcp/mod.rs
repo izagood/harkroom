@@ -191,19 +191,6 @@ pub fn dispatch(body: &Value, served: &[&str]) -> Dispatch {
 mod tests {
     use super::*;
 
-    /// 기능 카탈로그 패리티 시험과 같은 방식 — TS 원본의 `registerTool('…'` 을 읽어 표와 맞춘다. 도구가 늘거나 빠지면 여기서 깨진다.
-    #[test]
-    fn registry_matches_ts_source() {
-        let src = include_str!("../../../../../packages/server/src/mcp/mcpPlugin.ts");
-        let mut ts = Vec::new();
-        for (i, _) in src.match_indices("server.registerTool('") {
-            let rest = &src[i + "server.registerTool('".len()..];
-            ts.push(&rest[..rest.find('\'').unwrap()]);
-        }
-        let ours: Vec<&str> = TOOLS.iter().map(|s| s.name).collect();
-        assert_eq!(ts, ours);
-    }
-
     #[test]
     fn core_candidates_are_pure_reads() {
         for s in TOOLS.iter().filter(|s| s.core_candidate) {

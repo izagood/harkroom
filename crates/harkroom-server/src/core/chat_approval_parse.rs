@@ -545,11 +545,10 @@ mod tests {
         assert_eq!(match_ask_pick(&opts, &p("a안").unwrap()), Ok("a"));
     }
 
-    /// P3b-1b 골든 대조 — TS 가 낸 출력(`packages/server/test/fixtures/chat-parse-golden.json`)과 같은지 본다.
-    /// TS 쪽 `chatParseGolden.test.ts` 가 같은 파일이 지금 TS 와 같은지 지키므로, 둘이 함께 초록이면 두 구현이 같다.
+    /// P3b-1b 골든 대조 — 옛 TS 구현이 낸 출력(`golden/chat-parse-golden.json`, TS 를 지울 때 옮겨 얼린 것)과 같은지 본다.
     fn golden() -> serde_json::Value {
-        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../packages/server/test/fixtures/chat-parse-golden.json");
+        let p =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("golden/chat-parse-golden.json");
         serde_json::from_str(&std::fs::read_to_string(&p).expect("golden fixture")).expect("json")
     }
 

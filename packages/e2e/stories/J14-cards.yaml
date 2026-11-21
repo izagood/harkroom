@@ -18,11 +18,6 @@ expect: "권한·ask 카드는 받을 사람(소유자)만 답하고, 답하면 
 failSigns:
   - "남이 승인함"
   - "답해도 에이전트가 안 깨어남"
-existing:
-  - kind: server-vitest
-    file: "packages/server/test/askAnswer.test.ts"
-    note: "ask 답 판정"
-  - kind: server-vitest
-    file: "packages/server/test/permissionCard.test.ts"
-    note: "권한 카드"
 runners: [browser, harness]
+gaps:
+  - "옛 TS 서버 시험(server-vitest·API 여정 러너)은 TS 백엔드 삭제로 없어졌다 — Rust 시험으로 옮기지 않은 판정은 여기서 빈다"

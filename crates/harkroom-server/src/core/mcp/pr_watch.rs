@@ -442,15 +442,6 @@ mod tests {
         let r = denied("too_many");
         assert!(r.contains(r#"\"code\":\"too_many\""#), "{r}");
         assert!(r.contains("pr watch not created: too_many"));
-        let src = include_str!("../../../../../packages/server/src/mcp/mcpPlugin.ts");
-        assert!(src.contains("return jsonResult({ error: { code: r.code, message: `pr watch not created: ${r.code}` } });"));
-        assert!(src.contains(
-            "return jsonResult({ watchId: r.watchId, created: r.created, expiresAt: r.expiresAt });"
-        ));
-        let svc = include_str!("../../../../../packages/server/src/services/prWatch.ts");
-        assert!(svc.contains("export const PR_WATCH_TTL_SEC = 6 * 60 * 60;"));
-        assert!(svc.contains("export const PR_WATCH_OPEN_PER_ACCOUNT = 20;"));
-        assert!(svc.contains("action: 'pr.status.denied', actorId: args.accountId, target: scope, detail: { number: args.number, code: 'not_granted', via: 'pr.watch' }"));
     }
 
     #[test]

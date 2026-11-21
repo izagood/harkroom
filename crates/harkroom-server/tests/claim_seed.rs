@@ -1,6 +1,6 @@
 //! 클레임 토큰 해시 심기(`claim_seed.rs`)가 TS `seedClaimToken` 과 같은 규칙으로 도는지 본다.
 //! - 기동 거절·빈 값: 진짜 바이너리를 띄운다(DB 없이 돈다 — 형식은 DB 에 닿기 전에 본다).
-//! - 심기·두 번 기동: `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `packages/server/test/rustFrontDb.test.ts` 가 넘긴다).
+//! - 심기·두 번 기동: `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `scripts/db-tests.sh` 가 넘긴다).
 //!   `HARKROOM_TEST_WRITE_DATABASE_URL` 이 있으면 쓰기 풀 심기는 그 역할(`CLAIM_SEED_PRIVILEGES` 만 가진 쓰기 역할)로 돈다.
 use harkroom_server::claim_seed::{CLAIM_SEED_PRIVILEGES, seed};
 use sqlx::PgPool;
@@ -42,13 +42,13 @@ fn wrong_shape_refuses_start() {
 
 #[test]
 fn empty_value_skips_seeding() {
-    // 비면 심기를 건너뛰고 다음 단계(서버 env 읽기)로 간다 — 거기서 `UPSTREAM_URL` 이 없어 멈추는 것으로 본다.
+    // 비면 심기를 건너뛰고 다음 단계(서버 env 읽기)로 간다 — 거기서 `DATABASE_URL` 이 없어 멈추는 것으로 본다.
     for empty in ["", "   "] {
         let out = front().env("CLAIM_TOKEN_HASH", empty).output().unwrap();
         let err = String::from_utf8_lossy(&out.stderr);
         assert!(!err.contains("CLAIM_TOKEN_HASH"), "{err}");
         assert!(!err.contains("claim token"), "{err}");
-        assert!(err.contains("UPSTREAM_URL is required"), "{err}");
+        assert!(err.contains("DATABASE_URL is required"), "{err}");
     }
 }
 

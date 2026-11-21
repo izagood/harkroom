@@ -1,5 +1,6 @@
-//! `tests/prompt_system_sections_golden.json` 은 정본 `buildSystemPrompt` 를 한 절만 켜고 돌려 그 절을 잘라 낸 출력이다
-//! (`golden/gen_prompt_system_sections.mts`). 정본이 바뀌면 스크립트로 다시 뽑는다.
+//! `tests/prompt_system_sections_golden.json` 은 옛 TS 정본 `buildSystemPrompt` 를 한 절만 켜고 돌려 그 절을 잘라 낸 출력이다.
+//! TS 러너와 그 생성 스크립트(`golden/gen_prompt_system_*.mts`)는 11-21 지웠다 — 이제 이 골든과 Rust 가 정본이고, 문구를 바꾸면
+//! 골든 JSON 을 손으로 같이 고친다.
 
 use serde_json::Value;
 

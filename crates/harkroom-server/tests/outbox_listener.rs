@@ -1,5 +1,5 @@
 //! outbox 리스너는 읽기 풀의 연결을 쥐지 않는다(전용 연결) — 풀이 연결 1개뿐이어도 요청이 그 연결을 쓰고, 리스너는 이벤트를 받는다.
-//! `HARKROOM_TEST_DATABASE_URL`(TS 마이그레이션이 적용된 DB)이 없으면 건너뛴다(CI 는 bus-e2e 의 `rustFrontDb.test.ts` 가 넘긴다).
+//! `HARKROOM_TEST_DATABASE_URL`(TS 마이그레이션이 적용된 DB)이 없으면 건너뛴다(CI 는 `scripts/db-tests.sh` 가 넘긴다).
 use harkroom_server::core::events::{Hub, spawn_outbox_listener};
 use serde_json::json;
 use std::time::Duration;

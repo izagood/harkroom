@@ -5,7 +5,7 @@ edition = "2024"
 rust-version = "1.88"
 license = "Apache-2.0"
 publish = false
-description = "Event bus writer (S5.0) — writes a workspace event to event_outbox and notifies the TS server (packages/server/src/eventBus.ts). Not wired in yet."
+description = "Event bus writer — writes a workspace event to event_outbox and notifies the server's outbox listener (harkroom-server core::events)."
 
 # 버전은 `=` 로 고정한다(Rust 전환 계획의 약속). 올리는 것은 따로 PR 로.
 # tls 는 켜지 않는다 — 서버와 DB 는 같은 클러스터 안에서 평문으로 붙는다(TS 서버와 같음).

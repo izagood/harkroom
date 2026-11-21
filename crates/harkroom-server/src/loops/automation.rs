@@ -718,7 +718,7 @@ pub async fn sweep(pool: &PgPool, st: &PostState) -> Result<usize, sqlx::Error> 
     Ok(n)
 }
 
-/// 15초마다 문지기(`automation`) 아래서 sweep. 주인이 `rust` 일 때만 돈다(기본 `ts`).
+/// 15초마다 문지기(`automation`) 아래서 sweep. 주인이 `rust` 일 때만 돈다(줄이 없으면 `rust`).
 pub fn spawn(gate: PgPool, pool: PgPool, implicit_ok: bool) -> tokio::task::JoinHandle<()> {
     let st = PostState {
         read: pool.clone(),

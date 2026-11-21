@@ -3012,11 +3012,6 @@ mod tests {
         assert!(meta.get("i18n").is_none());
         assert_eq!(meta["merge"]["ciOverride"], json!(true));
         assert_eq!(meta["merge"]["chainRootId"], json!("root"));
-        let src = include_str!("../../../../packages/server/src/services/mergeGrants.ts");
-        assert!(src.contains(
-            "`⛔ ${repo}#${r.number} 머지 실패 · head ${r.headSha.slice(0, 9)} (래퍼 보고)`"
-        ));
-        assert!(src.contains("systemI18n('system.merge.failed', { repo, number: r.number, head: r.headSha.slice(0, 9) })"));
     }
 
     #[test]
@@ -3062,13 +3057,6 @@ mod tests {
         );
         let many: Vec<String> = (0..30).map(|i| format!("c{i}")).collect();
         assert_eq!(sanitize_check_names(Some(&json!(many))).len(), 20);
-        let src = include_str!("../../../../packages/server/src/services/mergeDenials.ts");
-        assert!(src.contains("n.replace(/[\\p{Cc}\\p{Cf}\\u2028\\u2029]/gu, '').trim().slice(0, CHECK_NAME_MAX).trim()"));
-        assert!(src.contains("export const CHECK_NAME_MAX = 80;"));
-        assert!(src.contains("export const CHECK_NAMES_MAX = 20;"));
-        let g = include_str!("../../../../packages/server/src/services/mergeGrants.ts");
-        assert!(g.contains("export const MERGE_DENIAL_DAILY_CAP = 20;"));
-        assert!(g.contains("export const MERGE_DENIAL_TTL_MS = 24 * 3_600_000;"));
     }
 
     #[test]
@@ -3229,11 +3217,6 @@ mod tests {
         assert!(rust_reportable(
             &json!({ "result": "merged", "ignoredChecks": ["x"] })
         ));
-        let src = include_str!("../../../../packages/server/src/services/mergeGrants.ts");
-        assert!(src.contains("`📥 ${repo}#${r.number} 머지 큐에 넣음 · head ${r.headSha.slice(0, 9)}` + (granter ? ` · 권한: ${granter}` : '') + ignoredTail + ' (래퍼 보고)'"));
-        let watch = include_str!("../../../../packages/server/src/services/prWatch.ts");
-        assert!(watch.contains("if (!delegationV2Enabled()) return null;"));
-        assert!(src.contains("`🔀 ${repo}#${r.number} 머지됨 · ${(r.mergeSha ?? r.headSha).slice(0, 9)}` + (granter ? ` · 권한: ${granter}` : '') + ignoredTail + ' (래퍼 보고)'"));
     }
 
     #[test]
@@ -3321,30 +3304,14 @@ mod tests {
         );
         assert_eq!(body, "🔀 o/r#7 머지됨 · bbbbbbbbb · 무시: `ci` (래퍼 보고)");
         assert!(meta.get("i18n").is_none());
-        let src = include_str!("../../../../packages/server/src/services/mergeGrants.ts");
-        assert!(src.contains("const grewAfterApproval = ciOverride && ignored.some((n) => !usedApproval!.approvedChecks.includes(n));"));
-        assert!(src.contains("+ (ignored.length ? ` · 무시: ${checkNamesForBody(ignored)}` : '') + (grewAfterApproval ? ' (승인 뒤 늘어남)' : '');"));
-        assert!(src.contains("const tailVariant = ignored.length ? (ciOverride ? (grewAfterApproval ? 'CiOverrideGrew' : 'CiOverride') : 'Ignoring') : null;"));
-        let d = include_str!("../../../../packages/server/src/services/mergeDenials.ts");
-        assert!(d.contains("return names.map((n) => `\\`${n.replace(/`/g, \"'\").replace(/@/g, '＠').replace(/</g, '‹').replace(/>/g, '›')}\\``).join(', ');"));
-        assert!(d.contains(
-            "return names.join(', ').replace(/@/g, '＠').replace(/</g, '‹').replace(/>/g, '›');"
-        ));
     }
 
     #[test]
     fn gh_user_memo_sql_like_ts() {
-        let src = include_str!("../../../../packages/server/src/services/permissionRequests.ts");
-        assert!(src.contains("where a.id = $1 and a.gh_user is null and r.status = 'approved_once' and m.id = r.card_message_id"));
         assert!(GH_CARD_SQL.contains("where a.id = $1::uuid and a.gh_user is null and r.status = 'approved_once' and m.id = r.card_message_id"));
-        assert!(src.contains(
-            "and coalesce((meta->'permissionMirror'->>'neutral')::boolean, false) = false"
-        ));
         assert!(GH_MIRROR_SQL.contains(
             "and coalesce((meta->'permissionMirror'->>'neutral')::boolean, false) = false"
         ));
-        let g = include_str!("../../../../packages/server/src/services/mergeGrants.ts");
-        assert!(g.contains("const ghUserUsedDetail = usedApproval && usedApproval.ghUser === null && ghUserUsed ? { ghUserUsed, ghUserChosenBy: 'operator' } : {};"));
         assert!(!gh_user_ok("-bad"));
         assert!(gh_user_ok("bot-1"));
     }

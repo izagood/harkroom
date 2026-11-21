@@ -1,5 +1,5 @@
 //! 위임 기한 스윕(S5.4 L1, `loops/delegation_deadline.rs` — TS `createDelegationDeadlineSweeper`)을 실제 Postgres 로 본다.
-//! `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `packages/server/test/rustFrontDb.test.ts` 가 넘긴다).
+//! `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `scripts/db-tests.sh` 가 넘긴다).
 //! 쓰기 풀은 `HARKROOM_TEST_WRITE_DATABASE_URL`(있으면 `DELEGATION_DEADLINE_PRIVILEGES` 만 가진 역할) — 권한이 모자라면 여기서 빨개진다.
 use harkroom_server::loops::delegation_deadline::{
     DELEGATION_DEADLINE_PRIVILEGES, DELEGATION_DEADLINE_SEQUENCE_PRIVILEGES, sweep,
@@ -381,7 +381,7 @@ async fn delegation_deadline_like_ts() {
             .connect(&write_url)
     };
     let (gate1, work1) = (one().await.unwrap(), one().await.unwrap());
-    let r = run_gated(&gate1, "delegation.deadline", Side::Ts, || {
+    let r = run_gated(&gate1, "delegation.deadline", Side::Rust, || {
         sweep(&work1, false)
     })
     .await;

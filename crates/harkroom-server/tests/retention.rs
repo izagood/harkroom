@@ -1,5 +1,5 @@
 //! 보존 기간 정리 sweep(`loops::retention`)이 TS `retention.ts` 와 같은 일을 하는지 실제 Postgres 로 본다.
-//! `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `packages/server/test/rustFrontDb.test.ts` 가 넘긴다).
+//! `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `scripts/db-tests.sh` 가 넘긴다).
 //! - `HARKROOM_TEST_WRITE_DATABASE_URL` 이 있으면 sweep 은 그 역할(`RETENTION_PRIVILEGES` 만 가진 쓰기 역할)로 돈다.
 //! - `HARKROOM_RETENTION_DUAL=1` 이면 이중 실행 모드 — TS 가 깔아 둔 줄을 TS sweep 과 **동시에** 지워 지운 수만 찍는다(판정은 TS 쪽).
 use harkroom_server::loops::retention::{
@@ -190,7 +190,7 @@ async fn retention_sweep_like_ts() {
     };
     let (gate1, work1) = (one().await.unwrap(), one().await.unwrap());
     let mut st = Retention::new(true);
-    let r = run_gated(&gate1, "retention", Side::Ts, || async {
+    let r = run_gated(&gate1, "retention", Side::Rust, || async {
         st.sweep(&work1, |_| {}).await.map(|_| ())
     })
     .await;

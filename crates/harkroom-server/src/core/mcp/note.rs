@@ -480,9 +480,6 @@ mod tests {
         }
         let ok = json!({"threadRootId": "11111111-1111-4111-8111-111111111111", "x": 1});
         assert!(parse(&ok).is_ok());
-        // 글자는 SDK 원본과 맞춘다.
-        let sdk = include_str!("../../../../../packages/server/src/mcp/mcpPlugin.ts");
-        assert!(sdk.contains("threadRootId: z.string().uuid(),\n      body: z.string().min(1)"));
     }
 
     fn agent() -> Account {
@@ -522,36 +519,5 @@ mod tests {
             .expect("answered");
         assert!(r.contains("Invalid uuid at threadRootId"), "{r}");
         assert_eq!(answer(&dead, &dead, &agent(), &Value::Null).await, None);
-    }
-
-    /// 거절 문구·답 모양·문장을 TS 원본과 맞춘다(값은 rustFrontDb 대조 시험이 본다).
-    #[test]
-    fn texts_follow_ts_source() {
-        let mcp = include_str!("../../../../../packages/server/src/mcp/mcpPlugin.ts");
-        for want in [
-            "return jsonResult({ error: { code: 'agents_only', message: '스레드 메모는 에이전트만 쓴다' } });",
-            "if (root === 'not_found') return jsonResult({ error: { code: 'not_found', message: '그런 글이 없다' } });",
-            "return jsonResult({ error: { code: 'not_root', message: '스레드 루트 글의 id 를 줘라(대화 프롬프트 맨 위의 threadRootId)' } });",
-            "return jsonResult({ error: { code: 'forbidden', message: 'not a member of this channel' } });",
-            "body: z.string().min(1).max(MAX_THREAD_NOTE_LENGTH).nullable().optional(),",
-            "ifUpdatedAt: z.string().datetime({ offset: true }).nullable().optional(),",
-            "const flag = body === null ? null : scanWrite(body);",
-            "? `그 사이 다른 턴이 이 메모를 고쳤다(지금 판 ${now.toISOString()}). thread.note 로 다시 읽고 합쳐서 그 updatedAt 으로 써라.`",
-            ": '그 사이 메모가 지워졌거나 아직 없다. 새로 쓸 거면 ifUpdatedAt: null 로 써라.',",
-            "notice: `저장했지만 쓰기 검사에 걸렸다(${flag.reason}) — 다음 턴에 싣지 않는다. 남의 글을 옮겼거나 비밀 값을 넣었다면 빼고 다시 써라.`,",
-        ] {
-            assert!(mcp.contains(want), "{want}");
-        }
-        let svc = include_str!("../../../../../packages/server/src/services/threadNote.ts");
-        for want in [
-            "export const MAX_THREAD_NOTE_LENGTH = 4000;",
-            "`select channel_id, thread_root_id from message where id = $1 and deleted_at is null`,",
-            "`select body, updated_at, flag_reason from thread_note where account_id = $1 and thread_root_id = $2 and archived_at is null`,",
-            "`select updated_at, archived_at from thread_note where account_id = $1 and thread_root_id = $2 for update`,",
-            "await client.query(`delete from thread_note where account_id = $1 and thread_root_id = $2`, [accountId, threadRootId]);",
-            "set body = excluded.body, flag_reason = excluded.flag_reason, archived_at = null, archived_by_run = null,\n             updated_at = greatest(now(), thread_note.updated_at + interval '1 millisecond')",
-        ] {
-            assert!(svc.contains(want), "{want}");
-        }
     }
 }

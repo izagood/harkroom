@@ -243,60 +243,10 @@ pub async fn post_line(
 mod tests {
     use super::*;
     use crate::core::chat_approval_decide::{Done, Refused};
-    use crate::core::chat_approval_parse::ChatBlock;
     use crate::core::chat_approval_pick::Candidate;
-
-    const TS: &str = include_str!("../../../../packages/server/src/services/chatApproval.ts");
-
-    #[test]
-    fn reasons_are_ts_text() {
-        for r in [
-            Refusal::Block(ChatBlock::Negated),
-            Refusal::Block(ChatBlock::Question),
-            Refusal::Block(ChatBlock::Bypass),
-            Refusal::Block(ChatBlock::Conflict),
-            Refusal::Block(ChatBlock::NotFinal),
-            Refusal::Block(ChatBlock::DenyNotFinal),
-            Refusal::DenyNeedsLink,
-            Refusal::NeedsExplicit,
-            Refusal::NoWord,
-            Refusal::TooMany,
-            Refusal::NoCard,
-            Refusal::AskCard,
-            Refusal::AskMany,
-            Refusal::AskNoMatch,
-            Refusal::AskNoRecommended,
-            Refusal::AskIrreversible,
-            Refusal::AskAnswered,
-            Refusal::Hidden,
-            Refusal::HeadChanged,
-            Refusal::CiWord,
-            Refusal::Settled,
-            Refusal::NoRequest,
-            Refusal::NotBefore,
-            Refusal::Decided,
-            Refusal::Expired,
-            Refusal::OnceOnCard,
-            Refusal::MergeNoMandate,
-            Refusal::Failed,
-        ] {
-            let want = format!("  {}: '{}',", r.key(), reason_ko(r));
-            assert!(TS.contains(&want), "TS REASON_KO 와 다르다: {want}");
-        }
-    }
 
     #[test]
     fn line_heads_are_ts_text() {
-        for s in [
-            "이 스레드에 기다리는 카드가 ${open.length}장이라 어느 것인지 모른다. 정할 카드의 링크를 붙여 다시 쓴다:",
-            "기다리는 권한 요청이 ${mine.length}개라 어느 것인지 모른다. 정할 카드의 링크를 붙여 다시 쓴다:",
-            "✅ 이 글로 권한 요청을 정했다(카드와 같은 효과).",
-            "이 글로 권한 요청을 거절했다(카드와 같은 효과).",
-            "이 글로는 아무 권한 요청도 정하지 않았다.",
-            "거두려면 설정 › 에이전트 › 할 수 있는 일에서 지우거나, 그 에이전트에게 「그 권한 거둬」라고 하라.",
-        ] {
-            assert!(TS.contains(s), "TS 에 없다: {s}");
-        }
         assert!(ambiguous_text(true, 2).contains("카드가 2장이라"));
         assert!(ambiguous_text(false, 3).contains("요청이 3개라"));
     }

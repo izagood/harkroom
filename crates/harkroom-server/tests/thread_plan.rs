@@ -1,6 +1,6 @@
 //! 계획판 자동 진행 깨움(`loops::thread_plan_auto::wake`, P5)을 실제 Postgres 로 본다 — 깨움 글이 관리 에이전트의 inbox 에 닿는지,
 //! 그리고 위임장 유효성 문장이 `THREAD_PLAN_PRIVILEGES` 의 칸 단위 GRANT 만으로 도는지.
-//! `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `packages/server/test/rustFrontDb.test.ts` 가 넘긴다).
+//! `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `scripts/db-tests.sh` 가 넘긴다).
 use harkroom_server::core::mandate_line_write::valid_owner_sql;
 use harkroom_server::core::msg_post::PostState;
 use harkroom_server::loops::thread_plan::THREAD_PLAN_PRIVILEGES;

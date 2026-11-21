@@ -1,20 +1,13 @@
 //! C3b-3a 판정 코어(`core::decide_core`) — DB 없이 볼 수 있는 표·골든·잠금 순서. DB 대조·동시성 시험은 `HARKROOM_TEST_DATABASE_URL`
 //! 이 있을 때 도는 쪽에 둔다.
 use harkroom_server::core::decide_core::{
-    AfterVerdict, Decision, FORBIDDEN_MESSAGE, LOCK_FN, LOCK_FN_MIGRATION, LOCK_FN_SIGNATURE,
-    LOCK_ORDER, LOCK_REQUEST, LockedRequest, Recheck, Shape, UNKNOWN_OPTION_MESSAGE, Verdict,
-    after_verdict, option_decision, recheck_locked, rust_takes,
+    AfterVerdict, Decision, LOCK_FN, LOCK_FN_MIGRATION, LOCK_FN_SIGNATURE, LOCK_ORDER,
+    LOCK_REQUEST, LockedRequest, Recheck, Shape, Verdict, after_verdict, option_decision,
+    recheck_locked, rust_takes,
 };
 
-const TS_DECISIONS: &str = include_str!("../../../packages/server/src/services/decisions.ts");
 const RS_SRC: &str = include_str!("../src/core/decide_core.rs");
 const CARGO: &str = include_str!("../Cargo.toml");
-
-#[test]
-fn messages_match_ts() {
-    assert!(TS_DECISIONS.contains(&format!("message: '{FORBIDDEN_MESSAGE}'")));
-    assert!(TS_DECISIONS.contains(&format!("message: '{UNKNOWN_OPTION_MESSAGE}'")));
-}
 
 #[test]
 fn option_table_matches_ts() {
@@ -40,15 +33,6 @@ fn option_table_matches_ts() {
     ] {
         assert_eq!(option_decision(o), None, "{o:?}");
     }
-    // TS 표에 있는 선택지 수와 같다.
-    let ts = TS_DECISIONS
-        .split("const OPTION_DECISION")
-        .nth(1)
-        .unwrap()
-        .split("};")
-        .next()
-        .unwrap();
-    assert_eq!(ts.matches("]: '").count(), 7);
 }
 
 fn shape<'a>(option: &'a str, kind: &'a str) -> Shape<'a> {
@@ -446,19 +430,10 @@ fn breakage_switch_not_in_default_features() {
     );
 }
 
-const TS_PERMISSION_REQUESTS: &str =
-    include_str!("../../../packages/server/src/services/permissionRequests.ts");
-
 /// 감사 detail 골든(security C3b-3 ③) — TS 와 같은 칸 이름만, 요청 사유·경고·digest·비밀 같은 칸은 없다.
 #[test]
 fn audit_detail_keys_match_ts_and_carry_no_secrets() {
     use harkroom_server::core::decide_core::{AUDIT_DETAIL_KEYS, AuditDetail, audit_detail};
-    for k in AUDIT_DETAIL_KEYS {
-        assert!(
-            TS_PERMISSION_REQUESTS.contains(k),
-            "TS audit detail has {k}"
-        );
-    }
     let full = audit_detail(&AuditDetail {
         request_id: "r",
         kind: "command",
@@ -525,10 +500,6 @@ fn audit_detail_keys_match_ts_and_carry_no_secrets() {
         mirror,
         serde_json::json!({"requestId": "r", "kind": "tool", "target": "Bash(ls:*)", "channelId": null, "via": "mirror", "mirrorMessageId": "m"})
     );
-    assert!(
-        TS_PERMISSION_REQUESTS
-            .contains("{ via: 'mirror', mirrorMessageId: args.via.mirrorMessageId }")
-    );
     // P3b-2 — 글 승인에서 온 결정: TS `{ via: 'chat', messageId, chatTarget? }`, 카드 meta `decidedVia` 는 `args.via` 그대로.
     use harkroom_server::core::decide_core::ChatVia;
     let chat = audit_detail(&AuditDetail {
@@ -551,9 +522,6 @@ fn audit_detail_keys_match_ts_and_carry_no_secrets() {
         chat,
         serde_json::json!({"requestId": "r", "kind": "tool", "target": "Bash(ls:*)", "channelId": null, "via": "chat", "messageId": "g", "chatTarget": "T2"})
     );
-    assert!(TS_PERMISSION_REQUESTS.contains(
-        "{ via: args.via.kind, messageId: args.via.messageId, ...(args.via.target ? { chatTarget: args.via.target } : {}) }"
-    ));
     use harkroom_server::core::decide_core::decided_via;
     assert_eq!(
         decided_via(
@@ -590,13 +558,4 @@ fn audit_detail_keys_match_ts_and_carry_no_secrets() {
         deny,
         serde_json::json!({"requestId": "r", "kind": "tool", "target": "Bash(ls:*)", "channelId": null, "via": "button"})
     );
-}
-
-/// S5.4 12e — 결정 길의 만료 409 문구·코드는 TS `decidePermissionRequest` 원문과 같다.
-#[test]
-fn request_expired_matches_ts() {
-    use harkroom_server::core::decide_approve::REQUEST_EXPIRED_MESSAGE;
-    assert!(TS_PERMISSION_REQUESTS.contains(&format!(
-        "code: 'request_expired', message: '{REQUEST_EXPIRED_MESSAGE}'"
-    )));
 }

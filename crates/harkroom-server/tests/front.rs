@@ -80,66 +80,23 @@ async fn send(
 }
 
 #[tokio::test]
-async fn forwards_method_path_query_headers_and_body() {
-    let up = serve(axum::Router::new().fallback(echo)).await;
-    let front = front_over(&format!("http://{up}/")).await;
-    let (status, h, text) = send(
-        front,
-        Method::POST,
-        "/channels/c1/messages?limit=5&x=%20",
-        &[
-            ("authorization", "Bearer t0k"),
-            ("content-type", "application/json"),
-            ("x-forwarded-for", "203.0.113.9"),
-            ("connection", "keep-alive, x-drop-me"),
-            ("x-drop-me", "1"),
-        ],
-        "{\"body\":\"안녕\"}",
-    )
-    .await;
-    assert_eq!(status, 200);
-    assert_eq!(h.get("x-from").unwrap(), "upstream");
-    assert!(
-        h.get("x-secret-hop").is_none(),
-        "상류 답의 홉 헤더는 넘기지 않는다"
-    );
-    let first = text.lines().next().unwrap();
-    assert!(
-        first.starts_with("POST /channels/c1/messages?limit=5&x=%20"),
-        "{first}"
-    );
-    assert!(text.contains("authorization=Bearer t0k"));
-    assert!(text.contains("content-type=application/json"));
-    assert!(
-        text.contains("x-forwarded-for=203.0.113.9, 127.0.0.1"),
-        "클라이언트 주소를 끝에 덧붙인다:\n{text}"
-    );
-    assert!(
-        !text.contains("x-drop-me"),
-        "Connection 이 이름 붙인 헤더는 넘기지 않는다"
-    );
-    assert!(text.ends_with("{\"body\":\"안녕\"}"));
-}
-
-#[tokio::test]
-async fn upstream_status_passes_through() {
+async fn unserved_paths_and_upgrades_are_closed_with_404() {
+    // TS 넘김을 닫았다(11-21) — 상류가 살아 있어도 넘기지 않고 고정 404 `not_found` 로 답한다.
     let up = serve(axum::Router::new().fallback(echo)).await;
     let front = front_over(&format!("http://{up}")).await;
-    let (status, _, _) = send(front, Method::GET, "/missing", &[], "").await;
-    assert_eq!(status, 404);
-}
-
-#[tokio::test]
-async fn upstream_down_is_502_for_http_and_websocket() {
-    let dead = {
-        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        l.local_addr().unwrap()
-    };
-    let front = front_over(&format!("http://{dead}")).await;
-    let (status, _, text) = send(front, Method::GET, "/readyz", &[], "").await;
-    assert_eq!(status, 502);
-    assert!(text.contains("upstream unavailable"));
-    // 웹소켓 업그레이드도 상류가 죽어 있으면 502 — 앞단이 혼자 101 을 내지 않는다.
+    for (m, path) in [
+        (Method::GET, "/readyz"),
+        (Method::POST, "/missing?x=1"),
+        (Method::DELETE, "/a/b"),
+    ] {
+        let (status, h, text) = send(front, m.clone(), path, &[], "{}").await;
+        assert_eq!(status, 404, "{m} {path}");
+        assert!(
+            h.get("x-from").is_none(),
+            "{m} {path} 는 상류로 가지 않는다"
+        );
+        assert!(text.contains("\"code\":\"not_found\""), "{text}");
+    }
     let ws_key = generate_key();
     let (status, _, text) = send(
         front,
@@ -154,133 +111,8 @@ async fn upstream_down_is_502_for_http_and_websocket() {
         "",
     )
     .await;
-    assert_eq!(status, 502);
-    assert!(text.contains("upstream unavailable"));
-}
-
-#[tokio::test]
-async fn non_websocket_upgrades_are_refused() {
-    let up = serve(axum::Router::new().fallback(echo)).await;
-    let front = front_over(&format!("http://{up}")).await;
-    let (status, _, _) = send(
-        front,
-        Method::GET,
-        "/ws",
-        &[("connection", "upgrade"), ("upgrade", "h2c")],
-        "",
-    )
-    .await;
-    assert_eq!(status, 501);
-}
-
-/// 가짜 TS 소켓 — 쿠키가 없으면 401(TS 의 인증 거절 자리), 있으면 받은 머리를 첫 글로 보내고 그 뒤로는 메아리.
-async fn ws_upstream(
-    ws: axum::extract::ws::WebSocketUpgrade,
-    uri: axum::http::Uri,
-    headers: HeaderMap,
-) -> axum::response::Response {
-    use axum::extract::ws::Message;
-    use axum::response::IntoResponse;
-    if !headers.contains_key("cookie") {
-        return (StatusCode::UNAUTHORIZED, "no session").into_response();
-    }
-    let mut seen: Vec<String> = headers
-        .iter()
-        .map(|(k, v)| format!("{k}={}", v.to_str().unwrap_or("?")))
-        .collect();
-    seen.sort();
-    let first = format!("{uri}\n{}", seen.join("\n"));
-    ws.on_upgrade(move |mut sock| async move {
-        if sock.send(Message::Text(first.into())).await.is_err() {
-            return;
-        }
-        while let Some(Ok(m)) = sock.recv().await {
-            match m {
-                Message::Text(_) | Message::Binary(_) => {
-                    if sock.send(m).await.is_err() {
-                        return;
-                    }
-                }
-                Message::Close(_) => return,
-                _ => {}
-            }
-        }
-    })
-}
-
-#[tokio::test]
-async fn websocket_upgrades_are_bridged_to_upstream() {
-    use futures_util::{SinkExt, StreamExt};
-    use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest};
-    let up = serve(axum::Router::new().route("/ws", axum::routing::get(ws_upstream))).await;
-    let front = front_over(&format!("http://{up}")).await;
-
-    let mut req = format!("ws://{front}/ws?ticket=t1")
-        .into_client_request()
-        .unwrap();
-    let h = req.headers_mut();
-    h.insert("origin", "tauri://localhost".parse().unwrap());
-    h.insert("cookie", "sid=abc".parse().unwrap());
-    h.insert("x-forwarded-for", "198.51.100.7".parse().unwrap());
-    h.insert("connection", "Upgrade, x-drop-me".parse().unwrap());
-    h.insert("x-drop-me", "1".parse().unwrap());
-    let (mut sock, res) = tokio_tungstenite::connect_async(req).await.unwrap();
-    assert_eq!(res.status(), 101);
-
-    let Some(Ok(Message::Text(first))) = sock.next().await else {
-        panic!("상류의 첫 글이 오지 않았다");
-    };
-    let first = first.as_str();
-    assert!(first.starts_with("/ws?ticket=t1"), "{first}");
-    assert!(first.contains("origin=tauri://localhost"), "{first}");
-    assert!(first.contains("cookie=sid=abc"), "{first}");
-    assert!(
-        first.contains("x-forwarded-for=198.51.100.7, 127.0.0.1"),
-        "HTTP 길과 같게 클라이언트 주소를 끝에 덧붙인다:\n{first}"
-    );
-    assert!(
-        !first.contains("x-drop-me"),
-        "Connection 이 이름 붙인 헤더는 넘기지 않는다:\n{first}"
-    );
-
-    // 양쪽으로 그대로 흐른다(글·바이너리).
-    sock.send(Message::Text("안녕".into())).await.unwrap();
-    let Some(Ok(Message::Text(echo))) = sock.next().await else {
-        panic!("메아리가 오지 않았다");
-    };
-    assert_eq!(echo.as_str(), "안녕");
-    sock.send(Message::Binary(vec![0u8, 1, 2, 255].into()))
-        .await
-        .unwrap();
-    let Some(Ok(Message::Binary(b))) = sock.next().await else {
-        panic!("바이너리 메아리가 오지 않았다");
-    };
-    assert_eq!(&b[..], &[0u8, 1, 2, 255]);
-    sock.close(None).await.unwrap();
-}
-
-#[tokio::test]
-async fn websocket_rejection_from_upstream_passes_through() {
-    let up = serve(axum::Router::new().route("/ws", axum::routing::get(ws_upstream))).await;
-    let front = front_over(&format!("http://{up}")).await;
-    // 쿠키 없음 → 상류가 401. 앞단은 인증을 따로 하지 않고 그 답을 그대로 돌려준다.
-    let ws_key = generate_key();
-    let (status, h, text) = send(
-        front,
-        Method::GET,
-        "/ws",
-        &[
-            ("connection", "upgrade"),
-            ("upgrade", "websocket"),
-            ("sec-websocket-version", "13"),
-            ("sec-websocket-key", &ws_key),
-        ],
-        "",
-    )
-    .await;
-    assert_eq!(status, 401);
-    assert!(h.get("upgrade").is_none());
-    assert_eq!(text, "no session");
+    assert_eq!(status, 404);
+    assert!(text.contains("not_found"));
 }
 
 #[tokio::test]
@@ -316,7 +148,7 @@ fn schema_compare_refuses_missing_and_tolerates_newer() {
 /// 코어 줄(`route_table::Table`)과 **같은 경로의 다른 메서드**는 TS 로 간다 — 405 가 아니다(`route_table::ts_fallback`).
 /// 코어가 `GET /channels/{id}/messages` 만 붙여도 같은 경로의 `POST`(글 쓰기)는 상류가 답해야 한다.
 #[tokio::test]
-async fn core_table_sends_other_methods_on_same_path_to_upstream() {
+async fn core_table_closes_other_methods_on_same_path() {
     use harkroom_server::route_table::{Table, ts_fallback};
     let up = serve(axum::Router::new().fallback(echo)).await;
     let upstream = Upstream::new(&format!("http://{up}"));
@@ -349,23 +181,16 @@ async fn core_table_sends_other_methods_on_same_path_to_upstream() {
             front,
             m.clone(),
             "/channels/c1/messages?x=1",
-            &[("authorization", "Bearer t0k")],
+            &[],
             "{\"body\":\"hi\"}",
         )
         .await;
-        assert_eq!(s, StatusCode::OK, "{m} 는 405 가 아니라 상류로");
-        assert_eq!(h.get("x-from").unwrap(), "upstream");
-        let first = text.lines().next().unwrap();
-        assert!(
-            first.starts_with(&format!("{m} /channels/c1/messages?x=1")),
-            "{first}"
-        );
-        assert!(text.contains("authorization=Bearer t0k") && text.ends_with("{\"body\":\"hi\"}"));
+        assert_eq!(s, StatusCode::NOT_FOUND, "{m} 는 405 가 아니라 닫힌 404");
+        assert!(h.get("x-from").is_none());
+        assert!(text.contains("not_found"), "{text}");
     }
-    // 코어에 없는 경로는 지금처럼 앞단 fallback 이 넘긴다.
+    // 코어에 없는 경로도 앞단 fallback 이 404 로 닫는다.
     let (s, h, _) = send(front, Method::GET, "/elsewhere", &[], "").await;
-    assert_eq!(
-        (s, h.get("x-from").unwrap().to_str().unwrap()),
-        (StatusCode::OK, "upstream")
-    );
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    assert!(h.get("x-from").is_none());
 }

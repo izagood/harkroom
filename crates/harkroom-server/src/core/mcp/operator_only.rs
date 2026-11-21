@@ -210,22 +210,4 @@ mod tests {
         assert!(answer("secret.mount", &json!({"name":"😀".repeat(32)})).is_some());
         assert!(answer("secret.mount", &json!({"name":"😀".repeat(33)})).is_none());
     }
-
-    #[test]
-    fn message_matches_ts_source() {
-        let src = include_str!("../../../../../packages/server/src/mcp/mcpPlugin.ts");
-        assert!(src.contains("error: { code: 'operator_required', message: `${tool} is handled by the harkroom operator; this runner is not connected through one that supports it` },"));
-        for t in [
-            "secret.generate",
-            "secret.import",
-            "secret.rotate",
-            "pr.status",
-        ] {
-            assert!(src.contains(&format!("operatorOnly('{t}')")), "{t}");
-        }
-        for t in ["secret.mount", "attachment.upload"] {
-            assert!(src.contains(&format!("message: '{t} is handled by the harkroom operator; this runner is not connected through one that supports it'")), "{t}");
-        }
-        assert!(src.contains("repo: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}\\/[A-Za-z0-9._-]{1,100}$/).describe('owner/name'),"));
-    }
 }

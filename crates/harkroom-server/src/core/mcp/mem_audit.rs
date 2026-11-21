@@ -721,35 +721,9 @@ mod tests {
     /// 상수·문장·답 모양을 TS 원본과 맞춘다 — TS 가 바꾸면 여기서 깨진다.
     #[test]
     fn follows_ts_source() {
-        let mem = include_str!("../../../../../packages/server/src/services/memory.ts");
-        for needle in [
-            "export const AUDIT_STALE_DAYS = 30;",
-            "export const AUDIT_NEVER_READ_GRACE_DAYS = 7;",
-            "const AUDIT_LIST_CAP = 30;",
-            "export const AUDIT_OLD_DAYS = 90;",
-            "export const AUDIT_BODY_SIMILARITY = 0.5;",
-            "const AUDIT_LARGEST_CAP = 10;",
-            "`select slug, value, description, kind, read_count, last_read_at, recall_count, last_recalled_at,\n       created_at, updated_at, flagged_at, flag_reason\n     from agent_memory where account_id = $1 and archived_at is null order by slug`",
-            "`select count(*)::int as n from agent_memory where account_id = $1 and archived_at is not null`",
-            "for (const m of r.value.matchAll(/\\[\\[([^\\]\\s]{1,255})\\]\\]/g)) {",
-            "return new Set(slug.replace(/^mem\\//, '').split(/[\\/_-]+/).filter((t) => t.length > 1 && !/^\\d+$/.test(t)));",
-            "return new Set(value.toLowerCase().split(/[^\\p{L}\\p{N}]+/u).filter((t) => t.length > 1));",
-            "return new Set([...value.matchAll(/(?<![\\w#])#(\\d{3,6})\\b/g)].map((m) => `#${m[1]}`));",
-            "if (jaccard(named[i]![1], named[j]![1]) >= 0.6) audit.similar.push([named[i]![0], named[j]![0]]);",
-            "audit.similarBody.push({ pair: [bodies[i]![0], bodies[j]![0]], similarity: Math.round(sim * 100) / 100 });",
-            "audit.sharedRefs = [...byRef.entries()].filter(([, s]) => s.length >= 3)\n    .sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0])).map(([ref, s]) => ({ ref, slugs: s }));",
-            "const lowered = patterns.map((p) => p.trim()).filter((p) => p.length >= 3).map((p) => [p, p.toLowerCase()] as const);",
-            "const judged = r.slug !== 'core' && r.kind !== 'journal';",
-            "neverRead: [], stale: [], brokenLinks: [], similar: [], outdated: [], undescribed: [], flagged: [],\n    truncated: false,",
-            "similarBody: [], sharedRefs: [], old: [], largest: [],",
-        ] {
-            assert!(mem.contains(needle), "{needle}");
-        }
         let shared = include_str!("../../../../../packages/shared/src/index.ts");
         assert!(shared.contains("export const MAX_JOURNAL_MEMORIES_PER_ACCOUNT = 60;"));
         assert!(shared.contains("export const JOURNAL_EXPIRING_WINDOW = 5;"));
-        let mcp = include_str!("../../../../../packages/server/src/mcp/mcpPlugin.ts");
-        assert!(mcp.contains("inputSchema: { patterns: z.array(z.string().min(3).max(100)).max(20).optional() },\n  }, async ({ patterns }) => jsonResult(await auditMemory(pool, account.id, patterns ?? [])));"));
     }
 
     #[test]

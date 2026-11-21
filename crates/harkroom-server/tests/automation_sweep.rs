@@ -1,5 +1,5 @@
 //! 자동화 sweep(`loops::automation`)이 TS `automations.ts` 의 `deliverOne`·`fireOneSchedule` 과 같은 일을 하는지 실제 Postgres 로 본다.
-//! `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `packages/server/test/rustFrontDb.test.ts` 가 넘긴다).
+//! `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `scripts/db-tests.sh` 가 넘긴다).
 use harkroom_server::core::msg_post::PostState;
 use harkroom_server::loops::automation::{Delivered, Fired, deliver_one, fire_one_schedule, sweep};
 use serde_json::Value;

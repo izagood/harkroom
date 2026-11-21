@@ -11,7 +11,7 @@
 import { execFileSync } from 'node:child_process';
 import { copyFileSync, chmodSync, rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { binariesDir, repoRoot, resolveTarget } from './sidecar.mjs';
+import { binariesDir, repoRoot, resolveTarget } from './sidecarTarget.mjs';
 
 async function main() {
   const target = resolveTarget();
