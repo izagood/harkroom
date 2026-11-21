@@ -179,25 +179,10 @@ mod tests {
 
     #[test]
     fn statements_follow_ts_source() {
-        let pr = include_str!("../../../../../packages/server/src/services/permissionRequests.ts");
-        for want in [
-            "const rows = (await pool.query<{ scope: string; expiresAt: Date | null; mayDecide: boolean }>(LIST_TOOL_RULES_SQL, [agentId, now])).rows;",
-            "if (!visible.has(p.channelId)) visible.set(p.channelId, await assertChannelVisible(pool, p.channelId, agentId));",
-            "if (!visible.get(p.channelId)) { hiddenToolRules += 1; continue; }",
-            "toolRules.push({ channelId: p.channelId, rule: p.rule, expiresAt: r.expiresAt?.toISOString() ?? null, active: r.mayDecide && v.ok && v.rule === p.rule });",
-        ] {
-            assert!(pr.contains(want), "{want}");
-        }
         let tr = include_str!("../../../../../packages/shared/src/toolRules.ts");
         assert!(tr.contains(
             "const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';"
         ));
         assert!(tr.contains("const TOOL_SCOPE_RE = new RegExp(`^tool:(${UUID}):(.+)$`, 's');"));
-        let mcp = include_str!("../../../../../packages/server/src/mcp/mcpPlugin.ts");
-        assert!(mcp.contains(
-            "async () => jsonResult({ ...(await listDelegations(pool, account.id)), ...(await listToolRules(pool, account.id)) }));"
-        ));
-        let ad = include_str!("../../../../../packages/server/src/services/apiDelegation.ts");
-        assert!(ad.contains("return { mine, given };"));
     }
 }

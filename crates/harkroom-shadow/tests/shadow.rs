@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 fn fx(name: &str) -> String {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    std::fs::read_to_string(root.join("../../packages/agent/test/fixtures").join(name)).unwrap()
+    std::fs::read_to_string(root.join("../fixtures/harness-tui").join(name)).unwrap()
 }
 
 fn paint(text: &str) -> String {

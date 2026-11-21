@@ -614,41 +614,14 @@ mod tests {
 
     #[test]
     fn refusals_follow_ts_source() {
-        let src = include_str!("../../../../packages/server/src/services/askBundles.ts");
-        for (code, msg) in REFUSALS {
-            if *code == "bundle_full" {
-                assert!(src.contains(
-                    "bundle_full: `a bundle holds at most ${ASK_BUNDLE_MAX_ITEMS} rows — open a new bundle`,"
-                ));
-                continue;
-            }
-            let line = format!("  {code}: '{msg}',");
-            assert!(src.contains(&line), "{line}");
-        }
         let shared = include_str!("../../../../packages/shared/src/index.ts");
         assert!(shared.contains("export const ASK_BUNDLE_MAX_ITEMS = 20;"));
         assert!(shared.contains("export const MAX_MESSAGE_BODY_CHARS = 8000;"));
         assert!(shared.contains("export const MODEL_ID_MAX = 120;"));
-        let push = include_str!("../../../../packages/server/src/services/push/pushJobs.ts");
-        assert!(push.contains("export const BUNDLE_PUSH_WINDOW_SEC = 60;"));
-        let msgs = include_str!("../../../../packages/server/src/services/messages.ts");
-        assert!(msgs.contains("const prompt = (ask.prompt ?? firstLine).slice(0, 200);"));
-        assert!(msgs.contains(
-            r"const firstLine = row.body.replace(/<@[0-9a-f-]{36}>\s*/g, '').split('\n').map((l) => l.trim()).find((l) => l !== '') ?? '';"
-        ));
     }
 
     #[test]
     fn carry_follows_ts_source() {
-        let msgs = include_str!("../../../../packages/server/src/services/messages.ts");
-        for frag in [
-            "set meta = jsonb_set(meta::jsonb, '{askBundle,items}', (meta->'askBundle'->'items') || jsonb_build_array($2::jsonb))",
-            "and not (meta->'askBundle'->'items' @> jsonb_build_array(jsonb_build_object('rootId', $3::text)))",
-            "and jsonb_array_length(meta->'askBundle'->'items') < $4",
-            "and meta->'askBundle'->'items' @> jsonb_build_array(jsonb_build_object('rootId', $1::text))`,",
-        ] {
-            assert!(msgs.contains(frag), "{frag}");
-        }
         assert!(CARRY_BUNDLE_ITEM_SQL.contains("< $4"));
         assert!(BUNDLES_HOLDING_SQL.contains("deleted_at is null"));
     }

@@ -14,7 +14,7 @@ fn golden() -> Value {
 
 /// 하네스 fixture(이미 그려진 화면 글, 120×40) — 정본과 같은 파일을 읽는다.
 fn fx(name: &str) -> String {
-    std::fs::read_to_string(root().join("../../packages/agent/test/fixtures").join(name)).unwrap()
+    std::fs::read_to_string(root().join("../fixtures/harness-tui").join(name)).unwrap()
 }
 
 /// 화면을 통째로 지우고 그 글을 그리는 바이트 — TS 시험의 `paint` 와 같다.

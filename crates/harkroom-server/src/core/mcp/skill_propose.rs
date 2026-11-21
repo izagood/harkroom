@@ -304,17 +304,6 @@ mod tests {
         let (b, m) = system_line("x1", Some("r1"));
         assert!(b.ends_with("\n⚠️ 쓰기 검사에 걸렸습니다(r1). 승인 전에 본문을 확인하세요."));
         assert_eq!(m["i18n"]["key"], json!("system.skill.proposedFlagged"));
-        let svc = include_str!("../../../../../packages/server/src/services/skills.ts");
-        assert!(svc.contains(
-            "body: `스킬이 제안되었습니다: **${skill.slug}** — 승인을 기다리고 있습니다.`"
-        ));
-        assert!(svc.contains("(skill.flagReason ? `\\n⚠️ 쓰기 검사에 걸렸습니다(${skill.flagReason}). 승인 전에 본문을 확인하세요.` : '')"));
-        assert!(svc.contains("export const BUILTIN_SKILL_PREFIX = 'harkroom-';"));
-        assert!(
-            svc.contains(
-                "emitEvent({ type: 'skill.proposed', skill, channelId: input.channelId });"
-            )
-        );
     }
 
     #[test]
@@ -335,11 +324,6 @@ mod tests {
             answer_text(&s, Some(("r", &["a", "b"])))
                 .ends_with(r#","flagged":{"reason":"r","rules":["a","b"]}}"#)
         );
-        let src = include_str!("../../../../../packages/server/src/mcp/mcpPlugin.ts");
-        assert!(src.contains(
-            "return jsonResult({ ...result, flagged: { reason: flag.reason, rules: flag.rules } });"
-        ));
-        assert!(src.contains("return jsonResult({ error: { code: 'forbidden', message: 'not a member of this channel' } });"));
     }
 
     #[test]

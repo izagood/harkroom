@@ -1,0 +1,9 @@
+
+Only accept if you recognize this as your organization telemetry collector.
+
+Approving applies: env var x1 - this redirects where telemetry from this machine is sent.
+
+[2m❯[0m1.Yes,Itrustthesesettings
+2.No,exitClaudeCode
+
+Entertoconfirm · Esctoexit

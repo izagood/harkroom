@@ -1,0 +1,8 @@
+  Ask anything…  "Fix a TODO in the codebase"
+  build  harkroom-lane · —                     ctrl+p commands
+  Model ExampleOrg/example-model is not valid
+
+  ┌─ Connect a provider ─┐
+  │ Search                │
+  │ No results found      │
+  └───────────────────────┘

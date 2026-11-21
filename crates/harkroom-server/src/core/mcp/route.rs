@@ -960,30 +960,7 @@ mod tests {
 
     #[test]
     fn body_limit_matches_ts_source() {
-        let src = include_str!("../../../../../packages/server/src/mcp/mcpPlugin.ts");
-        assert!(src.contains(
-            "const MCP_BODY_LIMIT_BYTES = 2 * ARTIFACT_PUBLISH_ARG_MAX_BYTES + 512 * 1024;"
-        ));
-        let art = include_str!("../../../../../packages/server/src/services/artifacts.ts");
-        assert!(art.contains("export const ARTIFACT_PUBLISH_ARG_MAX_BYTES = 2 * 1024 * 1024;"));
         assert_eq!(BODY_LIMIT, 4_718_592);
-    }
-
-    #[test]
-    fn bg_gate_head_matches_ts_source() {
-        let src = include_str!("../../../../../packages/server/src/mcp/mcpPlugin.ts");
-        let list = BG_ALLOWED_TOOLS
-            .iter()
-            .map(|t| format!("'{t}'"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let norm = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
-        assert!(norm(src).contains(&format!("const BG_ALLOWED_TOOLS = new Set([ {list}, ]);")));
-        assert!(src.contains(
-            "refused('bg_tool_not_allowed', `백그라운드 회차에서는 ${toolName} 을 쓸 수 없다`)"
-        ));
-        assert!(src.contains("await leakGuard.record(null, req.account.id, req.operator?.id ?? null, hits, `mcp:${tool}`);"));
-        assert!(src.contains("const ADMIT_REFUSED = new Set([...BG_WRITE_TOOLS, 'bg.complete']);"));
     }
 
     #[test]
@@ -1065,15 +1042,6 @@ mod tests {
             .as_deref(),
             Some("bg_plan_read_only")
         );
-        let src = include_str!("../../../../../packages/server/src/mcp/mcpPlugin.ts");
-        for m in [
-            "'bg_job_not_running', '이 백그라운드 회차는 이미 닫혔거나 이 계정의 것이 아니다'",
-            "'bg_thread_not_in_input', '이 회차의 입력 스레드만 읽을 수 있다'",
-            "'bg_note_read_only', '백그라운드 회차에서 스레드 메모는 읽기만 한다'",
-            "'bg_plan_read_only', '백그라운드 회차에서 계획판은 읽기만 한다'",
-        ] {
-            assert!(src.contains(m), "{m}");
-        }
     }
 
     #[test]
@@ -1188,13 +1156,5 @@ mod tests {
         };
         // presence·비밀 값 검사가 없으면 TS 에 묻는다(TS 가 mark 하고 TS 키링으로 검사한다).
         assert!(local_admit(&pre, &axum::http::HeaderMap::new(), "message.read").is_none());
-    }
-
-    #[test]
-    fn gate_message_matches_ts_source() {
-        let src = include_str!("../../../../../packages/server/src/mcp/mcpPlugin.ts");
-        assert!(src.contains(
-            "{ error: { code: 'agent_only', message: 'MCP surface requires an agent PAT or an operator assignment' } }"
-        ));
     }
 }

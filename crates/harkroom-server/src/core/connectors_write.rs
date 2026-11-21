@@ -166,15 +166,6 @@ mod tests {
 
     #[test]
     fn mirrors_ts_sql_and_never_touches_secrets() {
-        let ts = include_str!("../../../../packages/server/src/routes/connectorRoutes.ts");
-        for want in [
-            "`delete from account_grant where capability = 'api.call' and scope = $1 returning account_id`",
-            "await client.query(`delete from api_connector where id = $1`, [cur.id]);",
-            "await recordAudit(pool, { action: 'connector.deleted', ...actorOf(req), target: cur.id, detail: { name: cur.name, removedGrants: removed.length } }, req);",
-            "for (const accountId of new Set(removed)) emitEvent({ type: 'grant.changed', accountId, audience: 'all' });",
-        ] {
-            assert!(ts.contains(want), "{want}");
-        }
         for (col, _) in CONNECTORS_WRITE_PRIVILEGES {
             assert!(!col.contains("secret"), "{col}");
         }

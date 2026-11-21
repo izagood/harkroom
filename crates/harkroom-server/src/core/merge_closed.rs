@@ -389,9 +389,5 @@ mod tests {
         assert_eq!(v["source"], json!("wrapper_report"));
         assert_eq!(v["onlyAgentId"], json!("a"));
         assert_eq!(v["leaseId"], json!("l"));
-        let src = include_str!("../../../../packages/server/src/services/mergeDenials.ts");
-        assert!(src.contains("source: args.onlyAgentId ? 'wrapper_report' : 'merge_result',"));
-        let g = include_str!("../../../../packages/server/src/services/mergeGrants.ts");
-        assert!(g.contains("await obsoleteMergeCards(pool, { scope, number: r.number, reason: 'merged', actorId: r.agentId, now }).catch(() => null);"));
     }
 }

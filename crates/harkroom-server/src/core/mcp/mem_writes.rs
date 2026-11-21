@@ -619,35 +619,8 @@ mod tests {
     /// 상수·문구를 TS 원본과 맞춘다.
     #[test]
     fn texts_follow_ts_source() {
-        let mcp = include_str!("../../../../../packages/server/src/mcp/mcpPlugin.ts");
-        let mem = include_str!("../../../../../packages/server/src/services/memory.ts");
-        let cur = include_str!("../../../../../packages/server/src/services/memoryCurate.ts");
         let shared = include_str!("../../../../../packages/shared/src/index.ts");
-        for want in [
-            "return jsonResult({ error: { code: 'not_found', message: 'memory not found' } });",
-            "notice: '지금 판은 쓰기 검사에 걸려 사람의 확인을 기다린다 — 본문을 싣지 않는다. '",
-            "+ (clean ? 'value 는 걸리기 전 마지막 판이다. ' : '걸리기 전 판이 없다. ')",
-            "+ '지시문·비밀 값 없이 다시 쓰면 표시가 풀린다.',",
-            "inputSchema: { slugs: z.array(z.string().min(1).max(300)).min(1).max(5) },",
-            "token: z.string().min(8).max(80).optional(),",
-            "minutes: z.number().int().min(1).max(MEMORY_LEASE_MAX_MINUTES).optional(),",
-            "if (!token) return jsonResult({ error: { code: 'token_required', message: 'release 에는 acquire 가 준 token 이 필요하다' } });",
-            "notice: '다른 턴이 이 계정의 기억을 정리하고 있다 — 만료 뒤에 다시 하거나 물러나라.' });",
-            "if (slug === 'core') return jsonResult({ error: { code: 'core_not_archivable', message: 'core 는 매 턴 실리는 자리라 보관할 수 없다 — 줄여 써라' } });",
-            "if (r === 'too_many') return jsonResult({ error: { code: 'too_many', message: `at most ${MAX_MEMORY_ITEMS_PER_ACCOUNT} active memories per account` } });",
-            "? `그 사이 다른 턴이 ${slug} 를 고쳤다(지금 판 ${now.toISOString()}). memory.get 으로 다시 읽고 그 updatedAt 으로 다시 해라.`",
-            ": `${slug} 가 그 사이 지워졌거나 아직 없다.`,",
-        ] {
-            assert!(mcp.contains(want), "{want}");
-        }
-        assert!(mem.contains(
-            "export const MEMORY_SLUG_HINT = 'slug must be \"core\" or \"mem/<name>\" '"
-        ));
         assert!(SLUG_HINT.starts_with("slug must be \"core\" or \"mem/<name>\" (segments"));
-        assert!(mem.contains("+ 'no dots, no uppercase, and the \"mem/\" prefix is required)';"));
-        assert!(cur.contains("export const MAX_ARCHIVED_MEMORIES_PER_ACCOUNT = 300;"));
-        assert!(cur.contains("export const MEMORY_LEASE_DEFAULT_MINUTES = 60;"));
-        assert!(cur.contains("export const MEMORY_LEASE_MAX_MINUTES = 180;"));
         assert!(shared.contains("export const MAX_MEMORY_ITEMS_PER_ACCOUNT = 200;"));
     }
 }
