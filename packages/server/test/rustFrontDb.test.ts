@@ -7582,7 +7582,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         }
       }
       // S5.3 C3b-2a — 묶음 카드 REST(코어 `ask_bundle.rs`): 한 줄에 답·「추천대로」. TS·Rust 에 **각자의 묶음·원본 카드**로 같은 시나리오를
-      // 돌려 응답·원본 meta·깨움·이벤트를 견준다. 권한 줄·모르는 kind 줄·`once` 가 실린 답은 Rust 가 정하지 않고 TS 로 넘긴다 —
+      // 돌려 응답·원본 meta·깨움·이벤트를 견준다. 권한 표지만 있는 줄·모르는 kind 줄은 Rust 가 TS 와 같은 거절로 답한다(0-1 ⑤) —
       // 줄마다 따로 재는지(같은 묶음 안 평범한 줄은 Rust 가 답한다)도 본다.
       {
         const ASKP = '/channels/{id}/messages/{messageId}';
@@ -7654,8 +7654,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           await step('묶음에 없는 줄 → 404', bAns(sd.B1), { rootId: sd.recB, optionId: 'a' });
           await step('남에게 온 줄 → 403', bAns(sd.B1), { rootId: sd.toMem, optionId: 'a' });
           await step('거울 줄 → 403', bAns(sd.B1), { rootId: sd.mirror, optionId: 'a' });
-          await step('권한 줄 → TS', bAns(sd.B1), { rootId: sd.perm, optionId: 'a' });
-          await step('모르는 kind 줄 → TS', bAns(sd.B1), { rootId: sd.odd, optionId: 'a' });
+          await step('권한 표지만 있는 줄 → 403', bAns(sd.B1), { rootId: sd.perm, optionId: 'a' });
+          await step('모르는 kind 줄 → 404', bAns(sd.B1), { rootId: sd.odd, optionId: 'a' });
           // b346d0f95 부터 사슬 백스톱 줄은 Rust 가 보통 물음 길로 답한다(TS 와 같다).
           await step('백스톱 줄', bAns(sd.B4), { rootId: sd.backstop, optionId: 'a' });
           await step('once 실림 → TS', bAns(sd.B1), { rootId: sd.plain2, optionId: 'a', once: { number: 1, headSha: 'x' } });
@@ -7665,7 +7665,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           await step('비멤버 비공개 → 403', `/channels/${String(priv.id)}/messages/${sd.B1}/ask-bundle/answer`, { rootId: sd.plain, optionId: 'a' }, member.token);
           await step('추천대로', bAcc(sd.B2), {});
           await step('추천대로 다시', bAcc(sd.B2), {});
-          await step('넘길 줄이 섞인 추천대로 → TS', bAcc(sd.B3), {});
+          await step('못 읽는 줄이 섞인 추천대로', bAcc(sd.B3), {});
           await step('추천대로 묶음 아님 → 404', bAcc(sd.recB), {});
           return out;
         };
@@ -7692,7 +7692,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           `select message_id::text as m, reason as r from inbox where message_id = any($1::uuid[]) and reason in ('ask_answered', 'ask_closed') order by id`,
           [Object.values(sd)])).rows.map((r) => ({ m: labelOf(sd)(r.m), r: r.r }));
         expect(await wakes(R)).toEqual(await wakes(T));
-        // 이벤트 — 쓰기(`message.updated`)만, 이름·모양·받는 사람·순서. 넘긴 줄(권한·모르는 kind·once·B3)은 TS 에서 나고 Rust outbox 에 없다.
+        // 이벤트 — 쓰기(`message.updated`)만, 이름·모양·받는 사람·순서. 0-1 ⑤ 부터 전에 TS 로 넘기던 줄(권한 표지·모르는 kind·B3)도
+        // Rust 가 답한다 — 그 이벤트가 Rust outbox 에서 나고 TS 에서는 나지 않는다.
         const HANDED = ['perm', 'odd', 'recA2', 'odd2', 'B3'];
         const writesOf = (evs: WorkspaceEvent[], sd: Side, handed: boolean) => evs.filter((e) => {
           if (e.type !== 'message.updated') return false;
@@ -7705,9 +7706,11 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         while (writesOf(busEvents, R, false).length < want.length && Date.now() < until) await new Promise((res) => setTimeout(res, 100));
         expect(writesOf(busEvents, R, false), 'Rust 가 낸 쓰기 이벤트 = TS').toEqual(want);
         const handedT = writesOf(tsEvents, T, true);
-        expect(handedT.length, '넘긴 줄도 TS 가 답해 이벤트가 난다').toBeGreaterThan(0);
-        expect(writesOf(tsEvents, R, true), '넘긴 줄은 TS 가 처리했다').toEqual(handedT);
-        expect(writesOf(busEvents, R, true), '넘긴 줄은 Rust outbox 에 없다').toEqual([]);
+        expect(handedT.length, '전에 넘기던 줄에도 이벤트가 난다(B3 의 추천 줄)').toBeGreaterThan(0);
+        const until3 = Date.now() + 10_000;
+        while (writesOf(busEvents, R, true).length < handedT.length && Date.now() < until3) await new Promise((res) => setTimeout(res, 100));
+        expect(writesOf(busEvents, R, true), '전에 넘기던 줄도 Rust 가 답했다').toEqual(handedT);
+        expect(writesOf(tsEvents, R, true), 'TS 로 넘기지 않았다').toEqual([]);
         offTs();
         // 한 트랜잭션 — outbox 넣기가 실패하면 답이 되돌아간다.
         const txCard = await card('트랜잭션 묶음 줄', {});
@@ -7795,6 +7798,13 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             await step('카드 다시 → 409 already_answered', ansP(sd.cardCard), { optionId: 'deny' });
             await step('카드 approve → TS(3c 범위 밖)', ansP(sd.outCard), { optionId: 'approve' }, member.token);
             await step('묶음에 없는 줄 → 404', bAnsP(sd.B), { rootId: sd.outCard, optionId: 'deny' });
+            // 0-1 ⑤ — 묶음 권한 줄의 쓰기 없는 거절(사람 세션 아님·모르는 선택지). 문구까지 견준다. 줄은 열린 채로 남아 아래에서 거절된다.
+            const refuse = async (name: string, body: unknown, token = A) => {
+              const r = await callX(base, 'POST', bAnsP(sd.B), body, token);
+              out.push({ step: name, status: r.status, code: r.code, body: r.status === 200 ? shape(sd)(r.json) : (r.json.error as { message?: string } | undefined)?.message ?? null });
+            };
+            await refuse('에이전트 토큰이 묶음 권한 줄 → 403', { rootId: sd.bundleCard, optionId: 'deny' }, agent.pat);
+            await refuse('묶음 권한 줄 모르는 선택지 → 400', { rootId: sd.bundleCard, optionId: 'maybe' });
             await step('묶음 줄 거절', bAnsP(sd.B), { rootId: sd.bundleCard, optionId: 'deny' });
             await step('묶음 줄 다시 → 409', bAnsP(sd.B), { rootId: sd.bundleCard, optionId: 'deny' });
             return out;
@@ -7806,6 +7816,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           expect(st('REST 거절')?.status).toBe(200);
           expect(st('카드 거절')?.status).toBe(200);
           expect(st('묶음 줄 거절')?.status).toBe(200);
+          expect(st('에이전트 토큰이 묶음 권한 줄 → 403')).toMatchObject({ status: 403, code: 'forbidden' });
+          expect(st('묶음 권한 줄 모르는 선택지 → 400')).toMatchObject({ status: 400, code: 'unknown_option' });
           // 요청 줄·카드 meta(권한·물음)·감사·깨움.
           const rows = async (sd: Side) => (await db.pool.query<{ k: string; status: string; by: string | null; decided: boolean }>(
             `select k, p.status, p.decided_by::text as by, p.decided_at is not null as decided from jsonb_each_text($1::jsonb) j(k, id)

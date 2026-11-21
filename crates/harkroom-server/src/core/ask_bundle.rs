@@ -5,20 +5,20 @@
 //! - **정본은 원본이다.** 줄의 답은 원본에 누른 사람 이름으로 적는다 — C3b-1 의 [`super::ask::record_ask_answer`] 그대로(수신자·
 //!   사람만·superseded 거절·깨움·거울/묶음 맞추기). 이벤트는 그 안의 묶음 `message.updated` 뒤에 원본의 `message.updated`(원본 채널의
 //!   받는 사람) — TS 와 같은 차례.
-//! - **TS 로 넘기는 줄**(닫힌 쪽): 줄마다 원본을 [`hand_answer_to_ts`] 로 잰다 — 권한 요청·권한 거울 표지,
-//!   권한 요청 행의 카드, 못 읽는 모양·모르는 kind, 이상한 `mirrorOf`, 원본이 없음. 그런 줄의 답은 읽어 둔 본문 바이트 그대로 TS 가
-//!   한다(권한 줄의 `decide` 는 C3b-3 몫). 머지 카드 [이번 한 번] 값(`once`)이 실린 답도 TS 로 넘긴다.
-//!   머지 거절·백스톱 원본은 Rust 가 맡는다(TS 도 `recordAskAnswer` 길 — 「추천대로」에서는 결정 카드·`irreversible` 로 빠진다).
-//!   「추천대로」는 TS 도 결정 카드 줄을 뺀다(`skipped_link`) — 남는 줄 가운데 하나라도 넘길 줄이면 요청 전체를 TS 로 넘긴다.
+//! - **TS 로 넘기는 줄**(닫힌 쪽): 권한 줄의 결정(거절·승인)은 `decide_routes` 가 하고, 쓰기 없는 거절(사람 세션 아님·모르는
+//!   선택지·일괄)도 Rust 가 답한다([`BundleLine`]). 넘기는 것은 아는 선택지인데 결정 코어가 맡지 않은 권한 줄(권한이 빠진 서버·
+//!   코어의 넘김)과 거울 표지를 못 읽는 원본, 그리고 `once` 의 number 를 정수로 못 읽는 꼴뿐이다 — 읽어 둔 본문 바이트 그대로 넘긴다.
+//!   표지만 있고 요청 줄이 없는 카드·머지 거절·백스톱 원본은 TS 도 `recordAskAnswer` 길이라 Rust 가 맡는다.
+//!   「추천대로」는 TS 도 결정 카드 줄을 뺀다(`skipped_link`) — 남는 줄 가운데 못 읽는 원본이 있으면 요청 전체를 TS 로 넘긴다.
 //! - 판정·쓰기·이벤트는 줄 하나에 한 트랜잭션이다. 「추천대로」는 TS 처럼 줄마다 따로 커밋한다(일부만 될 수 있다).
 //!   `Err` 면 그 줄의 트랜잭션을 버리고 500.
 //! - 문장은 TS 상수를 골든으로 받는다(`bundle_*`). 쓰기 권한은 C3b-1 의 `ASK_PRIVILEGES` 와 같다(같은 표·같은 칸을 쓴다) —
 //!   `ask::routes` 가 이 두 줄을 함께 붙이므로 권한이 모자라면 둘 다 TS 에 남는다.
 use super::ask::{
-    AskState, Outcome, hand_answer_to_ts, read_ask_meta, read_ask_row, read_bytes,
-    record_ask_answer, to_ts,
+    AskState, Outcome, read_ask_meta, read_ask_row, read_bytes, record_ask_answer, to_ts,
 };
 use super::audience::audience_on;
+use super::decide_routes::BundleLine;
 use super::msg_read::{channel_visible, is_uuid, message_by_id};
 use crate::auth::RequireAccount;
 use crate::directory::{internal, json_err};
@@ -358,10 +358,20 @@ pub async fn answer(
     {
         return r;
     }
-    // 원본이 Rust 가 정하지 않는 카드면 TS 가 한다. 사슬·옛 머지 거절 원본은 TS 에서도 `recordAskAnswer` 길이라 Rust 가 맡는다.
-    match hand_answer_to_ts(&st.read, &root).await {
-        Ok(false) => {}
-        Ok(true) => return to_ts(st.up.clone(), peer, parts, bytes).await,
+    // 0-1 ⑤ — 권한 줄에 온 쓰기 없는 거절(사람 세션 아님·모르는 선택지)도 Rust 가 답한다. 넘기는 것은 아는 선택지인데 결정 코어가
+    // 맡지 않은 줄(권한이 빠진 서버 등)과 거울 표지를 못 읽는 원본뿐이다. 그 밖의 원본(표지만 있고 요청 줄이 없는 카드·없는 원본·
+    // 거울)은 TS 에서도 `recordAskAnswer` 길이거나 그 앞에서 거절된다 — [`answer_root`] 가 같은 답을 한다.
+    let session = super::decide_routes::human_session(&me, &auth);
+    match super::decide_routes::bundle_line(&st, &me, session, false, &root, &option).await {
+        Ok(BundleLine::Plain) => {}
+        Ok(BundleLine::Refuse(s, c, m)) => {
+            return err(
+                StatusCode::from_u16(s).unwrap_or(StatusCode::FORBIDDEN),
+                c,
+                m,
+            );
+        }
+        Ok(BundleLine::Hand) => return to_ts(st.up.clone(), peer, parts, bytes).await,
         Err(e) => return internal(e),
     }
     match answer_root(&st, &root, &option, &me.id, None).await {
@@ -408,11 +418,12 @@ pub async fn accept_recommended(
                 Ok(b) => b,
                 Err(e) => return internal(e),
             };
-        // 사슬 백스톱 원본은 TS 도 `recordAskAnswer` 길이다(실제로는 `irreversible` 로 빠진다).
+        // 쓰기 전에 넘길 줄을 가른다 — 남은 것은 거울 표지를 못 읽는 원본뿐이다(일괄에서는 권한 줄도 TS 처럼 거절로 답한다).
         if !skip {
-            match hand_answer_to_ts(&st.read, &item.root_id).await {
-                Ok(false) => {}
-                Ok(true) => return to_ts(st.up.clone(), peer, parts, bytes).await,
+            match super::decide_routes::bundle_line(&st, &me, false, true, &item.root_id, "").await
+            {
+                Ok(BundleLine::Hand) => return to_ts(st.up.clone(), peer, parts, bytes).await,
+                Ok(_) => {}
                 Err(e) => return internal(e),
             }
         }
@@ -463,6 +474,20 @@ pub async fn accept_recommended(
                 json!({ "rootId": root, "outcome": "failed", "code": "bundle_item_not_found" }),
             );
             continue;
+        }
+        // TS `answerBundleItem` 의 권한 줄 — 일괄은 사람이 그 줄을 골라 누른 것이 아니라 403 이다(표지 없는 요청 줄 카드만 여기 닿는다).
+        // 차례는 TS 와 같다: 원본 없음·원본 채널·거울이 먼저고([`bundle_line`] 이 `Plain` 으로 돌려 `answer_root` 가 답한다) 그다음 권한.
+        match super::decide_routes::bundle_line(&st, &me, false, true, root, &option).await {
+            Err(e) => return internal(e),
+            Ok(BundleLine::Plain) => {}
+            Ok(BundleLine::Refuse(_, code, _)) => {
+                results.push(json!({ "rootId": root, "outcome": "failed", "code": code }));
+                continue;
+            }
+            // 위에서 이미 걸렀다 — 그 사이 원본이 바뀐 것이다. 이미 쓴 줄이 있을 수 있어 넘기지 않는다.
+            Ok(BundleLine::Hand) => {
+                return internal(sqlx::Error::Protocol("bundle line changed shape".into()));
+            }
         }
         match answer_root(&st, root, &option, &me.id, Some(BULK)).await {
             Err(e) => return internal(e),
