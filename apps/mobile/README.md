@@ -25,7 +25,7 @@
 `packages/*` 글롭 밖이라 **pnpm 은 이 디렉터리를 모른다.** `pnpm -r test` 도
 `pnpm -r typecheck` 도 여기를 돌지 않는다. 그것이 의도다 — 여기는 pub 의 땅이다.
 다만 그 때문에 저장소 전역 검사가 이 디렉터리를 빠뜨리기 쉬우니,
-`packages/server/test/repoHygiene.test.ts` 의 `CODE_ROOTS` 가 `apps` 를 함께 훑는다.
+`packages/shared/test/repoHygiene.test.ts` 의 `CODE_ROOTS` 가 `apps` 를 함께 훑는다.
 
 ## 돌리기
 

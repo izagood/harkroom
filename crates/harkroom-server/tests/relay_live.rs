@@ -1,5 +1,5 @@
 //! Rust 릴레이의 세션 사본·presence 쓰기(C6c-3, `core/relay_live.rs`)를 실제 Postgres 로 — security C6c r1a·r1b·r2·r3.
-//! `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `bus-e2e` 잡이 `packages/server/test/rustFrontDb.test.ts` 로 DB 를 넘긴다).
+//! `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `db-tests` 잡이 `scripts/db-tests.sh` 로 DB 를 넘긴다).
 //! 쓰기 풀은 `HARKROOM_TEST_WRITE_DATABASE_URL`(있으면 `OPERATOR_PRIVILEGES` 만 가진 역할)이다 — 표가 모자라면 여기서 빨개진다(r3).
 use harkroom_server::core::relay_live::{LiveOpts, PresenceMark, SessionLive};
 use serde_json::{Value, json};

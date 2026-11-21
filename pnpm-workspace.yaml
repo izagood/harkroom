@@ -1,13 +1,4 @@
 packages:
   - packages/*
 allowBuilds:
-  argon2: true
-  cpu-features: true
   esbuild: true
-  node-pty: true
-  protobufjs: true
-  sharp: false
-  ssh2: true
-minimumReleaseAgeExclude:
-  - '@izagood/avcs@0.45.0'
-  - '@izagood/avcs-server@0.3.0'

@@ -208,15 +208,17 @@ requirement is recorded — subsequent rebuilds stay silent.
 
 ## Running Tests
 
-Tests require Docker because the server tests use testcontainers to spin up a PostgreSQL container:
-
 ```sh
-# Run all tests
+# Run all TypeScript tests (desktop, shared, e2e story checks)
 pnpm test
 
-# Run tests for a specific package
-pnpm --filter @harkroom/server test
-pnpm --filter @harkroom/agent test
+# Rust crates (server, operator, runner, ...)
+cargo test --manifest-path crates/harkroom-server/Cargo.toml
+
+# Server DB tests need a PostgreSQL superuser URL and the built server binary
+PGADMIN_URL=postgres://user:pass@127.0.0.1:5432/postgres \
+SERVER_BIN=crates/harkroom-server/target/debug/harkroom-server-rs \
+  crates/harkroom-server/scripts/db-tests.sh
 ```
 
 ## Regression Testing Convention

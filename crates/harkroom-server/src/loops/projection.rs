@@ -9,7 +9,7 @@
 //!
 //! 하는 일은 TS 와 같다: 채널에 바인딩된 repo 마다 `events` 로 변경을 기다리고, 바뀌었으면 `sync` → `objects/fetch` 로 로그를 받아
 //! `lease` 만 `active_lease` 에 접고 `projection_cursor` 를 전진시킨다. lease 가 바뀌면 `lease.changed` 를 낸다.
-//! 문지기 이름 `projection` — `server_loop` 에 줄이 없으면 `ts` 라 기본은 꺼져 있다.
+//! 문지기 이름 `projection` — `server_loop` 에 줄이 없으면 `rust` 라 돈다(11-21 전에는 `ts` — 꺼짐).
 //!
 //! HTTP 는 `crate::avcs_http` 클라이언트를 쓴다 — 주소 scheme 으로 `http://`(평문)·`https://`(TLS, 묶인 Mozilla 루트)를 고른다.
 use super::{GateResult, Side, run_gated};

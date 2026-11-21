@@ -198,7 +198,7 @@ describe('repo hygiene', () => {
      * 이제 이 면제가 감추는 것은 **합성된 예시 주소**뿐이다(`acme-corp.net`). 실제 사내
      * 주소를 여기 적을 이유가 사라졌다 — 그것이 허용 방향으로 뒤집은 이유다.
      */
-    const 자기자신 = join(getRoot(), 'packages/server/test/repoHygiene.test.ts');
+    const 자기자신 = join(getRoot(), 'packages/shared/test/repoHygiene.test.ts');
 
     function 소스와문서(): string[] {
       const out: string[] = [];
@@ -277,7 +277,7 @@ describe('repo hygiene', () => {
     const 예시이름 = new Set(['u', 'x', 'me', 'you', 'alice', 'alice2', 'bob', 'someone', 'secret', 'user', 'example', 'runner']);
     // `/Users/<이름>`·`/home/<이름>`·claude 프로젝트 폴더 `-Users-<이름>-`. `<이름>`·`${…}` 자리표시자는 이름이 아니다.
     const 홈경로 = /(?:\/Users\/|\/home\/|-Users-)([A-Za-z0-9_]+)/g;
-    const 자기자신 = join(getRoot(), 'packages/server/test/repoHygiene.test.ts');
+    const 자기자신 = join(getRoot(), 'packages/shared/test/repoHygiene.test.ts');
 
     function 훑을파일(): string[] {
       const out: string[] = [];
@@ -352,7 +352,16 @@ describe('repo hygiene', () => {
       }
     }
 
-    // `config.ts` 만 보면 `packages/agent/src/version.ts` 의 `AGENT_VERSION` 처럼
+    function collectRustFiles(dir: string, out: string[]): void {
+      if (!existsSync(dir)) return;
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) collectRustFiles(full, out);
+        else if (entry.name.endsWith('.rs')) out.push(full);
+      }
+    }
+
+    // `config.ts` 만 보면 옛 러너의 `version.ts` 에서 읽던 `AGENT_VERSION` 처럼
     // 다른 파일에서 읽는 변수가 표에서 빠져도 초록으로 지나간다. 그래서 각 패키지의
     // src 와 scripts 디렉터리 전체를 훑는다(test 디렉터리는 제외).
     function extractEnvVars(roots: readonly string[]): string[] {
@@ -373,10 +382,19 @@ describe('repo hygiene', () => {
           if (match[1] && !TOOLCHAIN_VARS.has(match[1])) envVars.add(match[1]);
         }
       }
+      // 서버는 Rust 다(TS 서버는 지웠다, 11-21). 서버가 `std::env::var("X")`·`var_os("X")` 로 읽는 이름도 표에 있어야 한다.
+      const rust: string[] = [];
+      collectRustFiles(join(getRoot(), 'crates/harkroom-server/src'), rust);
+      for (const file of rust) {
+        const content = readFileSync(file, 'utf-8');
+        for (const match of content.matchAll(/\benv::var(?:_os)?\("([A-Z_][A-Z0-9_]*)"\)/g)) {
+          if (match[1] && !TOOLCHAIN_VARS.has(match[1])) envVars.add(match[1]);
+        }
+      }
       return Array.from(envVars).sort();
     }
 
-    it('covers every env var read anywhere under packages/*/src and packages/*/scripts', () => {
+    it('covers every env var read anywhere under packages/*/src, packages/*/scripts and the Rust server', () => {
       const readmePath = join(getRoot(), 'README.md');
       const readmeContent = readFileSync(readmePath, 'utf-8');
 

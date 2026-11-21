@@ -1,4 +1,5 @@
-//! 이벤트 버스의 **쓰는 쪽**(S5.0, Rust 전환). 받는 쪽은 TS 서버의 `packages/server/src/eventBus.ts` 다.
+//! 이벤트 버스의 **쓰는 쪽**(S5.0, Rust 전환). 받는 쪽은 Rust 서버의 outbox 리스너(`harkroom-server` `core::events`)다
+//! (옛 받는 쪽 TS `eventBus.ts` 와 그 끝에서 끝 시험 `eventBusRustE2e` 는 TS 백엔드와 함께 지웠다, 11-21).
 //!
 //! 계약(마이그레이션 `168_event_outbox.sql`):
 //! - 한 트랜잭션에서 `insert into event_outbox(event) values ($1) returning id` 뒤
@@ -6,8 +7,8 @@
 //! - NOTIFY 는 커밋될 때만 나가므로, 받는 쪽이 id 로 다시 읽을 때 줄이 이미 있다. 롤백하면 둘 다 사라진다.
 //! - 페이로드는 **id 만**이다(NOTIFY 는 8000바이트 미만이라 이벤트 본문을 싣지 않는다).
 //!
-//! 이벤트 모양은 여기서 검사하지 않는다 — 받는 쪽이 `events.ts` 의 종류·모양으로 거르고, 그 뒤 TS 가 직접 낸
-//! 이벤트와 같은 가시성 판정(`visibleTo`)을 지난다. 이 crate 는 아직 어디에도 연결되지 않았다.
+//! 이벤트 모양은 여기서 검사하지 않는다 — 받는 쪽이 종류·모양으로 거르고 가시성 판정을 지난다.
+//! 쓰는 곳은 `harkroom-server` 의 `write::emit_event` 다.
 
 use sqlx::{PgConnection, Postgres, Transaction};
 

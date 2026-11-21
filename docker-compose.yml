@@ -59,7 +59,8 @@ services:
       #   docker compose stop server
       #   docker run --rm -v <프로젝트>_attachments:/d alpine chown -R 65532:65532 /d
       #   docker compose start server
-      # 안 넘기면 업로드가 실패한다(읽기는 된다 — 그래서 늦게 드러난다).
+      # 안 넘기면 업로드가 실패한다(읽기는 된다 — 그래서 늦게 드러난다). 이 명령은 **볼륨 전체**의 소유자를 바꾼다 —
+      # 그 볼륨을 다른 서비스와 같이 쓴다면 첨부 폴더만 바꾼다(README 「Deployment notes」).
       - attachments:/var/lib/harkroom/attachments
     ports:
       - "3400:3400"

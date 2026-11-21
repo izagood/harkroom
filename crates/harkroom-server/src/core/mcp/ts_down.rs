@@ -73,16 +73,11 @@ pub fn unsupported(bytes: &[u8]) -> Option<Response<Body>> {
             body.push_str(&f);
         }
     }
-    let mut r = if body.is_empty() {
+    Some(if body.is_empty() {
         super::respond::accepted()
     } else {
         super::respond::sse_body(body)
-    };
-    r.headers_mut().insert(
-        crate::proxy::CLOSED_HEADER,
-        axum::http::HeaderValue::from_static("1"),
-    );
-    Some(r)
+    })
 }
 
 #[cfg(test)]
@@ -107,7 +102,8 @@ mod tests {
     async fn tools_call_becomes_tool_error() {
         let b = br#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"message.post","arguments":{}}}"#;
         let r = unsupported(b).unwrap();
-        assert_eq!(r.headers()[crate::proxy::CLOSED_HEADER], "1");
+        // 옛 대조 시험용 표지(`x-harkroom-closed`)는 TS 와 함께 걷었다(11-21).
+        assert!(r.headers().get("x-harkroom-closed").is_none());
         let (s, body) = text(r).await;
         assert_eq!(s, StatusCode::OK);
         let d = data(&body);

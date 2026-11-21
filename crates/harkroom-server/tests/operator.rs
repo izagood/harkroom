@@ -1,5 +1,5 @@
 //! 오퍼레이터 코어(C2a)를 실제 Postgres 로 — 가짜 오퍼레이터가 `/operator` 에 붙고 `/operators*` REST 를 부른다.
-//! `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `bus-e2e` 잡이 `packages/server/test/rustFrontDb.test.ts` 로 DB 를 넘긴다).
+//! `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `db-tests` 잡이 `scripts/db-tests.sh` 로 DB 를 넘긴다).
 //! 그 DB 에는 TS 서버의 마이그레이션이 전부 적용돼 있어야 한다. 시험이 넣은 행은 끝에 지운다 — 계정만은 남는다(`audit_log` 가
 //! append-only 라 감사 줄이 가리키는 계정을 지울 수 없다. 시험마다 복제한 DB 라 버려진다).
 //!

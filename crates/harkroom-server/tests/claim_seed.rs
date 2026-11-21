@@ -1,6 +1,6 @@
 //! 클레임 토큰 해시 심기(`claim_seed.rs`)가 TS `seedClaimToken` 과 같은 규칙으로 도는지 본다.
 //! - 기동 거절·빈 값: 진짜 바이너리를 띄운다(DB 없이 돈다 — 형식은 DB 에 닿기 전에 본다).
-//! - 심기·두 번 기동: `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `packages/server/test/rustFrontDb.test.ts` 가 넘긴다).
+//! - 심기·두 번 기동: `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `scripts/db-tests.sh` 가 넘긴다).
 //!   `HARKROOM_TEST_WRITE_DATABASE_URL` 이 있으면 쓰기 풀 심기는 그 역할(`CLAIM_SEED_PRIVILEGES` 만 가진 쓰기 역할)로 돈다.
 use harkroom_server::claim_seed::{CLAIM_SEED_PRIVILEGES, seed};
 use sqlx::PgPool;

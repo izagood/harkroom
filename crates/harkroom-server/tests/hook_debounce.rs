@@ -1,5 +1,5 @@
 //! 들어오는 hook 의 디바운스 모으기(`core::automation_hooks::enqueue_vars`, P5-3)가 TS `enqueueRun`·`mergeIntoGathering` 과 같은지
-//! 실제 Postgres 로 본다. `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `packages/server/test/rustFrontDb.test.ts` 가 넘긴다).
+//! 실제 Postgres 로 본다. `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `scripts/db-tests.sh` 가 넘긴다).
 use harkroom_server::core::automation_hooks::enqueue_vars;
 use serde_json::{Map, Value, json};
 use sqlx::PgPool;

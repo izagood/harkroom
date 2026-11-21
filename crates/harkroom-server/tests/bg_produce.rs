@@ -1,5 +1,5 @@
 //! 백그라운드 회차 생산(`loops::bg_produce`)이 TS `bgJobs.ts` 의 `enqueueBgJob`·`produceDistillJobs` 와 같은 일을 하는지 실제 Postgres 로 본다.
-//! `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `packages/server/test/rustFrontDb.test.ts` 가 넘긴다).
+//! `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `scripts/db-tests.sh` 가 넘긴다).
 //! - `HARKROOM_TEST_WRITE_DATABASE_URL` 이 있으면 넣기는 그 역할(`BG_PRODUCE_PRIVILEGES` 만 가진 쓰기 역할)로 돈다.
 //! - `HARKROOM_BG_PRODUCE_ONLY` 가 있으면 대조 모드 — TS 가 깔아 둔 시드에 증류 생산만 한 번 돌리고 끝난다(판정은 TS 쪽).
 //!   상한은 `HARKROOM_BG_PRODUCE_MAX`(없으면 50, TS `backgroundDailyMax` 와 같은 해석).
