@@ -1,5 +1,5 @@
 //! 백그라운드 회차 닫기(`loops::bg`)가 TS `bgJobs.ts` 의 `close` 와 같은 일을 하는지 실제 Postgres 로 본다.
-//! `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `packages/server/test/rustFrontDb.test.ts` 가 넘긴다).
+//! `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `scripts/db-tests.sh` 가 넘긴다).
 //! - `HARKROOM_TEST_WRITE_DATABASE_URL` 이 있으면 sweep 은 그 역할(`BG_PRIVILEGES` 만 가진 쓰기 역할)로 돈다.
 //! - `HARKROOM_BG_DUAL` 이 있으면 이중 실행 모드 — TS 가 깔아 둔 일감을 TS 와 **동시에** 닫아 닫은 수만 찍는다(판정은 TS 쪽).
 use harkroom_server::loops::bg::{BG_PRIVILEGES, close};

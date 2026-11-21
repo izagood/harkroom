@@ -1,5 +1,5 @@
 //! 턴 임대(`core::turn_lease`, S5.3 C6b)가 TS `secretAccess.ts` 의 `issueTurnLease`·`renewTurnLease`·`endTurnLease` 와 같은 판정을
-//! 하는지 실제 Postgres 로 본다. `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `packages/server/test/rustFrontDb.test.ts` 가 넘긴다).
+//! 하는지 실제 Postgres 로 본다. `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `scripts/db-tests.sh` 가 넘긴다).
 //! - `HARKROOM_TEST_WRITE_DATABASE_URL` 이 있으면 임대 쓰기는 그 역할(`TURN_LEASE_PRIVILEGES` 만 가진 쓰기 역할)로 한다.
 //! - `HARKROOM_TURN_LEASE_DUAL=<agent id>:<operator id>` 면 동시 발급 모드 — TS 가 깔아 둔 부름 전부에 TS 와 **동시에** 임대를
 //!   청하고 받은 수·거절 수만 찍는다(판정은 TS 쪽: 부름마다 살아 있는 임대가 정확히 하나인가).

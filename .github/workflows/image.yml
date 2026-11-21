@@ -64,15 +64,15 @@ concurrency:
   group: image-${{ inputs.release_tag || github.ref }}
   cancel-in-progress: false
 
-# 이미지는 둘이다 — TS 서버(`harkroom-server`)와 Rust 앞단(`harkroom-server-rs`, S5.1). 같은 커밋·같은 태그 규칙으로
-# 나가야 배포가 둘을 한 판 태그로 맞출 수 있다(앞단은 기동할 때 그 판의 마이그레이션 목록을 DB 와 대조한다).
+# 이미지는 Rust 서버(`harkroom-server-rs`) 하나다. TS 서버 이미지(`harkroom-server`)는 TS 백엔드를 지우면서
+# 더 굽지 않는다 — 레지스트리에 남은 마지막 판(0.5.1)이 비상 되돌리기용이다.
 # 이미지 이름은 아래 두 잡의 matrix `image` 에서 정한다.
 
 jobs:
   # ## 왜 아키텍처마다 **다른 러너**인가
   #
   # 한 러너에서 `--platform linux/amd64,linux/arm64` 로 한 번에 내려면 QEMU 에뮬레이션이
-  # 필요하다. 이 이미지는 `argon2`(네이티브 애드온)를 musl 에서 **소스로 컴파일**하므로
+  # 필요하다. 이 이미지는 Rust release 빌드를 **소스로 컴파일**하므로
   # 에뮬레이션 아래에서는 그 단계가 몇 배로 늘어난다. GitHub 가 arm64 러너를 주므로
   # (공개 저장소에서 무료) 각자 네이티브로 빌드하고 아래 `merge` 가 둘을 하나의 매니페스트
   # 리스트로 묶는다.
@@ -85,8 +85,6 @@ jobs:
       fail-fast: false
       matrix:
         image:
-          - name: harkroom-server
-            dockerfile: packages/server/Dockerfile
           - name: harkroom-server-rs
             dockerfile: crates/harkroom-server/Dockerfile
         arch:
@@ -129,9 +127,8 @@ jobs:
           # 어긋난다. 출처는 아래 `merge` 가 만드는 리스트 수준에서 다룬다.
           provenance: false
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
-          # 캐시 scope 는 옛 이름(`amd64`)을 TS 서버가 그대로 쓴다 — 바꾸면 첫 빌드가 캐시 없이 돈다.
-          cache-from: type=gha,scope=${{ matrix.image.name == 'harkroom-server' && matrix.arch.slug || format('{0}-{1}', matrix.image.name, matrix.arch.slug) }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.image.name == 'harkroom-server' && matrix.arch.slug || format('{0}-{1}', matrix.image.name, matrix.arch.slug) }}
+          cache-from: type=gha,scope=${{ format('{0}-{1}', matrix.image.name, matrix.arch.slug) }}
+          cache-to: type=gha,mode=max,scope=${{ format('{0}-{1}', matrix.image.name, matrix.arch.slug) }}
 
       - name: 다이제스트를 파일 이름으로 남긴다
         run: |
@@ -156,7 +153,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: [harkroom-server, harkroom-server-rs]
+        image: [harkroom-server-rs]
     env:
       IMAGE: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
     steps:

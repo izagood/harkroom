@@ -1,5 +1,5 @@
 //! C3b-3a 판정 코어(`core::decide_core`)를 실제 Postgres 로 본다. `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다
-//! (CI `bus-e2e` 의 `packages/server/test/rustFrontDb.test.ts` 가 마이그레이션을 다 적용한 DB 를 넘긴다).
+//! (CI `db-tests` 의 `scripts/db-tests.sh` 가 마이그레이션을 다 적용한 DB 를 넘긴다).
 //!
 //! - `locks_*`: 동시성 — 판정이 근거 줄을 잠근 채 **이기면** 명단 빼기·게스트 강등·비활성·채널 삭제·에이전트 삭제가 기다리고,
 //!   그 쓰기가 **먼저면** 판정이 기다렸다가 거절(`ok: None`)로 끝나는지. 잠금을 끄면(`Checks.lock = false`) 기다리지 않음을 함께 본다

@@ -286,8 +286,15 @@ Deployment notes:
 - **Run exactly one replica.** Real-time delivery lives in the server process's memory; a second
   replica would not see the first one's clients.
 - **Attachments are stored on disk** at `ATTACHMENT_ROOT`. Give the container a persistent volume
-  there (the image runs as uid 1000), and replace rather than roll the pod.
-- **Migrations run at startup**; no separate job is needed.
+  there (the image runs as uid 65532), and replace rather than roll the pod.
+- **Upgrading from the TypeScript server image:** it ran as uid 1000, so attachments it stored are
+  owned by uid 1000 and the Rust server cannot write next to them (reads still work, so this shows up
+  late, as failed uploads). Hand the volume over once, with the server stopped:
+  `docker run --rm -v <project>_attachments:/d alpine chown -R 65532:65532 /d`. This changes the owner of
+  **everything in that volume** — if the volume is shared with anything else, change only the
+  attachments directory instead. On Kubernetes, `fsGroup` decides the owner of a mounted volume.
+- **Migrations run at startup** when `HARKROOM_RUST_MIGRATE=1` (the compose file sets it); or run
+  them as a separate job with `HARKROOM_RUST_MIGRATE=only`.
 - **Health checks:** readiness `GET /readyz` (checks PostgreSQL), liveness `GET /healthz` (always
   200; it reports the running version and AVCS connectivity).
 
@@ -309,7 +316,13 @@ The server reads these environment variables:
 | Variable | Description | Default | Required |
 |----------|-------------|---------|----------|
 | `DATABASE_URL` | PostgreSQL connection string | - | Yes |
-| `PORT` | Server HTTP port | `3400` | No |
+| `PORT` | Server HTTP port | `3500` (image), `3400` in `docker-compose.yml` | No |
+| `DATABASE_WRITE_URL` | PostgreSQL connection string for the server's narrow write role. Without it (or when that role lacks a route's grants) the routes that write stay closed and answer `404 not_found` / `unsupported_call` | - | No |
+| `HARKROOM_REQUIRE_GRANTS` | `1` makes the server refuse to start when the write role is missing grants for a route or loop, instead of starting with those routes closed | unset | No |
+| `HARKROOM_CORE` | `rust` serves the realtime core (`/ws`, `/ws-ticket`, the operator and attach sockets) from this server | unset | No |
+| `HARKROOM_RUST_MIGRATE` | `1` runs the database migrations at startup before serving; `only` runs them and exits (`0` on success, `1` on failure) for a migration Job | unset (off) | No |
+| `HARKROOM_MACHINE_ID_KEY` | 64 hex chars (32 bytes) used to derive the operator `machine_id`; unset skips writing `machine_id` | - | No |
+| `HARKROOM_FRONT_TS_ROUTES` | Ignored since the TypeScript server was removed; when set, the server logs one line saying so | - | No |
 | `AVCS_BASE_URL` | AVCS server URL for event projection | - | No |
 | `CORS_ORIGINS` | Allowed CORS origins (comma-separated) | All origins | No |
 | `LOG_LEVEL` | Server log level (`debug`, `info`, `warn`, `error`) | `info` | No |
@@ -335,7 +348,6 @@ The server reads these environment variables:
 | `APNS_TEAM_ID` | Apple Developer Team ID that owns the APNs key | - | No |
 | `APNS_KEY_P8` | Contents of the APNs auth key file (`AuthKey_<KeyID>.p8`, PEM). Mount it from a Kubernetes Secret; never commit it | - | No |
 | `APNS_TOPIC` | Bundle ID of the mobile app that receives the pushes | - | No |
-| `HARKROOM_NEW_PASSWORD` | New password read by `packages/server/scripts/reset-password.ts`; only set for that one command | - | No |
 | `HARKROOM_COMMIT` | Commit sha stamped at image build time; served by `GET /healthz` so operators can tell which build is running. Pass it as a Docker build arg (`HARKROOM_COMMIT=$(git rev-parse --short HEAD) docker compose build server`). Reported as `null` when unset | - | No |
 | `HARKROOM_MANDATE_ENFORCE` | `on` makes the server decide agent merges by the turn's mandate lines (a matching merge line, including standing lines from the owner's merge grants) instead of the cause chain; no matching line refuses with `no_mandate_line` and a permission card. One-time merge approvals work as before. Any other value keeps today's decision (the mandate verdict is only logged) | `off` | No |
 | `HARKROOM_DELEGATION_V2` | Delegation redesign: `1` keeps a delegation open after the first `message.report` (`reported`) and passes the delegate's later posts to the agent that handed it over as `delegation_update` (runners that do not declare that reason get `delegation_followup` from 0.4.426 on, nothing before). Also enables PR watches. Turn it on only after runners know `delegation_update` | `off` | No |
@@ -386,7 +398,7 @@ set these by hand:
 | `AGENT_STATE_DIR` | Directory for sessions.json, MCP config, AVCS workspace | `~/.harkroom-agent` | No |
 | `CODEX_HOME` | Source Codex home whose `auth.json` is linked into the runner-isolated Codex home; child Codex processes always use the isolated home under `AGENT_STATE_DIR` | `~/.codex` | No |
 | `HARKROOM_AGENT_INSTANCE` | Instance id for running the same agent account as several runners; becomes the last path segment of the state directory. Must match `[a-z0-9-]{1,32}` — an invalid value fails startup. Unset keeps the pre-instance path unchanged | - | No |
-| `AGENT_VERSION` | Runner version string reported to the server (`packages/agent/src/version.ts`). Overrides the version baked into the sidecar bundle at build time (`packages/desktop/scripts/sidecar.mjs`); only needed when running the runner from source | baked bundle version, else `unknown` | No |
+| `AGENT_VERSION` | Runner version string reported to the server. The operator sets it to its own bundle version when it spawns the runner | - (reported as `unknown`) | No |
 | `HARKROOM_CLAUDE_ACCOUNTS_DIR` | Root of the claude account pool; one subdirectory per account, each used as that account's `CLAUDE_CONFIG_DIR` | `~/.harkroom-agent/claude-accounts` | No |
 | `HARKROOM_CODEX_ACCOUNTS_DIR` | Root of the Codex accounts; one subdirectory per account, each used as that account's `CODEX_HOME`. `active.json` names the account runners use | `~/.harkroom-agent/codex-accounts` | No |
 | `HARKROOM_USAGE_PROBE_DIR` | Empty working directory where the daemon runs `claude -p /usage` and `codex app-server` to read each account's limits | `~/.harkroom-agent/usage-probe` | No |
@@ -440,14 +452,14 @@ Two consequences worth knowing:
 
 - **pnpm does not see `apps/`.** `pnpm -r test` and `pnpm -r typecheck` skip it, which is
   intended — that directory belongs to pub. Run its checks from `apps/mobile` with `flutter`.
-- Because of that, a repo-wide check must name both roots. `packages/server/test/repoHygiene.test.ts`
+- Because of that, a repo-wide check must name both roots. `packages/shared/test/repoHygiene.test.ts`
   keeps that list in one place (`CODE_ROOTS`).
 
 ```sh
 pnpm install
 pnpm test                                    # all packages
 pnpm typecheck
-pnpm --filter @harkroom/server dev           # server
+cargo run --manifest-path crates/harkroom-server/Cargo.toml   # server (Rust)
 pnpm --filter @harkroom/desktop tauri dev    # desktop app in a native window
 pnpm --filter @harkroom/desktop tauri build  # distributable app
 ```

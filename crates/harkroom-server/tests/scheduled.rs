@@ -1,5 +1,5 @@
 //! 예약 글 sweep(`loops::scheduled`)이 TS `scheduledMessages.ts` 의 `sendOneDue` 와 같은 일을 하는지 실제 Postgres 로 본다.
-//! `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `packages/server/test/rustFrontDb.test.ts` 가 넘긴다).
+//! `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `scripts/db-tests.sh` 가 넘긴다).
 use harkroom_server::core::msg_post::PostState;
 use harkroom_server::loops::scheduled::{Sent, send_one_due, sweep};
 use sqlx::PgPool;

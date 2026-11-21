@@ -2,7 +2,8 @@
 //! 고정 답(404 `not_found`)을 낸다. 라우터 맨 끝 fallback 과, 핸들러가 「이 꼴은 Rust 가 맡지 않는다」고 판정한 갈래가 여기로 온다.
 //! `/mcp` 도구 부르기는 여기 오기 전에 [`crate::core::mcp::ts_down::unsupported`] 가 도구 오류(`unsupported_call`)로 답한다.
 //!
-//! `Upstream` 은 이름만 남은 빈 표지다 — 상태 구조체 여러 곳이 들고 있어, 지우는 것은 TS 코드 삭제 PR 에서 함께 한다.
+//! `Upstream` 은 이름만 남은 빈 표지다(아무 데도 잇지 않고 env 도 읽지 않는다) — 상태 구조체 80여 곳이 들고 있어 걷는 것은
+//! 기계적인 후속 정리로 미룬다. 옛 대조 시험용 표지 헤더(`x-harkroom-closed`)는 TS 백엔드와 함께 걷었다(11-21).
 use axum::body::Body;
 use axum::extract::{ConnectInfo, State};
 use axum::http::{Request, Response, StatusCode, header};
@@ -20,15 +21,12 @@ impl Upstream {
 
 /// 넘김을 닫은 자리의 고정 오류 코드(HTTP 404).
 pub const NOT_FOUND: &str = "not_found";
-/// 닫힌 자리가 낸 답이라는 표지(값 `1` 고정) — 대조 시험이 「예전에 TS 로 넘기던 장면」을 가른다. 경로·env 는 싣지 않는다.
-pub const CLOSED_HEADER: &str = "x-harkroom-closed";
 
 /// 답하지 않는 경로·꼴 — 404 `{"error":{"code":"not_found",…}}`. 웹소켓 업그레이드도 같다(101 을 내지 않는다).
 pub fn closed() -> Response<Body> {
     Response::builder()
         .status(StatusCode::NOT_FOUND)
         .header(header::CONTENT_TYPE, "application/json")
-        .header(CLOSED_HEADER, "1")
         .body(Body::from(format!(
             "{{\"error\":{{\"code\":\"{NOT_FOUND}\",\"message\":\"this route or request shape is not served\"}}}}"
         )))

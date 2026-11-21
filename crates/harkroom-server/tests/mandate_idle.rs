@@ -1,5 +1,5 @@
 //! 위임 idle 끝 sweep(`loops::mandate_idle`)이 TS `mandateEnd.ts` 의 `endIdleMandates` 와 같은 일을 하는지 실제 Postgres 로 본다.
-//! `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `packages/server/test/rustFrontDb.test.ts` 가 넘긴다).
+//! `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `scripts/db-tests.sh` 가 넘긴다).
 //! - `HARKROOM_TEST_WRITE_DATABASE_URL` 이 있으면 sweep 은 그 역할(`MANDATE_IDLE_PRIVILEGES` 만 가진 쓰기 역할)로 돈다.
 //! - `HARKROOM_MANDATE_IDLE_DUAL=<owner id>` 면 이중 실행 모드 — TS 가 깔아 둔 위임을 TS sweep 과 **동시에** 끝내고
 //!   끝낸 수만 찍는다(판정은 TS 쪽).

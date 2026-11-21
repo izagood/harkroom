@@ -6,7 +6,7 @@
  *
  * `#503` 이 같은 낡음을 **화면**에서 고치며 `runnerCommand.test.tsx` 에 회귀선을 걸었다.
  * 그때 범위 밖으로 보고된 것이 문서였고, 이 파일이 그쪽을 맡는다. 문서를 테스트로 고정하는
- * 것이 이 저장소에 없는 관례는 아니다 — `packages/server/test/repoHygiene.test.ts` 가 이미
+ * 것이 이 저장소에 없는 관례는 아니다 — `packages/shared/test/repoHygiene.test.ts` 가 이미
  * `README.md` 의 제목 언어와 환경변수 표를 소스에서 추출한 목록과 대조한다. 이 파일은 그
  * 선례를 따르되 대조 대상이 다르다: **화면 정본과 문서**를 맞춘다.
  *
@@ -16,8 +16,8 @@
  * **살아 있어야 할 사실**만 잡는다:
  *
  * - ① 맨 `pnpm --filter @harkroom/agent start` 가 **유일한 길**로 적히지 않는다.
- *   그 명령을 금지하지 않는다 — 저장소 안에서는 지금도 돈다(`packages/agent/package.json`
- *   의 `start`). 막는 것은 **사이드카 갈래 없이 그것만** 내미는 것이다. `#503` 의 ①과
+ *   그 명령을 금지하지 않는다 — 옛 문서가 과거를 말할 때 남을 수 있다(TS 러너 `packages/agent`
+ *   는 11-21 지웠다). 막는 것은 **사이드카 갈래 없이 그것만** 내미는 것이다. `#503` 의 ①과
  *   같은 계약이고, 재는 자리만 DOM 에서 문서로 바뀐다.
  * - ② 사라진 상태 이름(`외부에서 실행 중`)이 **지금의 안내로** 남아 있지 않다. 다만 문서는
  *   화면과 달리 *"예전에는 이렇게 적혀 있었고 그것이 왜 틀렸나"* 를 남기는 자리라
@@ -49,7 +49,7 @@ const ROOT = path.resolve(__dirname, '../../..');
 const read = (rel: string): string => readFileSync(path.join(ROOT, rel), 'utf8');
 
 /** 사람이 러너 실행을 안내받는 문서 — 여기 낡은 명령이 남으면 그대로 붙여넣는다. */
-const GUIDE_DOCS = ['docs/operations.md', 'packages/agent/README.md', 'README.md'] as const;
+const GUIDE_DOCS = ['docs/operations.md', 'README.md'] as const;
 
 /**
  * 사라진 상태 이름이 **지금의 안내로** 쓰였는지 가른다.
@@ -114,7 +114,7 @@ describe('낡은 러너 구조 문서 회귀선 (#431 사이드카·daemon · #4
     // ①②만 있으면 "그 절을 통째로 지웠다"로도 초록이다. 스펙 2026-09-20 §5 뒤로 러너를 띄우는
     // 것은 오퍼레이터뿐이고 러너는 서버 URL 도 PAT 도 받지 않는다 — 세 문서가 그 사실을 적고,
     // `HARKROOM_PAT=…` 명령은 과거를 말하는 문단에만 남아야 한다.
-    for (const rel of ['docs/operations.md', 'packages/agent/README.md', 'README.md']) {
+    for (const rel of ['docs/operations.md', 'README.md']) {
       const text = read(rel);
       expect(text, `${rel}: 오퍼레이터가 러너를 띄운다는 말이 없다`).toContain('harkroom-operator');
       expect(text, `${rel}: 사이드카 경로가 없다`).toContain(RUNNER_SIDECAR_PATH);

@@ -535,8 +535,8 @@ daemon 을 앞에 세운 것은 `#430` 의 실측 때문이다: 앱이 러너의
 들어 있다(Node 러너 `harkroom-runner` 는 번들에서 빠졌다).
 
 배정되지 않은 에이전트는 **돌지 않는다** — 그것이 이제 정상 상태이고, 화면(에이전트 상세의
-"어디서 돌리나")이 그 사실을 말한다. 저장소 안의 `pnpm --filter @harkroom/agent start` 는 개발용으로
-남아 있지만 오퍼레이터가 심는 env 넷 없이는 뜨지 않는다.
+"어디서 돌리나")이 그 사실을 말한다. 예전의 개발용 `pnpm --filter @harkroom/agent start`(Node 러너 소스)는
+2026-11-21 TS 러너와 함께 저장소에서 빠졌다 — 러너는 Rust(`crates/harkroom-runner`) 하나다.
 
 **손으로 띄운 러너가 앱의 러너 목록에 나타나지 않는다**는 앞 판본의 문장은 그래서 대상이 없어졌다 —
 러너는 전부 오퍼레이터의 장부에 있고, 앱은 이 머신의 그 장부를 읽을 뿐이다. 다른 머신의
@@ -772,12 +772,9 @@ owner 혼자 잠긴 경우는 이 길로 풀 수 없다 — 아래 운영 도구
 
 **사전 조건**: `DATABASE_URL` 환경변수가 설정되어 있어야 한다.
 
-```bash
-# 비밀번호는 argv 로 전달하지 않는다 — `ps` 로 다른 로컬 사용자에게 보인다.
-# 셸 히스토리에도 남으니 필요하면 앞에 공백을 두거나 히스토리를 끄고 실행한다.
-HARKROOM_NEW_PASSWORD=<새 비밀번호> DATABASE_URL=<...> \
-  pnpm --filter @harkroom/server exec tsx scripts/reset-password.ts <handle>
-```
+> **2026-11-21: 이 도구는 TS 서버(`packages/server`)와 함께 저장소에서 빠졌다.** Rust 서버에 같은 운영 명령은
+> 아직 없다. 그때까지 필요하면 마지막 TS 이미지(0.5.1) 안의 같은 스크립트를 같은 DB 에 대고 한 번 돌린다.
+> 아래는 그 도구가 하던 일이다 — Rust 로 옮길 때 같은 계약을 지킨다.
 
 이 도구는 다음을 수행한다:
 
@@ -809,7 +806,7 @@ HARKROOM_NEW_PASSWORD=<새 비밀번호> DATABASE_URL=<...> \
 | `not null` 걸기 | 코드가 항상 값을 넣게 하고, 빈 행을 채운다 | `set not null` |
 | `not null` 컬럼 추가 | `default` 를 준다(옛 코드의 insert 는 그 컬럼을 모른다) | — |
 
-**검사**: `packages/server/test/migrationExpandContract.test.ts` 가 079 이후 파일에서
+**검사**: `packages/shared/test/migrationExpandContract.test.ts` 가 079 이후 파일에서
 `drop table`·`drop column`·`rename`·`alter column … type`·`set not null`·default 없는
 `add column … not null` 을 잡는다. contract 단계라면(앞 릴리스에서 코드가 이미 그것을 안 쓰면)
 파일에 `-- contract: <사유 — 어느 릴리스부터 안 쓰는지>` 를 적으면 통과한다.

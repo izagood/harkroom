@@ -37,7 +37,7 @@ FROM gcr.io/distroless/cc-debian13:nonroot AS runtime
 COPY --from=build /harkroom-server-rs /usr/local/bin/harkroom-server-rs
 COPY --from=build --chown=65532:65532 /attachments /var/lib/harkroom/attachments
 
-# env: `DATABASE_URL`(없으면 기동하지 않는다) · `PORT`(기본 3500). `UPSTREAM_URL` 은 더 읽지 않는다(TS 넘김을 닫음).
+# env: `DATABASE_URL`(없으면 기동하지 않는다) · `PORT`(기본 3500). `UPSTREAM_URL` 은 읽지 않는다(TS 서버를 지웠다, 11-21).
 ENV PORT=3500
 EXPOSE 3500
 USER 65532:65532
