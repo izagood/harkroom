@@ -190,7 +190,7 @@ async fn retention_sweep_like_ts() {
     };
     let (gate1, work1) = (one().await.unwrap(), one().await.unwrap());
     let mut st = Retention::new(true);
-    let r = run_gated(&gate1, "retention", Side::Ts, || async {
+    let r = run_gated(&gate1, "retention", Side::Rust, || async {
         st.sweep(&work1, |_| {}).await.map(|_| ())
     })
     .await;

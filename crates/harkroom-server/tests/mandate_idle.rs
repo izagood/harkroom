@@ -303,7 +303,7 @@ async fn mandate_idle_sweep_like_ts() {
             .connect(&write_url)
     };
     let (gate1, work1) = (one().await.unwrap(), one().await.unwrap());
-    let r = run_gated(&gate1, "mandate.idle", Side::Ts, || async {
+    let r = run_gated(&gate1, "mandate.idle", Side::Rust, || async {
         sweep(&work1).await.map(|_| ())
     })
     .await;

@@ -104,14 +104,14 @@ async fn outbox_prune_like_ts() {
             .connect(&write_url)
     };
     let (gate1, work1) = (one().await.unwrap(), one().await.unwrap());
-    // 줄이 없으면 주인은 ts — Rust 쪽 tick 은 건너뛴다.
-    let r = run_gated(&gate1, "outbox.prune", Side::Rust, || async {
+    // 줄이 없으면 주인은 rust — ts 쪽 tick 은 건너뛴다.
+    let r = run_gated(&gate1, "outbox.prune", Side::Ts, || async {
         prune(&work1).await.map(|_| ())
     })
     .await;
     assert!(matches!(r, GateResult::NotOwner), "{r:?}");
     assert_eq!(old_rows(&admin, "op-rs").await, 5);
-    let r = run_gated(&gate1, "outbox.prune", Side::Ts, || async {
+    let r = run_gated(&gate1, "outbox.prune", Side::Rust, || async {
         prune(&work1).await.map(|_| ())
     })
     .await;

@@ -132,7 +132,7 @@ async fn bg_close_like_ts() {
             .connect(&write_url)
     };
     let (gate1, work1) = (one().await.unwrap(), one().await.unwrap());
-    let r = run_gated(&gate1, "bg", Side::Ts, || async {
+    let r = run_gated(&gate1, "bg", Side::Rust, || async {
         close(&work1).await.map(|_| ())
     })
     .await;

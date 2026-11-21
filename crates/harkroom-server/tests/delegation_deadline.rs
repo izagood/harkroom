@@ -381,7 +381,7 @@ async fn delegation_deadline_like_ts() {
             .connect(&write_url)
     };
     let (gate1, work1) = (one().await.unwrap(), one().await.unwrap());
-    let r = run_gated(&gate1, "delegation.deadline", Side::Ts, || {
+    let r = run_gated(&gate1, "delegation.deadline", Side::Rust, || {
         sweep(&work1, false)
     })
     .await;
