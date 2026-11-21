@@ -1368,7 +1368,11 @@ const GROUP_A_ENV: Record<string, string> = {
   HARKROOM_PRINCIPAL_INVOKE: 'on', ATTACHMENT_MAX_BYTES: '26214400', HARKROOM_BACKGROUND_ENABLED: '0',
 };
 
+/** 앞단 주소 → 그 앞단의 `UPSTREAM_URL`. 대조 시험의 닫힘 shim 이 「예전 넘김」을 흉내 낼 때 본 TS 가 아니라 그 앞단이 달고 뜬 위로 보낸다. */
+const FRONT_UPSTREAM = new Map<string, string>();
+
 async function startFront(bin: string, env: Record<string, string>): Promise<{ child: ChildProcess; log: () => string }> {
+  if (env.PORT && env.UPSTREAM_URL) FRONT_UPSTREAM.set(`http://127.0.0.1:${env.PORT}`, env.UPSTREAM_URL);
   const child = spawn(bin, [], { env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
   let log = '';
   child.stdout!.on('data', (b: Buffer) => { log += String(b); });
@@ -1400,15 +1404,73 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
     const secretKeysDir = mkdtempSync(joinPath(tmpdir(), 'contrast-keys-'));
     const secretKey = randomBytes(32);
     writeCases(joinPath(secretKeysDir, 'ck1'), secretKey.toString('hex'));
+    // TS 와 같은 키링을 앞단에도 건다. 키링이 없는 앞단은 비밀을 받은 에이전트의 MCP 호출을 검사하지 못해 닫는다 — 예전에는 그 판정을
+    // TS `/mcp/admit` 에 물어 TS 의 키링을 빌렸다(B 에서 그 물음을 없앴다). 키링 없는 장면을 일부러 보는 곳(leakGuard·보관소 키 env 없음)은 쓰지 않는다.
+    const KEYRING_ENV: Record<string, string> = { HARKROOM_SECRET_KEYS_DIR: secretKeysDir, HARKROOM_SECRET_KEY_ID: 'ck1' };
     const { createSecretKeyring } = await import('../src/services/secretKeyring.js');
     const app = await buildServer({
       pool: db.pool, trustProxy: TRUST, corsOrigins: [CORS], storage: { root: attRoot, maxBytes: 25 * 1024 * 1024 },
       secretKeyring: createSecretKeyring(new Map([['ck1', secretKey]]), 'ck1'),
     });
     let front: ChildProcess | undefined;
+    const realFetch = globalThis.fetch;
     try {
       await app.listen({ port: 0, host: '127.0.0.1' });
       const tsUrl = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
+      // B(11-21) — 앞단은 TS 로 넘기던 꼴을 이제 고정 오류로 닫는다(표지 `x-harkroom-closed: 1`). 이 시험의 「→ TS」 장면은 TS 를 기준으로
+      // 이어 가야 하므로, 닫힌 답이 **정해진 꼴**인지 먼저 단언한다 — MCP 는 200 SSE(도구 오류 `unsupported_call` 또는 JSON-RPC -32600)나 202,
+      // 그 밖은 404 `not_found` 고정 글. 그 뒤 예전 넘김처럼 같은 요청을 TS 에 보내 그 답을 돌려준다. TS 답에는 `x-harkroom-core` 가 없으므로
+      // 「누가 답했나」 단언은 그대로 null(= 이제는 닫힘)로 읽힌다 — Rust 가 답해야 할 장면이 닫히면 `core: mcp` 단언에서 여전히 실패한다.
+      // 거부 길(401·403·leakGuard·`not_admissible`)은 Rust 가 답하므로 이 길을 타지 않는다. TS 를 지우는 C·D 에서 이 시험과 함께 걷어 낸다.
+      const closedSeen = new Map<string, number>();
+      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const again = input instanceof Request ? input.clone() : undefined;
+        const res = await realFetch(input, init);
+        if (res.headers.get('x-harkroom-closed') !== '1') return res;
+        const url = new URL(input instanceof Request ? input.url : String(input));
+        const method = (input instanceof Request ? input.method : init?.method) ?? 'GET';
+        const text = await res.text();
+        let tool = '';
+        if (url.pathname === '/mcp' && res.status !== 404) {
+          expect([200, 202], `닫힌 /mcp 답 상태 ${text}`).toContain(res.status);
+          if (res.status === 200) {
+            const frames = text.split('\n').filter((l) => l.startsWith('data: ')).map((l) => JSON.parse(l.slice(6)) as {
+              result?: { content?: { text?: string }[] }; error?: { code?: number };
+            });
+            expect(frames.length, `닫힌 /mcp 답 ${text}`).toBeGreaterThan(0);
+            for (const fr of frames) {
+              if (fr.error) expect(fr.error.code, text).toBe(-32600);
+              else expect((JSON.parse(fr.result!.content![0]!.text!) as { error: { code: string } }).error.code, text).toBe('unsupported_call');
+            }
+          }
+          try { tool = String((JSON.parse(String(init?.body)) as { params?: { name?: string } }).params?.name ?? ''); } catch { tool = ''; }
+        } else {
+          expect(res.status, `닫힌 답 ${method} ${url.pathname}`).toBe(404);
+          expect(text, `닫힌 답 ${method} ${url.pathname}`).toBe('{"error":{"code":"not_found","message":"this route or request shape is not served"}}');
+        }
+        const key = `${method} ${url.pathname}${tool ? ` ${tool}` : ''}`;
+        closedSeen.set(key, (closedSeen.get(key) ?? 0) + 1);
+        // 예전 넘김은 그 앞단의 `UPSTREAM_URL` 로 갔다(장면 전용 TS·닿지 않는 위). 닿지 않으면 예전 앞단의 502 고정 답을 그대로 낸다.
+        const ts = `${FRONT_UPSTREAM.get(url.origin) ?? tsUrl}${url.pathname}${url.search}`;
+        try {
+          const up = await (again ? realFetch(new Request(ts, again)) : realFetch(ts, init));
+          // 예전 넘김의 위 답은 앞단 CORS 층(`cors::add_common`)을 거쳐 나갔다 — `Vary` 에 `Origin` 을 덧붙이고 허용 출처·노출 머리를
+          // 앞단 값으로 덮었다. 닫힌 답은 그 층을 이미 거쳤으므로 그 머리를 위 답에 얹는다(TS `compressBody` 는 `Vary` 를 덮어 Origin 이 빠진다).
+          const h = new Headers(up.headers);
+          const vary = (s: string | null) => (s ?? '').split(',').map((v) => v.trim()).filter(Boolean);
+          const merged = vary(h.get('vary'));
+          for (const v of vary(res.headers.get('vary'))) if (!merged.some((m) => m.toLowerCase() === v.toLowerCase())) merged.push(v);
+          if (merged.length) h.set('vary', merged.join(', '));
+          for (const n of ['access-control-allow-origin', 'access-control-expose-headers']) {
+            const v = res.headers.get(n);
+            if (v !== null) h.set(n, v);
+          }
+          const nullBody = [101, 204, 205, 304].includes(up.status);
+          return new Response(nullBody ? null : up.body, { status: up.status, statusText: up.statusText, headers: h });
+        } catch {
+          return new Response('{"error":{"code":"front","message":"upstream unavailable"}}', { status: 502, headers: { 'content-type': 'application/json' } });
+        }
+      }) as typeof fetch;
 
       // 픽스처 — 옮긴 라우트(GET /accounts·/dms·/mcp-servers·/audit)가 빈 목록이 아닌 값을 내도록.
       const admin = await bootstrapAdmin(app);
@@ -2738,6 +2800,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       const DT = await mkDelegations('TS');
       const DR = await mkDelegations('Rust');
       const prevV2 = process.env.HARKROOM_DELEGATION_V2;
+      let frontV2: ChildProcess | undefined;
       try {
         // 스위치 꺼짐 — TS 는 이 도구를 싣지 않는다 → Rust 도 답하지 않고 TS 의 「도구 없음」이 그대로 나간다.
         delete process.env.HARKROOM_DELEGATION_V2;
@@ -2763,6 +2826,17 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           expect(lb.core, 'tools/list 스위치 값 없음 — Rust 가 답한다').toBe('mcp');
         }
         process.env.HARKROOM_DELEGATION_V2 = '1';
+        // 켜진 쪽은 스위치를 env 로 받은 앞단(rsV2)이 답한다. 예전에는 스위치가 없는 앞단(rsUrl4)이 TS `/mcp/admit` 에 「지금 싣나」를
+        // 물어 답했는데, B(TS 넘김 닫기)에서 그 물음을 없앴다 — Rust 는 제 env 만 정본으로 본다(모르면 닫는다).
+        const portV2 = await freePort();
+        const fV2 = await startFront(bin, {
+          UPSTREAM_URL: tsUrl, DATABASE_URL: db.uri, PORT: String(portV2), HARKROOM_FRONT_TS_ROUTES: '', DATABASE_WRITE_URL: writeUrl.toString(),
+          TRUST_PROXY: TRUST.join(','), CORS_ORIGINS: CORS, HARKROOM_CORE: 'rust',
+          ATTACHMENT_ROOT: attRoot, HARKROOM_SECRET_KEYS_DIR: secretKeysDir, HARKROOM_SECRET_KEY_ID: 'ck1',
+          ...GROUP_A_ENV, HARKROOM_DELEGATION_V2: '1',
+        });
+        frontV2 = fV2.child;
+        const rsV2 = `http://127.0.0.1:${portV2}`;
         const steps = (d: typeof DT) => [
           ['모르는 담당 → not_found', { threadRootId: d.root, delegate: 'no-such-handle' }],
           ['담당 하나만(@ 붙임)', { threadRootId: d.root, delegate: '@bot2' }],
@@ -2778,18 +2852,17 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           const [name, ta] = tsSteps[i]!;
           const [, ra] = rsSteps[i]!;
           const a = await mcpCall(tsUrl, agent.pat, 'delegation.close', ta);
-          const b = await mcpCall(rsUrl4, agent.pat, 'delegation.close', ra);
+          const b = await mcpCall(rsV2, agent.pat, 'delegation.close', ra);
           expect({ status: b.status, type: b.type, text: b.text }, `delegation.close ${name}`).toEqual({ status: a.status, type: a.type, text: a.text });
-          // 이 앞단(rsUrl4)은 env 에 HARKROOM_DELEGATION_V2 가 없다(스위치 모름) — zod 공통 검증은 delegation.close 를 스위치가 「싣는다」일 때만
-          // 보므로(route.rs `zod_reply`) zodRejects 와 상관없이 「→ TS」 꼴은 TS 가 답한다.
-          expect(b.core, `delegation.close ${name} — 누가 답했나`).toBe(name.endsWith('→ TS') ? null : 'mcp');
+          // 이 앞단(rsV2)은 스위치가 「싣는다」 — zod 공통 검증(route.rs `zod_reply`)도 delegation.close 를 보므로 「→ TS」 꼴까지 Rust 가 답한다.
+          expect(b.core, `delegation.close ${name} — 누가 답했나`).toBe('mcp');
         }
         // W7 — 거부·빈 길을 Rust 쪽에서 따로 본다(bot2 는 이 위임 묶음의 리드가 아니다 — 픽스처에서 확인).
         expect((await db.pool.query(`select 1 from team_delegation where id = $1 and lead_account_id = $2`, [DR.theirs, agent.accountId])).rowCount).toBe(0);
-        const nf = await mcpCall(rsUrl4, agent.pat, 'delegation.close', { threadRootId: DR.root, delegate: 'no-such-handle' });
+        const nf = await mcpCall(rsV2, agent.pat, 'delegation.close', { threadRootId: DR.root, delegate: 'no-such-handle' });
         expect(nf.core).toBe('mcp');
         expect(nf.text).toContain('\\"code\\":\\"not_found\\"');
-        const theirs = await mcpCall(rsUrl4, agent.pat, 'delegation.close', { threadRootId: DR.root, delegationId: DR.theirs });
+        const theirs = await mcpCall(rsV2, agent.pat, 'delegation.close', { threadRootId: DR.root, delegationId: DR.theirs });
         expect(theirs.core).toBe('mcp');
         expect(theirs.text).toContain('closed\\":0');
         // 행 — TS 와 Rust 가 같은 결과(내 것 둘은 delegator_close·알림 처리, 남의 것은 그대로).
@@ -2800,7 +2873,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         const DW = await mkDelegations('W1');
         await db.pool.query(`revoke update (outcome) on team_delegation_item from ${rw}`);
         try {
-          const w1 = await mcpCall(rsUrl4, agent.pat, 'delegation.close', { threadRootId: DW.root });
+          const w1 = await mcpCall(rsV2, agent.pat, 'delegation.close', { threadRootId: DW.root });
           expect(w1.core, 'W1 — Rust 가 답한다').toBe('mcp');
           expect(w1.text).toContain('\\"code\\":\\"internal\\"');
           expect((await itemRows(DW)).every((r) => r.outcome === null && !r.closed), 'TS 가 대신 닫지 않았다').toBe(true);
@@ -2808,6 +2881,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           await db.pool.query(`grant update (outcome) on team_delegation_item to ${rw}`);
         }
       } finally {
+        frontV2?.kill();
         if (prevV2 === undefined) delete process.env.HARKROOM_DELEGATION_V2; else process.env.HARKROOM_DELEGATION_V2 = prevV2;
       }
 
@@ -3448,7 +3522,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         try {
           const fN = await startFront(bin, {
             UPSTREAM_URL: tsUrl, DATABASE_URL: db.uri, PORT: String(portN), HARKROOM_FRONT_TS_ROUTES: '', DATABASE_WRITE_URL: writeUrl.toString(),
-            TRUST_PROXY: TRUST.join(','), CORS_ORIGINS: CORS, HARKROOM_CORE: 'rust',
+            TRUST_PROXY: TRUST.join(','), CORS_ORIGINS: CORS, HARKROOM_CORE: 'rust', ...KEYRING_ENV,
           });
           frontN = fN.child;
           const untilN = Date.now() + 10_000;
@@ -10312,7 +10386,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                 fd = await startFront(bin, {
                   UPSTREAM_URL: tsUrl, DATABASE_URL: db.uri, PORT: String(portD), HARKROOM_FRONT_TS_ROUTES: '', DATABASE_WRITE_URL: writeUrl.toString(),
                   TRUST_PROXY: TRUST.join(','), CORS_ORIGINS: CORS, HARKROOM_CORE: 'rust', HARKROOM_DELEGATION_V2: mode,
-                  HARKROOM_DELEGATION_IMPLICIT: implicitMode, ...GROUP_A_ENV,
+                  HARKROOM_DELEGATION_IMPLICIT: implicitMode, ...GROUP_A_ENV, ...KEYRING_ENV,
                 });
               } catch (err) {
                 if (attempt >= 2 || !String(err).includes('AddrInUse')) throw err;
@@ -11150,6 +11224,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                 fd = await startFront(bin, {
                   UPSTREAM_URL: tsUrl, DATABASE_URL: db.uri, PORT: String(port), HARKROOM_FRONT_TS_ROUTES: '', DATABASE_WRITE_URL: writeUrl.toString(),
                   TRUST_PROXY: TRUST.join(','), CORS_ORIGINS: CORS, HARKROOM_CORE: 'rust', HARKROOM_DELEGATION_V2: V2, HARKROOM_DELEGATION_IMPLICIT: 'off', ...GROUP_A_ENV,
+                  ...KEYRING_ENV,
                 });
               } catch (err) {
                 if (attempt >= 2 || !String(err).includes('AddrInUse')) throw err;
@@ -12089,7 +12164,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                 const fd = await startFront(bin, {
                   UPSTREAM_URL: tsUrl, DATABASE_URL: db.uri, PORT: String(port), HARKROOM_FRONT_TS_ROUTES: '', DATABASE_WRITE_URL: writeUrl.toString(),
                   TRUST_PROXY: TRUST.join(','), CORS_ORIGINS: CORS, HARKROOM_CORE: 'rust', HARKROOM_DELEGATION_V2: '1', HARKROOM_DELEGATION_IMPLICIT: 'off',
-                  ...GROUP_A_ENV, ...over,
+                  ...GROUP_A_ENV, ...KEYRING_ENV, ...over,
                 });
                 kids.push(fd.child);
                 const until = Date.now() + 10_000;
@@ -14316,7 +14391,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           expect(b.headers.get(h), `preflight ${h}`).toBe(a.headers.get(h));
         }
       }
+      console.info(`닫힌 자리(예전 TS 넘김) ${[...closedSeen.values()].reduce((a, b) => a + b, 0)}번:\n${[...closedSeen].map(([k, n]) => `  ${k} ×${n}`).join('\n')}`);
     } finally {
+      globalThis.fetch = realFetch;
       front?.kill('SIGTERM');
       await app.close();
       await db.stop();

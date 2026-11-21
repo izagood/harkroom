@@ -335,28 +335,17 @@ pub async fn handle(
     if let Some(r) = serve_pre(&up, ci, &parts.headers, &bytes, served, &tools, &pre).await {
         return r;
     }
-    // Rust 가 답하지 않은 도구 호출 — 도구 이름과 인자 **키 이름**만 한 줄 남긴다(값·본문은 싣지 않는다). TS 로 가는 `/mcp` 를
-    // 운영 로그로 셀 수 있게, 그리고 어떤 인자 꼴이 Rust 를 빗나갔는지 바로 보이게.
+    // Rust 가 답하지 않은 도구 호출 — 도구 이름과 인자 **키 이름**만 한 줄 남긴다(값·본문은 싣지 않는다). 예전에는 TS 로 넘겼다.
+    // 이제 고정 코드로 닫는다([`super::ts_down::unsupported`]) — 운영 로그로 셀 수 있게, 어떤 인자 꼴이 빗나갔는지 바로 보이게.
     if let Some(name) = ts_tool_name(&bytes) {
         let keys = ts_arg_keys(&bytes);
         eprintln!(
-            "front: mcp tool to TS tool={name} agent={} keys={keys}",
+            "front: mcp tool unsupported tool={name} agent={} keys={keys}",
             me.id
         );
     }
-    // TS 가 꺼졌거나 닿지 않으면(앞단 프록시의 502) 맨 502 대신 JSON-RPC 꼴로 답한다([`super::ts_down`]).
-    let res = proxy::forward(
-        State(up),
-        ci,
-        Request::from_parts(parts, Body::from(bytes.clone())),
-    )
-    .await;
-    if res.status() == StatusCode::BAD_GATEWAY
-        && let Some(r) = super::ts_down::reply(&bytes)
-    {
-        return r;
-    }
-    res
+    let _ = (up, ci, parts);
+    super::ts_down::unsupported(&bytes).unwrap_or_else(proxy::closed)
 }
 
 /// P2b — 도구 부르기가 아닌 본문(`initialize`·`ping`·`tools/list`·알림·그것들만 든 배치)을 Rust 가 답한다([`super::lifecycle`]).

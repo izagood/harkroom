@@ -20,7 +20,8 @@ fn cases<'a>(
     let mut v = vec![
         // 익명 — 옮긴 라우트는 TS 와 같은 401 을 내야 한다.
         Case::get("anon /auth/me", "/auth/me"),
-        Case::get("unknown path", "/no-such-route-for-contrast"),
+        // 상태·코드(404 not_found)는 같아야 한다. 글은 Rust 가 경로를 싣지 않는 고정 문구라 다르다.
+        Case::get("unknown path", "/no-such-route-for-contrast").ignore("/error/message"),
         // P1 읽기① 디렉터리.
         Case::get("anon /accounts", "/accounts"),
         Case::get("anon /dms", "/dms"),
