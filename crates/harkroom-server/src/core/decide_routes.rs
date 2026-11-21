@@ -289,6 +289,108 @@ async fn card_target(st: &AskState, card: &str, actor: &str) -> sqlx::Result<Car
     }))
 }
 
+/// 2⁰. ask-answer 의 권한 카드(와 그 거울)에 **선택지**로 온 답 가운데 TS 가 쓰기 없이 거절하는 꼴 — Rust 가 같은 답을 한다
+/// (TS `messageRoutes.ts` ask-answer + `decisions.ts` `decide` 의 차례 그대로). 모두 읽기뿐이라 풀 권한과 무관하다.
+/// - 권한 카드(`meta ? 'permissionRequest'`)인데 사람 세션이 아님 → 403(`NOT_SESSION`).
+/// - 권한 카드인데 그 뒤에 요청 줄이 없음 → 404.
+/// - 권한 카드의 거울인데 사람 세션이 아님 → 403(진짜 거울 판정보다 앞).
+/// - 모르는 선택지: 정할 수 없는 사람이면 403, 아니면 400 `unknown_option`(원본 채널 보기 판정보다 앞).
+///
+/// 아는 선택지·표지 없는 요청 줄 카드·진짜가 아닌 거울(TS 는 물음 길)·표지와 거울 표지가 함께 있는 꼴(TS 는 500)은 `Hand` —
+/// 호출자의 다음 갈래가 맡는다.
+pub async fn answer_card_refuse(
+    st: &AskState,
+    me: &Account,
+    auth: &Auth,
+    card: &str,
+    option: &str,
+) -> Taken {
+    match card_refusal_of(st, me, auth, card, option).await {
+        Ok(Some(r)) => Taken::Done(r),
+        Ok(None) => Taken::Hand,
+        Err(e) => Taken::Done(internal(e)),
+    }
+}
+
+async fn card_refusal_of(
+    st: &AskState,
+    me: &Account,
+    auth: &Auth,
+    card: &str,
+    option: &str,
+) -> sqlx::Result<Option<Response>> {
+    let mut conn = st.read.acquire().await?;
+    let marked: Option<bool> = sqlx::query_scalar(
+        "select meta ? 'permissionRequest' from message where id = $1::uuid and deleted_at is null",
+    )
+    .bind(card)
+    .fetch_optional(&mut *conn)
+    .await?;
+    let Some(marked) = marked else {
+        return Ok(None);
+    };
+    let session = human_session(me, auth);
+    let not_session = || Some(refusal(403, "forbidden", NOT_SESSION));
+    if marked && !session {
+        return Ok(not_session());
+    }
+    let r = match resolve_decision(&mut conn, card).await {
+        Ok(r) => r,
+        Err(sqlx::Error::Protocol(_)) => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    let Some(DecisionRef::Permission {
+        request_id,
+        agent_id,
+        card_message_id: Some(root),
+        mirror_message_id,
+        ..
+    }) = r
+    else {
+        return Ok(marked.then(|| refusal(404, "not_found", NO_REQUEST_BEHIND)));
+    };
+    match (marked, &mirror_message_id) {
+        // 표지가 있는 글이 거울이기도 하다(TS 500)·표지 없는 요청 줄 카드(TS 물음 길) — 맡지 않는다.
+        (true, Some(_)) | (false, None) => return Ok(None),
+        (false, Some(_)) if !session => return Ok(not_session()),
+        _ => {}
+    }
+    if super::decide_core::option_decision(option).is_some() {
+        return Ok(None);
+    }
+    if let Some(m) = &mirror_message_id
+        && !is_genuine_permission_mirror(&mut conn, m, &root, &agent_id).await?
+    {
+        return Ok(None);
+    }
+    let channel: Option<Option<String>> = sqlx::query_scalar(
+        "select channel_id::text from permission_request where id = $1::uuid and agent_id = $2::uuid",
+    )
+    .bind(&request_id)
+    .bind(&agent_id)
+    .fetch_optional(&mut *conn)
+    .await?;
+    let v = super::decide_core::may_decide_for_unlocked(
+        &mut conn,
+        &agent_id,
+        &me.id,
+        channel.flatten().as_deref(),
+    )
+    .await?;
+    Ok(Some(if v.ok.is_none() {
+        mirror_forbidden()
+    } else {
+        refusal(
+            400,
+            "unknown_option",
+            super::decide_core::UNKNOWN_OPTION_MESSAGE,
+        )
+    }))
+}
+
+/// TS ask-answer 의 404 — 권한 표지는 있는데 요청 줄이 없는 카드.
+pub const NO_REQUEST_BEHIND: &str = "no permission request behind this card";
+
 /// 2. ask-answer 의 권한 카드 거절. `gate`(채널 보기·카드가 이 채널 글) 뒤에 부른다.
 pub async fn answer_card_deny(
     st: &AskState,

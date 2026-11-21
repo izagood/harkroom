@@ -137,6 +137,17 @@ pub(super) fn read_ask_meta(meta: &Value) -> Option<Ask> {
     })
 }
 
+/// JS 의 참인 값(TS `if (meta.permissionRequest)`) — null·false·0·빈 글자만 거짓이다.
+fn js_truthy(v: &Value) -> bool {
+    match v {
+        Value::Null => false,
+        Value::Bool(b) => *b,
+        Value::Number(n) => n.as_f64().is_some_and(|f| f != 0.0),
+        Value::String(s) => !s.is_empty(),
+        _ => true,
+    }
+}
+
 /// TS shared `askTakesText`.
 fn ask_takes_text(meta: &Value) -> bool {
     meta.is_object() && TS_ONLY_MARKERS.iter().all(|k| meta.get(*k).is_none())
@@ -420,7 +431,7 @@ async fn record_ask_answer_with(
     {
         return Ok(Outcome::UnknownOption);
     }
-    if !via_permission && meta.get("permissionRequest").is_some_and(|v| !v.is_null()) {
+    if !via_permission && meta.get("permissionRequest").is_some_and(js_truthy) {
         return Ok(Outcome::Forbidden);
     }
     match &ask.to {
@@ -746,6 +757,13 @@ pub async fn answer(
     };
     let (bytes, ans) = bytes;
     if let Some(r) = gate(&st, &me.id, &id, &message).await {
+        return r;
+    }
+    // 0-1 ⑤ — 권한 카드에 선택지로 온 답 중 TS 가 쓰기 없이 거절하는 꼴(사람 세션 아님·요청 줄 없음·모르는 선택지).
+    if let Answer::Option(o) = &ans
+        && let super::decide_routes::Taken::Done(r) =
+            super::decide_routes::answer_card_refuse(&st, &me, &auth, &message, o).await
+    {
         return r;
     }
     // C3b-3c — 권한 카드의 거절은 3b 코어가 정한다(S5.5 d 부터 진짜 거울도 — 원본 요청을 정한다). 그 밖의 권한 카드 답은 아래 `hand_answer_to_ts` 가 TS 로 넘긴다.
