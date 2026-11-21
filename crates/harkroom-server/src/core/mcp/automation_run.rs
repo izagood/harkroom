@@ -3,16 +3,20 @@
 //! **자동화 행 잠금 아래 한 트랜잭션**에서 에이전트 쿼터(10분 1회·1시간 3회)·원인 한 번·회차 INSERT(`runAutomationNow` → `enqueueRun`).
 //! 글은 Rust 도 쓰지 않는다 — 회차만 넣고 발송은 sweeper(TS) 몫이다(TS 도 같다).
 //!
-//! - **TS 로 넘기는 것**(`None`): zod 가 받지 않을 인자 · 1시간 회차가 `RATE_LIMIT_PER_HOUR` 에 닿은 경우(자동화를 끄고 위임장을
-//!   닫는 쓰기는 TS 만 한다 — 롤백한 뒤 넘기므로 TS 가 같은 판정을 처음부터 다시 한다). 이 둘뿐이다.
+//! - **TS 로 넘기는 것**(`None`): zod 가 받지 않을 인자뿐이다.
+//! - 1시간 회차가 `RATE_LIMIT_PER_HOUR` 에 닿으면 TS `enqueueRun` 처럼 **같은 트랜잭션에서** 자동화를 끄고
+//!   (`paused_reason = 'rate_limited'`) 위임장을 `automation_off` 로 끝낸 뒤 커밋하고 `rate_limited` 로 답한다 — 「지금 한 번」
+//!   (`automation_run_now`)·sweeper 와 같은 [`RATE_LIMIT_SQL`]·[`end_automation_mandates_tx`] 다. 회차는 넣지 않는다.
 //! - **DB 오류·깨진 행은 넘기지 않는다**: 트랜잭션 앞의 읽기 실패는 `temporarily_unavailable`([`super::db_retry::read_failed`]),
 //!   트랜잭션(시작·문장·커밋) 실패와 회차 행 해석 실패·저장된 트리거 해석 실패는 `internal`. 해석 실패는 커밋 **전**에 롤백한다.
-//! - 쓰기 칸은 `automation_run` INSERT 여덟 칸뿐이다. `automation` 에는 쓰지 않는다 — `for update` 잠금이 표의 UPDATE 칸 하나를
-//!   요구해 `automation.updated_at` UPDATE 를 받지만 그 칸에 쓰는 문장은 없다(`decide_approve::MANDATE_LINE_PRIVILEGES` 의 `for share` 와 같은 꼴).
+//! - 쓰기 칸은 `automation_run` INSERT 여덟 칸([`AUTOMATION_RUN_PRIVILEGES`])과, 상한에 닿았을 때만 쓰는 끄기·위임장 끝내기 칸
+//!   (`automation_run_now::AUTOMATION_RUN_NOW_PAUSE_PRIVILEGES` — `main.rs` 가 둘을 함께 확인한다)이다. `for update` 잠금은 표의
+//!   UPDATE 칸 하나(`automation.updated_at`)를 요구한다.
 use super::tools::err;
 use crate::auth::Account;
 use crate::core::msg_post;
 use crate::core::msg_read::is_uuid;
+use crate::loops::automation::{RATE_LIMIT_SQL, end_automation_mandates_tx};
 use serde_json::Value;
 use sqlx::{PgPool, Row};
 
@@ -99,6 +103,7 @@ fn refusal(code: &str) -> &'static str {
             "agents may run one automation at most once per 10 minutes and 3 times per hour"
         }
         "chain_capped" => "the mention chain limit is reached",
+        "rate_limited" => "too many runs in the last hour; the automation is paused",
         _ => "not queued",
     }
 }
@@ -224,7 +229,7 @@ pub async fn answer(
             Some(super::respond::text_result(&text))
         }
         Enq::Refused(code) => refuse(code),
-        Enq::RateLimited => None,
+        Enq::RateLimited => refuse("rate_limited"),
         Enq::Failed(what) => Some(broken(what)),
     }
 }
@@ -252,7 +257,7 @@ pub(crate) fn vars_for(trigger: &str) -> Option<Value> {
 pub enum Enq {
     Queued(String),
     Refused(&'static str),
-    /// 1시간 회차 상한 — 자동화를 끄는 쓰기는 TS 몫이라 롤백하고 넘긴다.
+    /// 1시간 회차 상한 — 같은 tx 에서 자동화를 끄고 위임장을 끝냈다. 부른 쪽이 **커밋**해야 남는다.
     RateLimited,
     /// DB 오류·행 해석 실패(롤백됨). 값은 로그에 남길 고정 문구다.
     Failed(&'static str),
@@ -277,6 +282,14 @@ async fn enqueue(
             } else {
                 // 커밋이 됐는지 알 수 없다 — 넘겨서 한 번 더 넣지 않는다.
                 Enq::Failed("commit")
+            }
+        }
+        // 상한에 닿아 자동화를 껐다 — 커밋해야 꺼진 채로 남는다. 커밋이 안 되면 꺼지지 않았으니 `rate_limited` 라고 답하지 않는다.
+        Ok(Enq::RateLimited) => {
+            if tx.commit().await.is_ok() {
+                Enq::RateLimited
+            } else {
+                Enq::Failed("pause commit")
             }
         }
         // 거절도 TS 처럼 롤백한다(`inactive`·`duplicate` 는 TS 가 커밋하지만 쓴 것이 없어 같다).
@@ -339,7 +352,12 @@ pub async fn enqueue_tx(
         .fetch_one(&mut **tx)
         .await?;
     if recent >= RATE_LIMIT_PER_HOUR {
-        // 끄기·위임장 닫기는 TS 만 한다 — 롤백하고 넘긴다.
+        // TS `enqueueRun` — 자동화를 끄고 위임장을 끝낸다. 회차는 넣지 않는다. 커밋은 부른 쪽 몫이다.
+        sqlx::query(RATE_LIMIT_SQL)
+            .bind(automation_id)
+            .execute(&mut **tx)
+            .await?;
+        end_automation_mandates_tx(tx, automation_id, "automation_off").await?;
         return Ok(Enq::RateLimited);
     }
     let ins = sqlx::query(INSERT_SQL)

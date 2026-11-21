@@ -363,3 +363,172 @@ async fn mandate_valid_owner_runs_with_column_grants_only() {
         "mandate line: automation 4칸 SELECT 만으로 통과, approved_at 회수 시 permission denied"
     );
 }
+
+/// MCP `automation.run` 이 1시간 회차 상한에 닿으면 **같은 tx 에서 자동화를 끄고 위임장을 끝낸다**(`enqueue_tx` → `Enq::RateLimited`).
+/// 권한은 `AUTOMATION_RUN_PRIVILEGES` + `AUTOMATION_RUN_NOW_PAUSE_PRIVILEGES` 의 칸 단위 GRANT 만으로 돌아야 하고,
+/// 끄기 칸이 없으면 `permission denied` 다(바닥). 회차는 늘지 않는다.
+#[tokio::test]
+async fn run_pauses_at_hourly_cap_with_column_grants_only() {
+    let _serial = GRANT_LOCK.lock().await;
+    use harkroom_server::core::automation_run_now::AUTOMATION_RUN_NOW_PAUSE_PRIVILEGES;
+    use harkroom_server::core::mcp::automation_run::{AUTOMATION_RUN_PRIVILEGES, Enq, enqueue_tx};
+    let Ok(url) = std::env::var("HARKROOM_TEST_DATABASE_URL") else {
+        eprintln!("skip: HARKROOM_TEST_DATABASE_URL unset");
+        return;
+    };
+    let admin = PgPool::connect(&url).await.unwrap();
+    let agent: String = sqlx::query_scalar(
+        "insert into account(handle, display_name, kind) values ('rl_agent', 'rl_agent', 'agent') returning id::text",
+    )
+    .fetch_one(&admin)
+    .await
+    .unwrap();
+    let ch: String = sqlx::query_scalar(
+        "insert into channel(name, kind) values ('rl-rs', 'standard') returning id::text",
+    )
+    .fetch_one(&admin)
+    .await
+    .unwrap();
+    let auto: String = sqlx::query_scalar(
+        "insert into automation(owner_id, channel_id, name, body, trigger, enabled, approved_at, next_at) \
+         values ($1::uuid, $2::uuid, 'cap probe', 'b', '{\"kind\":\"webhook\"}', true, now(), now()) returning id::text",
+    )
+    .bind(&agent)
+    .bind(&ch)
+    .fetch_one(&admin)
+    .await
+    .unwrap();
+    let mandate: String = sqlx::query_scalar(
+        "insert into mandate(owner_account_id, channel_id, automation_id) values ($1::uuid, $2::uuid, $3::uuid) returning id::text",
+    )
+    .bind(&agent)
+    .bind(&ch)
+    .bind(&auto)
+    .fetch_one(&admin)
+    .await
+    .unwrap();
+    let cause: String = sqlx::query_scalar(
+        "insert into message(channel_id, author_id, body, kind) values ($1::uuid, $2::uuid, 'x', 'user') returning id::text",
+    )
+    .bind(&ch)
+    .bind(&agent)
+    .fetch_one(&admin)
+    .await
+    .unwrap();
+    // 상한(20)만큼 — 사람·일정이 넣은 회차(`initiated_by` null)라 에이전트 쿼터(1시간 3회)에는 안 걸린다.
+    sqlx::query(
+        "insert into automation_run(automation_id, event_key, trigger_kind, payload) \
+         select $1::uuid, 'cap:' || g, 'manual', '{}'::jsonb from generate_series(1, 20) g",
+    )
+    .bind(&auto)
+    .execute(&admin)
+    .await
+    .unwrap();
+
+    let role = format!("rl_gp_{}", ch.replace('-', ""));
+    let role = role.as_str();
+    sqlx::query(sqlx::AssertSqlSafe(format!("create role {role} nologin")))
+        .execute(&admin)
+        .await
+        .unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "grant usage on schema public to {role}"
+    )))
+    .execute(&admin)
+    .await
+    .unwrap();
+    let grant = |list: &'static [(&'static str, &'static str)]| {
+        let admin = admin.clone();
+        let role = role.to_owned();
+        async move {
+            for (col, privilege) in list {
+                let (table, column) = col.split_once('.').expect("표.칸");
+                sqlx::query(sqlx::AssertSqlSafe(format!(
+                    "grant {privilege} ({column}) on {table} to {role}"
+                )))
+                .execute(&admin)
+                .await
+                .unwrap();
+            }
+        }
+    };
+    let state = || {
+        let admin = admin.clone();
+        let (auto, mandate) = (auto.clone(), mandate.clone());
+        async move {
+            let (enabled, paused, next_null): (bool, Option<String>, bool) = sqlx::query_as(
+                "select enabled, paused_reason, next_at is null from automation where id = $1::uuid",
+            )
+            .bind(&auto)
+            .fetch_one(&admin)
+            .await
+            .unwrap();
+            let end: Option<String> = sqlx::query_scalar(
+                "select end_reason from mandate where id = $1::uuid and ended_at is not null",
+            )
+            .bind(&mandate)
+            .fetch_optional(&admin)
+            .await
+            .unwrap();
+            let runs: i64 = sqlx::query_scalar(
+                "select count(*) from automation_run where automation_id = $1::uuid",
+            )
+            .bind(&auto)
+            .fetch_one(&admin)
+            .await
+            .unwrap();
+            (enabled, paused, next_null, end, runs)
+        }
+    };
+    let payload = serde_json::json!({ "vars": {}, "events": [{ "key": "manual:cap", "summary": "manual:cap" }] });
+
+    // 바닥: 회차 칸만 있고 끄기 칸이 없으면 상한 갈래의 UPDATE 가 막힌다 — 아무것도 바뀌지 않는다.
+    grant(AUTOMATION_RUN_PRIVILEGES).await;
+    let mut tx = admin.begin().await.unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!("set local role {role}")))
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    let e = enqueue_tx(&mut tx, &auto, &cause, &agent, "manual:cap", &payload)
+        .await
+        .err()
+        .expect("끄기 칸 없이는 상한 갈래가 막혀야 한다");
+    assert!(e.to_string().contains("permission denied"), "{e}");
+    tx.rollback().await.unwrap();
+    assert_eq!(state().await, (true, None, false, None, 20));
+
+    // 끄기 칸까지 주면 같은 tx 에서 끄고 위임장을 끝낸다. 커밋해야 남는다(부른 쪽 `enqueue` 가 커밋한다).
+    grant(AUTOMATION_RUN_NOW_PAUSE_PRIVILEGES).await;
+    for secret in ["ingress_token_hash", "ingress_secret_enc"] {
+        let can: bool =
+            sqlx::query_scalar("select has_column_privilege($1, 'automation', $2, 'SELECT')")
+                .bind(role)
+                .bind(secret)
+                .fetch_one(&admin)
+                .await
+                .unwrap();
+        assert!(!can, "{secret} 는 SELECT 를 주지 않는다");
+    }
+    let mut tx = admin.begin().await.unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!("set local role {role}")))
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    let out = enqueue_tx(&mut tx, &auto, &cause, &agent, "manual:cap", &payload)
+        .await
+        .expect("칸 단위 GRANT 만으로 끄기·위임장 끝내기가 돈다");
+    assert!(matches!(out, Enq::RateLimited), "상한에 닿으면 넣지 않는다");
+    tx.commit().await.unwrap();
+    assert_eq!(
+        state().await,
+        (
+            false,
+            Some("rate_limited".to_owned()),
+            true,
+            Some("automation_off".to_owned()),
+            20
+        ),
+        "자동화가 꺼지고 위임장이 끝났으며 회차는 늘지 않았다"
+    );
+    println!("automation.run: 시간당 상한 → 끄기·위임장 끝내기, 끄기 칸 없으면 permission denied");
+}
