@@ -8062,11 +8062,15 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           const appr = await preq(`Bash(echo ${tag} mappr:*)`);
           const fake = await preq(`Bash(echo ${tag} mfake:*)`);
           const mem = await preq(`Bash(echo ${tag} mmem:*)`);
+          const cls = await preq(`Bash(echo ${tag} mcls:*)`);
+          const clm = await preq(`Bash(echo ${tag} mclm:*)`);
           return {
             denyReq: deny.req, denyCard: deny.card, denyMirror: await mirrorOf(deny.card),
             apprReq: appr.req, apprCard: appr.card, apprMirror: await mirrorOf(appr.card),
             fakeReq: fake.req, fakeCard: fake.card, fakeMirror: await mirrorOf(fake.card, [{ id: 'approve', label: '허락' }, { id: 'no', label: '아니' }]),
             memReq: mem.req, memCard: mem.card, memMirror: await mirrorOf(mem.card),
+            clsReq: cls.req, clsCard: cls.card, clsMirror: await mirrorOf(cls.card),
+            clmReq: clm.req, clmCard: clm.card, clmMirror: await mirrorOf(clm.card),
           };
         };
         type Side = Awaited<ReturnType<typeof side>>;
@@ -8086,6 +8090,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           return v;
         };
         const ansP = (m: string) => `/channels/${todayId}/messages/${m}/ask-answer`;
+        const clsP = (m: string) => `/channels/${todayId}/messages/${m}/ask-close`;
         const updOf = (ids: string[]) => busEvents.filter((e) => (e as { type?: string }).type === 'message.updated'
           && ids.includes(String((e as { message?: { id?: string } }).message?.id))).length;
         const run = async (base: string, sd: Side) => {
@@ -8094,6 +8099,20 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             const r = await callX(base, 'POST', path, body, token);
             out.push({ step: name, status: r.status, code: r.code, body: r.status === 200 ? shape(sd)(r.json) : null });
           };
+          // 0-1 ⑤ — 권한 카드·거울의 쓰기 없는 거절(글 답·사람 세션 아님·모르는 선택지)과 닫기. 문구까지 견준다.
+          const refuse = async (name: string, path: string, body: unknown, token = A) => {
+            const r = await callX(base, 'POST', path, body, token);
+            out.push({ step: name, status: r.status, code: r.code, body: r.status === 200 ? shape(sd)(r.json) : (r.json.error as { message?: string } | undefined)?.message ?? null });
+          };
+          await refuse('권한 카드에 글 답 → 403', ansP(sd.denyCard), { text: '안 됩니다' });
+          await refuse('권한 거울에 글 답 → 403', ansP(sd.denyMirror), { text: '안 됩니다' });
+          await refuse('에이전트 토큰이 권한 카드 선택지 → 403', ansP(sd.denyCard), { optionId: 'deny' }, agent.pat);
+          await refuse('에이전트 토큰이 권한 거울 선택지 → 403', ansP(sd.denyMirror), { optionId: 'deny' }, agent.pat);
+          await refuse('권한 카드 모르는 선택지 → 400', ansP(sd.denyCard), { optionId: 'maybe' });
+          await refuse('권한 거울 모르는 선택지 → 400', ansP(sd.denyMirror), { optionId: 'maybe' });
+          await refuse('권한 카드 닫기', clsP(sd.clsCard), {});
+          await refuse('닫은 권한 카드 다시 닫기', clsP(sd.clsCard), {});
+          await refuse('권한 거울 닫기', clsP(sd.clmMirror), {});
           await step('거울로 거절', ansP(sd.denyMirror), { optionId: 'deny' });
           await step('거울 다시 → 409', ansP(sd.denyMirror), { optionId: 'deny' });
           await step('정해진 뒤 원본 카드 → 409', ansP(sd.denyCard), { optionId: 'deny' });
@@ -8108,6 +8127,14 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         const rsOut = await run(rsUrl, R);
         expect(rsOut).toEqual(tsOut);
         const st = (s: string) => tsOut.find((o) => o.step === s);
+        expect(st('권한 카드에 글 답 → 403')?.status).toBe(403);
+        expect(st('권한 거울에 글 답 → 403')?.status).toBe(403);
+        expect(st('에이전트 토큰이 권한 카드 선택지 → 403')?.status).toBe(403);
+        expect(st('에이전트 토큰이 권한 거울 선택지 → 403')?.status).toBe(403);
+        expect(st('권한 카드 모르는 선택지 → 400')).toMatchObject({ status: 400, code: 'unknown_option' });
+        expect(st('권한 거울 모르는 선택지 → 400')).toMatchObject({ status: 400, code: 'unknown_option' });
+        expect(st('권한 카드 닫기')?.status).toBe(200);
+        expect(st('권한 거울 닫기')?.status).toBe(200);
         expect(st('거울로 거절')?.status).toBe(200);
         expect((st('거울로 거절')?.body as { id?: string }).id, '응답은 누른 거울').toBe('DENYMIRROR');
         expect(st('거울 다시 → 409')?.status).toBe(409);

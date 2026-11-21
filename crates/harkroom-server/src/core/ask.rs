@@ -137,6 +137,17 @@ pub(super) fn read_ask_meta(meta: &Value) -> Option<Ask> {
     })
 }
 
+/// JS 의 참인 값(TS `if (meta.permissionRequest)`) — null·false·0·빈 글자만 거짓이다.
+fn js_truthy(v: &Value) -> bool {
+    match v {
+        Value::Null => false,
+        Value::Bool(b) => *b,
+        Value::Number(n) => n.as_f64().is_some_and(|f| f != 0.0),
+        Value::String(s) => !s.is_empty(),
+        _ => true,
+    }
+}
+
 /// TS shared `askTakesText`.
 fn ask_takes_text(meta: &Value) -> bool {
     meta.is_object() && TS_ONLY_MARKERS.iter().all(|k| meta.get(*k).is_none())
@@ -170,17 +181,30 @@ async fn is_permission_request_card(pool: &PgPool, id: &str) -> sqlx::Result<boo
 
 /// 이 카드를 TS 에 넘기나 — 닫힌 쪽: 확신할 수 없으면 넘긴다. 사슬·머지 거절 카드는 넘기지 않는다([`ANSWER_TS_MARKERS`]).
 pub(super) async fn hand_answer_to_ts(pool: &PgPool, id: &str) -> sqlx::Result<bool> {
-    hand_to_ts_with(pool, id, ANSWER_TS_MARKERS).await
+    hand_to_ts_with(pool, id, ANSWER_TS_MARKERS, true).await
 }
 
-async fn hand_to_ts_with(pool: &PgPool, id: &str, markers: &[&str]) -> sqlx::Result<bool> {
+/// 글로 쓴 답·닫기(`ask-answer` 의 `text`, `ask-close`)는 권한 카드와 그 거울도 Rust 가 맡는다 — TS 에서 이 둘은 권한 결정
+/// 길(`decide`)을 타지 않고 보통 물음 길(`recordAskAnswer`·`closeAsk`)을 그대로 탄다. 글 답은 그 안에서 403 으로 거절되고
+/// (`permissionRequest` 표지·`askTakesText`·권한 카드 원본), 닫기는 보통 카드처럼 닫힌다. 모양을 못 읽는 카드는 여전히 넘긴다.
+async fn hand_plain_to_ts(pool: &PgPool, id: &str) -> sqlx::Result<bool> {
+    hand_to_ts_with(pool, id, &[], false).await
+}
+
+/// `permission` — 권한 요청 줄이 가리키는 카드(표지 없이도)를 넘기나.
+async fn hand_to_ts_with(
+    pool: &PgPool,
+    id: &str,
+    markers: &[&str],
+    permission: bool,
+) -> sqlx::Result<bool> {
     let Some(meta) = meta_of(pool, id).await? else {
         return Ok(true);
     };
     let Some(ask) = read_ask_meta(&meta) else {
         return Ok(true);
     };
-    if has_marker(&meta, markers) || is_permission_request_card(pool, id).await? {
+    if has_marker(&meta, markers) || (permission && is_permission_request_card(pool, id).await?) {
         return Ok(true);
     }
     // 거울 표지가 문자열이 아니거나 uuid 가 아니면 못 읽은 것이다.
@@ -194,7 +218,7 @@ async fn hand_to_ts_with(pool: &PgPool, id: &str, markers: &[&str]) -> sqlx::Res
         && let Some(root_meta) = meta_of(pool, root).await?
         && (read_ask_meta(&root_meta).is_none()
             || has_marker(&root_meta, markers)
-            || is_permission_request_card(pool, root).await?)
+            || (permission && is_permission_request_card(pool, root).await?))
     {
         return Ok(true);
     }
@@ -407,7 +431,7 @@ async fn record_ask_answer_with(
     {
         return Ok(Outcome::UnknownOption);
     }
-    if !via_permission && meta.get("permissionRequest").is_some_and(|v| !v.is_null()) {
+    if !via_permission && meta.get("permissionRequest").is_some_and(js_truthy) {
         return Ok(Outcome::Forbidden);
     }
     match &ask.to {
@@ -735,6 +759,13 @@ pub async fn answer(
     if let Some(r) = gate(&st, &me.id, &id, &message).await {
         return r;
     }
+    // 0-1 ⑤ — 권한 카드에 선택지로 온 답 중 TS 가 쓰기 없이 거절하는 꼴(사람 세션 아님·요청 줄 없음·모르는 선택지).
+    if let Answer::Option(o) = &ans
+        && let super::decide_routes::Taken::Done(r) =
+            super::decide_routes::answer_card_refuse(&st, &me, &auth, &message, o).await
+    {
+        return r;
+    }
     // C3b-3c — 권한 카드의 거절은 3b 코어가 정한다(S5.5 d 부터 진짜 거울도 — 원본 요청을 정한다). 그 밖의 권한 카드 답은 아래 `hand_answer_to_ts` 가 TS 로 넘긴다.
     if let Answer::Option(o) = &ans
         && let super::decide_routes::Taken::Done(r) =
@@ -749,7 +780,11 @@ pub async fn answer(
     {
         return r;
     }
-    match hand_answer_to_ts(&st.read, &message).await {
+    let hand = match &ans {
+        Answer::Text(_) => hand_plain_to_ts(&st.read, &message).await,
+        Answer::Option(_) => hand_answer_to_ts(&st.read, &message).await,
+    };
+    match hand {
         Ok(false) => {}
         Ok(true) => return to_ts(st.up.clone(), peer, parts, bytes).await,
         Err(e) => return internal(e),
@@ -798,7 +833,7 @@ pub async fn close(
     if let Some(r) = gate(&st, &me.id, &id, &message).await {
         return r;
     }
-    match hand_answer_to_ts(&st.read, &message).await {
+    match hand_plain_to_ts(&st.read, &message).await {
         Ok(false) => {}
         Ok(true) => return to_ts(st.up.clone(), peer, parts, bytes).await,
         Err(e) => return internal(e),
