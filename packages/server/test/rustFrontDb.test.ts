@@ -1400,6 +1400,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
     const secretKeysDir = mkdtempSync(joinPath(tmpdir(), 'contrast-keys-'));
     const secretKey = randomBytes(32);
     writeCases(joinPath(secretKeysDir, 'ck1'), secretKey.toString('hex'));
+    // TS 와 같은 키링을 앞단에도 건다. 키링이 없는 앞단은 비밀을 받은 에이전트의 MCP 호출을 검사하지 못해 닫는다 — 예전에는 그 판정을
+    // TS `/mcp/admit` 에 물어 TS 의 키링을 빌렸다(B 에서 그 물음을 없앴다). 키링 없는 장면을 일부러 보는 곳(leakGuard·보관소 키 env 없음)은 쓰지 않는다.
+    const KEYRING_ENV: Record<string, string> = { HARKROOM_SECRET_KEYS_DIR: secretKeysDir, HARKROOM_SECRET_KEY_ID: 'ck1' };
     const { createSecretKeyring } = await import('../src/services/secretKeyring.js');
     const app = await buildServer({
       pool: db.pool, trustProxy: TRUST, corsOrigins: [CORS], storage: { root: attRoot, maxBytes: 25 * 1024 * 1024 },
@@ -3497,7 +3500,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         try {
           const fN = await startFront(bin, {
             UPSTREAM_URL: tsUrl, DATABASE_URL: db.uri, PORT: String(portN), HARKROOM_FRONT_TS_ROUTES: '', DATABASE_WRITE_URL: writeUrl.toString(),
-            TRUST_PROXY: TRUST.join(','), CORS_ORIGINS: CORS, HARKROOM_CORE: 'rust',
+            TRUST_PROXY: TRUST.join(','), CORS_ORIGINS: CORS, HARKROOM_CORE: 'rust', ...KEYRING_ENV,
           });
           frontN = fN.child;
           const untilN = Date.now() + 10_000;
@@ -10361,7 +10364,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                 fd = await startFront(bin, {
                   UPSTREAM_URL: tsUrl, DATABASE_URL: db.uri, PORT: String(portD), HARKROOM_FRONT_TS_ROUTES: '', DATABASE_WRITE_URL: writeUrl.toString(),
                   TRUST_PROXY: TRUST.join(','), CORS_ORIGINS: CORS, HARKROOM_CORE: 'rust', HARKROOM_DELEGATION_V2: mode,
-                  HARKROOM_DELEGATION_IMPLICIT: implicitMode, ...GROUP_A_ENV,
+                  HARKROOM_DELEGATION_IMPLICIT: implicitMode, ...GROUP_A_ENV, ...KEYRING_ENV,
                 });
               } catch (err) {
                 if (attempt >= 2 || !String(err).includes('AddrInUse')) throw err;
@@ -11199,6 +11202,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                 fd = await startFront(bin, {
                   UPSTREAM_URL: tsUrl, DATABASE_URL: db.uri, PORT: String(port), HARKROOM_FRONT_TS_ROUTES: '', DATABASE_WRITE_URL: writeUrl.toString(),
                   TRUST_PROXY: TRUST.join(','), CORS_ORIGINS: CORS, HARKROOM_CORE: 'rust', HARKROOM_DELEGATION_V2: V2, HARKROOM_DELEGATION_IMPLICIT: 'off', ...GROUP_A_ENV,
+                  ...KEYRING_ENV,
                 });
               } catch (err) {
                 if (attempt >= 2 || !String(err).includes('AddrInUse')) throw err;
@@ -12138,7 +12142,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                 const fd = await startFront(bin, {
                   UPSTREAM_URL: tsUrl, DATABASE_URL: db.uri, PORT: String(port), HARKROOM_FRONT_TS_ROUTES: '', DATABASE_WRITE_URL: writeUrl.toString(),
                   TRUST_PROXY: TRUST.join(','), CORS_ORIGINS: CORS, HARKROOM_CORE: 'rust', HARKROOM_DELEGATION_V2: '1', HARKROOM_DELEGATION_IMPLICIT: 'off',
-                  ...GROUP_A_ENV, ...over,
+                  ...GROUP_A_ENV, ...KEYRING_ENV, ...over,
                 });
                 kids.push(fd.child);
                 const until = Date.now() + 10_000;
