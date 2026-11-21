@@ -73,11 +73,16 @@ pub fn unsupported(bytes: &[u8]) -> Option<Response<Body>> {
             body.push_str(&f);
         }
     }
-    Some(if body.is_empty() {
+    let mut r = if body.is_empty() {
         super::respond::accepted()
     } else {
         super::respond::sse_body(body)
-    })
+    };
+    r.headers_mut().insert(
+        crate::proxy::CLOSED_HEADER,
+        axum::http::HeaderValue::from_static("1"),
+    );
+    Some(r)
 }
 
 #[cfg(test)]
@@ -101,7 +106,9 @@ mod tests {
     #[tokio::test]
     async fn tools_call_becomes_tool_error() {
         let b = br#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"message.post","arguments":{}}}"#;
-        let (s, body) = text(unsupported(b).unwrap()).await;
+        let r = unsupported(b).unwrap();
+        assert_eq!(r.headers()[crate::proxy::CLOSED_HEADER], "1");
+        let (s, body) = text(r).await;
         assert_eq!(s, StatusCode::OK);
         let d = data(&body);
         assert_eq!(d.len(), 1);

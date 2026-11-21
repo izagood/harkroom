@@ -20,12 +20,15 @@ impl Upstream {
 
 /// 넘김을 닫은 자리의 고정 오류 코드(HTTP 404).
 pub const NOT_FOUND: &str = "not_found";
+/// 닫힌 자리가 낸 답이라는 표지(값 `1` 고정) — 대조 시험이 「예전에 TS 로 넘기던 장면」을 가른다. 경로·env 는 싣지 않는다.
+pub const CLOSED_HEADER: &str = "x-harkroom-closed";
 
 /// 답하지 않는 경로·꼴 — 404 `{"error":{"code":"not_found",…}}`. 웹소켓 업그레이드도 같다(101 을 내지 않는다).
 pub fn closed() -> Response<Body> {
     Response::builder()
         .status(StatusCode::NOT_FOUND)
         .header(header::CONTENT_TYPE, "application/json")
+        .header(CLOSED_HEADER, "1")
         .body(Body::from(format!(
             "{{\"error\":{{\"code\":\"{NOT_FOUND}\",\"message\":\"this route or request shape is not served\"}}}}"
         )))

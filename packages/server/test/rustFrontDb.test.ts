@@ -1406,9 +1406,46 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       secretKeyring: createSecretKeyring(new Map([['ck1', secretKey]]), 'ck1'),
     });
     let front: ChildProcess | undefined;
+    const realFetch = globalThis.fetch;
     try {
       await app.listen({ port: 0, host: '127.0.0.1' });
       const tsUrl = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
+      // B(11-21) — 앞단은 TS 로 넘기던 꼴을 이제 고정 오류로 닫는다(표지 `x-harkroom-closed: 1`). 이 시험의 「→ TS」 장면은 TS 를 기준으로
+      // 이어 가야 하므로, 닫힌 답이 **정해진 꼴**인지 먼저 단언한다 — MCP 는 200 SSE(도구 오류 `unsupported_call` 또는 JSON-RPC -32600)나 202,
+      // 그 밖은 404 `not_found` 고정 글. 그 뒤 예전 넘김처럼 같은 요청을 TS 에 보내 그 답을 돌려준다. TS 답에는 `x-harkroom-core` 가 없으므로
+      // 「누가 답했나」 단언은 그대로 null(= 이제는 닫힘)로 읽힌다 — Rust 가 답해야 할 장면이 닫히면 `core: mcp` 단언에서 여전히 실패한다.
+      // 거부 길(401·403·leakGuard·`not_admissible`)은 Rust 가 답하므로 이 길을 타지 않는다. TS 를 지우는 C·D 에서 이 시험과 함께 걷어 낸다.
+      const closedSeen = new Map<string, number>();
+      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const again = input instanceof Request ? input.clone() : undefined;
+        const res = await realFetch(input, init);
+        if (res.headers.get('x-harkroom-closed') !== '1') return res;
+        const url = new URL(input instanceof Request ? input.url : String(input));
+        const method = (input instanceof Request ? input.method : init?.method) ?? 'GET';
+        const text = await res.text();
+        let tool = '';
+        if (url.pathname === '/mcp' && res.status !== 404) {
+          expect([200, 202], `닫힌 /mcp 답 상태 ${text}`).toContain(res.status);
+          if (res.status === 200) {
+            const frames = text.split('\n').filter((l) => l.startsWith('data: ')).map((l) => JSON.parse(l.slice(6)) as {
+              result?: { content?: { text?: string }[] }; error?: { code?: number };
+            });
+            expect(frames.length, `닫힌 /mcp 답 ${text}`).toBeGreaterThan(0);
+            for (const fr of frames) {
+              if (fr.error) expect(fr.error.code, text).toBe(-32600);
+              else expect((JSON.parse(fr.result!.content![0]!.text!) as { error: { code: string } }).error.code, text).toBe('unsupported_call');
+            }
+          }
+          try { tool = String((JSON.parse(String(init?.body)) as { params?: { name?: string } }).params?.name ?? ''); } catch { tool = ''; }
+        } else {
+          expect(res.status, `닫힌 답 ${method} ${url.pathname}`).toBe(404);
+          expect(text, `닫힌 답 ${method} ${url.pathname}`).toBe('{"error":{"code":"not_found","message":"this route or request shape is not served"}}');
+        }
+        const key = `${method} ${url.pathname}${tool ? ` ${tool}` : ''}`;
+        closedSeen.set(key, (closedSeen.get(key) ?? 0) + 1);
+        const ts = `${tsUrl}${url.pathname}${url.search}`;
+        return again ? realFetch(new Request(ts, again)) : realFetch(ts, init);
+      }) as typeof fetch;
 
       // 픽스처 — 옮긴 라우트(GET /accounts·/dms·/mcp-servers·/audit)가 빈 목록이 아닌 값을 내도록.
       const admin = await bootstrapAdmin(app);
@@ -14316,7 +14353,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           expect(b.headers.get(h), `preflight ${h}`).toBe(a.headers.get(h));
         }
       }
+      console.info(`닫힌 자리(예전 TS 넘김) ${[...closedSeen.values()].reduce((a, b) => a + b, 0)}번:\n${[...closedSeen].map(([k, n]) => `  ${k} ×${n}`).join('\n')}`);
     } finally {
+      globalThis.fetch = realFetch;
       front?.kill('SIGTERM');
       await app.close();
       await db.stop();
