@@ -24,7 +24,7 @@ describe('스토리보드 형식', () => {
     const bad = structuredClone(sb);
     bad.personas[0]!.handle = 'alice';
     bad.journeys[0]!.steps[0]!.act = 'nope' as never;
-    bad.journeys[0]!.existing = [{ kind: 'server-vitest', file: 'packages/server/test/nope.test.ts', note: '' }];
+    bad.journeys[0]!.existing = [{ kind: 'desktop-vitest', file: 'packages/desktop/test/nope.test.ts', note: '' }];
     const denied = bad.journeys.find((j) => j.steps.some((st) => st.act === 'api.denied'))!;
     for (const st of denied.steps) if (st.act === 'api.denied') delete st.with;
     const errors = validate(bad, (p) => existsSync(join(repoRoot, p)));

@@ -26,8 +26,6 @@ expect: "꺼진 계정은 열린 세션에서도 즉시 막힌다"
 failSigns:
   - "계속 보내짐"
   - "앱이 오류 루프"
-existing:
-  - kind: server-vitest
-    file: "packages/server/test/accountStatus.test.ts"
-    note: "계정 상태 판정"
 runners: [browser]
+gaps:
+  - "옛 TS 서버 시험(server-vitest·API 여정 러너)은 TS 백엔드 삭제로 없어졌다 — Rust 시험으로 옮기지 않은 판정은 여기서 빈다"

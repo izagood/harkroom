@@ -20,10 +20,7 @@ failSigns:
   - "invalid_claim 404"
   - "/bootstrap 409 또는 401"
   - "빈 사이드바"
-existing:
-  - kind: server-vitest
-    file: "packages/server/test/auth.test.ts"
-    note: "/claim·/bootstrap 판정"
 runners: [manual]
 gaps:
+  - "옛 TS 서버 시험(server-vitest·API 여정 러너)은 TS 백엔드 삭제로 없어졌다 — Rust 시험으로 옮기지 않은 판정은 여기서 빈다"
   - "gate(테넌트 발급·회수)는 이 저장소 밖이라 시험이 없다"

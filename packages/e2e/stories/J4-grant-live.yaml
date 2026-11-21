@@ -42,18 +42,13 @@ failSigns:
   - "⌘Q 재시작 뒤에야 보임"
   - "모바일에 옛 상태가 남음"
 existing:
-  - kind: server-vitest
-    file: "packages/server/test/storyJourneys.test.ts"
-    note: "API 여정 러너가 이 여정을 그대로 돈다(화면 단계는 /auth/me capabilities 로 옮겨 보거나 건너뜀)"
-  - kind: server-vitest
-    file: "packages/server/test/grantRoutes.test.ts"
-    note: "grant 주기·거두기와 grant.changed 신호"
   - kind: desktop-vitest
     file: "packages/desktop/test/agentCreateGate.test.tsx"
     note: "게이트 판정"
   - kind: browser-playwright
     file: "packages/e2e/web/journeys.pw.ts"
     note: "대체(브라우저): 화면 여정 러너가 이 여정의 화면 단계를 돈다(권한·역할·초대는 API 로)"
-runners: [api, browser, mobile]
+runners: [browser, mobile]
 gaps:
+  - "옛 TS 서버 시험(server-vitest·API 여정 러너)은 TS 백엔드 삭제로 없어졌다 — Rust 시험으로 옮기지 않은 판정은 여기서 빈다"
   - "모바일 실기기 회차가 아직 없다 — grant.changed 처리(#1624)는 integration_test 로만 봤다(시험 테넌트가 생기면 실물로)"
