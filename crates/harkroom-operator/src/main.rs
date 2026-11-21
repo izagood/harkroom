@@ -1,4 +1,4 @@
-//! `harkroom-operator-rs` — `merge`(A1)·`serve`(A2, 앱 소켓 서버)·`mcp-bridge`(s21b-2b)·`api`(3d-3a)·`hook`(3d-3b-2a)·`register`(P1a)만 한다.
+//! `harkroom-operator-rs` — `merge`(A1)·`serve`(A2, 앱 소켓 서버)·`mcp-bridge`(s21b-2b)·`api`(3d-3a)·`hook`(3d-3b-2a)·`register`(P1a)·`doctor`(L1a, 기기 점검)만 한다.
 //! 나머지는 TS 오퍼레이터가 맡는다.
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -137,6 +137,17 @@ fn main() {
             }
             std::process::exit(exit);
         }
+        Some("doctor") => {
+            let (out, err, exit) =
+                harkroom_operator::doctor::doctor_main(&args[1..], &|k| std::env::var(k).ok());
+            if !out.is_empty() {
+                println!("{out}");
+            }
+            if !err.is_empty() {
+                eprintln!("{err}");
+            }
+            std::process::exit(exit);
+        }
         Some("serve") => {
             let (line, exit) =
                 harkroom_operator::serve::serve_main(&args[1..], std::env::var("HOME").ok());
@@ -145,7 +156,7 @@ fn main() {
         }
         other => {
             eprintln!(
-                "harkroom-operator-rs: {} is not implemented yet (only `merge`, `api`, `hook`, `mcp-bridge`, `register` and `serve`)",
+                "harkroom-operator-rs: {} is not implemented yet (only `merge`, `api`, `hook`, `mcp-bridge`, `register`, `doctor` and `serve`)",
                 other.unwrap_or("(none)")
             );
             std::process::exit(2);

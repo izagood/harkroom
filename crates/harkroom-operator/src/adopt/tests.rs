@@ -198,6 +198,36 @@ fn lstart_parses_like_date_parse() {
 }
 
 #[test]
+fn proc_stat_start_time_survives_spaces_and_parens_in_comm() {
+    // 실제 줄 모양(칸 22 = 시작 틱). comm 에 공백·괄호가 들어도 마지막 `)` 뒤부터 센다.
+    let tail = "S 1 4242 4242 0 -1 4194304 100 0 0 0 5 3 0 0 20 0 1 0 987654 1000000 200 18446744073709551615 0 0";
+    for comm in ["(runner)", "(my runner)", "(a) b)", "(x (y))"] {
+        let line = format!("4242 {comm} {tail}");
+        assert_eq!(parse_proc_stat_start_ticks(&line), Some(987_654), "{comm}");
+    }
+    assert_eq!(parse_proc_stat_start_ticks(""), None);
+    assert_eq!(parse_proc_stat_start_ticks("4242 runner S 1"), None);
+    assert_eq!(parse_proc_stat_start_ticks("4242 (runner) S 1 2"), None);
+    // 시작 틱 자리가 숫자가 아니면 못 읽은 것이다.
+    let bad = format!("4242 (r) {}", tail.replace("987654", "x"));
+    assert_eq!(parse_proc_stat_start_ticks(&bad), None);
+
+    let sys = "cpu  1 2 3\nintr 5\nctxt 9\nbtime 1794385000\nprocesses 77\n";
+    assert_eq!(parse_proc_btime(sys), Some(1_794_385_000));
+    assert_eq!(parse_proc_btime("cpu 1 2\nbtimex 5\n"), None);
+    assert_eq!(parse_proc_btime("btime\n"), None);
+
+    let line = format!("4242 (runner) {tail}");
+    // 987654 틱 ÷ 100 = 9876초(초 아래 버림).
+    assert_eq!(proc_start_sec(&line, sys, 100), Some(1_794_385_000 + 9876));
+    // 1초 뒤에 뜬 프로세스는 다른 값이다 — pid 재사용을 가르는 축.
+    let later = line.replace("987654", "987754");
+    assert_eq!(proc_start_sec(&later, sys, 100), Some(1_794_385_000 + 9877));
+    assert_eq!(proc_start_sec(&line, sys, 0), None);
+    assert_eq!(proc_start_sec(&line, "cpu 1\n", 100), None);
+}
+
+#[test]
 fn real_probe_reads_own_process_and_rejects_nonsense() {
     let me = std::process::id() as i32;
     let p = PsProbe;

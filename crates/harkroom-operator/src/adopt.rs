@@ -6,7 +6,7 @@
 //!
 //! **옮긴 성질**(TS 와 같다):
 //! - 후보의 출처는 이 오퍼레이터 `appDataDir` 아래 장부 하나뿐이다 — 프로세스 목록을 훑지 않는다(남의 러너가 후보에 오를 길이 없다).
-//! - pid 재사용은 **커널 시작 시각**(`ps -o lstart= -p <pid>`, 1초 해상도)으로 가린다. 장부의 `bootTimeSec` 이 없거나(None),
+//! - pid 재사용은 **커널 시작 시각**(macOS `ps -o lstart= -p <pid>`, 리눅스 `/proc/<pid>/stat`, 1초 해상도)으로 가린다. 장부의 `bootTimeSec` 이 없거나(None),
 //!   지금 값을 못 읽거나, 다르면 채택하지 않는다. `startedAtMs`(오퍼레이터 시계)는 축으로 쓰지 않는다(창이 필요해진다).
 //! - 순서: 생사 → 장부의 시작 시각 유무 → 지금 시작 시각 대조. 세대(앱 버전) 판정은 **신원 판정 뒤**다 —
 //!   죽었거나 재사용된 pid 에 세대를 물으면 회수(`retire`)가 무관한 프로세스에 SIGTERM 을 보낼 수 있다.
@@ -19,6 +19,7 @@
 //! `mktime`(지역 시각, `tm_isdst=-1`)으로 바꾼다. 둘 다 초 단위로 잘라 같은 값이 나온다(시험 `lstart_parses_like_date_parse`).
 use crate::runner_ledger::RunnerLedgerEntry;
 use std::collections::HashMap;
+#[cfg(not(target_os = "linux"))]
 use std::process::{Command, Stdio};
 
 /// 프로세스 신원을 묻는 표면(TS `ProcessIdentityProbe`). 시험이 실물 없이 판정을 밟게 한다.
@@ -29,7 +30,7 @@ pub trait IdentityProbe {
     fn alive(&self, pid: i32) -> bool;
 }
 
-/// 실물 probe — `ps -o lstart= -p <pid>` 한 건만 묻는다(목록을 훑지 않는다).
+/// 실물 probe — 그 pid 한 건만 묻는다(목록을 훑지 않는다).
 pub struct PsProbe;
 
 impl IdentityProbe for PsProbe {
@@ -41,11 +42,35 @@ impl IdentityProbe for PsProbe {
     }
 }
 
-/// `ps -o lstart= -p <pid>` → 초 epoch. 러너 spawn 직후 장부에 적을 값도 이것으로 읽는다(c2b-2 배선).
+/// 그 pid 의 커널 시작 시각(초 epoch). 러너 spawn 직후 장부에 적을 값도 이것으로 읽는다(c2b-2 배선).
+///
+/// - 리눅스: `/proc/<pid>/stat` 의 시작 틱과 `/proc/stat` 의 `btime` 으로 잰다 — `ps`(procps)가 없는 최소 설치·컨테이너에서도 읽힌다.
+/// - 그 밖(macOS): `ps -o lstart= -p <pid>`.
+///
+/// 장부에 적는 쪽과 대조하는 쪽이 **같은 길**로 읽으므로 두 길의 값이 서로 같을 필요는 없다.
 pub fn ps_boot_time_sec(pid: i32) -> Option<i64> {
     if pid <= 0 {
         return None;
     }
+    #[cfg(target_os = "linux")]
+    {
+        proc_boot_time_sec(pid)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        lstart_boot_time_sec(pid)
+    }
+}
+
+/// 시작 시각을 어디서 읽는지 — `doctor` 가 사람에게 보인다.
+pub const BOOT_TIME_SOURCE: &str = if cfg!(target_os = "linux") {
+    "/proc/<pid>/stat"
+} else {
+    "/bin/ps -o lstart="
+};
+
+#[cfg(not(target_os = "linux"))]
+fn lstart_boot_time_sec(pid: i32) -> Option<i64> {
     let out = Command::new("/bin/ps")
         .args(["-o", "lstart=", "-p", &pid.to_string()])
         .env("LC_ALL", "C")
@@ -57,6 +82,40 @@ pub fn ps_boot_time_sec(pid: i32) -> Option<i64> {
         return None;
     }
     parse_lstart(String::from_utf8_lossy(&out.stdout).trim())
+}
+
+#[cfg(target_os = "linux")]
+fn proc_boot_time_sec(pid: i32) -> Option<i64> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let sys = std::fs::read_to_string("/proc/stat").ok()?;
+    // SAFETY: sysconf 는 인자 하나만 읽는다.
+    let hz = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
+    proc_start_sec(&stat, &sys, hz)
+}
+
+/// `/proc/<pid>/stat` 한 줄에서 시작 틱(22번째 칸, 부팅 뒤 clock tick)을 고른다.
+/// 둘째 칸(`comm`)은 괄호로 싸여 있고 그 안에 공백·괄호가 들 수 있어 **마지막 `)`** 뒤부터 센다.
+pub fn parse_proc_stat_start_ticks(stat: &str) -> Option<u64> {
+    let rest = &stat[stat.rfind(')')? + 1..];
+    // rest 의 첫 칸이 3번째 칸(state)이다 → 22번째 칸은 19번째(0부터).
+    rest.split_ascii_whitespace().nth(19)?.parse().ok()
+}
+
+/// `/proc/stat` 의 `btime <초 epoch>` 줄.
+pub fn parse_proc_btime(sys_stat: &str) -> Option<i64> {
+    sys_stat.lines().find_map(|l| {
+        let mut w = l.split_ascii_whitespace();
+        (w.next() == Some("btime")).then(|| w.next()?.parse().ok())?
+    })
+}
+
+/// 부팅 시각 + 시작 틱 ÷ 초당 틱 → 초 epoch(초 아래는 버린다 — `lstart` 와 같은 1초 해상도).
+pub fn proc_start_sec(pid_stat: &str, sys_stat: &str, ticks_per_sec: i64) -> Option<i64> {
+    if ticks_per_sec <= 0 {
+        return None;
+    }
+    let ticks = i64::try_from(parse_proc_stat_start_ticks(pid_stat)?).ok()?;
+    parse_proc_btime(sys_stat)?.checked_add(ticks / ticks_per_sec)
 }
 
 /// `Wed Nov 11 17:30:56 2026` (C 로캘 `lstart`) → 지역 시각으로 본 초 epoch.
