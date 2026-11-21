@@ -10791,9 +10791,10 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                    values ($1, 'tool', 'Bash(kubectl get pods:*)', 'x', $2, $3, now() + interval '1 hour')`, [bot3.accountId, ch, head]);
               }),
               pr({ kind: 'tool', rule: 'Bash(kubectl get pods:*)' }, true, 'permission.request 기한 지난 옛 요청(카드 없음) 대체', oldReq(false)),
-              // P6-2b — 대체한 옛 요청의 카드를 Rust 가 닫는다(permissionRequest 상태·ask 닫기·message.updated·거울). 묶음에 담긴 카드는 TS.
+              // P6-2b — 대체한 옛 요청의 카드를 Rust 가 닫는다(permissionRequest 상태·ask 닫기·message.updated·거울).
+              // 0-1 ④ — 옛 카드가 묶음에 담겨 있으면 새 카드를 그 묶음의 줄로 옮기는 것도 Rust(TS carryBundleItem).
               pr({ kind: 'tool', rule: 'Bash(kubectl get pods:*)' }, true, 'permission.request 옛 요청에 카드 → 옛 카드 닫기', oldReq(true)),
-              pr({ kind: 'tool', rule: 'Bash(kubectl get pods:*)' }, false, 'permission.request 옛 카드가 묶음에 → TS(묶음 줄 옮기기)', oldReq(true, true)),
+              pr({ kind: 'tool', rule: 'Bash(kubectl get pods:*)' }, true, 'permission.request 옛 카드가 묶음에 → 새 카드를 묶음 줄로', oldReq(true, true)),
               // P6-2c — command 도 Rust. 오퍼레이터를 거치지 않으면 파일 해시가 없으니 kubectl·helm(늘 kubeconfig 를 읽는다)은 거절로 끝난다.
               pr({ kind: 'command', command: 'kubectl --context rc get pod' }, true, 'permission.request command kubeconfig 없음 → needs_kubeconfig'),
               pr({ kind: 'command', command: 'kubectl --kubeconfig /k/c --context rc get pod' }, true, 'permission.request command 파일 안 잼 → files_unmeasured'),
