@@ -247,7 +247,7 @@ pub struct ApproveArgs<'a> {
     pub actor_id: &'a str,
     /// `approve`·`approve_mandate`·`approve_turn`·`approve_once`·`approve_hour`.
     pub option: &'a str,
-    /// 카드 길이면 카드 meta 에 1회 머지 값(`permissionRequest.once`)이 있는가 — TS `onceFromCard`. 있으면 TS(`not_once` 갈래).
+    /// 카드 길이면 카드 meta 에 1회 머지 값(`permissionRequest.once`)이 있는가 — TS `onceFromCard`(REST `approve-once` 는 본문). 머지 거절 카드가 아니면 쓰기 없는 409 `not_once`.
     pub has_once: bool,
     /// 카드의 1회 머지 값(TS `onceFromCard`, gh 계정은 비움 — 오퍼레이터가 고른다). 머지 [이번 한 번]만 쓴다.
     pub once: Option<&'a super::decide_merge_once::Once>,
@@ -535,6 +535,10 @@ pub async fn approve_write(
     }
     // TS `decidePermissionRequest`: command 가 아닌 카드의 `approve_once` 는 머지 거절 카드 + once 일 때만 — 그 밖은 쓰기 없이 409.
     if decision == Decision::ApproveOnce && locked.kind != "command" {
+        return Ok(refused(409, "not_once", NOT_ONCE_MESSAGE));
+    }
+    // 0-1 ② — TS 의 바로 다음 줄: command 요청에 1회 머지 값(`once`)이 붙어 오면 쓰기 없이 409 `not_once`.
+    if locked.kind == "command" && args.has_once {
         return Ok(refused(409, "not_once", NOT_ONCE_MESSAGE));
     }
     // S5.4 11d — TS 와 같은 차례의 쓰기 없는 409 `bad_decision` 셋(소유자 승인만 여기 온다 — 위임장 줄 지우기 갈래 없음).
@@ -1008,7 +1012,7 @@ async fn upsert_grant_by_user(
 }
 
 /// 머지 거절 카드의 [이번 한 번] — TS `insertApprovalFromDenial` + `decidePermissionRequest` 의 그 갈래. 같은 tx, 감사도 tx 안.
-/// 위임장·소유자 아님·once 값 없음·스위치 꺼짐은 쓰기 전에 TS.
+/// 거절 기록·once 값이 없으면 쓰기 없이 409 `not_once`. 스위치 꺼짐·못 읽은 once 값은 쓰기 전에 TS.
 async fn merge_once_write(
     conn: &mut PgConnection,
     locked: &LockedRequest,
@@ -1016,9 +1020,16 @@ async fn merge_once_write(
     as_owner: bool,
 ) -> sqlx::Result<ApproveOutcome> {
     use super::decide_merge_once as m;
-    let (Some(once), Some(denial_id), true) =
-        (args.once, locked.denial_id.as_deref(), m::merge_once_on())
-    else {
+    // 0-1 ② — TS: `r.kind !== 'merge' || !r.denialId || !args.once` 면 쓰기 없이 409 `not_once`. 거절 기록이 없거나 1회 머지
+    // 값이 아예 없는 꼴은 스위치와 무관하게 여기서 답한다(읽기뿐). 값은 있는데 정수로 못 읽은 드문 꼴(`has_once` 인데 `once`
+    // 없음)과 스위치 꺼짐만 쓰기 전에 TS.
+    let Some(denial_id) = locked.denial_id.as_deref() else {
+        return Ok(refused(409, "not_once", NOT_ONCE_MESSAGE));
+    };
+    if !args.has_once {
+        return Ok(refused(409, "not_once", NOT_ONCE_MESSAGE));
+    }
+    let (Some(once), true) = (args.once, m::merge_once_on()) else {
         return Ok(ApproveOutcome::HandToTs);
     };
     // TS `decisions.ts`: `if (once && !verdict.asOwner) once = { ...once, ghUser: null }` — gh 계정 고르기는 소유자만(security F1).
@@ -1417,27 +1428,53 @@ mod tests {
             }),
             Some(Decision::ApproveOnce)
         );
-        // once 본문·거절 기록·merge 는 TS(1회 머지 쓰기).
+        // 0-1 ② — 쓰기 없는 409 `not_once` 꼴도 Rust: once 가 붙은 tool·command, 거절 기록이나 once 가 없는 merge.
         for s in [
             Shape {
                 has_once: true,
                 ..base
             },
             Shape {
-                has_denial: true,
+                kind: "merge",
                 ..base
             },
             Shape {
                 kind: "merge",
+                has_denial: true,
                 ..base
             },
-            // 머지 1회라도 거절 기록이 없으면 TS(거울은 S5.5 d, 글 승인은 P3 B6 부터 버튼과 같다)(15d — 위임장이 있으면 Rust, 아래).
             Shape {
                 kind: "merge",
                 has_once: true,
                 ..base
             },
             Shape {
+                kind: "command",
+                has_once: true,
+                ..base
+            },
+        ] {
+            assert_eq!(rust_takes(s), Some(Decision::ApproveOnce), "{s:?}");
+        }
+        // 거절 기록이 붙은 tool·command, `approve_once` 가 아닌 선택지에 붙은 once 는 TS.
+        for s in [
+            Shape {
+                has_denial: true,
+                ..base
+            },
+            Shape {
+                has_once: true,
+                has_denial: true,
+                ..base
+            },
+            Shape {
+                kind: "command",
+                has_once: true,
+                has_denial: true,
+                ..base
+            },
+            Shape {
+                option: "approve_hour",
                 kind: "command",
                 has_once: true,
                 ..base
