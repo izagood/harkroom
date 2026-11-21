@@ -982,3 +982,135 @@ async fn acl_flip(url: &str, role: &str, n: usize) -> Result<(), sqlx::Error> {
     }
     c.close().await
 }
+
+/// 옛 TS `permissionCard` 의 쓰기 없는 거부 둘(TS 없이 Rust 단언): ① command 요청은 위임장으로 승인되지 않는다 —
+/// `approve_mandate`·`approve_new_mandate` 모두 409 `bad_decision` ② 위임장을 세울 수 없는 merge 는 7일 승인으로 넘어가지 않는다 —
+/// `approve_mandate`·`approve_new_mandate` 모두 409 `mandate_unavailable`. 어느 쪽도 요청은 pending 그대로, grant 0.
+#[tokio::test]
+async fn approve_refusals_write_nothing() {
+    use harkroom_server::core::decide_approve::{
+        ApproveArgs, ApproveOutcome, check_mandate_core, decide_approve,
+    };
+    let Some(url) = db_url() else { return };
+    let pool = PgPool::connect(&url).await.unwrap();
+    // 위임장 쓰기 칸 판정(관리자 URL 이라 다 있다) — 꺼져 있으면 approve_new_mandate 가 TS 로 넘어가 이 시험이 보는 답이 아니다.
+    assert!(check_mandate_core(&pool).await, "mandate core off");
+    let f = fixture(&pool, "list").await;
+    sqlx::query("insert into channel_member(channel_id, account_id) values ($1::uuid, $2::uuid)")
+        .bind(&f.channel)
+        .bind(&f.owner)
+        .execute(&pool)
+        .await
+        .unwrap();
+    // 카드 없고 스레드 머리 글도 없는 요청(thread_root_id 는 not null 이라 없는 글의 id 를 넣는다) — 위임장을 세울 머리 글이 없다.
+    let request = |kind: &'static str, target: &'static str| {
+        let pool = pool.clone();
+        let agent = f.agent.clone();
+        let channel = f.channel.clone();
+        async move {
+            sqlx::query_scalar::<_, String>(
+                "insert into permission_request(agent_id, kind, target, reason, channel_id, thread_root_id, expires_at) \
+                 values ($1::uuid, $2, $3, 'r', $4::uuid, gen_random_uuid(), now() + interval '1 hour') returning id::text",
+            )
+            .bind(agent)
+            .bind(kind)
+            .bind(target)
+            .bind(channel)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let status = |req: String| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, String>(
+                "select status from permission_request where id = $1::uuid",
+            )
+            .bind(req)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let approve = |req: String, option: &'static str| {
+        let pool = pool.clone();
+        let agent = f.agent.clone();
+        let owner = f.owner.clone();
+        async move {
+            decide_approve(
+                &pool,
+                ApproveArgs {
+                    agent_id: &agent,
+                    request_id: &req,
+                    actor_id: &owner,
+                    option,
+                    has_once: false,
+                    once: None,
+                    bundle_message_id: None,
+                    mirror_message_id: None,
+                    chat: None,
+                },
+            )
+            .await
+            .unwrap()
+        }
+    };
+
+    let cmd = request("command", "kubectl --context ops get pods").await;
+    for option in ["approve_mandate", "approve_new_mandate"] {
+        let out = approve(cmd.clone(), option).await;
+        assert!(
+            matches!(
+                out,
+                ApproveOutcome::Refused {
+                    status: 409,
+                    code: "bad_decision",
+                    ..
+                }
+            ),
+            "command {option}: {out:?}"
+        );
+        assert_eq!(status(cmd.clone()).await, "pending", "command {option}");
+    }
+    let grants: i64 =
+        sqlx::query_scalar("select count(*) from command_grant where agent_id = $1::uuid")
+            .bind(&f.agent)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(grants, 0, "command: 거부된 승인이 command_grant 를 남겼다");
+
+    let merge = request("merge", "acme-org/no-mandate").await;
+    for option in ["approve_mandate", "approve_new_mandate"] {
+        let out = approve(merge.clone(), option).await;
+        assert!(
+            matches!(
+                out,
+                ApproveOutcome::Refused {
+                    status: 409,
+                    code: "mandate_unavailable",
+                    ..
+                }
+            ),
+            "merge {option}: {out:?}"
+        );
+        assert_eq!(status(merge.clone()).await, "pending", "merge {option}");
+    }
+    let grants: i64 = sqlx::query_scalar(
+        "select count(*) from account_grant where account_id = $1::uuid and capability = 'repo.merge'",
+    )
+    .bind(&f.agent)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(grants, 0, "merge: 위임장 없이 7일 grant 를 남겼다");
+    let mandates: i64 = sqlx::query_scalar(
+        "select count(*) from permission_request where id = $1::uuid and mandate_id is not null",
+    )
+    .bind(&merge)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(mandates, 0, "merge: 위임장 키가 적혔다");
+}
