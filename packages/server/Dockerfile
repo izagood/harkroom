@@ -60,6 +60,8 @@ COPY --from=deps /app ./
 
 COPY packages/shared packages/shared
 COPY packages/server packages/server
+# 마이그레이션 정본은 Rust 서버 쪽(`crates/harkroom-server/migrations`)에 있다 — `src/db/migrate.ts` 가 그 자리를 읽는다.
+COPY crates/harkroom-server/migrations crates/harkroom-server/migrations
 # 릴리스 버전의 **정본**이다(`packages/server/src/version.ts` 에 근거). 서버가 `/healthz` 에
 # 자기 버전을 실으려면 이 한 파일이 이미지 안에 있어야 한다 — 몇 백 바이트짜리 JSON 이고
 # `packages/desktop` 의 나머지는 들어오지 않는다.

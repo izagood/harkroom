@@ -269,7 +269,7 @@ describe('channel sections (136)', () => {
         [otherId, channelId, name],
       );
     }
-    const sql = await readFile(new URL('../src/db/migrations/136_channel_section.sql', import.meta.url), 'utf8');
+    const sql = await readFile(new URL('../../../crates/harkroom-server/migrations/136_channel_section.sql', import.meta.url), 'utf8');
     const backfill = sql.slice(sql.indexOf('-- 옮겨 담기'));
     expect(backfill).toContain('insert into channel_section');
     // 위 clearSections 로 다른 계정에는 섹션이 없다 — 이미 136 을 지난 DB 에 다시 돌려도 겹치지 않는다.

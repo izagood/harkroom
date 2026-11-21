@@ -1,9 +1,9 @@
-//! TS 서버의 마이그레이션 파일 이름(정본 `packages/server/src/db/migrations/*.sql`)을 바이너리에 굽는다.
+//! 마이그레이션 파일 이름(정본 `crates/harkroom-server/migrations/*.sql`)을 바이너리에 굽는다.
 //! 기동할 때 DB 의 `schema_migrations` 와 대조한다(`src/schema.rs`). 본문도 굽는다 — 마이그레이션 실행기(`src/migrate.rs`, 기본 꺼짐)가 쓴다.
 use std::{env, fs, path::Path};
 
 fn main() {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/server/src/db/migrations");
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
     println!("cargo:rerun-if-changed={}", dir.display());
     let mut names: Vec<String> = fs::read_dir(&dir)
         .expect("마이그레이션 폴더")
