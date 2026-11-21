@@ -9,7 +9,7 @@ const read = (f: string) => readFileSync(join(SRC, f), 'utf8');
 describe('카드형 화면이 꼴을 쓴다', () => {
   it.each([
     ['UpdatesSettings.tsx', 'layout="cards"', 'updates-columns'],
-    ['AgentDefaultsSettings.tsx', 'layout="cards"', 'agent-defaults-columns'],
+    ['AgentDefaultsSettings.tsx', 'layout="form"', 'layout="form"'],
     ['ThisOperatorSettings.tsx', 'layout="form"', 'layout="form"'],
     ['ProviderAccountsSettings.tsx', 'layout="list"', 'provider-accounts-grid'],
     ['HandleGroupsSettings.tsx', '@container/settings', 'group-detail-columns'],

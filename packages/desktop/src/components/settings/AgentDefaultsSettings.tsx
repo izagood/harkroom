@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { RUNNABLE_HARNESSES, type AgentDefaults } from '@harkroom/shared';
 import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
-import { Field, SaveStatus, Segmented, Select, SettingsColumns, SettingsGroup, SettingsPage, TextInput, type SaveState } from './primitives';
+import { Field, SaveStatus, Segmented, Select, SettingsGroup, SettingsPage, TextInput, type SaveState } from './primitives';
 import { useT } from '../../i18n/useT';
 
 // 러너가 실제로 띄울 수 있는 하네스는 `@harkroom/shared` 의 `RUNNABLE_HARNESSES` 하나다. 여기에
@@ -70,12 +70,9 @@ export function AgentDefaultsSettings() {
     <SettingsPage
       section="agent-defaults"
       description={t('defaults.field.subtitle')}
-      layout="cards"
+      layout="form"
     >
-      {/* 새 에이전트 기본값 한 칸이다. 곁 칸이던 멘션 연쇄 상한은 없다 — 홉 수로 부름을 막던 검사를 서버에서 걷었다. */}
-      <SettingsColumns
-        testId="agent-defaults-columns"
-        main={(
+      {/* 필드 셋짜리 카드 한 장이라 꼴은 form(상한 880px)이다 — 나눌 칸이 없어 `SettingsColumns` 를 쓰지 않는다. */}
       <SettingsGroup>
         {!isAdmin && (
           <p className="px-4 py-3 text-fg-muted">{t('defaults.field.notAdmin')}</p>
@@ -125,8 +122,6 @@ export function AgentDefaultsSettings() {
           </div>
         )}
       </SettingsGroup>
-        )}
-      />
     </SettingsPage>
   );
 }
