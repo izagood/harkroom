@@ -93,10 +93,11 @@ fn who_takes_it() {
         rust_takes(shape("approve_once", "merge")),
         Some(Decision::ApproveOnce)
     );
-    // 승인 kind 는 허용 목록 — merge 의 [이번 턴만]·모르는 kind 는 TS.
+    // 승인 kind 는 허용 목록 — 모르는 kind·모르는 선택지는 TS.
     for (o, k) in [
         ("approve", "future_kind"),
-        ("approve_turn", "merge"),
+        ("approve_turn", "future_kind"),
+        ("approve_hour", "future_kind"),
         ("nope", "tool"),
     ] {
         assert_eq!(rust_takes(shape(o, k)), None, "{o}/{k}");
@@ -106,6 +107,9 @@ fn who_takes_it() {
         ("approve_hour", "tool", Decision::ApproveHour),
         ("approve_turn", "tool", Decision::ApproveTurn),
         ("approve_turn", "command", Decision::ApproveTurn),
+        // 0-1 ⑥ — merge 카드의 [이번 턴만]·[1시간].
+        ("approve_turn", "merge", Decision::ApproveTurn),
+        ("approve_hour", "merge", Decision::ApproveHour),
         ("approve_mandate", "command", Decision::ApproveMandate),
         (
             "approve_new_mandate",
@@ -157,6 +161,30 @@ fn who_takes_it() {
         rust_takes(m("approve_once", "merge")),
         Some(Decision::ApproveOnce)
     );
+    // 0-1 ⑥ — merge 카드의 [이번 턴만]·[1시간]은 위임장·거절 기록이 있어도 쓰기 없는 409 `bad_decision` — Rust 가 답한다.
+    for (o, d) in [
+        ("approve_turn", Decision::ApproveTurn),
+        ("approve_hour", Decision::ApproveHour),
+    ] {
+        assert_eq!(rust_takes(m(o, "merge")), Some(d), "{o}/merge + mandate");
+        assert_eq!(
+            rust_takes(Shape {
+                has_denial: true,
+                ..shape(o, "merge")
+            }),
+            Some(d),
+            "{o}/merge + denial"
+        );
+        // 1회 머지 값은 `approve_once` 에만 붙는다 — 다른 선택지에 붙은 꼴은 맡지 않는다(그대로).
+        assert_eq!(
+            rust_takes(Shape {
+                has_once: true,
+                ..shape(o, "merge")
+            }),
+            None,
+            "{o}/merge + once"
+        );
+    }
     // P3 B2 — 위임장 있는 카드의 거절은 kind 와 관계없이 Rust(TS 거절은 위임장을 건드리지 않는다).
     for k in ["tool", "command", "merge"] {
         assert_eq!(rust_takes(m("deny", k)), Some(Decision::Deny), "deny/{k}");

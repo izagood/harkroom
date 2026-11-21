@@ -11,8 +11,8 @@
 //! S5.3 C3 — 위임장 있는 command `approve_once`·`approve_hour` 도 1시간 `command_grant` 와 함께 그 위임장에 cap `command` 줄 하나
 //! (기한 1시간, 「이번 한 번」은 `uses: 1`)를 적는다. grant 를 썼으므로 줄이 실패하면 savepoint 로 줄만 되돌리고 결정은 남긴다(TS 와 같음).
 //!
-//! 맡는 꼴은 [`super::decide_core::rust_takes`] 가 정한다(`once`·글 승인·거울·merge·위임장 있는 deny 는 처음부터 TS). 소유자가 아닌 사람의 승인은
-//! 판정 뒤([`super::decide_core::after_verdict`]) 쓰기 전에 TS 로 넘긴다(소유자 알림 글을 TS 가 쓴다).
+//! 맡는 꼴은 [`super::decide_core::rust_takes`] 가 정한다(그 목록 밖은 처음부터 TS). 소유자가 아닌 사람의 승인은 쓰기 없는 거절까지
+//! Rust 가 답하고, 쓰는 길은 소유자 알림 줄을 쓸 칸이 있을 때만 맡는다(없으면 쓰기 전에 TS).
 //!
 //! TS 와 다른 점(덜 여는 쪽): TS 는 감사·`grant.given`·이벤트를 커밋 **뒤**에 쓰고 실패를 삼킨다. 여기서는 결정과 같은 tx 라
 //! 감사가 실패하면 grant 도 남지 않는다(`internal`, TS 로 넘기지 않음).

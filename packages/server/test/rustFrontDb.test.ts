@@ -8611,6 +8611,17 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         const ansP = (m: string) => `/channels/${todayId}/messages/${m}/ask-answer`;
         const run3 = async (base: string, sd: Side3) => {
           const out: { step: string; status: number; code?: string; body: unknown }[] = [];
+          // 0-1 ⑥ — merge 카드의 [이번 턴만]·[1시간]은 위임장·거절 기록이 있든 없든 쓰기 없이 409 `bad_decision`(요청은 pending 그대로 —
+          // 아래 걸음들이 같은 카드를 그대로 정한다).
+          for (const [name, card, optionId] of [
+            ['merge 카드 [이번 턴만] 위임장 없음 → 409 bad_decision', sd.otherCard, 'approve_turn'],
+            ['merge 카드 [이번 턴만] 위임장 있음 → 409 bad_decision', sd.existCard, 'approve_turn'],
+            ['merge 카드 [1시간] CI 거절 기록 → 409 bad_decision', sd.ciOwnCard, 'approve_hour'],
+            ['merge 카드 [1시간] 권한 거절 기록 → 409 bad_decision', sd.deniedCard, 'approve_hour'],
+          ] as const) {
+            const r = await callX(base, 'POST', ansP(card), { optionId }, A);
+            out.push({ step: name, status: r.status, code: r.code, body: r.status === 200 ? (await shape3(sd))(r.json) : (r.json.error as { message?: string } | undefined)?.message ?? null });
+          }
           for (const [name, card] of [
             ['소유자 머리 → 새 위임장·merge 줄(grant 없음)', sd.ownCard],
             ['남의 머리 → 409 mandate_unavailable(7일 승인으로 넘어가지 않음)', sd.otherCard],
@@ -8629,6 +8640,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         const rsOut3 = await run3(rsUrl, R3);
         expect(rsOut3).toEqual(tsOut3);
         expect(tsOut3.map((o) => [o.status, o.code ?? null])).toEqual([
+          [409, 'bad_decision'], [409, 'bad_decision'], [409, 'bad_decision'], [409, 'bad_decision'],
           [200, null], [409, 'mandate_unavailable'], [200, null], [400, 'ci_card_once_only'],
           [409, 'mandate_unavailable'], [200, null], [409, 'mandate_line_failed'],
         ]);

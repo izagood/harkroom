@@ -599,6 +599,9 @@ pub fn rust_takes(s: Shape<'_>) -> Option<Decision> {
         (Decision::ApproveTurn, "tool" | "command")
         | (Decision::ApproveMandate | Decision::ApproveNewMandate, "command")
         | (Decision::ApproveHour, "tool") => !s.has_denial,
+        // 0-1 ⑥ — merge 카드의 [이번 턴만]·[1시간]도 TS 는 쓰기 없이 409 `bad_decision` 이다(거절 기록·위임장이 있어도 — 두 거절은
+        // 종류만 본다). 승인 쓰기([`super::decide_approve::approve_write`])의 같은 차례 거절이 그대로 답한다.
+        (Decision::ApproveTurn | Decision::ApproveHour, "merge") => true,
         _ => false,
     };
     ok.then_some(d)

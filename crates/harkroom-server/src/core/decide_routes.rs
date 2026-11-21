@@ -7,8 +7,10 @@
 //!    답은 원본 카드에 적혀 `sync_ask_mirrors` 가 거울을 같은 tx 에서 닫는다. 응답은 누른 거울 글이다.
 //! 3. `POST /channels/{id}/messages/{messageId}/ask-bundle/answer` 의 권한 줄 + `deny` — TS `answerBundleItem`(`via: bundle`).
 //!
-//! **맡지 않으면 언제나 쓰기 전에 TS 로 넘긴다**(읽은 바이트 그대로): 사람 세션이 아님·uuid 아님·요청 줄의 에이전트가 경로와 다름·
-//! 진짜 거울이 아님·`once`·거절이 아닌 선택지·코어가 `HandToTs`(만료·꼴 바뀜). 코어가 쓰기 tx 안에서 실패하면 `internal` 이고 TS 로 넘기지 않는다.
+//! **맡지 않으면 언제나 쓰기 전에 TS 로 넘긴다**(읽은 바이트 그대로): uuid 아님·요청 줄의 에이전트가 경로와 다름·진짜 거울이 아님·
+//! 코어가 `HandToTs`(맡는 꼴 목록 [`super::decide_core::rust_takes`] 밖·쓰는 칸이 없는 서버). 코어가 쓰기 tx 안에서 실패하면 `internal` 이고
+//! TS 로 넘기지 않는다. 승인 선택지는 아래 B2 절의 승인 입구가, 카드·묶음 줄에 온 「사람 세션이 아님」·모르는 선택지는 쓰기 없는 거절
+//! ([`answer_card_refuse`]·[`bundle_line`])이 Rust 에서 답한다 — REST 입구의 사람 세션 아님만 그대로 넘긴다.
 //!
 //! **W1(security, 3b 검토)** — `bundle_message_id` 는 [`answer_bundle_deny`] 를 부르기 **전에** 호출자(`ask_bundle::answer`)가
 //! 「그 묶음 글이 이 채널의 묶음이고 그 줄(rootId)을 담는다」를 확인한 뒤에만 넘긴다. 여기서도 그 줄의 원본이 권한 카드인지·원본 채널을
