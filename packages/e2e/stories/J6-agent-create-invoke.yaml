@@ -21,9 +21,6 @@ failSigns:
   - "답 없이 끝남"
   - "소유자가 아닌 사람에게 관리 버튼"
 existing:
-  - kind: server-vitest
-    file: "packages/server/test/agentOwner.test.ts"
-    note: "소유 판정"
   - kind: desktop-vitest
     file: "packages/desktop/test/agentCreateLocalOperator.test.tsx"
     note: "만들기→로컬 오퍼레이터"
@@ -32,4 +29,5 @@ existing:
     note: "owner 시점의 멘션→러너→발화"
 runners: [harness, manual]
 gaps:
+  - "옛 TS 서버 시험(server-vitest·API 여정 러너)은 TS 백엔드 삭제로 없어졌다 — Rust 시험으로 옮기지 않은 판정은 여기서 빈다"
   - "러너·오퍼레이터는 Tauri 앱 안이라 브라우저 러너로는 못 본다(손 시험)"
