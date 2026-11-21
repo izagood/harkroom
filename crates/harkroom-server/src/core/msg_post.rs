@@ -18,8 +18,8 @@
 //!   (`REPLY_LOCK_CLASS`)을 채널 락 앞에 잡고, 부름이 실제로 간 에이전트에게 회신권을 열고(`openReplyGrants`) 답글이면 받은
 //!   회신권을 닫는다(`closeReplyGrants`). 위임 키·깨움 선점·카드 닫기는 TS 와 같이 사람 글에만. 아직 TS 로 넘기는 것:
 //!   암묵 위임 쓰기 권한이 빠진 서버의 부름. 스위치 값이 없으면 TS 기본값으로 맡고, 암묵 위임은 [`implicit_delegation`] 이 적는다(C1c-4d).
-//! - **사슬 안의 에이전트 글**(C1c-4b): 앞 고리([`chain_link`])에서 깊이·사슬 시작을 잇고, 정체 홉([`super::chain_stall`])을 적고,
-//!   한도를 넘으면 막았을 부름을 `meta.mentionStallShadow` 에 남긴다(그림자 — 부름은 그대로 나간다).
+//! - **사슬 안의 에이전트 글**(C1c-4b): 앞 고리([`chain_link`])에서 깊이·사슬 시작을 잇고, 정체 홉([`super::chain_stall`])을 적는다.
+//!   깊이·정체 칸은 **적기만 한다** — 홉 수·사슬 나이로 부름을 막지 않고(O1), 정체 그림자(`meta.mentionStallShadow`)도 남기지 않는다.
 //! - 순서(TS 와 같다): 본문 읽기(413·400·415) → 인증(401, `route_layer`) → 경로·본문 검사(400) → 쓰기 게이트(403 `forbidden`·
 //!   `channel_archived`) → **쓰기 트랜잭션 하나**: seq 락(TS `lockChannelForSeq`) → 재시도 키 재생(200, 헤더 없음) → insert →
 //!   첨부 잇기(실패면 되돌리고 400 `bad_attachment`) → 다시 읽기 → 재시도 키 기록 → 부름 넣기 → 위임 → `message.created`·
@@ -30,8 +30,7 @@
 use super::ask_reply_close;
 use super::audience::audience_for;
 use super::cause_link;
-use super::chain_backstop;
-use super::chain_stall::{self, STALL_HOP_LIMIT};
+use super::chain_stall;
 use super::delegate_write;
 use super::implicit_delegation;
 use super::invoke_gate;
@@ -170,7 +169,6 @@ struct Sql {
     depth_scan: String,
     recent_bodies: String,
     own_links: String,
-    stall_shadow: String,
     reply_open: String,
     reply_close: String,
     reply_lock_class: i32,
@@ -279,7 +277,6 @@ fn sql() -> &'static Sql {
             ),
             recent_bodies: frag("stall_recent_bodies"),
             own_links: frag("stall_own_thread_links"),
-            stall_shadow: frag("stall_shadow"),
             reply_open: frag("reply_grant_open"),
             reply_close: frag("reply_grant_close"),
             set_mandate: frag("message_set_mandate"),
@@ -351,7 +348,7 @@ pub(crate) struct Origin<'a> {
     /// 결과를 닫는 글(`meta.kind` 가 `failure`·`report`, C3b-2c). 작성자가 담당인 **안 닫힌** 위임 항목이 이 스레드에 있으면 TS
     /// `closeDelegationsForReply` 가 그 항목을 닫고 위임자를 깨운다.
     pub(crate) closes_delegation: bool,
-    /// MCP `message.delegate`(C3b-2c-4b) — 게이트를 지난 위임. 있으면 같은 tx 에서 사슬 상한(TS `delegationChainCapped`)을 보고
+    /// MCP `message.delegate`(C3b-2c-4b) — 게이트를 지난 위임. 있으면 같은 tx 에서
     /// 의무를 만든다(TS `createDelegation`, [`delegate_write`]). 위임 스위치 값이 없으면 v0 이다.
     pub(crate) delegation: Option<delegate_write::Plan<'a>>,
     /// TS `kind: 'system'`(S5.4 CH4b-2) — 서버가 사실을 남기는 줄(멤버 넣기·빼기). 라우트 입력에서는 켜지 않는다. TS `postMessage` 와 같이
@@ -548,8 +545,6 @@ pub(crate) enum Outcome {
     BadThread,
     /// 이 스레드는 TS 몫이다([`TS_THREAD_SQL`]) — 아무것도 쓰지 않았다.
     ToTs,
-    /// 위임 글의 사슬이 상한에 닿았다(TS `beforeCommit` 의 `chain_limit`, 409) — 아무것도 쓰지 않았다. [`Origin::delegation`] 만.
-    ChainLimit,
     /// [`Origin::before_commit`] 이 거절했다 — 롤백됐고 글은 없다(TS `failure: 'rejected'`).
     Rejected(Rejection),
     Posted {
@@ -559,15 +554,6 @@ pub(crate) enum Outcome {
         /// [`Origin::delegation`] 으로 만든 위임 id.
         delegation_id: Option<String>,
     },
-}
-
-/// 상한에 막힌 부름 — 커밋 뒤 [`chain_backstop::raise`] 가 받는다(TS `postMessage` 끝의 `raiseChainBackstop` 입력).
-pub(crate) struct Capped {
-    source: String,
-    thread_root: String,
-    capped_ids: Vec<String>,
-    limit: i64,
-    age: bool,
 }
 
 /// TS `resolveMentionCalls` 의 입력 — 깊이·사슬 시작은 [`chain_link`](사람은 언제나 0·없음), principal 없음(REST 에는 원인이 없다).
@@ -581,7 +567,6 @@ async fn resolve_post(
     body: &str,
     thread_root: Option<&str>,
     link: &Chain,
-    chain_depth: Option<i32>,
     principal: Option<&str>,
 ) -> Result<mention_calls::Resolved, sqlx::Error> {
     mention_calls::resolve(
@@ -591,9 +576,6 @@ async fn resolve_post(
             channel_id: channel,
             author_id: author,
             author_is_agent,
-            mention_depth: mention_depth(link.depth, chain_depth) as i64,
-            chain_bound: chain_depth.is_some(),
-            chain_started_at_ms: link.started_ms,
             // TS 는 결과 발화면 사람 글에도 머리를 넘긴다(사람은 회신권 대상이 아니라 판정은 같다).
             reply_grant_thread_id: thread_root,
             principal: principal.map(|id| mention_calls::Principal { id }),
@@ -618,8 +600,6 @@ fn no_mention_calls(body: &str) -> mention_calls::Resolved {
         normalized_body: body.to_owned(),
         account_handles: HashSet::new(),
         called_ids: Vec::new(),
-        capped_ids: HashSet::new(),
-        capped_order: Vec::new(),
         denied_ids: HashSet::new(),
         team_plans: Vec::new(),
         target_call: Vec::new(),
@@ -710,8 +690,7 @@ pub(crate) fn iso_ms(ms: i64) -> String {
     )
 }
 
-/// 글 하나를 올린다. 에이전트 결과 글의 부름이 사슬 상한에 막혔으면 **커밋 뒤** 소유자에게 백스톱 카드를 세운다(TS `postMessage`
-/// 끝의 `raiseChainBackstop`, C1c-4d-2). 카드가 실패해도 이 글은 이미 나갔다 — 오류는 적고 삼킨다(TS 와 같다).
+/// 글 하나를 올린다. 사슬 상한·백스톱 카드(TS `raiseChainBackstop`)는 없다(O1) — [`post_tx`] 를 그대로 부른다.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn post_in_tx(
     st: &PostState,
@@ -724,7 +703,7 @@ pub(crate) async fn post_in_tx(
     is_dm: bool,
     origin: &Origin<'_>,
 ) -> Result<Outcome, sqlx::Error> {
-    let (out, capped) = post_tx(
+    post_tx(
         st,
         channel,
         author,
@@ -735,22 +714,7 @@ pub(crate) async fn post_in_tx(
         is_dm,
         origin,
     )
-    .await?;
-    if let Some(c) = capped {
-        let b = chain_backstop::Input {
-            agent_id: author,
-            channel_id: channel,
-            thread_root_id: &c.thread_root,
-            source_message_id: &c.source,
-            capped_ids: &c.capped_ids,
-            limit: c.limit,
-            age: c.age,
-        };
-        if let Err(e) = chain_backstop::raise(st, &b, audience, is_dm).await {
-            eprintln!("[chainBackstop] 카드를 세우지 못했다(글은 나갔다): {e}");
-        }
-    }
-    Ok(out)
+    .await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -764,7 +728,7 @@ pub(crate) async fn post_tx(
     audience: &Value,
     is_dm: bool,
     origin: &Origin<'_>,
-) -> Result<(Outcome, Option<Capped>), sqlx::Error> {
+) -> Result<Outcome, sqlx::Error> {
     let s = sql();
     // TS `isReply = countsAsReply(kind)` — `progress`·`wake` 만 거짓.
     let is_reply = !(origin.progress || origin.wake);
@@ -789,7 +753,7 @@ pub(crate) async fn post_tx(
             .is_some();
         if !ok {
             tx.rollback().await?;
-            return Ok((Outcome::BadThread, None));
+            return Ok(Outcome::BadThread);
         }
     }
     // TS 회신권 「결과 한 번」 락 — 같은 작성자·같은 스레드의 결과끼리 줄을 세운다(채널 락보다 언제나 앞).
@@ -885,7 +849,6 @@ pub(crate) async fn post_tx(
             // TS `replyGrantThreadId: isResult ? threadRootId : null`.
             root.filter(|_| is_result),
             &link,
-            origin.chain_depth,
             principal.as_ref().map(|(p, _)| p.as_str()),
         )
         .await?
@@ -896,7 +859,6 @@ pub(crate) async fn post_tx(
         v2,
         crate::env_once::get(&crate::env_once::DELEGATION_IMPLICIT),
     );
-    // 상한에 막힌 부름은 C1c-4d-2 부터 Rust 가 맡는다 — 커밋 뒤 백스톱 카드([`post_in_tx`]).
     if author_is_agent
         && is_result
         && !origin.system
@@ -907,7 +869,7 @@ pub(crate) async fn post_tx(
         // 암묵 위임 쓰기 권한이 빠진 서버 — 이 갈래만 남긴다(권한이 빠진 기능의 처리는 따로 정한다).
         tx.rollback().await?;
         ts_reason("implicit_privileges_missing", author, root);
-        return Ok((Outcome::ToTs, None));
+        return Ok(Outcome::ToTs);
     }
     sqlx::query(s.lock.as_str())
         .bind(s.lock_class)
@@ -933,7 +895,7 @@ pub(crate) async fn post_tx(
         if ts {
             tx.rollback().await?;
             ts_reason("thread_open_ask", author, root);
-            return Ok((Outcome::ToTs, None));
+            return Ok(Outcome::ToTs);
         }
     }
     if let Some(key) = idempotency_key {
@@ -946,17 +908,13 @@ pub(crate) async fn post_tx(
         if let Some(id) = dup {
             let row = message_by_id(&mut *tx, &id).await?;
             tx.commit().await?;
-            return Ok((
-                match row {
-                    Some(r) => Outcome::Replayed(r),
-                    // TS 는 `existing.rows[0]`(undefined)을 그대로 보낸다 — 지울 수 없는 행이라 닿지 않는 갈래다.
-                    None => Outcome::Replayed("null".into()),
-                },
-                None,
-            ));
+            return Ok(match row {
+                Some(r) => Outcome::Replayed(r),
+                // TS 는 `existing.rows[0]`(undefined)을 그대로 보낸다 — 지울 수 없는 행이라 닿지 않는 갈래다.
+                None => Outcome::Replayed("null".into()),
+            });
         }
     }
-    // TS `stallShadowFor` — 정체 한도가 막았을 부름(부른 에이전트만, 부른 순서). 상한에 막힌 부름은 위 가드가 이미 TS 로 넘겼다.
     // TS `{...input.meta, ...calls.callMeta, turnId?, mentionStall…}` — 입력 meta(모델 신고) 위에 부름 meta 가 얹힌다.
     let mut meta = origin.meta.clone();
     for (k, v) in &calls.call_meta {
@@ -964,32 +922,6 @@ pub(crate) async fn post_tx(
     }
     if let (true, Some(t)) = (author_is_agent, origin.turn_id) {
         meta.insert("turnId".into(), Value::String(t.to_owned()));
-    }
-    if stall.stall_depth >= STALL_HOP_LIMIT {
-        let called: Vec<&String> = calls
-            .called_ids
-            .iter()
-            .filter(|c| c.as_str() != author && !calls.capped_ids.contains(c.as_str()))
-            .collect();
-        if !called.is_empty() {
-            let agents: HashSet<String> = sqlx::query_scalar::<_, String>(s.stall_shadow.as_str())
-                .bind(&called)
-                .fetch_all(&mut *tx)
-                .await?
-                .into_iter()
-                .collect();
-            let mut seen = HashSet::new();
-            let would: Vec<&String> = called
-                .into_iter()
-                .filter(|c| agents.contains(c.as_str()) && seen.insert(c.as_str()))
-                .collect();
-            if !would.is_empty() {
-                meta.insert(
-                    "mentionStallShadow".into(),
-                    json!({ "wouldCap": would, "stallDepth": stall.stall_depth, "limit": STALL_HOP_LIMIT }),
-                );
-            }
-        }
     }
     if stall.link_only_reset {
         meta.insert("mentionStallLinkReset".into(), Value::Bool(true));
@@ -1024,7 +956,7 @@ pub(crate) async fn post_tx(
             && found.iter().all(|(_, up, m)| up == author && m.is_none());
         if !ok {
             tx.rollback().await?;
-            return Ok((Outcome::BadAttachment, None));
+            return Ok(Outcome::BadAttachment);
         }
         sqlx::query(s.attach_update.as_str())
             .bind(&id)
@@ -1245,30 +1177,13 @@ pub(crate) async fn post_tx(
                 .await?;
         }
     }
-    // C3b-2c-4b `message.delegate` — TS `beforeCommit` 의 사슬 상한, 이어서 `createDelegation`. TS 는 의무를 커밋 뒤 다른 tx 로
-    // 만들지만(그 사이 실패면 글만 남는다) 여기서는 같은 tx 다.
+    // C3b-2c-4b `message.delegate` — `createDelegation`. TS 는 의무를 커밋 뒤 다른 tx 로 만들지만(그 사이 실패면 글만 남는다)
+    // 여기서는 같은 tx 다. 사슬 상한(TS `beforeCommit`)은 보지 않는다(O1).
     let delegation_id = match (&origin.delegation, v2) {
-        (Some(plan), on) => {
-            // TS 는 팀 명단 갈래(`team`)에서 사슬 상한을 보지 않는다(`!team && delegationChainCapped`).
-            if plan.team_id.is_none()
-                && delegate_write::chain_capped(&mut tx, &id, now_ms()).await?
-            {
-                tx.rollback().await?;
-                return Ok((Outcome::ChainLimit, None));
-            }
-            Some(
-                delegate_write::create(
-                    &mut tx,
-                    on,
-                    &id,
-                    channel,
-                    root.unwrap_or(&id),
-                    author,
-                    plan,
-                )
+        (Some(plan), on) => Some(
+            delegate_write::create(&mut tx, on, &id, channel, root.unwrap_or(&id), author, plan)
                 .await?,
-            )
-        }
+        ),
         _ => None,
     };
     // TS `planAutoStamp` — 시스템 글에만, 커밋 앞 같은 tx 에서.
@@ -1284,7 +1199,7 @@ pub(crate) async fn post_tx(
     if let Some(hook) = origin.before_commit {
         if let Some(rej) = hook.run(&mut tx, &id, &notified_set).await? {
             tx.rollback().await?;
-            return Ok((Outcome::Rejected(rej), None));
+            return Ok(Outcome::Rejected(rej));
         }
         if let Some(r) = message_by_id(&mut *tx, &id).await? {
             row = r;
@@ -1358,34 +1273,12 @@ pub(crate) async fn post_tx(
         ask_reply_close::close_by_reply(&mut tx, r, channel, seq, author, &id).await?;
     }
     tx.commit().await?;
-    // TS `authorIsAgent && isResult && calls.cappedIds.size > 0` — 커밋 뒤 백스톱 카드의 입력.
-    let capped = (author_is_agent && is_result && !calls.capped_ids.is_empty()).then(|| {
-        // TS `[...calls.cappedIds]` — 집합에 넣은 순서(부른 순서)다.
-        Capped {
-            source: id.clone(),
-            thread_root: root.unwrap_or(&id).to_owned(),
-            capped_ids: calls.capped_order.clone(),
-            limit: calls
-                .call_meta
-                .get("mentionChainLimit")
-                .and_then(Value::as_i64)
-                .unwrap_or(mention_calls::MENTION_CHAIN_LIMIT),
-            age: calls
-                .call_meta
-                .get("mentionChainReason")
-                .and_then(Value::as_str)
-                == Some("age"),
-        }
-    });
-    Ok((
-        Outcome::Posted {
-            row,
-            notified,
-            mandate,
-            delegation_id,
-        },
-        capped,
-    ))
+    Ok(Outcome::Posted {
+        row,
+        notified,
+        mandate,
+        delegation_id,
+    })
 }
 
 /// TS `channel.kind = 'dm'` — 없는 채널은 거짓(insert 가 FK 로 실패한다, TS 와 같다).
@@ -1714,10 +1607,7 @@ pub async fn post(
     {
         Err(e) => internal(e),
         // 세 사유를 400 하나로 합친다 — TS 와 같이, 남의 업로드 id 가 있는지 알리는 신호가 되지 않게.
-        // 위임 상한은 MCP `message.delegate` 만 낸다 — REST 글에는 닿지 않는다.
-        Ok(Outcome::ToTs | Outcome::ChainLimit | Outcome::Rejected(_)) => {
-            to_ts(st.up.clone(), peer, parts, bytes).await
-        }
+        Ok(Outcome::ToTs | Outcome::Rejected(_)) => to_ts(st.up.clone(), peer, parts, bytes).await,
         Ok(Outcome::BadThread) => json_err(
             StatusCode::BAD_REQUEST,
             "bad_thread",
@@ -1869,7 +1759,7 @@ mod tests {
             c.normalized_body,
             "@scout <@00000000-0000-4000-8000-00000000000a> hi"
         );
-        assert!(c.called_ids.is_empty() && c.capped_order.is_empty() && c.team_plans.is_empty());
+        assert!(c.called_ids.is_empty() && c.team_plans.is_empty());
         assert!(c.call_meta.is_empty() && !c.channel_called);
         // 기본값은 부른다 — 이제까지의 호출자는 그대로다.
         assert!(!Origin::default().no_mentions);

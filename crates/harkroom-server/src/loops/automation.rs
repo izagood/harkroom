@@ -43,7 +43,7 @@
 //! - [x] DB 테스트 — `tests/automation_sweep.rs`(TS 와 같은 결과인지).
 //!
 //! 넘기지 못한 회차(G4): 이 sweep 은 주인이 `rust` 일 때만 돌므로, 여기서 대기로 되돌린 회차는 TS 도 보내지 않아 1시간 뒤
-//! `failed / expired` 로 조용히 끝났다. 이제 글 경로가 글을 못 만든 갈래(`ToTs`·`ChainLimit`·`BadAttachment`·`Rejected` — 자동화
+//! `failed / expired` 로 조용히 끝났다. 이제 글 경로가 글을 못 만든 갈래(`ToTs`·`BadAttachment`·`Rejected` — 자동화
 //! 회차에는 에이전트 주인의 상한 부름 갈래 말고는 닿지 않는다)는 그 자리에서 `failed / unsupported:<갈래>` 로 적는다(자동화는
 //! 멈추지 않는다 — 다음 회차는 본문·부름이 달라 나갈 수 있다). 일정 쪽 `Fired::Left`(chrono-tz 가 모르는 tz·읽을 수 없는 trigger)는
 //! 자동화 id 를 로그에 남긴다 — 저장 때 zod·`Intl` 이 거르므로 닿기 어렵고, 멈춤(`paused_reason`)으로 바꾸려면 화면 문구가 함께
@@ -476,7 +476,6 @@ pub async fn deliver_one(
         // 글 경로가 글을 만들지 않은 갈래 — 주인이 `rust` 인 동안 TS 도 보내지 않으니 대기로 두면 1시간 뒤 `expired` 로
         // 조용히 끝난다(G4). 그 자리에서 까닭을 적는다. post_in_tx 가 이미 되돌렸어도 이 tx 는 sweeper 것이다.
         Outcome::ToTs => return unsupported(tx, &id, "to_ts").await,
-        Outcome::ChainLimit => return unsupported(tx, &id, "chain_limit").await,
         Outcome::BadAttachment => return unsupported(tx, &id, "bad_attachment").await,
         Outcome::Rejected(_) => return unsupported(tx, &id, "rejected").await,
     };

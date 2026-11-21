@@ -97,7 +97,7 @@ fn parse(args: &Value) -> Option<Args> {
     })
 }
 
-/// TS `postedResult` — 못 부른 이름을 앞세운다(상한에 막힌 부름 → 호출 범위 밖 순서).
+/// TS `postedResult` — 못 부른 이름(호출 범위 밖)을 앞세운다. 사슬 상한에 막힌 부름은 없다(O1).
 fn posted_result(row: &str, notified: &[String], extra: &str) -> Option<String> {
     let v: Value = serde_json::from_str(row).ok()?;
     let handles = |key: &str| -> Vec<String> {
@@ -111,31 +111,7 @@ fn posted_result(row: &str, notified: &[String], extra: &str) -> Option<String> 
             })
             .unwrap_or_default()
     };
-    let capped = handles("/meta/mentionChainCapped");
     let mut warnings: Vec<String> = Vec::new();
-    // TS `postedResult` — 상한에 막힌 부름이 먼저(C1c-4d-2 부터 Rust 가 맡는다). 백스톱 카드는 서버가 세웠다.
-    if !capped.is_empty() {
-        let why = if v
-            .pointer("/meta/mentionChainReason")
-            .and_then(Value::as_str)
-            == Some("age")
-        {
-            "사람 손길 뒤 24시간이 지났다".to_owned()
-        } else {
-            // TS `String(meta.mentionChainLimit)` — 숫자 그대로(없으면 undefined).
-            let limit = match v.pointer("/meta/mentionChainLimit") {
-                Some(Value::Number(n)) => n.to_string(),
-                Some(Value::String(t)) => t.clone(),
-                None => "undefined".to_owned(),
-                Some(other) => other.to_string(),
-            };
-            format!("멘션 연쇄 상한 {limit} 홉에 닿았다")
-        };
-        warnings.push(format!(
-            "{} 를 부르지 못했다: {why} (사람 없이 에이전트끼리 이어진 부름이 너무 길다). 서버가 네 소유자에게 [계속 — 예산 리셋]/[멈춤] 카드를 세웠다 — 따로 message.ask 를 세우지 말고 지금 아는 것을 정리한 뒤 턴을 끝내라. 「계속」이면 다시 깨어난다.",
-            capped.join(", ")
-        ));
-    }
     let denied = handles("/meta/mentionDenied");
     // 행 글자는 그대로 싣는다 — 키 순서가 TS `JSON.stringify(row)` 와 같다(REST 응답과 같은 글자).
     let notified = Value::from(notified.to_vec()).to_string();
@@ -971,7 +947,7 @@ async fn post_service(
     .await
     .ok()?;
     match out {
-        Outcome::ToTs | Outcome::Replayed(_) | Outcome::ChainLimit => None,
+        Outcome::ToTs | Outcome::Replayed(_) => None,
         Outcome::Rejected(r) => Some(Err(err(&r.code, &r.message))),
         Outcome::BadThread => Some(Err(err("bad_thread", BAD_THREAD))),
         Outcome::BadAttachment => Some(Err(err(
@@ -1249,7 +1225,7 @@ async fn post_with(
     .await
     .ok()?;
     match out {
-        Outcome::ToTs | Outcome::Replayed(_) | Outcome::ChainLimit => None,
+        Outcome::ToTs | Outcome::Replayed(_) => None,
         // TS `failure === 'rejected'` — `{ error: { code, message } }`.
         Outcome::Rejected(r) => Some(err(&r.code, &r.message)),
         Outcome::BadThread => Some(err("bad_thread", BAD_THREAD)),
@@ -1737,15 +1713,11 @@ mod tests {
                 .unwrap(),
         )
         .unwrap();
+        // 옛 글에 남은 상한 meta 는 경고가 되지 않는다 — 호출 범위 밖만 알린다.
         let w = inner["warnings"].as_array().unwrap();
-        assert_eq!(w.len(), 2);
+        assert_eq!(w.len(), 1);
         assert!(
             w[0].as_str()
-                .unwrap()
-                .starts_with("@b2 를 부르지 못했다: 멘션 연쇄 상한 8 홉에 닿았다 (사람 없이")
-        );
-        assert!(
-            w[1].as_str()
                 .unwrap()
                 .starts_with("@x 를 부르지 못했다: 너는")
         );

@@ -207,7 +207,8 @@ async fn edit_in_tx(
         .bind(channel)
         .fetch_optional(&mut *tx)
         .await?;
-    let Some((author, kind, old_body, old_meta, depth, created_ms, author_is_agent)) = found else {
+    let Some((author, kind, old_body, old_meta, _depth, created_ms, author_is_agent)) = found
+    else {
         return Ok(Outcome::NotFound);
     };
     if author != actor || kind != "user" {
@@ -220,9 +221,6 @@ async fn edit_in_tx(
             channel_id: channel,
             author_id: actor,
             author_is_agent,
-            mention_depth: depth,
-            chain_bound: false,
-            chain_started_at_ms: None,
             reply_grant_thread_id: None,
             principal: None,
             now_ms,

@@ -1,5 +1,5 @@
 //! S5.4 통합 — MCP `automation.run`(082). TS `mcpPlugin.ts` 의 같은 도구와 `services/automations.ts::runAutomationForAgent` 를 옮긴다:
-//! 인자(zod uuid) → 원인 판정(`agentRunOwner`, `automation.list` 와 같은 문장) → 소유자의 자동화인가·승인됐나 → 연쇄 상한 →
+//! 인자(zod uuid) → 원인 판정(`agentRunOwner`, `automation.list` 와 같은 문장) → 소유자의 자동화인가·승인됐나 →
 //! **자동화 행 잠금 아래 한 트랜잭션**에서 에이전트 쿼터(10분 1회·1시간 3회)·원인 한 번·회차 INSERT(`runAutomationNow` → `enqueueRun`).
 //! 글은 Rust 도 쓰지 않는다 — 회차만 넣고 발송은 sweeper(TS) 몫이다(TS 도 같다).
 //!
@@ -16,7 +16,7 @@ use crate::core::msg_read::is_uuid;
 use serde_json::Value;
 use sqlx::{PgPool, Row};
 
-/// 쓰기 풀에 이 권한이 다 있을 때만 Rust 가 답한다(`main.rs`). 원인·자동화·연쇄 상한 판정은 읽기 풀로 한다.
+/// 쓰기 풀에 이 권한이 다 있을 때만 Rust 가 답한다(`main.rs`). 원인·자동화 판정은 읽기 풀로 한다. 연쇄 상한(`chain_capped`)은 보지 않는다(O1).
 pub const AUTOMATION_RUN_PRIVILEGES: &[(&str, &str)] = &[
     // 잠금(`for update`)·enqueueRun 의 행 읽기.
     ("automation.id", "SELECT"),
@@ -51,14 +51,10 @@ pub(crate) const RATE_LIMIT_PER_HOUR: i32 = 20;
 const AGENT_RUNS_PER_HOUR: i32 = 3;
 const AGENT_RUN_MIN_GAP_MS: i64 = 10 * 60 * 1000;
 const AGENT_RUN_CHAIN_DEPTH: i32 = 1;
-/// `@harkroom/shared` `MENTION_CHAIN_LIMIT`(행이 없을 때).
-const MENTION_CHAIN_LIMIT: i32 = 8;
 
 /// TS `getAutomation`(소유자·지워지지 않음) 중 여기서 쓰는 칸.
 const AUTOMATION_SQL: &str = "select a.id::text, a.owner_id::text, a.channel_id::text, a.name, a.trigger::text, \
        (a.approved_at is not null) from automation a where a.id = $1::uuid and a.owner_id = $2::uuid and a.deleted_at is null";
-const CHAIN_LIMIT_SQL: &str =
-    "select coalesce((select chain_limit from mention_policy where id = true), $1)::int";
 const LOCK_SQL: &str = "select 1 from automation where id = $1::uuid for update";
 const QUOTA_SQL: &str = "select floor(extract(epoch from max(created_at)) * 1000)::bigint, \
        floor(extract(epoch from now()) * 1000)::bigint, count(*)::int from automation_run \
@@ -98,7 +94,6 @@ fn refusal(code: &str) -> &'static str {
         "agent_quota" => {
             "agents may run one automation at most once per 10 minutes and 3 times per hour"
         }
-        "chain_capped" => "the mention chain limit is reached",
         _ => "not queued",
     }
 }
@@ -183,16 +178,6 @@ pub async fn answer(
         name,
         trigger,
     };
-    let Ok(chain_limit) = sqlx::query_scalar::<_, i32>(CHAIN_LIMIT_SQL)
-        .bind(MENTION_CHAIN_LIMIT)
-        .fetch_one(read)
-        .await
-    else {
-        return Some(super::db_retry::read_failed(TOOL));
-    };
-    if AGENT_RUN_CHAIN_DEPTH >= chain_limit {
-        return refuse("chain_capped");
-    }
     let Some(vars) = vars_for(&a.trigger) else {
         return Some(broken("stored trigger did not yield time vars"));
     };

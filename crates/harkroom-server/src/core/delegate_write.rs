@@ -1,14 +1,13 @@
 //! S5.3 C3b-2c-4b — MCP `message.delegate` 의 **쓰기**(게이트를 다 지난 요청). TS `mcp/mcpPlugin.ts` 의 같은 도구 뒷부분 —
-//! `postMessage` 의 `beforeCommit`(`delegationChainCapped`) 과 그 뒤의 `createDelegation`(`services/delegations.ts`) — 을
+//! `postMessage` 뒤의 `createDelegation`(`services/delegations.ts`) — 을
 //! [`super::msg_post::post_tx`] 안에서 **글과 같은 tx** 로 한다.
 //!
 //! - TS 는 글을 커밋한 뒤 다른 tx 로 의무를 만든다(그 사이 실패하면 `delegation_failed` — 글만 남는다). Rust 는 한 tx 라 그 창이 없다:
 //!   의무를 못 만들면 글도 남지 않고 TS 로 넘긴다. 성공한 결과는 같다.
 //! - 문장은 전부 TS 상수를 골든(`delegation_insert`·`delegation_item_insert`·`delegate_supersede`·`delegate_mark_settled_quietly`·
 //!   `delegate_inbox_convert`·`delegate_inbox_insert`)으로 받는다.
-//! - S5.4-11c: 팀장이 자기 팀 하나에 넘기는 갈래도 온다 — [`Plan::team_id`] 가 있으면 위임 행·부름에 `team_id` 를 적고,
-//!   TS 처럼 사슬 상한(`delegationChainCapped`)을 보지 않는다(TS 는 `!team` 일 때만 `beforeCommit` 에서 본다). `kind` 는 언제나 `'delegate'`.
-use super::mention_calls::{self, CHAIN_BACKSTOP_MS};
+//! - S5.4-11c: 팀장이 자기 팀 하나에 넘기는 갈래도 온다 — [`Plan::team_id`] 가 있으면 위임 행·부름에 `team_id` 를 적는다.
+//!   `kind` 는 언제나 `'delegate'`. 사슬 상한(`delegationChainCapped`)은 어느 갈래에서도 보지 않는다(O1 — TS 와 여기서 갈린다).
 use serde_json::Value;
 use sqlx::PgConnection;
 use std::sync::OnceLock;
@@ -31,7 +30,7 @@ pub(crate) struct Plan<'a> {
     pub(crate) delegate_ids: &'a [String],
     /// TS `deadlineAt.toISOString()`.
     pub(crate) deadline_at: &'a str,
-    /// 팀장이 자기 팀에 넘기면 그 팀 id(TS `team?.teamId ?? null`). 있으면 사슬 상한을 보지 않는다.
+    /// 팀장이 자기 팀에 넘기면 그 팀 id(TS `team?.teamId ?? null`).
     pub(crate) team_id: Option<&'a str>,
 }
 
@@ -63,26 +62,6 @@ fn sql() -> &'static Sql {
             inbox: frag("delegate_inbox_insert"),
         }
     })
-}
-
-/// TS `delegationChainCapped` — 막 쓴 글의 사슬 깊이가 상한(`mention_policy.chain_limit`)에 닿았거나 사슬이 24시간을 넘었는가.
-/// 글 행을 그대로 읽는다(TS 와 같이 `beforeCommit` 자리, 같은 tx).
-pub(crate) async fn chain_capped(
-    conn: &mut PgConnection,
-    message_id: &str,
-    now_ms: i64,
-) -> Result<bool, sqlx::Error> {
-    let row: Option<(i32, Option<i64>)> = sqlx::query_as(
-        "select mention_depth, (extract(epoch from chain_started_at) * 1000)::bigint from message where id = $1::uuid",
-    )
-    .bind(message_id)
-    .fetch_optional(&mut *conn)
-    .await?;
-    let Some((depth, started)) = row else {
-        return Ok(false);
-    };
-    let aged = started.is_some_and(|s| now_ms - s >= CHAIN_BACKSTOP_MS);
-    Ok(aged || i64::from(depth) >= mention_calls::chain_limit(conn).await?)
 }
 
 /// TS `createDelegation`(`teamId = plan.team_id`, `kind = 'delegate'`). `v2` 는 위임 스위치(알 때만 이 갈래가 돈다). 돌려주는 것은 위임 id.

@@ -181,7 +181,7 @@ pub async fn fan_out_calls(
         if notified.contains(id) || queued.contains(id) {
             continue;
         }
-        if id == post.author_id || r.capped_ids.contains(id) || r.denied_ids.contains(id) {
+        if id == post.author_id || r.denied_ids.contains(id) {
             continue;
         }
         let led = r

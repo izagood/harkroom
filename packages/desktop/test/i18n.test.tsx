@@ -1963,8 +1963,6 @@ describe('설정 화면 넷 — 언어를 바꾸면 따라온다', () => {
       agentDefaults: vi.fn(async (): Promise<AgentDefaults> => (
         { harness: 'claude-code', model: null, effort: null }
       )),
-      // 같은 화면의 멘션 연쇄 상한 절(#935)이 읽는다.
-      mentionPolicy: vi.fn(async () => ({ chainLimit: 8 })),
     } as unknown as Controller);
   };
 
@@ -2008,14 +2006,12 @@ describe('설정 화면 넷 — 언어를 바꾸면 따라온다', () => {
     render(<AgentDefaultsSettings />);
     await waitFor(() => expect(screen.getAllByLabelText('Default harness').length).toBeGreaterThan(0));
     expect(screen.getAllByLabelText('Default model').length).toBeGreaterThan(0);
-    expect(await screen.findByLabelText('Most agent-to-agent hops')).toBeTruthy();
 
     cleanup();
     speak('ko');
     asAdmin();
     render(<AgentDefaultsSettings />);
     await waitFor(() => expect(screen.getAllByLabelText('기본 harness').length).toBeGreaterThan(0));
-    expect(await screen.findByLabelText('에이전트끼리 이어 부를 수 있는 홉 수')).toBeTruthy();
   });
 
   /**

@@ -415,14 +415,6 @@ export const ko = {
   'defaults.field.notAdmin': '기본값을 정할 수 있는 것은 admin 뿐이다.',
   'defaults.field.saveFailed': '기본값을 저장하지 못했다',
   'defaults.field.subtitle': '새로 만드는 에이전트가 물려받는다. 이미 있는 에이전트는 바뀌지 않는다.',
-  'defaults.chain.title': '멘션 연쇄 상한',
-  'defaults.chain.label': '에이전트끼리 이어 부를 수 있는 홉 수',
-  'defaults.chain.hint':
-    '사람 없이 에이전트끼리 서로 부르면, 이 홉 수(또는 24시간)에 닿은 부름은 다른 에이전트에게 가지 않고 소유자에게 [계속]/[멈춤] 카드가 선다. 사람이 말하거나 [계속]을 누르면 다시 처음부터 센다.',
-  'defaults.chain.range': '{min}~{max} 사이.',
-  'defaults.chain.saveFailed': '상한을 저장하지 못했다',
-  'defaults.chain.loadFailed': '상한을 불러오지 못했다',
-  'defaults.chain.notAdmin': '상한을 바꿀 수 있는 것은 admin 뿐이다.',
 
   // ---------------------------------------------------------------------------
   // groups — 한국어는 원래 쓰던 `집합` 을 그대로 둔다. 영어가 `group` 인 근거는

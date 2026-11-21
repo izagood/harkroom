@@ -33,7 +33,6 @@ struct Sql {
     folded: String,
     started: String,
     outcomes: String,
-    rounds: String,
     summaries: String,
     summary_items: String,
     summary_watches: String,
@@ -107,15 +106,11 @@ fn sql() -> &'static Sql {
                 "select s.\"messageId\"::text, s.\"channelId\"::text, s.\"threadRootId\"::text from ({}) s",
                 frag("inbox_started_in")
             ),
-            // TS `outcomesFor` 의 두 문장(결말 항목·라운드). 결말 항목은 handle 순 — 겉에서 다시 건다.
+            // TS `outcomesFor` 의 결말 항목 문장. 결말 항목은 handle 순 — 겉에서 다시 건다.
             outcomes: format!(
                 "select o.message_id::text, o.thread_root_id::text, o.lead_account_id::text, o.handle, o.outcome \
                  from ({}) o order by o.handle",
                 frag("inbox_delegation_outcomes")
-            ),
-            rounds: format!(
-                "select r.i::int8, r.n::int8 from ({}) r",
-                frag("delegate_rounds_used")
             ),
             // TS `delegationSummariesFor` 의 세 문장. 순서는 안쪽과 같게 겉에서 다시 건다(스레드 머리, 최근 것이 뒤).
             summaries: format!(
@@ -424,8 +419,9 @@ struct Extras {
     outcomes: HashMap<String, String>,
 }
 
-/// TS `TEAM_ROUND_LIMIT`(shared).
-const TEAM_ROUND_LIMIT: i64 = 3;
+/// 스레드당 넘기기 횟수 상한은 없어졌다(O1). `roundsLeft` 칸은 **옛 러너 때문에만** 남긴다 — 옛 러너는 이 칸이 없거나 0 이면
+/// 프롬프트에 「다시 넘길 수 없다」고 적는다. 늘 같은 값이고 세지 않는다. 새 러너는 이 칸을 읽지 않는다.
+const LEGACY_ROUNDS_LEFT: i64 = 3;
 
 /// TS `inboxOutcome` — DB 결말을 인박스 결말 넷으로(`reported` → done, 그 밖 모르는 값 → timeout).
 fn inbox_outcome(raw: &str) -> &'static str {
@@ -466,11 +462,10 @@ fn group_outcomes(
     out
 }
 
-/// TS `{ timedOut, roundsLeft, items }` 과 같은 키 순서.
-fn outcome_json(timed_out: bool, used: i64, items: &[String]) -> String {
+/// TS `{ timedOut, roundsLeft, items }` 과 같은 키 순서. `roundsLeft` 는 [`LEGACY_ROUNDS_LEFT`] 고정이다.
+fn outcome_json(timed_out: bool, items: &[String]) -> String {
     format!(
-        "{{\"timedOut\":{timed_out},\"roundsLeft\":{},\"items\":[{}]}}",
-        (TEAM_ROUND_LIMIT - used).max(0),
+        "{{\"timedOut\":{timed_out},\"roundsLeft\":{LEGACY_ROUNDS_LEFT},\"items\":[{}]}}",
         items.join(",")
     )
 }
@@ -499,22 +494,8 @@ async fn extras(pool: &PgPool, me: &str, rows: &[BaseRow]) -> sqlx::Result<Extra
                 .await?;
         let groups = group_outcomes(got);
         if !groups.is_empty() {
-            let roots: Vec<String> = groups.iter().map(|g| g.1.clone()).collect();
-            let leads: Vec<String> = groups.iter().map(|g| g.2.clone()).collect();
-            let used: Vec<(i64, i64)> = sqlx::query_as(s.rounds.as_str())
-                .bind(&roots)
-                .bind(&leads)
-                .fetch_all(pool)
-                .await?;
-            let mut n = vec![0i64; groups.len()];
-            for (i, c) in used {
-                if let Some(slot) = usize::try_from(i - 1).ok().and_then(|k| n.get_mut(k)) {
-                    *slot = c;
-                }
-            }
-            for (k, (mid, _, _, timed_out, items)) in groups.into_iter().enumerate() {
-                ex.outcomes
-                    .insert(mid, outcome_json(timed_out, n[k], &items));
+            for (mid, _, _, timed_out, items) in groups {
+                ex.outcomes.insert(mid, outcome_json(timed_out, &items));
             }
         }
     }
@@ -812,12 +793,12 @@ mod tests {
         assert_eq!(g.len(), 1);
         assert!(g[0].3);
         assert_eq!(
-            outcome_json(g[0].3, 1, &g[0].4),
-            r#"{"timedOut":true,"roundsLeft":2,"items":[{"handle":"alpha","outcome":"done"},{"handle":"beta","outcome":"timeout"}]}"#
+            outcome_json(g[0].3, &g[0].4),
+            r#"{"timedOut":true,"roundsLeft":3,"items":[{"handle":"alpha","outcome":"done"},{"handle":"beta","outcome":"timeout"}]}"#
         );
         assert_eq!(
-            outcome_json(false, 5, &[]),
-            r#"{"timedOut":false,"roundsLeft":0,"items":[]}"#
+            outcome_json(false, &[]),
+            r#"{"timedOut":false,"roundsLeft":3,"items":[]}"#
         );
     }
 

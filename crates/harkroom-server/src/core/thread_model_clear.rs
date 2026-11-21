@@ -234,10 +234,7 @@ pub(crate) async fn announce(
         // 생긴 경합뿐이다).
         Outcome::ToTs => eprintln!("[threadModelClear] system line not posted: to_ts"),
         Outcome::BadThread => eprintln!("[threadModelClear] system line not posted: bad_thread"),
-        Outcome::BadAttachment
-        | Outcome::ChainLimit
-        | Outcome::Rejected(_)
-        | Outcome::Replayed(_) => {
+        Outcome::BadAttachment | Outcome::Rejected(_) | Outcome::Replayed(_) => {
             eprintln!("[threadModelClear] system line not posted")
         }
     }

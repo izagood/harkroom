@@ -299,18 +299,6 @@ pub fn delegation_section(outcome: &Value) -> Vec<String> {
                 .into(),
         );
         out.push("사람에게 넘긴다(무엇이 막혔는지 적어서).".into());
-        let rounds = outcome
-            .get("roundsLeft")
-            .and_then(Value::as_f64)
-            .unwrap_or(0.0);
-        out.push(if rounds > 0.0 {
-            format!(
-                "다시 넘길 수 있는 남은 횟수는 {}번이다.",
-                value_text(outcome.get("roundsLeft"))
-            )
-        } else {
-            "**다시 넘길 수 없다** — 남은 횟수가 없다. ① 또는 ③ 이다.".to_string()
-        });
         out.push(String::new());
     } else {
         out.push(

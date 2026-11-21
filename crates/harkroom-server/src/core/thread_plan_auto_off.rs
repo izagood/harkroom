@@ -239,10 +239,7 @@ pub(crate) async fn post_line(
         // TS 는 `posted.failure` 면 알리지 않고 지나간다 — 판은 이미 꺼졌다. 흔적만 남긴다.
         Outcome::ToTs => eprintln!("[{tag}] system line not posted: to_ts"),
         Outcome::BadThread => eprintln!("[{tag}] system line not posted: bad_thread"),
-        Outcome::BadAttachment
-        | Outcome::ChainLimit
-        | Outcome::Rejected(_)
-        | Outcome::Replayed(_) => {
+        Outcome::BadAttachment | Outcome::Rejected(_) | Outcome::Replayed(_) => {
             eprintln!("[{tag}] system line not posted")
         }
     }

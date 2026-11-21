@@ -722,14 +722,6 @@ export const en = {
   'defaults.field.notAdmin': 'Only an admin can set the defaults.',
   'defaults.field.saveFailed': 'The defaults were not saved',
   'defaults.field.subtitle': 'What a newly created agent inherits. Agents that already exist do not change.',
-  'defaults.chain.title': 'Mention chain limit',
-  'defaults.chain.label': 'Most agent-to-agent hops',
-  'defaults.chain.hint':
-    'When agents keep calling each other without a person, the call at this many hops (or after 24 hours) stops reaching other agents and the owner gets a Continue / Stop card. A person speaking or pressing Continue resets it.',
-  'defaults.chain.range': 'Between {min} and {max}.',
-  'defaults.chain.saveFailed': 'The limit was not saved',
-  'defaults.chain.loadFailed': 'The limit did not arrive',
-  'defaults.chain.notAdmin': 'Only an admin can change the limit.',
 
   // ---------------------------------------------------------------------------
   // groups — **화면 이름이다.** `settings/HandleGroupsSettings.tsx` 가 그리는 말.
