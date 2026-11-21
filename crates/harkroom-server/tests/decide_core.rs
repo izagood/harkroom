@@ -88,10 +88,14 @@ fn who_takes_it() {
     ] {
         assert_eq!(rust_takes(shape(o, k)), Some(d), "{o}/{k}");
     }
-    // 승인 kind 는 허용 목록 — merge(7일 승인 밖)·모르는 kind 는 TS.
+    // 0-1 ② — once 값 없는 merge [이번 한 번]은 TS 가 쓰기 없이 409 `not_once` — Rust 가 같은 답을 한다.
+    assert_eq!(
+        rust_takes(shape("approve_once", "merge")),
+        Some(Decision::ApproveOnce)
+    );
+    // 승인 kind 는 허용 목록 — merge 의 [이번 턴만]·모르는 kind 는 TS.
     for (o, k) in [
         ("approve", "future_kind"),
-        ("approve_once", "merge"),
         ("approve_turn", "merge"),
         ("nope", "tool"),
     ] {
@@ -148,7 +152,11 @@ fn who_takes_it() {
         rust_takes(m("approve_new_mandate", "merge")),
         Some(Decision::ApproveNewMandate)
     );
-    assert_eq!(rust_takes(m("approve_once", "merge")), None);
+    // 0-1 ② — once 값 없는 merge [이번 한 번]은 쓰기 없는 409 `not_once` — Rust 가 답한다.
+    assert_eq!(
+        rust_takes(m("approve_once", "merge")),
+        Some(Decision::ApproveOnce)
+    );
     // P3 B2 — 위임장 있는 카드의 거절은 kind 와 관계없이 Rust(TS 거절은 위임장을 건드리지 않는다).
     for k in ["tool", "command", "merge"] {
         assert_eq!(rust_takes(m("deny", k)), Some(Decision::Deny), "deny/{k}");
@@ -185,14 +193,15 @@ fn who_takes_it() {
         }),
         rust_takes(base)
     );
-    // 머지 거절 카드(denial_id): deny 는 Rust, once 값 없는 approve_once 는 TS(security ②-6).
+    // 머지 거절 카드(denial_id): deny 는 Rust. once 값 없는 approve_once 는 1회 승인을 쓰지 않는다(security ②-6) —
+    // 0-1 ② 부터 그 무쓰기 409 `not_once` 를 Rust 가 답한다(쓰기 갈래는 once 값이 있을 때만).
     // 13d — 같은 카드의 7일 approve 는 Rust(CI 거절이면 400 `ci_card_once_only`). 14d — 위임장이 있어도 Rust.
     let d = |o| Shape {
         has_denial: true,
         ..shape(o, "merge")
     };
     assert_eq!(rust_takes(d("deny")), Some(Decision::Deny));
-    assert_eq!(rust_takes(d("approve_once")), None);
+    assert_eq!(rust_takes(d("approve_once")), Some(Decision::ApproveOnce));
     assert_eq!(rust_takes(d("approve")), Some(Decision::Approve));
     // 13d — 위임장 없는 merge approve_mandate 는 쓰기 없는 409 `mandate_unavailable`(Rust).
     assert_eq!(

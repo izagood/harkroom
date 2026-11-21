@@ -553,10 +553,17 @@ pub fn rust_takes(s: Shape<'_>) -> Option<Decision> {
     // P3 B6 — 글 승인(`via: chat`)도 같은 허용 목록이다. 글 승인 입구(msg_post)가 선택지를 deny·approve_once·
     // approve_new_mandate 로 좁혀 들어오고, 결정 쓰기는 버튼과 같은 길(줄 `via` 만 chat)이다.
     let d = option_decision(s.option)?;
-    // S5.4 — `once` 는 머지 거절 카드의 [이번 한 번](거절 기록 있음, 15d 부터 위임장이 있어도)만 Rust. 그 밖의 `once` 는 TS.
+    // S5.4 — `once` 는 머지 거절 카드의 [이번 한 번](거절 기록 있음, 15d 부터 위임장이 있어도)에만 쓰기로 이어진다.
+    // 0-1 ② — 그 밖의 `approve_once` + `once`(tool·command 요청, 거절 기록 없는 merge)는 TS 가 쓰기 없이 409 `not_once` 로
+    // 돌려보낸다 — Rust 가 같은 답을 한다. `once` 는 입구가 `approve_once` 일 때만 싣는다 — 다른 선택지에 붙은 꼴은 맡지 않는다.
     if s.has_once {
-        let merge_once = d == Decision::ApproveOnce && s.kind == "merge" && s.has_denial;
-        return merge_once.then_some(d);
+        let ok = d == Decision::ApproveOnce
+            && match s.kind {
+                "merge" => true,
+                "tool" | "command" => !s.has_denial,
+                _ => false,
+            };
+        return ok.then_some(d);
     }
     let ok = match (d, s.kind) {
         // P3 B2 — 위임장 있는 카드의 거절도 Rust. TS 거절은 위임장을 건드리지 않는다(줄은 `approving` 일 때만, 소유자가 아닌
@@ -585,6 +592,8 @@ pub fn rust_takes(s: Shape<'_>) -> Option<Decision> {
         (Decision::ApproveNewMandate, "merge") => true,
         // S5.4 — tool 카드의 [이번 한 번](once 없음·거절 기록 없음)은 TS 가 쓰기 없이 409 `not_once` 로 돌려보낸다 — Rust 가 같은 답을 한다.
         (Decision::ApproveOnce, "tool") => !s.has_denial,
+        // 0-1 ② — merge 카드의 [이번 한 번]인데 `once` 값이 없으면 TS 는 쓰기 없이 409 `not_once`(거절 기록이 있어도) — 같은 답.
+        (Decision::ApproveOnce, "merge") => true,
         // S5.4 11d — TS 가 쓰기 없이 409 `bad_decision` 으로 돌려보내는 꼴(위임장 없는 tool [이번 턴만], command 의 [이번 턴만]·
         // 위임장 승인, tool 의 [1시간])도 Rust 가 같은 답을 한다(쓰기 없음).
         (Decision::ApproveTurn, "tool" | "command")

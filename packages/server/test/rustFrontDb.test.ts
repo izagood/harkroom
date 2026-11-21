@@ -7952,6 +7952,10 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             const r = await callX(base, 'POST', path, body, token);
             out.push({ step: name, status: r.status, code: r.code, body: r.status === 200 ? shape(sd)(r.json) : null });
           };
+          // 0-1 ② — 머지 거절 카드가 아닌 요청에 1회 머지 값이 붙어 오면 쓰기 없이 409 not_once(요청은 pending 그대로 — 아래에서 정한다).
+          const NOT_MERGE_ONCE = { number: 1, headSha: 'c'.repeat(40) };
+          await step('REST tool approve-once + once → 409 not_once', restP(sd.toolRestReq, 'approve-once'), NOT_MERGE_ONCE);
+          await step('REST command approve-once + once → 409 not_once', restP(sd.cmdRestReq, 'approve-once'), NOT_MERGE_ONCE);
           await step('REST tool approve', restP(sd.toolRestReq, 'approve'), {});
           await step('REST 다시 → 409', restP(sd.toolRestReq, 'approve'), {});
           await step('REST tool approve — 만료 grant 덮기', restP(sd.toolOldReq, 'approve'), {});
@@ -7983,6 +7987,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         }
         expect(st('REST command 판정 안 맞음 → 409 not_grantable')?.code).toBe('not_grantable');
         expect(st('REST 다시 → 409')?.code).toBe('already_decided');
+        for (const s of ['REST tool approve-once + once → 409 not_once', 'REST command approve-once + once → 409 not_once', '카드 command approve_once + 카드 once → TS 409 not_once']) {
+          expect(st(s)?.code, s).toBe('not_once');
+        }
         expect(st('묶음 once 꼴 틀림 → 400')?.status).toBe(400);
         expect(st('묶음 once null → 400')?.status).toBe(400);
         expect(st('묶음 tool approve + 본문 once(버림)')?.status).toBe(200);
