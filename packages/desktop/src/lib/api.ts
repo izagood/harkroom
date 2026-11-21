@@ -1,6 +1,6 @@
 import type {
   AutomationIngressIssued, AutomationRunView, AutomationTrigger, AutomationView,
-  McpServerRow, AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentSessionView, MentionPolicy,
+  McpServerRow, AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentSessionView,
   AgentModelOptions, AgentPickableModel, AgentPickableSaved, AgentModelPick, ThreadAgentModelView, ThreadPlanView,
   AgentWakeView, AgentTeamMemberRow, AgentTeamRow, AgentView, AgentAssignmentView, AccountView, MeView, OperatorView, OperatorCapabilities, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, ChannelSectionRow, CollabProposalsView, DmView, HandleGroupRow, InboxEntry, InviteCreated, InviteView, InboxThreadState, InvokeScope, LeaseRow, MentionEditSkipReason, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionConfigView, ProjectionStatus, ServerHealth, ServerVersion, SavedMessageRow, ScheduledMessageView, WorkspaceSkillView } from '@harkroom/shared';
 import { AVATAR_SOURCE_HEADER, MENTION_EDIT_SKIPPED_HEADER, type AvatarCrop, type AvatarSourceMeta, type GrantRow, type Capability, type Role, type ApiAuthKind, type ApiConnectorView, type ApiGrantLimits, type ApiTokenForm, type ApiMethod, type ApiErrorDetail } from '@harkroom/shared';
@@ -1245,15 +1245,6 @@ export class ApiClient {
   /** model·effort 를 지우는 것은 **명시적 null** 이다 — 키를 빼면 '손대지 않음'이 된다. */
   updateAgentDefaults(patch: Partial<AgentDefaults>): Promise<AgentDefaults> {
     return this.req('PUT', '/settings/agent-defaults', patch);
-  }
-
-  /** 멘션 연쇄 상한(078, #932). 읽기는 누구나, 바꾸기는 admin 이다. */
-  mentionPolicy(): Promise<MentionPolicy> {
-    return this.req('GET', '/settings/mention-policy');
-  }
-
-  updateMentionPolicy(policy: MentionPolicy): Promise<MentionPolicy> {
-    return this.req('PUT', '/settings/mention-policy', policy);
   }
 
   /**

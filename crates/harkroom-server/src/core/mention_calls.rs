@@ -1,8 +1,8 @@
 //! S5.3 C3a-3b-2 — 「누구를 부르나」 판정. TS `services/messages.ts` 의 `resolveMentionCalls`(1074행)를 옮긴다.
 //!
 //! - 본문 파싱은 [`super::mention_parse`](C3a-3a, TS 와 골든 대조), 호출 게이트는 [`super::invoke_gate`](C3a-3b-1)를 쓴다.
-//! - **사슬 상한**: 에이전트 글(또는 사슬에 묶인 글)이면 `mention_policy.chain_limit`(없으면 shared `MENTION_CHAIN_LIMIT` = 8)과
-//!   사슬 시작 뒤 24시간(`CHAIN_BACKSTOP_MS`)으로 막는다. 막힌 것은 에이전트 부름만 — 사람 부름은 막지 않는다.
+//! - **사슬 상한은 없다**(O1): 홉 수(`mention_policy.chain_limit`)·사슬 나이(24시간)로 에이전트 부름을 막던 검사를 걷었다.
+//!   부름을 막는 것은 호출 게이트뿐이다. TS `resolveMentionCalls` 와 여기서 갈린다.
 //! - **principal**(이번 턴을 깨운 사람): 에이전트 글의 막힌 계정 부름을 그 사람 권한으로 다시 잰다(`mayInvoke(대상, principal)`).
 //!   스위치 `HARKROOM_PRINCIPAL_INVOKE`(off·0·false 면 그림자만)와 하루 상한 200(최근 24시간 `invokedAsPrincipal` 글 수).
 //! - 읽기만 한다(inbox 넣기는 C3a-3b-3). 모든 조회는 받은 연결 하나로 — 글 쓰기 트랜잭션 안에서 부른다.
@@ -38,7 +38,6 @@ struct Sql {
     team_by_id: String,
     team_by_name: String,
     team_members: String,
-    policy: String,
     principal_invokes: String,
 }
 
@@ -63,7 +62,6 @@ fn sql() -> &'static Sql {
                 "select m.\"accountId\"::text, m.handle, m.disabled from ({}) m order by m.handle",
                 golden("mc_team_members")
             ),
-            policy: format!("select p.chain_limit from ({}) p", golden("mc_mention_policy")),
             principal_invokes: format!(
                 "select q.n::int8 from ({}) q",
                 golden("mc_principal_invokes")
@@ -72,10 +70,6 @@ fn sql() -> &'static Sql {
     })
 }
 
-/// shared `MENTION_CHAIN_LIMIT`.
-pub const MENTION_CHAIN_LIMIT: i64 = 8;
-/// shared `CHAIN_BACKSTOP_MS`(chainStall.ts) — 24시간.
-pub const CHAIN_BACKSTOP_MS: i64 = 24 * 60 * 60_000;
 /// TS `PRINCIPAL_INVOKE_DAILY_CAP`(invokePrincipal.ts).
 pub const PRINCIPAL_INVOKE_DAILY_CAP: i64 = 200;
 /// shared `CHANNEL_MENTION_HANDLE`.
@@ -96,10 +90,6 @@ pub struct Input<'a> {
     pub channel_id: &'a str,
     pub author_id: &'a str,
     pub author_is_agent: bool,
-    pub mention_depth: i64,
-    pub chain_bound: bool,
-    /// 사슬 시작 시각(밀리초). 없으면 나이로 막지 않는다.
-    pub chain_started_at_ms: Option<i64>,
     pub reply_grant_thread_id: Option<&'a str>,
     pub principal: Option<Principal<'a>>,
     /// 지금(밀리초) — TS `Date.now()`. 시험이 고정할 수 있게 받는다.
@@ -122,9 +112,6 @@ pub struct Resolved {
     /// 계정으로 처리한 이름(본문 글자 기준, 소문자).
     pub account_handles: HashSet<String>,
     pub called_ids: Vec<String>,
-    pub capped_ids: HashSet<String>,
-    /// TS `[...calls.cappedIds]` — 상한에 막힌 계정을 처음 넣은 순서로(백스톱 카드의 `cappedIds`, C1c-4d-2).
-    pub capped_order: Vec<String>,
     pub denied_ids: HashSet<String>,
     pub team_plans: Vec<TeamPlan>,
     pub target_call: Vec<Target>,
@@ -172,14 +159,6 @@ async fn accounts_by_ids(
         .into_iter()
         .map(|(id, handle, kind)| Acct { id, handle, kind })
         .collect())
-}
-
-/// TS `getMentionPolicy` — 행이 없으면 상수.
-pub(crate) async fn chain_limit(conn: &mut PgConnection) -> Result<i64, sqlx::Error> {
-    let v: Option<i32> = sqlx::query_scalar(sql().policy.as_str())
-        .fetch_optional(&mut *conn)
-        .await?;
-    Ok(v.map(i64::from).unwrap_or(MENTION_CHAIN_LIMIT))
 }
 
 /// TS `principalInvokesToday`.
@@ -260,12 +239,6 @@ fn target_key(t: &Target) -> String {
 
 /// TS `resolveMentionCalls`.
 pub async fn resolve(conn: &mut PgConnection, input: &Input<'_>) -> Result<Resolved, sqlx::Error> {
-    let caps_chain = input.author_is_agent || input.chain_bound;
-    let limit = if caps_chain {
-        chain_limit(conn).await?
-    } else {
-        MENTION_CHAIN_LIMIT
-    };
     let body_handles = mentioned_handles(input.body);
     let mentioned = accounts_by_handles(conn, &body_handles).await?;
     let mut handle_to_id: HashMap<String, String> = HashMap::new();
@@ -287,12 +260,6 @@ pub async fn resolve(conn: &mut PgConnection, input: &Input<'_>) -> Result<Resol
     }
     let normalized = normalize_mentions(input.body, &name_to_token);
 
-    let chain_aged = caps_chain
-        && input
-            .chain_started_at_ms
-            .is_some_and(|s| input.now_ms - s >= CHAIN_BACKSTOP_MS);
-    let chain_capped = caps_chain && (input.mention_depth >= limit || chain_aged);
-
     let known: HashSet<&str> = mentioned.iter().map(|a| a.id.as_str()).collect();
     let raw_ids: Vec<String> = mentioned_ids(&normalized)
         .into_iter()
@@ -309,26 +276,11 @@ pub async fn resolve(conn: &mut PgConnection, input: &Input<'_>) -> Result<Resol
         agent_ids.contains(id)
     });
 
-    let mut capped: HashSet<String> = HashSet::new();
-    let mut capped_order: Vec<String> = Vec::new();
-    if chain_capped {
-        for id in &split.call {
-            if id != input.author_id && agent_ids.contains(id) && capped.insert(id.clone()) {
-                capped_order.push(id.clone());
-            }
-        }
-    }
-    let capped_handles: Vec<String> = called_accounts
-        .iter()
-        .filter(|a| capped.contains(&a.id))
-        .map(|a| a.handle.clone())
-        .collect();
-
     // 호출 게이트 — 행 순서 그대로(TS `Map` 순서).
     let gate_ids: Vec<String> = split
         .call
         .iter()
-        .filter(|id| *id != input.author_id && !capped.contains(*id))
+        .filter(|id| *id != input.author_id)
         .cloned()
         .collect();
     let gate_facts = invoke_gate::invoke_facts_ordered(conn, &gate_ids).await?;
@@ -493,13 +445,6 @@ pub async fn resolve(conn: &mut PgConnection, input: &Input<'_>) -> Result<Resol
     };
 
     let mut meta = Map::new();
-    if !capped_handles.is_empty() {
-        meta.insert("mentionChainCapped".into(), json!(capped_handles));
-        meta.insert("mentionChainLimit".into(), json!(limit));
-        if input.mention_depth < limit {
-            meta.insert("mentionChainReason".into(), json!("age"));
-        }
-    }
     if !denied_handles.is_empty() {
         meta.insert("mentionDenied".into(), json!(denied_handles));
     }
@@ -522,8 +467,6 @@ pub async fn resolve(conn: &mut PgConnection, input: &Input<'_>) -> Result<Resol
         normalized_body: normalized,
         account_handles,
         called_ids: split.call,
-        capped_ids: capped,
-        capped_order,
         denied_ids: denied,
         team_plans,
         target_call,
@@ -551,8 +494,6 @@ mod tests {
 
     #[test]
     fn constants_like_ts() {
-        assert_eq!(MENTION_CHAIN_LIMIT, 8);
-        assert_eq!(CHAIN_BACKSTOP_MS, 86_400_000);
         assert_eq!(PRINCIPAL_INVOKE_DAILY_CAP, 200);
     }
 }

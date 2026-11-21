@@ -129,12 +129,14 @@ fn delegation_section_unresolved_rounds_and_canceled() {
     assert!(out.contains(
         &"@eve 의 일은 **사람이 멈춘 것**이다 — 다시 시작하지 마라. 무엇을 왜".to_string()
     ));
-    assert!(out.contains(&"다시 넘길 수 있는 남은 횟수는 2번이다.".to_string()));
+    // 넘기기 횟수 상한은 없다 — 남은 횟수 줄을 쓰지 않는다(서버가 옛 러너 때문에 싣는 `roundsLeft` 는 읽지 않는다).
+    assert!(!out.iter().any(|l| l.contains("남은 횟수")));
 
     let out = delegation_section(
         &json!({"timedOut": false, "roundsLeft": 0, "items": [{"handle": "bob", "outcome": "failed"}]}),
     );
-    assert!(out.contains(&"**다시 넘길 수 없다** — 남은 횟수가 없다. ① 또는 ③ 이다.".to_string()));
+    assert!(out.iter().any(|l| l.contains("셋 중 하나")));
+    assert!(!out.iter().any(|l| l.contains("다시 넘길 수 없다")));
     // 취소만 있으면 미해결이 아니다.
     let out = delegation_section(
         &json!({"timedOut": false, "roundsLeft": 1, "items": [{"handle": "eve", "outcome": "canceled"}]}),

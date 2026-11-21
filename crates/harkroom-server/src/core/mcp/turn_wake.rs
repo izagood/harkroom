@@ -428,7 +428,7 @@ pub async fn answer(
     .await
     .ok()?;
     let row = match out {
-        Outcome::ToTs | Outcome::Replayed(_) | Outcome::ChainLimit | Outcome::Rejected(_) => {
+        Outcome::ToTs | Outcome::Replayed(_) | Outcome::Rejected(_) => {
             return None;
         }
         Outcome::BadThread => return Some(err("bad_thread", BAD_THREAD)),

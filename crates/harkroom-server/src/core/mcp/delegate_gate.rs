@@ -1,11 +1,11 @@
 //! S5.3 C3b-2c-4a — MCP `message.delegate` 의 **게이트·상한**(거절 갈래)만 Rust 가 답한다. TS `mcp/mcpPlugin.ts` 의 같은 도구를
-//! 위에서부터 옮긴다: 채널 가시성 → 자기 위임 → 팀장 명단 → 에이전트만 → 호출 게이트(`openDelegationTargets`) → 라운드 상한(`roundsUsed`).
+//! 위에서부터 옮긴다: 채널 가시성 → 자기 위임 → 팀장 명단 → 에이전트만 → 호출 게이트(`openDelegationTargets`). 스레드당 넘기기 횟수 상한(`round_limit`)과 사슬 상한(`chain_limit`)은 없다(O1).
 //!
-//! - Rust 가 답하는 것: `forbidden` · `self_delegation` · `not_agent` · `not_invokable` · `round_limit` — 모두 **아무것도 쓰지 않는** 거절이다.
-//! - C3b-2c-4b: 게이트를 지난 요청도 맡는다 — 접속 확인 → 위임 글(`meta.kind = 'delegation'`) → 같은 tx 의 사슬 상한·의무
+//! - Rust 가 답하는 것: `forbidden` · `self_delegation` · `not_agent` · `not_invokable` — 모두 **아무것도 쓰지 않는** 거절이다.
+//! - C3b-2c-4b: 게이트를 지난 요청도 맡는다 — 접속 확인 → 위임 글(`meta.kind = 'delegation'`) → 같은 tx 의 의무
 //!   ([`crate::core::delegate_write`]) → 이벤트. 쓰기 칸(`McpWrites::delegate`)이 없으면 지금처럼 TS 로 넘긴다.
-//! - S5.4-11c: 팀장 **에이전트**가 `to` 전원을 담는 자기 팀 **하나**에 넘기는 요청(팀 명단 갈래)도 맡는다 — TS 처럼 호출 게이트·
-//!   사슬 상한을 건너뛰고 팀 명단의 (계정, 꺼짐)으로 접속을 본 뒤 위임 행·부름에 `team_id` 를 적는다. `to` 를 담는 팀이 둘 이상이면
+//! - S5.4-11c: 팀장 **에이전트**가 `to` 전원을 담는 자기 팀 **하나**에 넘기는 요청(팀 명단 갈래)도 맡는다 — TS 처럼 호출 게이트를
+//!   건너뛰고 팀 명단의 (계정, 꺼짐)으로 접속을 본 뒤 위임 행·부름에 `team_id` 를 적는다. `to` 를 담는 팀이 둘 이상이면
 //!   TS 처럼 같은 문장의 행 순서 첫 팀(S5.4-14c). 팀장이 사람이어도 같은 팀 갈래를 탄다(`route_for`).
 //! - S5.4-14c: 비지 않은 `agentModels` 도 맡는다 — 접속 확인 뒤 TS `preparePicks`([`super::msg_post::check_picks`]), 글 tx 의
 //!   `applyAgentPicks`(`notified` 에 넘겨받는 팀원을 더한다), 커밋 뒤 시스템 줄·이벤트. 하네스 목록(`relay_moved`)·고르기 쓰기 권한
@@ -32,8 +32,6 @@ use sqlx::PgPool;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-/// TS `TEAM_ROUND_LIMIT`(shared).
-const TEAM_ROUND_LIMIT: i64 = 3;
 /// TS `DELEGATION_DEADLINE_MIN_SEC`·`MAX_SEC`.
 const DEADLINE_MIN: i64 = 60;
 const DEADLINE_MAX: i64 = 6 * 60 * 60;
@@ -47,7 +45,6 @@ const ONLINE_SQL: &str = "select account_id::text from agent_presence where acco
 struct Sql {
     lead_team: String,
     targets: String,
-    rounds: String,
 }
 
 fn sql() -> &'static Sql {
@@ -63,7 +60,6 @@ fn sql() -> &'static Sql {
         Sql {
             lead_team: frag("delegate_lead_team"),
             targets: frag("delegate_targets"),
-            rounds: frag("delegate_rounds_used"),
         }
     })
 }
@@ -316,8 +312,7 @@ pub async fn answer(
             Err(refused) => return Some(refused),
         },
     };
-    rounds_then_write(
-        pool,
+    write_or_ts(
         st,
         me,
         &a,
@@ -396,10 +391,9 @@ async fn gate(
     Some(Ok(members))
 }
 
-/// 라운드 상한 → (쓰기 칸이 있으면) 위임 쓰기.
+/// (쓰기 칸이 있으면) 위임 쓰기.
 #[allow(clippy::too_many_arguments)]
-async fn rounds_then_write(
-    pool: &PgPool,
+async fn write_or_ts(
     st: Option<&PostState>,
     me: &Account,
     a: &Args,
@@ -410,31 +404,11 @@ async fn rounds_then_write(
     turn: Option<&str>,
     operator: bool,
 ) -> Option<String> {
-    // TS `roundsUsed` = `roundsUsedMany` 에 한 쌍 — (순번, 수) 한 줄.
-    let (_, used): (i32, i32) = sqlx::query_as(&*sql().rounds)
-        .bind(vec![a.root.clone()])
-        .bind(vec![me.id.clone()])
-        .fetch_one(pool)
-        .await
-        .map_err(ts_err("rounds_used"))
-        .ok()?;
-    let used = i64::from(used);
-    if used >= TEAM_ROUND_LIMIT {
-        return Some(err(
-            "round_limit",
-            &format!(
-                "이 스레드에서 이미 {used}번 넘겼다(상한 {TEAM_ROUND_LIMIT}) — 직접 하거나 사람에게 넘겨라"
-            ),
-        ));
-    }
-    // 게이트·상한을 다 지났다 — 쓰기 칸이 있으면 위임을 쓴다(C3b-2c-4b).
+    // 게이트를 다 지났다 — 쓰기 칸이 있으면 위임을 쓴다(C3b-2c-4b). 스레드당 넘기기 횟수 상한은 없다.
     let Some(st) = st else {
         return to_ts("write_core_off");
     };
-    write(
-        st, me, a, wanted, members, team_id, used, cause, turn, operator,
-    )
-    .await
+    write(st, me, a, wanted, members, team_id, cause, turn, operator).await
 }
 
 /// 같은 값이 두 번 있나 — 접속한 담당 명단(`delegate_ids`)에 쓴다.
@@ -452,7 +426,6 @@ async fn write(
     wanted: &[String],
     members: &Members,
     team_id: Option<&str>,
-    used: i64,
     cause: Option<&str>,
     turn: Option<&str>,
     operator: bool,
@@ -618,10 +591,6 @@ async fn write(
         Outcome::ToTs => to_ts("post_to_ts"),
         Outcome::Replayed(_) => to_ts("replayed"),
         Outcome::Rejected(_) => to_ts("rejected"),
-        Outcome::ChainLimit => Some(err(
-            "chain_limit",
-            "이 사슬은 에이전트끼리의 호출 상한에 닿았다 — 사람에게 넘겨라",
-        )),
         // 아무것도 쓰지 않았다. TS 위임 도구는 `postMessage` 의 실패를 그대로 싣는다 —
         // `{ code: 'post_failed', message: posted.failure }`(`message.post` 의 400 bad_thread 와 다르다).
         Outcome::BadThread => Some(err("post_failed", "bad_thread")),
@@ -679,12 +648,11 @@ async fn write(
                 }
             }
             let inner = format!(
-                "{{\"message\":{row},\"delegationId\":{},\"delegated\":{},\"unreachable\":{},\"deadlineAt\":{},\"roundsLeft\":{}{plan_extra}}}",
+                "{{\"message\":{row},\"delegationId\":{},\"delegated\":{},\"unreachable\":{},\"deadlineAt\":{}{plan_extra}}}",
                 Value::from(delegation_id?),
                 Value::from(delegated),
                 Value::from(unreachable),
-                Value::from(deadline_at),
-                (TEAM_ROUND_LIMIT - used - 1).max(0)
+                Value::from(deadline_at)
             );
             Some(super::respond::text_result(&super::respond::minify(&inner)))
         }
@@ -709,7 +677,6 @@ mod tests {
         let s = sql();
         assert!(s.lead_team.contains("agent_team_member"));
         assert!(s.targets.contains("lower(handle) = any($1::text[])"));
-        assert!(s.rounds.contains("with ordinality"));
     }
 
     const C: &str = "11111111-1111-1111-1111-111111111111";

@@ -60,7 +60,6 @@ pub mod automations_write;
 pub mod avatar_read;
 pub mod avatar_write;
 pub mod cause_link;
-pub mod chain_backstop;
 pub mod chain_stall;
 pub mod channel_auto_mention_doc;
 pub mod channel_create_update;

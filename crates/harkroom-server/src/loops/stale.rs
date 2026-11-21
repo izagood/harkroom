@@ -133,7 +133,7 @@ async fn post_one(st: &PostState, group: &[Candidate]) -> Result<bool, sqlx::Err
         ..Origin::default()
     };
     let key = format!("stale:{}", ids.iter().min().copied().unwrap_or_default());
-    let (out, _) = msg_post::post_tx(
+    let out = msg_post::post_tx(
         st,
         &head.channel,
         &head.account,

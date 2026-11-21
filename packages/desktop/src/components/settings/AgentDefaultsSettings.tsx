@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
-import { MENTION_CHAIN_LIMIT_MAX, MENTION_CHAIN_LIMIT_MIN, RUNNABLE_HARNESSES, type AgentDefaults, type MentionPolicy } from '@harkroom/shared';
+import { RUNNABLE_HARNESSES, type AgentDefaults } from '@harkroom/shared';
 import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
-import { Field, SaveStatus, Segmented, Select, SettingsColumns, SettingsGroup, SettingsPage, TextInput, type SaveState } from './primitives';
+import { Field, SaveStatus, Segmented, Select, SettingsGroup, SettingsPage, TextInput, type SaveState } from './primitives';
 import { useT } from '../../i18n/useT';
 
 // 러너가 실제로 띄울 수 있는 하네스는 `@harkroom/shared` 의 `RUNNABLE_HARNESSES` 하나다. 여기에
@@ -70,12 +70,9 @@ export function AgentDefaultsSettings() {
     <SettingsPage
       section="agent-defaults"
       description={t('defaults.field.subtitle')}
-      layout="cards"
+      layout="form"
     >
-      {/* 새 에이전트 기본값이 주 칸, 멘션 연쇄 한도가 곁 칸(설정 폭 시안 v1 cards). 900 미만에서는 위아래로 쌓인다. */}
-      <SettingsColumns
-        testId="agent-defaults-columns"
-        main={(
+      {/* 필드 셋짜리 카드 한 장이라 꼴은 form(상한 880px)이다 — 나눌 칸이 없어 `SettingsColumns` 를 쓰지 않는다. */}
       <SettingsGroup>
         {!isAdmin && (
           <p className="px-4 py-3 text-fg-muted">{t('defaults.field.notAdmin')}</p>
@@ -125,82 +122,7 @@ export function AgentDefaultsSettings() {
           </div>
         )}
       </SettingsGroup>
-        )}
-        side={<MentionChainLimit isAdmin={isAdmin} />}
-      />
     </SettingsPage>
   );
 }
 
-/**
- * **멘션 연쇄 상한**(078, #932). 에이전트끼리 사람 없이 서로 부르며 도는 폭주를 끊는 깊이다.
- *
- * 새 에이전트의 서식이 아니라 **지금 도는 모든 에이전트에 곧바로 걸리는 값**이다 — 그래서 위의
- * 기본값 폼과 저장 버튼을 나눈다. 한 버튼으로 묶으면 "기본값 저장"이 폭주 방지까지 바꾸는
- * 줄 모른다.
- *
- * 읽기는 누구나다(서버 `GET` 이 requireAccount) — 막힌 메시지의 "상한 N 에 걸렸다"를 보고
- * N 이 어디서 왔는지 찾아온 사람에게 값은 보여야 한다. 바꾸기만 admin 이다.
- */
-function MentionChainLimit({ isAdmin }: { isAdmin: boolean }) {
-  const t = useT();
-  const [policy, setPolicy] = useState<MentionPolicy | 'error' | null>(null);
-  const [draft, setDraft] = useState('');
-  const [state, setState] = useState<SaveState>('idle');
-
-  useEffect(() => {
-    void getController().mentionPolicy()
-      .then((p) => { setPolicy(p); setDraft(String(p.chainLimit)); })
-      .catch(() => setPolicy('error'));
-  }, []);
-
-  const parsed = Number(draft);
-  // 정수·범위를 여기서도 본다 — 서버가 400 으로 막지만, 보내기 전에 버튼이 막혀 있어야
-  // "왜 저장이 안 되지"를 묻지 않는다.
-  const valid = /^\d+$/.test(draft) && parsed >= MENTION_CHAIN_LIMIT_MIN && parsed <= MENTION_CHAIN_LIMIT_MAX;
-  const unchanged = policy !== null && policy !== 'error' && parsed === policy.chainLimit;
-
-  /** 칸을 떠나거나 Enter 에서 저장한다(UX ⑤ — 저장 버튼 없음). 범위 밖이면 저장하지 않고 힌트가 말한다. */
-  const save = async (): Promise<void> => {
-    if (!valid || unchanged) return;
-    setState('saving');
-    try {
-      const next = await getController().updateMentionPolicy({ chainLimit: parsed });
-      setPolicy(next);
-      setDraft(String(next.chainLimit));
-      setState('saved');
-    } catch {
-      setState('failed');
-    }
-  };
-
-  return (
-    <SettingsGroup title={t('defaults.chain.title')}>
-      <div className="space-y-3 px-4 py-3">
-        {policy === null && <p className="text-fg-muted">{t('defaults.field.loading')}</p>}
-        {policy === 'error' && <p role="alert" className="text-danger">{t('defaults.chain.loadFailed')}</p>}
-        {policy !== null && policy !== 'error' && (
-          <>
-            <Field
-              label={t('defaults.chain.label')}
-              hint={t('defaults.chain.range', { min: MENTION_CHAIN_LIMIT_MIN, max: MENTION_CHAIN_LIMIT_MAX })}
-            >
-              <span onBlur={() => void save()} onKeyDown={(e) => { if (e.key === 'Enter') void save(); }}>
-              <TextInput
-                ariaLabel={t('defaults.chain.label')}
-                value={draft}
-                disabled={!isAdmin}
-                onChange={(v) => { setDraft(v.trim()); setState('idle'); }}
-              />
-            </span>
-            </Field>
-            <p className="text-meta text-fg-muted">{t('defaults.chain.hint')}</p>
-            {isAdmin
-              ? <SaveStatus state={state} failedLabel={t('defaults.chain.saveFailed')} />
-              : <p className="text-meta text-fg-muted">{t('defaults.chain.notAdmin')}</p>}
-          </>
-        )}
-      </div>
-    </SettingsGroup>
-  );
-}

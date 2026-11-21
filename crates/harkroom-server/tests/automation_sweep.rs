@@ -172,16 +172,16 @@ async fn automation_sweep_like_ts() {
     assert_eq!(meta["automation"]["id"], Value::String(plain.clone()));
     assert_eq!(meta["automation"]["runId"], Value::String(r_plain.clone()));
 
-    // 사슬 깊이 99 — TS `max(scan, chainDepth)` 를 저장하고, `chainBound` 라 사람 글이라도 상한에 막힌다.
+    // 사슬 깊이 99 — TS `max(scan, chainDepth)` 를 저장한다. 사슬 상한은 없다(O1) — 깊이가 아무리 깊어도 부름을 막지 않는다.
     let (s, _, m) = status(&admin, &r_deep).await;
     assert_eq!(s, "sent");
     let (_, depth, meta) = message(&admin, &m.unwrap()).await;
     assert_eq!(depth, 99);
     assert!(
-        meta.get("mentionChainCapped").is_some(),
-        "chain-bound post is capped: {meta}"
+        meta.get("mentionChainCapped").is_none(),
+        "a deep chain-bound post is not capped: {meta}"
     );
-    // 같은 자동화의 사슬 밖 회차 — 사람 글은 막히지 않는다.
+    // 같은 자동화의 사슬 밖 회차.
     let (s, _, m) = status(&admin, &r_free).await;
     assert_eq!(s, "sent");
     let (_, depth, meta) = message(&admin, &m.unwrap()).await;
