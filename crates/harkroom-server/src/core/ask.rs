@@ -3,10 +3,11 @@
 //! `readAskMeta`·`askTakesText` 를 옮긴다. 뒤처리(깨움·거울·묶음)는 `core/ask_sync.rs`.
 //!
 //! - 순서가 규칙이다(TS 와 같다): 인증(401) → 경로(400) → 본문(400) → 볼 수 있는가(403) → 이 채널의 글인가(404) → 판정 → 쓰기 → 이벤트.
-//! - **Rust 가 맡는 카드는 좁다(닫힌 쪽).** 카드나 그 거울의 원본이 권한·머지·사슬 카드(`permissionRequest`·`permissionMirror`·
-//!   `mergeDenial`·`chainBackstop`)이거나 권한 요청 줄이 가리키는 카드, 또는 종류(`meta.kind`)·모양을 못 읽는 카드면
-//!   Rust 는 판정하지 않고 읽어 둔 본문 그대로 TS 로 넘긴다([`hand_answer_to_ts`]). 그런 카드의 결정은 C3b-3 몫이다.
-//!   단 답하기·닫기는 사슬 백스톱·옛 머지 거절 카드(와 그 거울)도 Rust 가 맡는다 — TS 에서도 보통 물음 길이다([`ANSWER_TS_MARKERS`]).
+//! - **권한 카드는 결정 길이 먼저 본다.** 권한 카드(`permissionRequest`)와 그 거울(`permissionMirror`)에 선택지로 온 답은
+//!   `decide_routes` 의 쓰기 없는 거절·거절·승인 입구가 차례로 맡고, 글 답·닫기는 보통 물음 길로 Rust 가 답한다([`hand_plain_to_ts`]).
+//!   그 입구들이 맡지 않은 권한 카드 답(맡는 꼴 목록 밖·쓰는 칸이 없는 서버·표지 없이 요청 줄만 가리키는 카드)과 종류(`meta.kind`)·
+//!   모양을 못 읽는 카드만 읽어 둔 본문 그대로 TS 로 넘긴다([`hand_answer_to_ts`]).
+//!   사슬 백스톱·옛 머지 거절 카드(와 그 거울)의 답하기·닫기는 Rust 가 맡는다 — TS 에서도 보통 물음 길이다([`ANSWER_TS_MARKERS`]).
 //! - 판정·쓰기·깨움·이벤트는 쓰기 풀의 **한 트랜잭션**이다. `Err` 면 500 이고 답·닫힘도 되돌아간다. 깨움 실패만 TS 처럼 삼킨다
 //!   (SAVEPOINT — 답은 남는다).
 //! - 이벤트 순서는 TS 그대로: 거울 경로는 원본 `message.updated` → 거울 맞추기(묶음 → 거울마다 깨움·`message.updated`) →
@@ -766,14 +767,14 @@ pub async fn answer(
     {
         return r;
     }
-    // C3b-3c — 권한 카드의 거절은 3b 코어가 정한다(S5.5 d 부터 진짜 거울도 — 원본 요청을 정한다). 그 밖의 권한 카드 답은 아래 `hand_answer_to_ts` 가 TS 로 넘긴다.
+    // C3b-3c — 권한 카드의 거절은 3b 코어가 정한다(S5.5 d 부터 진짜 거울도 — 원본 요청을 정한다).
     if let Answer::Option(o) = &ans
         && let super::decide_routes::Taken::Done(r) =
             super::decide_routes::answer_card_deny(&st, &me, &auth, &message, o).await
     {
         return r;
     }
-    // S5.3 B2 — 소유자의 승인(tool approve·command approve_once/hour). 맡지 않는 꼴은 아래 `hand_answer_to_ts` 가 TS 로 넘긴다.
+    // S5.3 B2 — 승인(맡는 꼴은 `decide_core::rust_takes`). 코어가 맡지 않은 꼴만 아래 `hand_answer_to_ts` 가 TS 로 넘긴다.
     if let Answer::Option(o) = &ans
         && let super::decide_routes::Taken::Done(r) =
             super::decide_routes::answer_card_approve(&st, &me, &auth, &message, o).await
