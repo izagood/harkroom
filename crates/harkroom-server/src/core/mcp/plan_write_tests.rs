@@ -225,44 +225,6 @@ fn body_text(t: &str) -> String {
     v["content"][0]["text"].as_str().unwrap().to_string()
 }
 
-/// 거절 문구·문장·답 모양을 TS 원본과 맞춘다(값은 rustFrontDb 대조 시험이 본다).
-#[test]
-fn texts_follow_ts_source() {
-    let mcp = include_str!("../../../../../packages/server/src/mcp/mcpPlugin.ts");
-    for (code, msg) in MESSAGES {
-        let line = if msg.contains('\'') {
-            format!("    {code}: \"{msg}\",")
-        } else {
-            format!("    {code}: '{msg}',")
-        };
-        assert!(mcp.contains(&line), "{line}");
-    }
-    for want in [
-        "if (account.kind !== 'agent') return jsonResult({ error: { code: 'agents_only', message: '계획판 쓰기 도구는 에이전트만 쓴다' } });",
-        "ok: true, rev: view.rev, updatedAt: view.updatedAt, progress: view.progress, ...extra,\n      ...diffDerived(before, view.derived),",
-        "notice: `저장했지만 쓰기 검사에 걸렸다(${res.flagged.reason}) — 사람에게는 보이지만 다음 턴 프롬프트에는 싣지 않는다. 남의 글을 옮겼거나 비밀 값을 넣었다면 빼고 다시 써라.`,",
-        "if ('deleted' in res) return jsonResult({ ok: true, deleted: true });\n    return planWritten(res, { id, removed: patch.remove === true });",
-    ] {
-        assert!(mcp.contains(want), "{want}");
-    }
-    let svc = include_str!("../../../../../packages/server/src/services/threadPlan.ts");
-    for want in [
-        "const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;",
-        "`select updated_at, rev, doc from thread_plan where root_id = $1 for update`",
-        "`select 1 from account a join channel c on c.id = $2\n            where a.id = $1 and a.kind = 'agent' and a.deleted_at is null and ${channelVisibleSql('c', '$1')}`,",
-        "set doc = excluded.doc, flag_reason = excluded.flag_reason, updated_by = excluded.updated_by,\n               rev = thread_plan.rev + 1,\n               updated_at = greatest(now(), thread_plan.updated_at + interval '1 millisecond')",
-        "await client.query(`delete from thread_plan_link where parent_root = $1`, [rootId]);",
-        "`insert into thread_plan_link (parent_root, child_root) select $1, unnest($2::uuid[]) on conflict do nothing`,",
-        "await client.query(`delete from thread_plan where root_id = $1`, [rootId]);",
-        "type: 'thread.plan.changed', channelId, rootId, rev: row?.rev ?? null, progress,",
-        "if (now && manager !== before) managerChanged = true;",
-        "if (!now && !manager && accountId !== null) {",
-        "let manager = doc.managerId === undefined ? before : doc.managerId;",
-    ] {
-        assert!(svc.contains(want), "{want}");
-    }
-}
-
 /// 권한 상수가 쓰는 문장을 덮는다.
 #[test]
 fn privileges_cover_sql() {

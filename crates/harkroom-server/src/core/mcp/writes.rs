@@ -649,39 +649,6 @@ mod tests {
         assert_eq!(inbox_ids(&json!({})), None);
     }
 
-    #[test]
-    fn inbox_sql_follows_ts_source() {
-        let svc = include_str!("../../../../../packages/server/src/services/messages.ts");
-        assert!(svc.contains(
-            "`update inbox set read_at = now() where account_id = $1 and id = any($2) and read_at is null`,"
-        ));
-    }
-
-    /// `delegation.close` 의 문장·문구를 TS 원본과 맞춘다(값 비교는 대조 시험이 한다).
-    #[test]
-    fn delegation_close_follows_ts_source() {
-        let dl = include_str!("../../../../../packages/server/src/services/delegations.ts");
-        for want in [
-            "set outcome = 'closed', closed_reason = 'delegator_close', closed_at = coalesce(i.closed_at, now()),\n            update_pending_message_id = null, update_pending_at = null",
-            "where d.id = i.delegation_id and d.lead_account_id = $1 and d.thread_root_id = $2",
-            "and ($3::uuid is null or d.id = $3::uuid)\n        and ($4::uuid is null or i.delegate_account_id = $4::uuid)\n        and (i.outcome is null or i.outcome = 'reported')",
-            // C3b-2c-4b 부터 `MARK_SETTLED_QUIETLY_SQL` 상수다(문장은 그대로).
-            "`update team_delegation d set notified_at = now()\n      where d.id = any($1::uuid[]) and d.notified_at is null\n        and not exists (select 1 from team_delegation_item i where i.delegation_id = d.id and i.outcome is null)`;",
-        ] {
-            assert!(dl.contains(want), "{want}");
-        }
-        let mcp = include_str!("../../../../../packages/server/src/mcp/mcpPlugin.ts");
-        for want in [
-            "`select id from account where handle = $1 and deleted_at is null`, [delegate.replace(/^@/, '')]);",
-            "if (!r.rowCount) return jsonResult({ error: { code: 'not_found', message: 'unknown delegate' } });",
-            "return jsonResult({ closed });",
-            "delegate: z.string().min(1).max(100).optional(),",
-            "if (tool === 'delegation.close') return delegationV2Enabled();",
-        ] {
-            assert!(mcp.contains(want), "{want}");
-        }
-    }
-
     /// 두 update 가 읽는 칸(별칭 `i.`·`d.` 로 쓴 것 = where·set 식·returning)마다 SELECT 가, 고치는 칸마다 UPDATE 가 목록에 있다.
     /// 문장에 칸을 더하고 목록을 안 고치면 빨개진다 — 운영 역할에 SELECT 가 없을 때 풀이 켜져 늘 `internal` 이 되는 것을 막는다.
     #[test]
@@ -747,24 +714,5 @@ mod tests {
             read.len() + 6,
             "목록에 남는 칸이 없다"
         );
-    }
-
-    /// 거절 문구·답 모양을 TS 원본과 맞춘다.
-    #[test]
-    fn texts_follow_ts_source() {
-        let mcp = include_str!("../../../../../packages/server/src/mcp/mcpPlugin.ts");
-        for want in [
-            "return jsonResult({ error: { code: 'bad_request', message: 'a reaction must be a single emoji' } });",
-            "return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });",
-            "return jsonResult({ error: { code: 'not_found', message: 'no such message in this channel' } });",
-            "error: { code: 'too_many_reactions', message: `at most ${MAX_REACTIONS_PER_ACTOR} reactions per message` },",
-            "return jsonResult({ emoji });",
-            "if (removed === 'status_kept') return jsonResult({ ok: true });",
-            "emoji: z.string().min(1).max(32),",
-            "inputSchema: { ids: z.array(z.number().int()).min(1).max(200) },",
-            "return jsonResult({ read });",
-        ] {
-            assert!(mcp.contains(want), "{want}");
-        }
     }
 }

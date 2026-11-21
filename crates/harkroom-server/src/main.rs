@@ -1,8 +1,8 @@
-//! `harkroom-server-rs` — env: `UPSTREAM_URL`(TS 서버, 예 `http://harkroom:3400`) · `DATABASE_URL` · `PORT`(기본 3500) ·
-//! `CORS_ORIGINS`(TS 와 같은 허용 출처, 비면 요청 출처를 돌려줌 — `cors.rs`) · `HARKROOM_CORE`(`ts` 기본 · `rust` 면 `/ws`·`/ws-ticket` 을 답함, S5.3 C0) · `TRUST_PROXY`(감사 `ip` 규칙, TS 와 같은 꼴 — `trust_proxy.rs`) · `HARKROOM_FRONT_TS_ROUTES`(옮긴 줄을 TS 로 되돌림 — `"GET /accounts,GET /dms"` 또는 `*`, `routes.rs` 참고) ·
-//! `DATABASE_WRITE_URL`(쓰기 역할, P3 — 없거나 권한이 모자라면 쓰는 줄을 켜지 않고 그 요청은 TS 로 간다, `write.rs` 참고) ·
+//! `harkroom-server-rs` — env: `DATABASE_URL` · `PORT`(기본 3500) ·
+//! `CORS_ORIGINS`(TS 와 같은 허용 출처, 비면 요청 출처를 돌려줌 — `cors.rs`) · `HARKROOM_CORE`(`ts` 기본 · `rust` 면 `/ws`·`/ws-ticket` 을 답함, S5.3 C0) · `TRUST_PROXY`(감사 `ip` 규칙, TS 와 같은 꼴 — `trust_proxy.rs`) ·
+//! `DATABASE_WRITE_URL`(쓰기 역할, P3 — 없거나 권한이 모자라면 쓰는 줄을 켜지 않고 그 요청은 닫힌 답(404·`unsupported_call`)이 된다, `write.rs` 참고) ·
 //! `HARKROOM_RUST_MIGRATE`(`1` 이면 기동 때 마이그레이션을 Rust 가 돌림, `only` 면 돌리고 서버로 뜨지 않고 끝남(성공 0·실패 1,
-//! 마이그레이션 Job 용 — 이때 `DATABASE_URL`·`UPSTREAM_URL` 은 없어도 된다), **기본 꺼짐** — S5.4 M1, `migrate.rs`) ·
+//! 마이그레이션 Job 용 — 이때 `DATABASE_URL` 은 없어도 된다), **기본 꺼짐** — S5.4 M1, `migrate.rs`) ·
 //! `DATABASE_MIGRATE_URL`(그때 쓰는 DDL 역할 — 스위치를 켰는데 없으면 기동하지 않는다).
 //! `CLAIM_TOKEN_HASH`(호스팅 워크스페이스의 클레임 토큰 sha256 hex — 기동 때 `claim_token` 에 심는다, 틀린 형식이면 기동하지 않는다,
 //! `claim_seed.rs`).
@@ -12,7 +12,7 @@ use std::net::SocketAddr;
 #[tokio::main]
 async fn main() {
     // S5.4 M1 — 켰을 때만 스키마 대조보다 먼저 마이그레이션을 돌린다. TS 실행기와 같은 잠금 키라 동시에 떠도 한쪽씩 돈다.
-    // `only` 면 여기서 끝난다 — 그래서 서버 env(`UPSTREAM_URL`·`DATABASE_URL`)는 이 뒤에서 읽는다.
+    // `only` 면 여기서 끝난다 — 그래서 서버 env(`DATABASE_URL`)는 이 뒤에서 읽는다.
     let migrate_only = migrate::only(std::env::var("HARKROOM_RUST_MIGRATE").ok().as_deref());
     // 클레임 토큰 해시(TS `seedClaimToken` 과 같은 규칙) — 형식부터 본다. 틀리면 아무것도 하기 전에 기동을 거절한다.
     let claim = match claim_seed::parse(std::env::var("CLAIM_TOKEN_HASH").ok().as_deref()) {
@@ -59,7 +59,7 @@ async fn main() {
         }
     }
 
-    let upstream = std::env::var("UPSTREAM_URL").expect("UPSTREAM_URL is required");
+    // `UPSTREAM_URL`(옛 TS 서버)은 읽지 않는다 — TS 백엔드를 지웠다(11-21). 남아 있어도 무시한다.
     let db = std::env::var("DATABASE_URL").expect("DATABASE_URL is required");
     let port: u16 = std::env::var("PORT")
         .ok()
@@ -94,20 +94,15 @@ async fn main() {
     if let (Some(hash), false) = (&claim, claim_seeded) {
         seed_claim_with_write_pool(write.as_ref(), hash).await;
     }
-    // C5b — 서버 루프(예약 깨움). 주인이 `rust` 일 때만 실제로 돈다(`server_loop`, 기본 `ts`).
+    // C5b — 서버 루프(예약 깨움). 주인이 `rust` 일 때만 실제로 돈다(`server_loop`, 줄이 없으면 `rust` — `loops.rs`).
     if write.is_some() {
         spawn_loops().await;
     }
-    let ts = routes::TsOverrides::parse(std::env::var("HARKROOM_FRONT_TS_ROUTES").ok().as_deref());
-    let known: Vec<routes::Moved> = routes::MOVED
-        .iter()
-        .chain(routes::MOVED_WRITE)
-        .cloned()
-        .collect();
-    let unknown = ts.unknown(&known);
-    if !unknown.is_empty() {
-        eprintln!("front: HARKROOM_FRONT_TS_ROUTES names unknown route(s): {unknown:?}");
+    // `HARKROOM_FRONT_TS_ROUTES`(옮긴 줄을 TS 로 되돌림)는 더 읽지 않는다 — 되돌릴 TS 가 없어(11-21) 되돌린 줄은 404 가 될 뿐이다.
+    if std::env::var_os("HARKROOM_FRONT_TS_ROUTES").is_some() {
+        eprintln!("front: HARKROOM_FRONT_TS_ROUTES is ignored (TS server removed)");
     }
+    let ts = routes::TsOverrides::default();
     // 감사 `ip` 규칙 — TS `TRUST_PROXY` 와 같은 꼴. 모르는 값이면 기동하지 않는다(TS 와 같다).
     let trust =
         match harkroom_server::trust_proxy::parse(std::env::var("TRUST_PROXY").ok().as_deref()) {
@@ -127,7 +122,7 @@ async fn main() {
         }
     );
     let state = routes::AppState {
-        up: proxy::Upstream::new(&upstream),
+        up: proxy::Upstream::new(""),
         pool,
         write,
         trust: std::sync::Arc::new(trust),
@@ -1541,44 +1536,50 @@ async fn main() {
         }
         _ => None,
     };
-    // 에이전트 업로드의 비밀 값 검사(`core/leak_guard.rs`) — 권한·키 env 가 다 맞을 때만. 아니면 에이전트 업로드는 TS.
+    // 에이전트 업로드의 비밀 값 검사(`core/leak_guard.rs`) — 권한·키 env 가 다 맞을 때만. 아니면 에이전트 업로드 줄은 켜지 않는다.
     // MCP `artifact.publish` 새 안 게시가 쓸 첨부 저장소 — 업로드 줄과 같은 잠금(권한·저장소·상한)을 지났을 때만.
     let artifact_storage = attachment_upload.as_ref().map(|(_, s, _)| s.clone());
     // `/mcp` 입장 확인은 키링이 없는 가드도 받는다 — 그 에이전트에게 걸린 비밀이 없으면 검사할 것이 없으므로 Rust 가 끝까지 답하고,
-    // 걸린 비밀이 있으면 TS `/mcp/admit` 에 묻는다(`core/mcp/route.rs` `pre_admit`). 업로드는 지금처럼 키링이 있을 때만.
-    let leak_guard_any = match &attachment_upload {
-        Some((write, _, _)) => {
+    // 걸린 비밀이 있으면 닫는다(`core/mcp/route.rs` `pre_admit`). 업로드는 지금처럼 키링이 있을 때만.
+    // 가드는 첨부 저장소 env(`ATTACHMENT_ROOT`·`ATTACHMENT_MAX_BYTES`)와 무관하게 쓰기 풀에서 싣는다 — 예전에는 업로드 줄에 매달려 있어
+    // 첨부 env 가 없는 앞단은 가드가 없었고, 그 `/mcp` 는 TS `/mcp/admit` 에 물었다. 그 물음이 없어진 뒤로는 모든 MCP 호출이 닫혔다.
+    let leak_guard_any = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(write)) => {
             use harkroom_server::core::leak_guard as lg;
             match write::missing_in(write, &lg::privileges(), lg::LEAK_GUARD_SEQUENCES).await {
                 Ok(m) if m.is_empty() => match lg::LeakGuard::load(write.clone()).await {
                     Ok(g) => {
                         if !g.is_on() {
                             eprintln!(
-                                "front: agent upload leak guard off — no matching secret key (mcp admits locally only for agents without granted secrets)"
+                                "front: leak guard has no matching secret key — agent uploads closed; mcp admits only agents without granted secrets"
                             );
                         }
                         Some(std::sync::Arc::new(g))
                     }
                     Err(e) => {
-                        eprintln!("front: agent upload leak guard off — secret keys: {e}");
+                        eprintln!(
+                            "front: leak guard off (agent uploads and mcp admit closed) — secret keys: {e}"
+                        );
                         None
                     }
                 },
                 Ok(m) => {
-                    eprintln!("front: agent upload leak guard off — missing privileges {m:?}");
+                    eprintln!(
+                        "front: leak guard off (agent uploads and mcp admit closed) — missing privileges {m:?}"
+                    );
                     refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
                     eprintln!(
-                        "front: agent upload leak guard off — privilege check failed ({})",
+                        "front: leak guard off (agent uploads and mcp admit closed) — privilege check failed ({})",
                         e.as_database_error().map_or("io", |_| "db")
                     );
                     None
                 }
             }
         }
-        None => None,
+        _ => None,
     };
     let agent_upload_leak = leak_guard_any.clone().filter(|g| g.is_on());
     // S5.4 CT1 — 채널에 팀 넣기(`POST /channels/{id}/teams/{teamId}/add`). 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 그 칸 권한이 다 있을 때만.
@@ -5542,7 +5543,7 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], port)))
         .await
         .expect("bind");
-    eprintln!("front: listening on :{port}, upstream {upstream}");
+    eprintln!("front: listening on :{port}");
     axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
@@ -5599,7 +5600,7 @@ fn refuse_missing_grants(missing: &[String]) {
         return;
     }
     eprintln!(
-        "front: refusing to start — missing privileges {missing:?} (HARKROOM_REQUIRE_GRANTS=1; unset it to forward to TS instead)"
+        "front: refusing to start — missing privileges {missing:?} (HARKROOM_REQUIRE_GRANTS=1; unset it to start with those routes closed instead)"
     );
     std::process::exit(1);
 }
@@ -5677,7 +5678,7 @@ async fn spawn_loops() {
     };
     match write::missing_in(&pool, wake::WAKE_PRIVILEGES, wake::WAKE_SEQUENCE_PRIVILEGES).await {
         Ok(m) if m.is_empty() => {
-            eprintln!("front: loop wake on (runs only while server_loop owner is rust)");
+            eprintln!("front: loop wake on (runs unless server_loop pins it to ts)");
             wake::spawn(gate.clone(), pool.clone());
         }
         Ok(m) => eprintln!("front: loop wake off — missing privileges {m:?}"),
@@ -5690,7 +5691,7 @@ async fn spawn_loops() {
                 std::env::var("HARKROOM_RETENTION_DELETE").ok().as_deref(),
             );
             eprintln!(
-                "front: loop retention on (delete={del}; runs only while server_loop owner is rust)"
+                "front: loop retention on (delete={del}; runs unless server_loop pins it to ts)"
             );
             retention::spawn(gate.clone(), pool.clone(), del);
         }
@@ -5706,7 +5707,7 @@ async fn spawn_loops() {
     .await
     {
         Ok(m) if m.is_empty() => {
-            eprintln!("front: loop mandate.idle on (runs only while server_loop owner is rust)");
+            eprintln!("front: loop mandate.idle on (runs unless server_loop pins it to ts)");
             mandate_idle::spawn(gate.clone(), pool.clone());
         }
         Ok(m) => eprintln!("front: loop mandate.idle off — missing privileges {m:?}"),
@@ -5721,9 +5722,7 @@ async fn spawn_loops() {
     .await
     {
         Ok(m) if m.is_empty() => {
-            eprintln!(
-                "front: loop permission.expire on (runs only while server_loop owner is rust)"
-            );
+            eprintln!("front: loop permission.expire on (runs unless server_loop pins it to ts)");
             permission_expire::spawn(gate.clone(), pool.clone());
         }
         Ok(m) => eprintln!("front: loop permission.expire off — missing privileges {m:?}"),
@@ -5741,7 +5740,7 @@ async fn spawn_loops() {
         {
             Ok(m) if m.is_empty() => {
                 eprintln!(
-                    "front: loop delegation.deadline on (v2={v2}; runs only while server_loop owner is rust)"
+                    "front: loop delegation.deadline on (v2={v2}; runs unless server_loop pins it to ts)"
                 );
                 delegation_deadline::spawn(gate.clone(), pool.clone(), v2);
             }
@@ -5754,13 +5753,13 @@ async fn spawn_loops() {
     // C5c-4 — event_outbox 정리(보존 5분이 지난 줄, 1분마다). 문지기 이름 `outbox.prune`.
     match write::missing_in(&pool, outbox_prune::OUTBOX_PRUNE_PRIVILEGES, &[]).await {
         Ok(m) if m.is_empty() => {
-            eprintln!("front: loop outbox.prune on (runs only while server_loop owner is rust)");
+            eprintln!("front: loop outbox.prune on (runs unless server_loop pins it to ts)");
             outbox_prune::spawn(gate.clone(), pool.clone());
         }
         Ok(m) => eprintln!("front: loop outbox.prune off — missing privileges {m:?}"),
         Err(e) => eprintln!("front: loop outbox.prune off — privilege check failed: {e}"),
     }
-    // decision 4 — avcs 투영(lease·커서·상태 줄). 문지기 이름 `projection`(줄이 없으면 `ts` — 꺼짐).
+    // decision 4 — avcs 투영(lease·커서·상태 줄). 문지기 이름 `projection`(줄이 없으면 `rust` — 돈다; 바인딩된 repo 가 없으면 할 일이 없다).
     {
         use harkroom_server::loops::projection as pj;
         match write::missing_in(
@@ -5771,7 +5770,7 @@ async fn spawn_loops() {
         .await
         {
             Ok(m) if m.is_empty() => {
-                eprintln!("front: loop projection on (runs only while server_loop owner is rust)");
+                eprintln!("front: loop projection on (runs unless server_loop pins it to ts)");
                 pj::spawn(gate.clone(), pool.clone());
             }
             Ok(m) => eprintln!("front: loop projection off — missing privileges {m:?}"),
@@ -5788,7 +5787,7 @@ async fn spawn_loops() {
     match write::missing_in(&pool, &post_privs, seqs).await {
         Ok(m) if m.is_empty() => {
             let implicit_ok = matches!(write::missing_in(&pool, harkroom_server::core::implicit_delegation::IMPLICIT_DELEGATION_PRIVILEGES, &[]).await, Ok(m) if m.is_empty());
-            eprintln!("front: loop scheduled on (runs only while server_loop owner is rust)");
+            eprintln!("front: loop scheduled on (runs unless server_loop pins it to ts)");
             scheduled::spawn(gate.clone(), pool.clone(), implicit_ok);
         }
         Ok(m) => eprintln!("front: loop scheduled off — missing privileges {m:?}"),
@@ -5803,7 +5802,7 @@ async fn spawn_loops() {
     match write::missing_in(&pool, &auto_privs, seqs).await {
         Ok(m) if m.is_empty() => {
             let implicit_ok = matches!(write::missing_in(&pool, harkroom_server::core::implicit_delegation::IMPLICIT_DELEGATION_PRIVILEGES, &[]).await, Ok(m) if m.is_empty());
-            eprintln!("front: loop automation on (runs only while server_loop owner is rust)");
+            eprintln!("front: loop automation on (runs unless server_loop pins it to ts)");
             harkroom_server::loops::automation::spawn(gate.clone(), pool.clone(), implicit_ok);
         }
         Ok(m) => eprintln!("front: loop automation off — missing privileges {m:?}"),
@@ -5814,9 +5813,7 @@ async fn spawn_loops() {
         bg::background_enabled(std::env::var("HARKROOM_BACKGROUND_ENABLED").ok().as_deref());
     match write::missing_in(&pool, bg::BG_PRIVILEGES, &[]).await {
         Ok(m) if m.is_empty() => {
-            eprintln!(
-                "front: loop bg on (enabled={bg_on}; runs only while server_loop owner is rust)"
-            );
+            eprintln!("front: loop bg on (enabled={bg_on}; runs unless server_loop pins it to ts)");
             bg::spawn(gate.clone(), pool.clone(), bg_on);
         }
         Ok(m) => eprintln!("front: loop bg off — missing privileges {m:?}"),
@@ -5825,7 +5822,7 @@ async fn spawn_loops() {
     // C5e-2 — 푸시 발송. 문지기 이름 `push`.
     match push_sweeper(&pool).await {
         Ok(Some(s)) => {
-            eprintln!("front: loop push on (runs only while server_loop owner is rust)");
+            eprintln!("front: loop push on (runs unless server_loop pins it to ts)");
             // `/healthz` 의 `push` 칸(TS `pushSweeper.health` 와 같은 낱말).
             let _ = harkroom_server::health::PUSH_HEALTH.set(s.health.clone());
             harkroom_server::loops::push::spawn(gate.clone(), s);
@@ -5846,15 +5843,13 @@ async fn spawn_loops() {
     .await
     {
         Ok(m) if m.is_empty() => {
-            eprintln!("front: loop stale on (runs only while server_loop owner is rust)");
+            eprintln!("front: loop stale on (runs unless server_loop pins it to ts)");
             harkroom_server::loops::stale::spawn(
                 gate.clone(),
                 harkroom_server::core::msg_post::PostState {
                     read: pool.clone(),
                     write: pool.clone(),
-                    up: harkroom_server::proxy::Upstream::new(
-                        &std::env::var("UPSTREAM_URL").unwrap_or_default(),
-                    ),
+                    up: harkroom_server::proxy::Upstream::new(""),
                     implicit_ok: false,
                 },
             );
@@ -5863,7 +5858,7 @@ async fn spawn_loops() {
         Err(e) => eprintln!("front: loop stale off — privilege check failed: {e}"),
     }
     // P5 — 스레드 상태 이모지 감시·계획판 감시. 둘 다 이벤트로 돈다 — 루프 전용 허브 하나를 outbox LISTEN(전용 연결 하나)으로 채운다.
-    // 문지기 이름 `thread.status`·`thread.plan` — 주인이 rust 일 때만 판정한다(줄이 없으면 TS 가 판정한다).
+    // 문지기 이름 `thread.status`·`thread.plan` — 주인이 rust 일 때만 판정한다(줄이 없으면 rust).
     let status_on = match write::missing_in(
         &pool,
         harkroom_server::loops::thread_status::THREAD_STATUS_PRIVILEGES,
@@ -5909,19 +5904,17 @@ async fn spawn_loops() {
         let plan_events = plan_on.then(|| hub.subscribe());
         harkroom_server::core::events::spawn_outbox_listener(pool.clone(), url.clone(), hub);
         if let Some(events) = status_events {
-            eprintln!("front: loop thread.status on (runs only while server_loop owner is rust)");
+            eprintln!("front: loop thread.status on (runs unless server_loop pins it to ts)");
             harkroom_server::loops::thread_status::spawn(gate.clone(), pool.clone(), events);
         }
         if let Some(events) = plan_events {
-            eprintln!("front: loop thread.plan on (runs only while server_loop owner is rust)");
+            eprintln!("front: loop thread.plan on (runs unless server_loop pins it to ts)");
             harkroom_server::loops::thread_plan::spawn(
                 gate.clone(),
                 harkroom_server::core::msg_post::PostState {
                     read: pool.clone(),
                     write: pool.clone(),
-                    up: harkroom_server::proxy::Upstream::new(
-                        &std::env::var("UPSTREAM_URL").unwrap_or_default(),
-                    ),
+                    up: harkroom_server::proxy::Upstream::new(""),
                     implicit_ok: false,
                 },
                 events,
@@ -5937,7 +5930,7 @@ async fn spawn_loops() {
                     .as_deref(),
             );
             eprintln!(
-                "front: loop bg.produce on (enabled={bg_on}; runs only while server_loop owner is rust)"
+                "front: loop bg.produce on (enabled={bg_on}; runs unless server_loop pins it to ts)"
             );
             bg_produce::spawn(gate, pool, bg_on, max);
         }

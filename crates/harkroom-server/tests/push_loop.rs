@@ -1,5 +1,5 @@
 //! 푸시 발송 sweep(`loops::push`)이 TS `pushJobs.ts::createPushSweeper` 와 같은 일을 하는지 실제 Postgres 로 본다.
-//! `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `packages/server/test/rustFrontDb.test.ts` 가 넘긴다).
+//! `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `scripts/db-tests.sh` 가 넘긴다).
 //! 장면(사람·채널·글·기기)은 TS 가 TS 서비스로 깐다 — 여기서는 sweep 한 번을 돌리고 가짜 전송부가 받은 것을 찍는다.
 //! - `HARKROOM_TEST_WRITE_DATABASE_URL` 이 있으면 sweep 은 그 역할(`PUSH_PRIVILEGES` 만 가진 쓰기 역할)로 돈다.
 //! - `HARKROOM_PUSH_LOOP_REPLY=<status>[:<reason>]` 이면 장면 모드 — 그 답을 주는 가짜로 sweep 한 번, 받은 것을

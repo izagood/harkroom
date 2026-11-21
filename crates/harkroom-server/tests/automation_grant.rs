@@ -1,7 +1,7 @@
 //! MCP `automation.propose` 의 Rust INSERT 가 **`AUTOMATION_PROPOSE_PRIVILEGES` 의 칸 단위 GRANT 만으로** 도는지 실제 Postgres 로 본다.
 //! 대조(`contrast`)의 쓰기 역할은 `pg_read_all_data` 를 가져 `returning *` 같은 넓은 SELECT 를 가린다 — 여기서는 그것 없이
 //! GRANT 목록만 가진 역할로 돌린다. 수신 비밀 칸(`ingress_token_hash`·`ingress_secret_enc`)을 읽는 문장이면 빨개진다.
-//! `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `packages/server/test/rustFrontDb.test.ts` 가 넘긴다).
+//! `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `scripts/db-tests.sh` 가 넘긴다).
 use harkroom_server::core::mcp::automation_propose::{AUTOMATION_PROPOSE_PRIVILEGES, insert_sql};
 use sqlx::{PgPool, Row};
 

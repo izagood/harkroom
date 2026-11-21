@@ -1,5 +1,5 @@
 //! event_outbox 정리 sweep(`loops::outbox_prune`)이 TS `eventBus.ts::pruneEventOutbox` 와 같은 일을 하는지 실제 Postgres 로 본다.
-//! `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `packages/server/test/rustFrontDb.test.ts` 가 넘긴다).
+//! `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `scripts/db-tests.sh` 가 넘긴다).
 //! - `HARKROOM_TEST_WRITE_DATABASE_URL` 이 있으면 sweep 은 그 역할(`OUTBOX_PRUNE_PRIVILEGES` 만 가진 쓰기 역할)로 돈다.
 //! - `HARKROOM_OUTBOX_PRUNE_DUAL=1` 이면 이중 실행 모드 — TS 가 깔아 둔 줄을 TS sweep 과 **동시에** 지워 지운 수만 찍는다(판정은 TS 쪽).
 use harkroom_server::loops::outbox_prune::{OUTBOX_PRUNE_PRIVILEGES, prune};
@@ -104,14 +104,14 @@ async fn outbox_prune_like_ts() {
             .connect(&write_url)
     };
     let (gate1, work1) = (one().await.unwrap(), one().await.unwrap());
-    // 줄이 없으면 주인은 ts — Rust 쪽 tick 은 건너뛴다.
-    let r = run_gated(&gate1, "outbox.prune", Side::Rust, || async {
+    // 줄이 없으면 주인은 rust — ts 쪽 tick 은 건너뛴다.
+    let r = run_gated(&gate1, "outbox.prune", Side::Ts, || async {
         prune(&work1).await.map(|_| ())
     })
     .await;
     assert!(matches!(r, GateResult::NotOwner), "{r:?}");
     assert_eq!(old_rows(&admin, "op-rs").await, 5);
-    let r = run_gated(&gate1, "outbox.prune", Side::Ts, || async {
+    let r = run_gated(&gate1, "outbox.prune", Side::Rust, || async {
         prune(&work1).await.map(|_| ())
     })
     .await;

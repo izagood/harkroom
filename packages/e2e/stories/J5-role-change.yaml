@@ -37,16 +37,9 @@ failSigns:
   - "재시작 전까지 옛 역할"
   - "버튼은 보이는데 403"
 existing:
-  - kind: server-vitest
-    file: "packages/server/test/storyJourneys.test.ts"
-    note: "API 여정 러너가 이 여정을 그대로 돈다(화면 단계는 /auth/me capabilities 로 옮겨 보거나 건너뜀)"
-  - kind: server-vitest
-    file: "packages/server/test/permissions.test.ts"
-    note: "역할별 판정"
-  - kind: server-vitest
-    file: "packages/server/test/authMe.test.ts"
-    note: "/auth/me 의 role·capabilities"
   - kind: browser-playwright
     file: "packages/e2e/web/journeys.pw.ts"
     note: "대체(브라우저): 화면 여정 러너가 이 여정의 화면 단계를 돈다(권한·역할·초대는 API 로)"
-runners: [api, browser, mobile]
+runners: [browser, mobile]
+gaps:
+  - "옛 TS 서버 시험(server-vitest·API 여정 러너)은 TS 백엔드 삭제로 없어졌다 — Rust 시험으로 옮기지 않은 판정은 여기서 빈다"

@@ -223,16 +223,12 @@ mod tests {
 
     #[test]
     fn needles_sql_matches_ts() {
-        let ts = include_str!("../../../../packages/server/src/services/secretLeakGuard.ts");
         let norm = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
         let inner = "select distinct s.id, s.name, s.kind, v.version, v.sealed \
        from secret_grant g join secret s on s.id = g.secret_id \
        join secret_version v on v.secret_id = s.id and v.revoked_at is null and v.sealed is not null \
       where g.agent_id = $1::uuid";
         assert!(norm(NEEDLES_SQL).contains(&norm(inner)));
-        assert!(norm(ts).contains(&norm(inner)));
-        assert!(ts.contains("'denied', 'leak_blocked'"));
-        assert!(ts.contains("action: 'secret.leak.blocked'"));
         // 키링 없는 가드의 「걸린 비밀이 있나」는 같은 from·where 를 본다.
         let from_where = &inner[inner.find("from").unwrap()..];
         assert!(norm(HAS_NEEDLES_SQL).contains(&norm(from_where)));

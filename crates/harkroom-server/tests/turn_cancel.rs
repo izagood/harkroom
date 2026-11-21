@@ -1,5 +1,5 @@
 //! MCP `turn.cancel` 을 Rust 허브로 답하는 길(`core/mcp/turn_cancel.rs` — TS `mcpPlugin.ts` `turn.cancel`)을 실제 Postgres 로 본다.
-//! `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `packages/server/test/rustFrontDb.test.ts` 가 넘긴다).
+//! `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `scripts/db-tests.sh` 가 넘긴다).
 //! 쓰기 풀은 `HARKROOM_TEST_WRITE_DATABASE_URL`(있으면 `OPERATOR_PRIVILEGES` 만 가진 역할) — 정리·감사 권한이 모자라면 여기서 빨개진다.
 use harkroom_server::auth::Account;
 use harkroom_server::core::mcp::turn_cancel::answer;

@@ -507,27 +507,6 @@ mod tests {
         }
     }
 
-    /// 거절 문구·답 모양·지우기 조건을 TS 원본과 맞춘다.
-    #[test]
-    fn texts_follow_ts_source() {
-        let mcp = include_str!("../../../../../packages/server/src/mcp/mcpPlugin.ts");
-        for want in [
-            "inputSchema: { grantId: z.string().uuid() },",
-            "if (account.kind !== 'agent') return jsonResult({ error: { code: 'not_agent', message: 'only agents use this' } });",
-            "return jsonResult(r.ok ? { revoked: true } : { error: { code: r.code ?? 'not_found', message: 'no such grant given by you' } });",
-        ] {
-            assert!(mcp.contains(want), "{want}");
-        }
-        let svc = include_str!("../../../../../packages/server/src/services/apiDelegation.ts");
-        for want in [
-            "`delete from account_grant where id = $1 and granted_by = $2 and parent_grant_id is not null returning account_id as \"accountId\"`",
-            "await recordAudit(pool, { action: 'grant.delegate.revoked', actorId: a.agentId, target: r.rows[0]!.accountId, detail: { grantId: a.grantId } });",
-            "emitEvent({ type: 'grant.changed', accountId: r.rows[0]!.accountId, audience: 'all' });",
-        ] {
-            assert!(svc.contains(want), "{want}");
-        }
-    }
-
     #[test]
     fn canonical_rules_only() {
         for ok in [
@@ -557,43 +536,6 @@ mod tests {
         );
         for no in ["izagood", "a/b/c", "-a/b", "a/", "*/b", "a/b*", "a b/c"] {
             assert_eq!(repo_grant_scope(no), None, "{no}");
-        }
-    }
-
-    /// permission.revoke 의 문장·문구를 TS 원본과 맞춘다.
-    #[test]
-    fn permission_revoke_follows_ts_source() {
-        let mcp = include_str!("../../../../../packages/server/src/mcp/mcpPlugin.ts");
-        for want in [
-            "kind: z.enum(['tool', 'merge', 'read']),",
-            "rule: z.string().min(1).max(300).optional(),",
-            "repo: z.string().min(3).max(201).optional(),",
-            "if (account.kind !== 'agent') return jsonResult({ error: { code: 'not_agent', message: 'only an agent can release its own permission' } });",
-            "return jsonResult({ error: { code: 'bad_request', message: 'kind \"tool\" takes `rule`, kinds \"merge\" and \"read\" take `repo` — exactly one' } });",
-            "return jsonResult({ revoked: true, capability: r.capability, scope: r.scope, grantRemoved: r.grantRemoved, closedTurnLines: r.closedTurnLines });",
-        ] {
-            assert!(mcp.contains(want), "{want}");
-        }
-        let svc = include_str!("../../../../../packages/server/src/services/permissionRequests.ts");
-        for (k, m) in NOT_FOUND {
-            assert!(svc.contains(&format!("  {k}: '{m}',")), "{k}");
-        }
-        for want in [
-            "`delete from account_grant where account_id = $1 and capability = $2 and scope = any($3::text[]) returning scope`",
-            "if (!scope) return { ok: false, code: 'bad_repo', message: 'repo must be one <owner>/<name> or <owner>/*' };",
-            "message: `no such grant on this agent: ${RELEASE_NOT_FOUND_MESSAGE[reason]}`",
-            "await recordAudit(pool, { action: 'grant.revoked', actorId: args.agentId, target: args.agentId, detail: { capability, scope, via: 'permission.revoke' } });",
-            "detail: { mandateId: l.mandateId, lineId: l.id, cap: 'tool', scope: l.scope, via: l.via, requestId: l.requestId, revokedVia: 'permission.revoke' },",
-        ] {
-            assert!(svc.contains(want), "{want}");
-        }
-        let lines = include_str!("../../../../../packages/server/src/services/mandateLines.ts");
-        for want in [
-            "and l.agent_ids = array[$1::uuid]",
-            "and l.limits ? 'turnCause' and (l.limits->>'until')::timestamptz > $4",
-            "or exists (select 1 from permission_request r",
-        ] {
-            assert!(lines.contains(want), "{want}");
         }
     }
 }

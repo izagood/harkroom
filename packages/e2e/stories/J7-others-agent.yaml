@@ -21,11 +21,6 @@ expect: "invokeGate 판정대로 되고, 막히면 조용히 무시되지 않는
 failSigns:
   - "멘션했는데 아무 일도 없음"
   - "남이 에이전트 설정을 바꿈"
-existing:
-  - kind: server-vitest
-    file: "packages/server/test/invokeGate.test.ts"
-    note: "채널 부르기 판정"
-  - kind: server-vitest
-    file: "packages/server/test/dmInvokeGate.test.ts"
-    note: "DM 부르기 판정"
 runners: [browser, harness]
+gaps:
+  - "옛 TS 서버 시험(server-vitest·API 여정 러너)은 TS 백엔드 삭제로 없어졌다 — Rust 시험으로 옮기지 않은 판정은 여기서 빈다"

@@ -247,14 +247,6 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn refusal_texts_follow_ts_source() {
-        let ts = include_str!("../../../../packages/server/src/services/askBundles.ts");
-        for (code, msg) in REFUSALS {
-            assert!(ts.contains(&format!("  {code}: '{msg}',")), "{code}");
-        }
-    }
-
-    #[test]
     fn bundle_meta_like_read_ask_bundle_meta() {
         let ok = json!({"kind":"askBundle","askBundle":{"items":[{"rootId":"a","options":[]}]}});
         assert_eq!(bundle_items(&ok).map(Vec::len), Some(1));

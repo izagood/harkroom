@@ -8,7 +8,7 @@
 //!   글이 커밋된 뒤 `sent_message_id` 를 찍기 전에 죽으면 다음 tick 이 같은 키로 다시 올리고, 글 경로는 이미 만든 글을 돌려준다(재생).
 //! - DB 순간 오류는 `failed_reason` 을 찍지 않는다(되돌리고 다음 sweep 이 다시 한다 — TS 와 같다).
 //! - Rust 글 경로가 아직 TS 로 넘기는 글(링크 미리보기·글 승인 체에 걸리는 본문, TS 몫 스레드·부름)은 **보내지 않고 대기로 둔다**
-//!   (이번 sweep 에서만 건너뛴다). 그런 예약이 있는 동안은 `server_loop` 주인을 `ts` 로 둬야 한다.
+//!   (이번 sweep 에서만 건너뛴다). TS 백엔드를 지운 뒤(11-21)로는 그런 예약을 대신 보낼 쪽이 없다 — 대기로 남는다.
 use super::{GateResult, Side, run_gated};
 use crate::core::audience::audience_for;
 use crate::core::msg_post::{Origin, Outcome, PostBody, PostState, gate_sql, post_in_tx, ts_body};

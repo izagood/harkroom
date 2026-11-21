@@ -1399,29 +1399,6 @@ mod tests {
 
     #[test]
     fn mirrors_ts_source() {
-        let ts = include_str!("../../../../packages/server/src/routes/connectorRoutes.ts");
-        for want in [
-            "const NAME = /^[a-z0-9][a-z0-9_-]{0,63}$/;",
-            "const HEADER = /^[A-Za-z0-9-]{1,64}$/;",
-            "const RESERVED_HEADERS = new Set(['host', 'content-length', 'transfer-encoding', 'connection', 'cookie']);",
-            "const FORM_VALUE = /^[\\x20-\\x7e]{1,200}$/;",
-            "const FORM_FIELD = /^[A-Za-z0-9_.-]{1,64}$/;",
-            "const RESERVED_FORM_FIELDS = new Set(['grant_type', 'client_id']);",
-            "where capability = 'api.call' and scope = $1 and suspended_at is null returning account_id`, [scope])",
-            "and exists (select 1 from jsonb_array_elements_text(limits->'methods') m where m = any($2::text[]))",
-            "|| next.tokenUrl !== cur.tokenUrl || JSON.stringify(next.tokenForm) !== JSON.stringify(cur.tokenForm);",
-        ] {
-            assert!(ts.contains(want), "{want}");
-        }
-        let grants = include_str!("../../../../packages/server/src/auth/apiGrants.ts");
-        for want in [
-            "if (/%2e|%2f|%5c|%25/i.test(input) || /\\/\\.\\.?(\\/|$)/.test(input)) return null;",
-            "if (u.protocol !== 'https:' || u.username || u.password || u.search || u.hash) return null;",
-            "if (u.pathname !== '/' && u.pathname !== '') return null;",
-            "return out.length <= 500 ? out : null;",
-        ] {
-            assert!(grants.contains(want), "{want}");
-        }
         let shared = include_str!("../../../../packages/shared/src/permissions.ts");
         assert!(shared.contains(
             "export const API_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as const;"

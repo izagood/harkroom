@@ -12,9 +12,10 @@ owner 한 명으로 쓸 때는 안 보이던 경우(권한 차이·처음 쓰는
 
 ## 러너(`runners` 칸)
 
+옛 `api` 러너(TS 서버 vitest 안에서 여정을 돌던 것)는 TS 백엔드와 함께 지웠다. 서버 거부 판정은 Rust DB 시험(`crates/harkroom-server/tests/deny_*.rs`)이 본다.
+
 | 러너 | 무엇 | 결과를 부르는 이름 |
 |---|---|---|
-| `api` | server vitest 안에서 `app.inject` 로 여정을 돈다(시험마다 새 DB) | 서버 판정 |
 | `browser` | 데스크톱 웹뷰를 브라우저(Playwright)로 띄운다 | **대체(브라우저)** — Tauri 앱 실물이 아니다 |
 | `mobile` | `apps/mobile/integration_test` 를 시험 커뮤니티에 돌린다 | 실물(실기기·시험 테넌트) |
 | `harness` | #testbed 의 시험 에이전트 회차 | 실물(러너·운영 서버) |

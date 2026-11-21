@@ -1,5 +1,5 @@
 //! 권한 요청 만료 sweep(`loops::permission_expire`)이 TS `permissionRequests.ts` 의 `expirePermissionRequests` 와 같은 일을 하는지
-//! 실제 Postgres 로 본다. `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `packages/server/test/rustFrontDb.test.ts` 가 넘긴다).
+//! 실제 Postgres 로 본다. `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `scripts/db-tests.sh` 가 넘긴다).
 //! - `HARKROOM_TEST_WRITE_DATABASE_URL` 이 있으면 sweep 은 그 역할(`PERMISSION_EXPIRE_PRIVILEGES` 만 가진 쓰기 역할)로 돈다.
 //! - `HARKROOM_PERMISSION_EXPIRE_DUAL=<agent id>` 면 이중 실행 모드 — TS 가 깔아 둔 요청을 TS sweep 과 **동시에** 만료하고
 //!   만료한 수만 찍는다(판정은 TS 쪽).
@@ -374,7 +374,7 @@ async fn permission_expire_sweep_like_ts() {
             .connect(&write_url)
     };
     let (gate1, work1) = (one().await.unwrap(), one().await.unwrap());
-    let r = run_gated(&gate1, "permission.expire", Side::Ts, || async {
+    let r = run_gated(&gate1, "permission.expire", Side::Rust, || async {
         sweep(&work1).await.map(|_| ())
     })
     .await;

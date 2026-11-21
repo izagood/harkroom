@@ -1,5 +1,5 @@
 //! 예약 깨움 sweep(`loops::wake`)이 TS `agentWakes.ts::fireOneDue` 와 같은 일을 하는지 실제 Postgres 로 본다.
-//! `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `packages/server/test/rustFrontDb.test.ts` 가 넘긴다).
+//! `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `scripts/db-tests.sh` 가 넘긴다).
 //! - `HARKROOM_TEST_WRITE_DATABASE_URL` 이 있으면 sweep 은 그 역할(`WAKE_PRIVILEGES` 만 가진 쓰기 역할)로 돈다.
 //! - `HARKROOM_WAKE_DUAL=1` 이면 이중 실행 모드 — TS 가 깔아 둔 깨움을 TS sweep 과 **동시에** 쓸어 띄운 수만 찍는다(판정은 TS 쪽).
 use harkroom_server::loops::wake::{WAKE_PRIVILEGES, WAKE_SEQUENCE_PRIVILEGES, sweep};

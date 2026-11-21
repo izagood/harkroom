@@ -1,28 +1,10 @@
 # 빌드 컨텍스트에서 제외한다. **없으면 서버 이미지가 깨진다** — 아래 근거.
 #
-# ## 왜 node_modules 를 반드시 빼야 하는가
+# ## 왜 node_modules 를 빼는가
 #
-# `packages/server/Dockerfile` 은 이 순서로 돈다:
-#
-#   RUN pnpm install ...          ← 컨테이너 안에 제대로 설치한다
-#   COPY packages/server packages/server   ← 그 뒤에 소스를 덮어쓴다
-#
-# 이때 호스트의 `packages/server/node_modules` 가 함께 복사되면 방금 설치한 것을
-# **덮어쓴다.** 그리고 pnpm 은 실제 패키지를 루트 `node_modules/.pnpm/` 에 두고
-# 각 패키지에는 **심링크만** 건다:
-#
-#   packages/server/node_modules/fastify -> ../../../node_modules/.pnpm/fastify@5.12.1/...
-#
-# `COPY` 는 그 심링크는 가져오지만 **루트 `.pnpm` 은 안 가져온다**(복사 대상이 아니다).
-# 결과는 **가리키는 곳이 없는 심링크**이고, 런타임에 이렇게 죽는다:
-#
-#   Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'fastify'
-#
-# ## 왜 지금까지 안 드러났나
-#
-# **CI 에서는 안 잡힌다** — 체크아웃 직후엔 `node_modules` 가 없어 덮어쓸 것도 없다.
-# **로컬에서 개발하다 빌드할 때만** 깨진다. 그래서 서버를 재빌드하지 않는 동안
-# 잠복해 있었다(2026-09-06 에 실제로 터졌다).
+# 서버 이미지는 Rust(`crates/harkroom-server/Dockerfile`)라 node_modules 를 쓰지 않는다 — 넣으면 빌드 컨텍스트만
+# 수백 MB 커진다. (옛 TS 서버 이미지 때는 호스트의 pnpm 심링크가 컨테이너 안 설치를 덮어써 런타임에
+# `ERR_MODULE_NOT_FOUND` 로 죽었다(2026-09-06). TS 서버는 11-21 지웠다.)
 node_modules
 **/node_modules
 

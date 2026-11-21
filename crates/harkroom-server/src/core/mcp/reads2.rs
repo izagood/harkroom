@@ -379,47 +379,4 @@ mod tests {
         );
         assert_eq!(jsonb_as_js(r#"{"n": 1.5}"#), None);
     }
-
-    /// 문장을 TS 원본과 맞춘다 — TS 가 칸·조건을 바꾸면 여기서 깨진다(값 비교는 대조 시험이 한다).
-    #[test]
-    fn statements_follow_ts_source() {
-        let mem = include_str!("../../../../../packages/server/src/services/memory.ts");
-        assert!(mem.contains("`select slug, case when flagged_at is null then description end as description, kind\n     from agent_memory where account_id = $1 and archived_at is null order by slug`"));
-        assert!(mem.contains("md5(string_agg(slug || ':' || (extract(epoch from updated_at) * 1000000)::bigint, ',' order by slug)),\n       'empty') as rev\n     from agent_memory where account_id = $1`"));
-        let bg = include_str!("../../../../../packages/server/src/services/bgJobs.ts");
-        assert!(bg.contains("return env.HARKROOM_BACKGROUND_ENABLED === '1';"));
-        assert!(bg.contains(
-            "return r.rows[0]?.bg_enabled === true && r.rows[0].harness === BG_HARNESS;"
-        ));
-        assert!(bg.contains("export const BG_HARNESS = 'claude-code';"));
-        let mcp = include_str!("../../../../../packages/server/src/mcp/mcpPlugin.ts");
-        assert!(mcp.contains("return jsonResult({ slugs: entries.map((e) => e.slug), entries, rev, ...(bgCleanup ? { bgCleanup: true } : {}) });"));
-        assert!(mcp.contains(
-            "return jsonResult({ secrets: await listGrantedSecrets(pool, account.id) });"
-        ));
-        assert!(mcp.contains(
-            "notes: notes.map((n) => ({ ...n, updatedAt: n.updatedAt.toISOString() })),"
-        ));
-        let sec = include_str!("../../../../../packages/server/src/services/secretAccess.ts");
-        assert!(sec.contains("`select s.name, s.kind, s.filename, s.description, array_agg(distinct g.channel_id) as \"channelIds\""));
-        assert!(sec.contains("group by s.id order by s.name`, [agentId]);"));
-        let tn = include_str!("../../../../../packages/server/src/services/threadNote.ts");
-        assert!(tn.contains("export const THREAD_NOTE_LIST_MAX = 100;"));
-        assert!(tn.contains(
-            "const limit = Math.min(Math.max(opts.limit ?? 50, 1), THREAD_NOTE_LIST_MAX);"
-        ));
-        assert!(tn.contains("rootFirstLine: firstLine(r.root_body ?? '', 80),\n    noteFirstLine: r.flag_reason ? '' : firstLine(r.body, 120),"));
-        assert!(tn.contains("return line.length > max ? `${line.slice(0, max - 1)}…` : line;"));
-        assert!(tn.contains("noteFirstLine: r.flag_reason ? '' : firstLine(r.body, 120),\n    flagged: r.flag_reason !== null,"));
-        assert!(mem.contains("const MEMORY_SLUG_REGEX = /^core$|^mem\\/[a-z0-9][a-z0-9_-]{0,63}((\\/[a-z0-9][a-z0-9_-]{0,63})*)$/;"));
-        assert!(mem.contains(
-            "return slug.length > 0 && slug.length <= 255 && MEMORY_SLUG_REGEX.test(slug);"
-        ));
-        assert!(mem.contains("`select id::int as id, value, description, updated_at as \"updatedAt\", replaced_at as \"replacedAt\", flagged, reason, detail, kind\n     from agent_memory_revision where account_id = $1 and slug = $2\n     order by replaced_at desc, id desc`"));
-        assert!(mcp.contains("id: r.id, updatedAt: r.updatedAt.toISOString(), replacedAt: r.replacedAt.toISOString(), chars: r.value.length, ...(r.kind ? { kind: r.kind } : {}),"));
-        assert!(mcp.contains("...(r.description ? { description: r.description } : {}), ...(r.reason ? { reason: r.reason } : {}),"));
-        assert!(mcp.contains(
-            "...(r.detail ? { detail: r.detail } : {}), ...(r.flagged ? { flagged: true } : {}),"
-        ));
-    }
 }

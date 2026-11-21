@@ -1,6 +1,6 @@
 //! 받은함 기본 줄(`core::inbox_list`, S5.3 C6a-3a)이 실제 스키마에서 TS `listInbox` 의 거르기·순서·모양을 지키는지.
 //! 안 읽음·읽음, 볼 수 없는 채널, 지운 글, 시스템 글 자리표시자, `viaEdit`·`teamId` 키 정리, 팀 명단, 상한 페이지를 본다.
-//! `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `bus-e2e` 잡이 `packages/server/test/rustFrontDb.test.ts` 로 DB 를 넘긴다).
+//! `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `db-tests` 잡이 `scripts/db-tests.sh` 로 DB 를 넘긴다).
 use harkroom_server::core::inbox_list::{InboxQuery, list_inbox, list_inbox_newest};
 use serde_json::Value;
 use sqlx::PgPool;

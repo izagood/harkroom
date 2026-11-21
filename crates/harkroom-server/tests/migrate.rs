@@ -1,5 +1,5 @@
 //! 마이그레이션 실행기(`migrate.rs`, S5.4 M1)가 TS `migrate.ts` 와 같이 도는지 실제 Postgres 로 본다.
-//! `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `packages/server/test/rustFrontDb.test.ts` 가 넘긴다).
+//! `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `scripts/db-tests.sh` 가 넘긴다).
 //! 시험마다 새 스키마를 만들어 `search_path` 로 가둔다 — 진짜 `schema_migrations` 는 건드리지 않는다.
 //! advisory 잠금은 DB 단위라 이 파일의 시험이 병렬로 돌면 서로의 잠금을 본다 — 시험마다 [`serial`] 로 한 줄로 세운다.
 use harkroom_server::migrate::{self, MIGRATION_LOCK_KEY};

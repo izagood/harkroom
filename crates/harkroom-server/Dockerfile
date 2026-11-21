@@ -2,7 +2,7 @@
 # 마이그레이션 파일 이름(`crates/harkroom-server/migrations/*.sql`)을 바이너리에 굽기 때문이다.
 #
 # 두 스테이지: `build` 에서 `cargo build --locked --release` 하고, 배포 이미지에는 바이너리 하나만 넘긴다.
-# 런타임은 distroless `cc`(glibc·libgcc 만, 셸 없음)에 nonroot(uid 65532)다 — 앞단은 파일을 쓰지 않는다.
+# 런타임은 distroless `cc`(glibc·libgcc 만, 셸 없음)에 nonroot(uid 65532)다 — 쓰는 파일은 첨부(`ATTACHMENT_ROOT`)뿐이다.
 # TLS 를 쓰지 않는다(sqlx `postgres` 만, 클러스터 안 평문 PG·TS 서버) — 그래서 openssl·인증서가 필요 없다.
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -26,14 +26,18 @@ COPY crates/harkroom-server crates/harkroom-server
 RUN cd crates/harkroom-server \
  && cargo build --locked --release --bin harkroom-server-rs \
  && cp target/release/harkroom-server-rs /harkroom-server-rs
+# 첨부 저장소 자리(`ATTACHMENT_ROOT` 를 여기로 주면 쓴다). 런타임에는 셸이 없어 여기서 만들어 넘긴다 — 빈 볼륨을
+# 이 경로에 걸면 docker 가 이 소유(65532)를 물려준다. 안 쓰면 빈 폴더 하나일 뿐이다.
+RUN mkdir -p /attachments
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 2) runtime — 실제로 배포되는 이미지
 # ─────────────────────────────────────────────────────────────────────────────
 FROM gcr.io/distroless/cc-debian13:nonroot AS runtime
 COPY --from=build /harkroom-server-rs /usr/local/bin/harkroom-server-rs
+COPY --from=build --chown=65532:65532 /attachments /var/lib/harkroom/attachments
 
-# env: `UPSTREAM_URL`(TS 서버) · `DATABASE_URL` · `PORT`(기본 3500). 셋 중 앞의 둘이 없으면 기동하지 않는다.
+# env: `DATABASE_URL`(없으면 기동하지 않는다) · `PORT`(기본 3500). `UPSTREAM_URL` 은 읽지 않는다(TS 서버를 지웠다, 11-21).
 ENV PORT=3500
 EXPOSE 3500
 USER 65532:65532

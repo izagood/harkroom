@@ -29,15 +29,10 @@ failSigns:
   - "가입 직후 /auth/me 401 루프"
   - "초대가 대기로 남음"
 existing:
-  - kind: server-vitest
-    file: "packages/server/test/storyJourneys.test.ts"
-    note: "API 여정 러너가 이 여정을 그대로 돈다(화면 단계는 /auth/me capabilities 로 옮겨 보거나 건너뜀)"
-  - kind: server-vitest
-    file: "packages/server/test/inviteMail.test.ts"
-    note: "초대 발급·메일"
   - kind: mobile-integration
     file: "apps/mobile/integration_test/live_tour_test.dart"
     note: "초대 토큰으로 계정을 만든다(E2E_SERVER 없으면 건너뜀)"
-runners: [api, browser, mobile]
+runners: [browser, mobile]
 gaps:
+  - "옛 TS 서버 시험(server-vitest·API 여정 러너)은 TS 백엔드 삭제로 없어졌다 — Rust 시험으로 옮기지 않은 판정은 여기서 빈다"
   - "/join → 앱 → 가입을 한 줄로 잇는 시험이 없다"

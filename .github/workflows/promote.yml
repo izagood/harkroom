@@ -69,7 +69,8 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  IMAGE: ghcr.io/${{ github.repository_owner }}/harkroom-server
+  # 서버 이미지는 Rust 서버 하나다(TS `harkroom-server` 는 더 굽지 않는다 — image.yml 머리 주석).
+  IMAGE: ghcr.io/${{ github.repository_owner }}/harkroom-server-rs
   CHANNEL_TAG: stable
 
 jobs:

@@ -38,15 +38,6 @@ async fn pool(schema: &str) -> Option<PgPool> {
 }
 
 #[tokio::test]
-async fn channel_name_matches_ts_receiver() {
-    let ts = include_str!("../../../packages/server/src/eventBus.ts");
-    assert!(ts.contains(&format!(
-        "EVENT_OUTBOX_CHANNEL = '{}'",
-        harkroom_bus::EVENT_OUTBOX_CHANNEL
-    )));
-}
-
-#[tokio::test]
 async fn commit_writes_row_and_notifies_id_only() {
     let _g = DB.lock().await;
     let Some(pool) = pool("bus_t_commit").await else {

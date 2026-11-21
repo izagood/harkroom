@@ -7,8 +7,8 @@
 //!   `{ id, filename, contentType, sizeBytes }`.
 //! - 내용 판별·허용 목록·미리보기 생성은 TS 에도 없다. 타입은 파트의 `Content-Type` 그대로(busboy 처럼 매개변수를 떼고
 //!   소문자 `type/subtype`, 없으면 busboy 기본 `text/plain`) — 믿지 않고 저장만 하며 내려줄 때 무력화한다.
-//! - **TS 로 넘기는 요청**(본문을 읽기 전에 판정, 그대로 `proxy::forward`):
-//!   - 에이전트의 업로드인데 [`super::leak_guard`] 를 켤 수 없을 때(권한·키 env) — TS 가 비밀 값 유출 검사를 한다.
+//! - **닫는 요청**(본문을 읽기 전에 판정, `proxy::forward` → 404 `not_found` — 예전에는 TS 로 넘겼다):
+//!   - 에이전트의 업로드인데 [`super::leak_guard`] 를 켤 수 없을 때(권한·키 env) — 비밀 값 유출 검사 없이 받지 않는다.
 //! - 에이전트의 업로드는 저장한 바이트를 다시 읽어 grant 받은 비밀 값이 들어 있으면 파일을 지우고 거절을 기록한 뒤
 //!   400 `secret_in_body`(TS `leakGuard.findInBytes`·`record`, surface `upload`). 키링이 꺼져 있으면 TS 처럼 보지 않는다.
 //!   - `multipart/` 가 아니거나 boundary 가 없는 요청 — TS(@fastify/multipart)의 오류 응답을 그대로 받게 한다.
