@@ -10,13 +10,18 @@
 //! - J9: guest 는 전역 `channel.create` grant 가 있어도 `POST /channels` → 403 `forbidden`(member 는 201).
 //! - member 는 grant 를 못 준다(`PUT /accounts/:id/grants` 403 `forbidden`), admin 임명은 owner 만(`PUT /accounts/:id/role` 403).
 //! - 새 DM 은 부를 수 있는 에이전트와만 연다(`POST /dms` 403 `agent_not_invokable`), 꺼 둔 에이전트도 같다.
+//!
+//! 옛 TS `accountStatus`·`auth`(비밀번호 변경) 시험의 거부 길(세 번째 시험):
+//! - 에이전트의 `PUT /accounts/me/status` → 400 `invalid_account`, 상태 그대로. 81자 문구 → 400 `invalid_request`, 문구 그대로.
+//! - `POST /auth/password`: 자격 없음 401 `unauthorized` · 현재 비밀번호 틀림 401 `invalid_credentials`(해시 그대로) ·
+//!   새 비밀번호 7자 400 `invalid_request` · 성공(204)하면 지금 세션은 살고 다른 세션은 401.
 mod common;
 
 use axum::http::{Method, StatusCode};
 use harkroom_server::auth::{AuthPools, hash_token};
 use harkroom_server::core::{
-    account_grant_give, account_role, agent_create, auth_light, channel_create_update, dm_open,
-    invites_write,
+    account_grant_give, account_role, account_self, agent_create, auth_light, auth_password,
+    channel_create_update, dm_open, invites_write,
 };
 use serde_json::Value;
 use sqlx::PgPool;
@@ -97,7 +102,10 @@ async fn app(pool: &PgPool) -> String {
 }
 
 async fn call(base: &str, m: Method, path: &str, bearer: &str, body: &str) -> (StatusCode, Value) {
-    let mut h = vec![("authorization", bearer)];
+    let mut h = Vec::new();
+    if !bearer.is_empty() {
+        h.push(("authorization", bearer));
+    }
     if !body.is_empty() {
         h.push(("content-type", "application/json"));
     }
@@ -441,4 +449,211 @@ async fn role_grant_and_dm_denials_hold_without_ts() {
     )
     .await;
     assert_eq!(s, StatusCode::CREATED, "community 에이전트 DM: {b}");
+}
+
+async fn app3(pool: &PgPool) -> String {
+    let auth = || AuthPools {
+        read: pool.clone(),
+        write: Some(pool.clone()),
+    };
+    let cors = Arc::new(harkroom_server::cors::Cors::from_env_value(None));
+    let trust = Arc::new(harkroom_server::trust_proxy::TrustProxy::None);
+    let r = account_self::routes(
+        account_self::AccountSelfState {
+            read: pool.clone(),
+            write: pool.clone(),
+            trust: trust.clone(),
+        },
+        auth(),
+        cors.clone(),
+    )
+    .router
+    .merge(
+        auth_password::routes(
+            auth_password::AuthPasswordState {
+                write: pool.clone(),
+                trust: trust.clone(),
+            },
+            auth(),
+            cors.clone(),
+        )
+        .router,
+    )
+    .merge(
+        auth_light::routes(
+            auth_light::AuthLightState {
+                read: pool.clone(),
+                write: pool.clone(),
+                trust,
+            },
+            auth(),
+            cors,
+        )
+        .router,
+    );
+    format!("http://{}", common::serve(r).await)
+}
+
+#[tokio::test]
+async fn status_and_password_denials_hold_without_ts() {
+    let Ok(url) = std::env::var("HARKROOM_TEST_DATABASE_URL") else {
+        eprintln!("skip: HARKROOM_TEST_DATABASE_URL unset");
+        return;
+    };
+    let pool = PgPool::connect(&url).await.unwrap();
+    let tag = format!("sp{}", std::process::id());
+    let base = app3(&pool).await;
+    let status_of = |id: String| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_as::<_, (String, Option<String>)>(
+                "select status, status_text from account where id = $1::uuid",
+            )
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+
+    // accountStatus — 에이전트는 상태를 못 바꾼다(400 invalid_account), 행도 그대로.
+    let owner = human(&pool, &format!("{tag}-owner"), "member").await;
+    let bot = agent(&pool, &format!("{tag}-bot"), "owner", &owner, false).await;
+    let bot_tok = session(&pool, &bot, &format!("{tag}-bot-sess")).await;
+    let (s, b) = call(
+        &base,
+        Method::PUT,
+        "/accounts/me/status",
+        &bot_tok,
+        r#"{"status":"dnd","statusText":"x"}"#,
+    )
+    .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "에이전트 상태 변경: {b}");
+    assert_eq!(code(&b), "invalid_account", "에이전트 상태 code: {b}");
+    assert_eq!(
+        status_of(bot.clone()).await,
+        ("available".to_string(), None),
+        "에이전트 상태가 바뀌었다"
+    );
+
+    // 사람: 정한 문구는 81자 요청으로 지워지지 않는다(400 invalid_request).
+    let me = human(&pool, &format!("{tag}-me"), "member").await;
+    let me_tok = session(&pool, &me, &format!("{tag}-me-sess")).await;
+    let (s, b) = call(
+        &base,
+        Method::PUT,
+        "/accounts/me/status",
+        &me_tok,
+        r#"{"status":"dnd","statusText":"lunch"}"#,
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "사람 상태 변경: {b}");
+    let long = "가".repeat(81);
+    let (s, b) = call(
+        &base,
+        Method::PUT,
+        "/accounts/me/status",
+        &me_tok,
+        &format!(r#"{{"status":"away","statusText":"{long}"}}"#),
+    )
+    .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "81자 문구: {b}");
+    assert_eq!(code(&b), "invalid_request", "81자 code: {b}");
+    assert_eq!(
+        status_of(me.clone()).await,
+        ("dnd".to_string(), Some("lunch".to_string())),
+        "81자 거절이 상태를 바꿨다"
+    );
+
+    // 비밀번호 변경 거부 — 자격 없음 401.
+    let pw_hash = harkroom_server::password::hash("pw123456");
+    sqlx::query("update account set password_hash = $1 where id = $2::uuid")
+        .bind(&pw_hash)
+        .bind(&me)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (s, b) = call(
+        &base,
+        Method::POST,
+        "/auth/password",
+        "",
+        r#"{"currentPassword":"pw123456","newPassword":"new123456"}"#,
+    )
+    .await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED, "자격 없는 비밀번호 변경: {b}");
+    assert_eq!(code(&b), "unauthorized", "자격 없음 code: {b}");
+    let hash_now = || {
+        let pool = pool.clone();
+        let me = me.clone();
+        async move {
+            sqlx::query_scalar::<_, Option<String>>(
+                "select password_hash from account where id = $1::uuid",
+            )
+            .bind(me)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    // 현재 비밀번호 틀림 — 401 invalid_credentials, 해시 그대로.
+    let (s, b) = call(
+        &base,
+        Method::POST,
+        "/auth/password",
+        &me_tok,
+        r#"{"currentPassword":"wrong-password","newPassword":"another123"}"#,
+    )
+    .await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED, "틀린 현재 비밀번호: {b}");
+    assert_eq!(
+        code(&b),
+        "invalid_credentials",
+        "틀린 현재 비밀번호 code: {b}"
+    );
+    assert_eq!(
+        hash_now().await.as_deref(),
+        Some(pw_hash.as_str()),
+        "틀린 요청이 해시를 바꿨다"
+    );
+    // 새 비밀번호가 짧다 — 400 invalid_request, 해시 그대로.
+    let (s, b) = call(
+        &base,
+        Method::POST,
+        "/auth/password",
+        &me_tok,
+        r#"{"currentPassword":"pw123456","newPassword":"short"}"#,
+    )
+    .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "짧은 새 비밀번호: {b}");
+    assert_eq!(code(&b), "invalid_request", "짧은 새 비밀번호 code: {b}");
+    assert_eq!(
+        hash_now().await.as_deref(),
+        Some(pw_hash.as_str()),
+        "짧은 요청이 해시를 바꿨다"
+    );
+
+    // 성공하면 지금 세션은 살고 다른 세션은 끊긴다.
+    let other_tok = session(&pool, &me, &format!("{tag}-me-sess2")).await;
+    let (s, _) = call(&base, Method::GET, "/auth/me", &other_tok, "").await;
+    assert_eq!(s, StatusCode::OK, "바꾸기 전 다른 세션");
+    let (s, b) = call(
+        &base,
+        Method::POST,
+        "/auth/password",
+        &me_tok,
+        r#"{"currentPassword":"pw123456","newPassword":"newpassword123"}"#,
+    )
+    .await;
+    assert_eq!(s, StatusCode::NO_CONTENT, "비밀번호 변경: {b}");
+    assert_ne!(
+        hash_now().await.as_deref(),
+        Some(pw_hash.as_str()),
+        "해시가 그대로다"
+    );
+    let (s, _) = call(&base, Method::GET, "/auth/me", &me_tok, "").await;
+    assert_eq!(s, StatusCode::OK, "바꾼 세션은 산다");
+    let (s, b) = call(&base, Method::GET, "/auth/me", &other_tok, "").await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED, "다른 세션은 끊긴다: {b}");
+    assert_eq!(code(&b), "unauthorized", "다른 세션 code: {b}");
 }
