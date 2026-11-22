@@ -1246,7 +1246,7 @@ async fn main() {
         _ => false,
     };
     // B1 — `GET /threads/{rootId}/work`(작업 나무 읽기). 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 읽기 풀에 그 SELECT 가 다 있을 때만.
-    // 새 표라 권한이 아직 없을 수 있다 — 없으면 줄만 닫고 뜬다(`HARKROOM_REQUIRE_GRANTS` 로도 기동을 막지 않는다).
+    // 다른 읽기 줄과 같다 — 권한이 없으면 줄만 닫고 뜨고, `HARKROOM_REQUIRE_GRANTS=1` 이면 기동을 거절한다.
     let work_read_on = match &core_mode {
         harkroom_server::core::CoreMode::Rust => {
             use harkroom_server::core::work as wk;
@@ -1254,6 +1254,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => true,
                 Ok(m) => {
                     eprintln!("front: work read core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     false
                 }
                 Err(e) => {
