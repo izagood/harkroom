@@ -21,6 +21,8 @@
 #   systemctl --user kill -s KILL harkroom-operator@<8자> && sleep 12 && systemctl --user status harkroom-operator@<8자>
 #
 # 로그: journalctl --user -u harkroom-operator@<8자> -f   (서버에 붙으면 `서버에 붙었다: <주소>`)
+#   권한이 없다고 나오면(사용자별 journal 이 없는 기기): sudo journalctl _SYSTEMD_USER_UNIT=harkroom-operator@<8자>.service -f
+#   sudo 없이 읽으려면: sudo usermod -aG systemd-journal "$USER" 뒤 다시 로그인
 [Unit]
 Description=harkroom operator (%i) — runs the agents of one community assigned to this machine
 After=network-online.target

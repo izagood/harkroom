@@ -313,7 +313,7 @@ impl AssignmentReconciler {
         self.deps.link_expect(&runner_id, &agent_id, &secret);
         let env = self.runner_env(&runner_id, &secret, &mcp_path, local.as_ref());
         // 러너 구현(B4-5c → L3c-3e). pi·omp 하네스·풀 해석 못 읽음·파일 없음이면 node 다(`runner_pick.rs`).
-        // 「단계」: 칸 없음은 node 가 없을 때만 rust(명시 rust 는 늘 rust 대상).
+        // 칸 없음은 기본 rust 다(`ABSENT_RUNNER_DEFAULTS_TO_RUST`) — node 유무는 node 대상인 에이전트에서만 뜻이 있다.
         let node_present = self.deps.node_present();
         let wants = crate::runner_pick::wants_rust(local.as_ref(), node_present);
         let account_use = || {
@@ -335,15 +335,6 @@ impl AssignmentReconciler {
         };
         // node 러너로 가는데 node 가 없다(s9) — 띄우면 127 로 죽고 끝없이 다시 뜬다. Rust 러너 조건(허용 하네스·풀 읽힘·
         // 파일 있음)을 넘으면 Rust 로, 못 넘으면 띄우지 않고 거절해 서버에 사유를 남긴다(조용히 돌지 않게).
-        if pick.kind == crate::local_agents::RunnerKind::Rust
-            && !node_present
-            && local.as_ref().and_then(|l| l.runner).is_none()
-        {
-            self.deps.log(&format!(
-                "러너: node 가 없어 Rust 러너로 띄운다(기본): agent={}",
-                definition.handle
-            ));
-        }
         if pick.kind == crate::local_agents::RunnerKind::Node && !node_present {
             // 명시 `"node"`(모르는 값 포함)는 「Rust 에서 문제가 나서 되돌린」 뜻일 수 있다 — Rust 로 넘기지 않고 거절한다(security #2169).
             let explicit_node = local.as_ref().and_then(|l| l.runner)
@@ -364,7 +355,7 @@ impl AssignmentReconciler {
             };
             if rust.kind == crate::local_agents::RunnerKind::Rust {
                 self.deps.log(&format!(
-                    "러너: node 가 없어 Rust 러너로 띄운다: agent={}",
+                    "러너: node 러너 대상이지만 이 기기에 node 가 없다 — Rust 러너로 띄운다: agent={}",
                     definition.handle
                 ));
                 pick = rust;
@@ -1280,7 +1271,7 @@ mod tests {
         *f.node_missing.lock().unwrap() = true;
         *f.rust_present.lock().unwrap() = true;
         *f.account_use.lock().unwrap() = AccountUse::None;
-        // 칸 없음(node 기본) 에이전트도, node 를 청한 에이전트도 node 가 없으면 Rust 로.
+        // 칸 없는 에이전트는 node 가 없어도 기본대로 Rust 로 뜬다.
         let mut d = def(CredentialScope::Community, None);
         d.harness = "claude-code".into();
         let out = r.on_assign("u", d, Some(LocalAgent::default())).unwrap();
@@ -1288,12 +1279,11 @@ mod tests {
         let picks = f.picks.lock().unwrap();
         assert_eq!(picks.len(), 1);
         assert_eq!(picks[0].kind, RunnerKind::Rust);
+        // Rust 가 기본이다 — 칸 없는 에이전트가 Rust 로 뜨는 것은 예외가 아니므로 node 를 들먹이는 줄을 남기지 않는다.
         assert!(
-            f.logs
-                .lock()
-                .unwrap()
-                .iter()
-                .any(|l| l.contains("node 가 없어 Rust 러너로"))
+            !f.logs.lock().unwrap().iter().any(|l| l.contains("node")),
+            "{:?}",
+            f.logs.lock().unwrap()
         );
     }
 

@@ -97,6 +97,22 @@ impl Scheduler for NamingScheduler {
 }
 
 fn main() {
+    // 판만 묻는 호출 — 설정(오퍼레이터가 심는 env)을 읽기 전에 답한다. 로그 머리 없이 stdout 한 줄.
+    if std::env::args()
+        .nth(1)
+        .is_some_and(|a| harkroom_proto::version_line::is_version_arg(&a))
+    {
+        println!(
+            "{}",
+            harkroom_proto::version_line::version_line(
+                "harkroom-runner",
+                option_env!("HARKROOM_BUILD_VERSION"),
+                env!("CARGO_PKG_VERSION"),
+                option_env!("HARKROOM_BUILD_COMMIT"),
+            )
+        );
+        return;
+    }
     let env = process_env();
     let config = match load_config(&env) {
         Ok(c) => c,

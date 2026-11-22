@@ -686,6 +686,7 @@ jobs:
   # glibc(2.35)가 된다. 러너 판을 올리면 바닥도 오른다: `ops/install.sh` 의 `MIN_GLIBC_*` 와 README 를 같이 고쳐라.
   #
   # 판 굽기: 오퍼레이터의 `serve` 는 `--app-version` 이 없으면 `HARKROOM_BUILD_VERSION`(컴파일 때 env)을 쓴다.
+  # `--version` 은 그 판과 `HARKROOM_BUILD_COMMIT`(커밋)을 찍는다.
   # 서명(minisign)과 자가 갱신은 다음 PR(M1)이다 — 지금 `SHA256SUMS` 는 같은 릴리즈의 무결성만 보증한다.
   linux-operator:
     name: Linux 오퍼레이터 묶음을 만든다 (${{ matrix.arch }})
@@ -718,6 +719,9 @@ jobs:
         run: |
           set -euo pipefail
           export HARKROOM_BUILD_VERSION="${TAG#v}"
+          # `--version` 이 찍는 커밋(체크아웃한 태그의 커밋).
+          HARKROOM_BUILD_COMMIT="$(git rev-parse HEAD)"
+          export HARKROOM_BUILD_COMMIT
           rustup target add "$TRIPLE"
           for crate in harkroom-operator harkroom-runner; do
             (cd "crates/$crate" && cargo build --release --locked --target "$TRIPLE")

@@ -303,7 +303,8 @@ Next steps
      (Settings > Agents > Operators; valid for five minutes):
        harkroom-operator register https://chat.example.com <code>
      It prints the community key (the 8 characters after c/) and the matching serve command.
-  3. Sign a harness account in on this machine (optional; account list shows what the community expects):
+  3. Account pools (optional — without one, agents run on the harness's own login on this machine;
+     add a pool only to rotate between several accounts):
        harkroom-operator account list --base-url https://chat.example.com
        harkroom-operator account login <pool> <account> --base-url https://chat.example.com
   4. Keep the operator running with systemd (one instance per community):
@@ -312,6 +313,10 @@ Next steps
        loginctl enable-linger "\$USER"      # keep it running after you log out
   5. Logs:
        journalctl --user -u harkroom-operator@<key> -f
+     If that reports insufficient permissions (machines without per-user journals), read the system journal:
+       sudo journalctl _SYSTEMD_USER_UNIT=harkroom-operator@<key>.service -f
+     To drop the sudo, join the journal group and log in again:
+       sudo usermod -aG systemd-journal "\$USER"
 
 After an upgrade, restart running instances:  systemctl --user restart 'harkroom-operator@*'
 Uninstall:  sh install.sh --uninstall

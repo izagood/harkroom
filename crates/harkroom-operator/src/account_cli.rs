@@ -244,7 +244,12 @@ pub struct Conn {
     reader: BufReader<UnixStream>,
 }
 
+/// 앱이 오퍼레이터를 띄우는 기기(macOS)의 안내.
+#[cfg(not(target_os = "linux"))]
 pub const NOT_RUNNING: &str = "이 커뮤니티의 오퍼레이터가 떠 있지 않다 — 앱을 열거나 `harkroom-operator-rs serve --base-url <url>` 을 먼저 띄운다";
+/// Linux 는 앱이 없다 — 설치기가 깐 유닛(키는 `register` 가 찍은 설정 경로의 `c/<8자>`)이나 `serve` 로 띄운다.
+#[cfg(target_os = "linux")]
+pub const NOT_RUNNING: &str = "이 커뮤니티의 오퍼레이터가 떠 있지 않다 — `systemctl --user start harkroom-operator@<키>` 로 띄우거나 `harkroom-operator serve --base-url <url>` 을 먼저 띄운다";
 
 fn send(w: &mut UnixStream, v: &Value) -> Result<(), String> {
     w.write_all(format!("{v}\n").as_bytes())
@@ -383,10 +388,13 @@ pub fn render_list(snapshot: &Value) -> String {
         }
     }
     if pools.is_empty() {
-        out.push("계정이 없다 — `account login <pool> <account>` 로 더한다".to_string());
+        out.push(NO_POOLS.to_string());
     }
     out.join("\n")
 }
+
+/// 풀이 하나도 없을 때의 한 줄. 풀은 **선택**이다 — 없으면 러너는 이 기기 하네스의 기본 로그인으로 돈다.
+pub const NO_POOLS: &str = "계정 풀이 없다 — 이대로도 돈다(하네스의 기본 로그인을 쓴다). 계정 여러 개를 돌려 쓰려 할 때만 `account login <pool> <account>` 로 더한다";
 
 /// `login` 루프가 받는 것.
 pub enum Msg {

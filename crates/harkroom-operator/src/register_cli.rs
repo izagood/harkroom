@@ -302,8 +302,60 @@ fn shell_quote(arg: &str) -> String {
     }
 }
 
-/// 사람에게 보일 줄(TS `main.ts` 의 두 줄). 도는 오퍼레이터가 없었으면 `serve` 명령을 함께 보인다(TS 는 `run` 이었다).
-pub fn success_lines(r: &Registered, serve_cmd: &str) -> String {
+/// 도는 오퍼레이터가 없을 때 「띄워 두는 법」을 어느 기기 꼴로 안내할지.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Standing {
+    /// 앱이 오퍼레이터를 띄우는 기기(macOS).
+    App,
+    /// 설치기(`ops/install.sh`)가 systemd user 유닛 `harkroom-operator@<키>` 를 깔아 두는 기기(Linux).
+    Systemd {
+        /// 유닛 인스턴스 이름 — 커뮤니티 키(뿌리 `c/<8자>` 의 그 8자).
+        key: String,
+        base_url: String,
+        /// 유닛 env 파일의 `EXTRA_ARGS`(색인이 정한 옛 뿌리면 `--app-data <dir>`, 아니면 빈 글).
+        extra_args: String,
+    },
+}
+
+/// 이 커뮤니티의 유닛 인스턴스 이름(커뮤니티 키). 계산한 뿌리 `…/c/<8자>` 의 마지막 마디다 — `doctor`·설치기 안내의 `<key>` 와 같다.
+pub fn community_unit_key(base_url: &str) -> String {
+    let root = computed_community_root(
+        "/",
+        community_root_key(base_url),
+        COMMUNITY_ROOT_HASH_LENGTH,
+    );
+    Path::new(&root)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+/// [`Standing`] 을 고른다. `linux` 는 `cfg!(target_os = "linux")`(시험이 바꿔 끼운다).
+pub fn standing_for(
+    linux: bool,
+    base_url: &str,
+    root: &str,
+    home: &str,
+    app_data: &str,
+) -> Standing {
+    if !linux {
+        return Standing::App;
+    }
+    let key = community_root_key(base_url);
+    let computed = computed_community_root(home, key, COMMUNITY_ROOT_HASH_LENGTH);
+    Standing::Systemd {
+        key: community_unit_key(base_url),
+        base_url: key.to_string(),
+        extra_args: if same_root(root, &computed) {
+            String::new()
+        } else {
+            format!("--app-data {app_data}")
+        },
+    }
+}
+
+/// 사람에게 보일 줄(TS `main.ts` 의 두 줄). 도는 오퍼레이터가 없었으면 띄워 두는 법([`Standing`])과 `serve` 명령을 함께 보인다.
+pub fn success_lines(r: &Registered, serve_cmd: &str, standing: &Standing) -> String {
     let s = |k: &str| r.out.get(k).and_then(Value::as_str).unwrap_or("");
     let config = Path::new(&r.root).join("operator").join("operator.json");
     let head = format!(
@@ -323,9 +375,21 @@ pub fn success_lines(r: &Registered, serve_cmd: &str) -> String {
     } else {
         "\n러너는 이 실행 파일 옆의 harkroom-runner-rs 로 뜬다(그 파일이 없으면 배정이 와도 러너를 못 띄운다)."
     };
-    format!(
-        "{head}\n이 커뮤니티의 오퍼레이터가 떠 있지 않다. 앱을 열거나, 앱 없이 두려면 이 명령을 띄운다(상주는 ops/operator.*.template):\n  {serve_cmd}{runner_note}\n그다음 설정 › 에이전트 상세에서 이 오퍼레이터를 배정하면 러너가 뜬다."
-    )
+    let tail = "그다음 설정 › 에이전트 상세에서 이 오퍼레이터를 배정하면 러너가 뜬다.";
+    match standing {
+        Standing::App => format!(
+            "{head}\n이 커뮤니티의 오퍼레이터가 떠 있지 않다. 앱을 열거나, 앱 없이 두려면 이 명령을 띄운다(늘 떠 있게 하는 법은 저장소 docs/operations.md 8-1):\n  {serve_cmd}{runner_note}\n{tail}"
+        ),
+        Standing::Systemd {
+            key,
+            base_url,
+            extra_args,
+        } => format!(
+            "{head}\n이 커뮤니티의 오퍼레이터가 떠 있지 않다. 설치기(install.sh)가 깐 systemd 유닛으로 띄워 둔다(커뮤니티 키 {key}):\n  mkdir -p ~/.config/harkroom\n  printf 'BASE_URL=%s\\nEXTRA_ARGS=%s\\n' {url} {extra} > ~/.config/harkroom/operator-{key}.env\n  systemctl --user enable --now harkroom-operator@{key}\n  loginctl enable-linger \"$USER\"      # 로그아웃해도 돌게\n로그:\n  journalctl --user -u harkroom-operator@{key} -f\n  sudo journalctl _SYSTEMD_USER_UNIT=harkroom-operator@{key}.service -f      # 위 줄이 권한이 없다고 하면(사용자별 journal 이 없는 기기)\n유닛을 깔지 않았으면 이 명령으로 바로 띄운다:\n  {serve_cmd}{runner_note}\n{tail}",
+            url = shell_quote(base_url),
+            extra = shell_quote(extra_args),
+        ),
+    }
 }
 
 /// 이 실행 파일과 그 옆의 러너 사이드카(있을 때만).
@@ -375,7 +439,14 @@ pub fn register_main(
                 &home,
                 &app_data,
             );
-            (success_lines(&r, &cmd), String::new(), 0)
+            let standing = standing_for(
+                cfg!(target_os = "linux"),
+                &args.base_url,
+                &r.root,
+                &home,
+                &app_data,
+            );
+            (success_lines(&r, &cmd, &standing), String::new(), 0)
         }
         Err(e) => (String::new(), e, 1),
     }
@@ -558,7 +629,7 @@ mod tests {
             &format!("{}/app", d.p()),
         );
         assert_eq!(cmd, format!("/b/op serve --base-url {URL}"));
-        let lines = success_lines(&r, &cmd);
+        let lines = success_lines(&r, &cmd, &Standing::App);
         assert!(lines.starts_with(&format!(
             "등록됐다: mac (op-1) @ {URL} — 설정: {}/operator/operator.json",
             r.root
@@ -567,6 +638,62 @@ mod tests {
         assert!(lines.contains(&format!("\n  /b/op serve --base-url {URL}\n")));
         assert!(lines.contains("옆의 harkroom-runner-rs 로 뜬다"));
         assert!(!lines.contains(" run"));
+        // 저장소 안 틀 파일 경로를 가리키지 않는다 — 설치된 기기에는 그 파일이 없다.
+        assert!(!lines.contains("template"));
+    }
+
+    /// Linux 는 앱이 없다 — 설치기가 깐 유닛(`harkroom-operator@<키>`)과 로그 보는 법을 실제 키로 안내한다.
+    #[test]
+    fn linux_points_at_the_installed_systemd_unit() {
+        let home = "/h";
+        let computed = harkroom_roots::computed_community_root(home, URL, 8);
+        let key = community_unit_key(&format!("{URL}/"));
+        assert_eq!(key.len(), 8);
+        assert!(computed.ends_with(&format!("/c/{key}")), "{computed}");
+        let r = Registered {
+            out: json!({"name": "box", "operatorId": "op-1", "baseUrl": URL}),
+            live: false,
+            root: computed.clone(),
+        };
+        let standing = standing_for(true, &format!("{URL}/"), &computed, home, "/h/app");
+        assert_eq!(
+            standing,
+            Standing::Systemd {
+                key: key.clone(),
+                base_url: URL.to_string(),
+                extra_args: String::new()
+            }
+        );
+        let cmd = format!("/b/op serve --base-url {URL}");
+        let lines = success_lines(&r, &cmd, &standing);
+        assert!(!lines.contains("앱을 열거나"), "{lines}");
+        assert!(!lines.contains("template"), "{lines}");
+        for want in [
+            format!(
+                "printf 'BASE_URL=%s\\nEXTRA_ARGS=%s\\n' {URL} '' > ~/.config/harkroom/operator-{key}.env"
+            ),
+            format!("systemctl --user enable --now harkroom-operator@{key}\n"),
+            "loginctl enable-linger \"$USER\"".to_string(),
+            format!("journalctl --user -u harkroom-operator@{key} -f"),
+            format!("sudo journalctl _SYSTEMD_USER_UNIT=harkroom-operator@{key}.service -f"),
+            format!("\n  {cmd}\n"),
+        ] {
+            assert!(lines.contains(&want), "없다: {want}\n{lines}");
+        }
+        // 색인이 정한 옛 뿌리면 유닛도 그 뿌리를 봐야 한다.
+        let legacy = standing_for(true, URL, "/h/app", home, "/h/app");
+        let Standing::Systemd { extra_args, .. } = &legacy else {
+            panic!("systemd 가 아니다");
+        };
+        assert_eq!(extra_args, "--app-data /h/app");
+        assert!(success_lines(&r, &cmd, &legacy).contains("'--app-data /h/app' >"));
+        // 맥은 그대로 앱 안내다. 도는 오퍼레이터가 맡았으면 어느 쪽도 띄우는 법을 보이지 않는다.
+        assert_eq!(
+            standing_for(false, URL, &computed, home, "/h/app"),
+            Standing::App
+        );
+        let live = Registered { live: true, ..r };
+        assert!(!success_lines(&live, &cmd, &standing).contains("systemctl"));
     }
 
     /// `serve` 명령은 register 가 쓴 뿌리를 가리켜야 한다 — 색인이 정한 뿌리면 `--app-data`, 러너를 알면 `--runner-command`.
@@ -630,9 +757,9 @@ mod tests {
             home,
             "/h/app",
         );
-        assert!(!success_lines(&r, &cmd).contains("붙인다"));
+        assert!(!success_lines(&r, &cmd, &Standing::App).contains("붙인다"));
         let live = Registered { live: true, ..r };
-        assert!(!success_lines(&live, &cmd).contains("serve"));
+        assert!(!success_lines(&live, &cmd, &Standing::App).contains("serve"));
     }
 
     /// 토큰 파일은 있는데 소켓이 죽었으면(잔해) 파일 길로 간다.
