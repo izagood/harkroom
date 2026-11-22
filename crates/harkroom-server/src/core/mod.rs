@@ -116,6 +116,7 @@ pub mod mandate_line_write;
 pub mod mandate_lines_read;
 pub mod mandate_stamp;
 pub mod mcp;
+pub mod measure;
 pub mod mem_search;
 pub mod mention_calls;
 pub mod mention_fanout;

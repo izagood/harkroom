@@ -2192,6 +2192,13 @@ async fn expired_denial(
         },
     )
     .await;
+    // A1 측정 — 권한 거절 갈래. 기록만.
+    super::measure::merge_denied(
+        agent,
+        code,
+        lease.channel_id.as_deref(),
+        lease.thread_root_id.as_deref(),
+    );
     record_shadow(pool, code, agent, &scope, o, lease, None, None).await;
     let mut r = json_err(
         StatusCode::FORBIDDEN,
@@ -2273,6 +2280,8 @@ async fn not_granted_code(
     } else {
         None
     };
+    // A1 측정 — 권한 거절 갈래. 기록만.
+    super::measure::merge_denied(agent, code, Some(channel), Some(root));
     record_shadow(pool, code, agent, scope, o, lease, None, None).await;
     Ok((
         StatusCode::FORBIDDEN,
@@ -2379,6 +2388,8 @@ async fn checks_early(
         },
     )
     .await;
+    // A1 측정 — 권한 거절 갈래. 기록만.
+    super::measure::merge_denied(agent, code, None, None);
     let status = if code == "bad_repo" {
         StatusCode::BAD_REQUEST
     } else {
