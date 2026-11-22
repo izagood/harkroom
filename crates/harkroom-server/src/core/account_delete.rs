@@ -242,6 +242,8 @@ async fn delete_human_account(pool: &PgPool, id: &str) -> Result<Outcome, sqlx::
         sqlx::query(sql).bind(id).execute(&mut *tx).await?;
     }
     tx.commit().await?;
+    // H1 허용 표(기록만) — 이 계정의 오퍼레이터에 걸려 있던 배정이 지워졌다. 어느 에이전트였는지 따로 모으지 않고 전부 맞춘다.
+    super::device_allow::sync(None);
     Ok(Outcome::Deleted {
         avatar_ids: vec![a, s],
         revoked_operator_ids,

@@ -46,11 +46,82 @@ pub fn capabilities(agent_ids: &[String], harnesses: Map<String, Value>) -> Valu
     json!({ "agentIds": agent_ids, "harnesses": Value::Object(harnesses) })
 }
 
+/// 기기 표지(H1) — 이 오퍼레이터가 어떤 기기에 어떤 꼴로 깔려 있는지. 서버는 적어 두기만 한다(일 배정은 그대로).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DeviceLabels {
+    /// `macos`·`linux` …(`std::env::consts::OS`).
+    pub platform: Option<String>,
+    /// `aarch64`·`x86_64` …(`std::env::consts::ARCH`).
+    pub arch: Option<String>,
+    /// `app`(데스크톱 앱 번들) · `bundle`(릴리스 묶음) · `dev`(그 밖).
+    pub install_kind: Option<String>,
+    /// 업데이트 채널 — 띄운 쪽이 `--update-channel` 로 알려 줄 때만 싣는다(모르면 비운다).
+    pub update_channel: Option<String>,
+}
+
+/// 표지 값 하나의 모양 — 소문자·숫자·`_`·`.`·`-` 1~32자. 서버도 같은 모양만 받는다(아니면 그 칸만 버린다).
+pub fn label_ok(s: &str) -> bool {
+    (1..=32).contains(&s.len())
+        && s.bytes().all(|b| {
+            b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'_' | b'.' | b'-')
+        })
+}
+
+/// 설치 꼴 — 실행 파일이 앱 번들 안이면 `app`, 릴리스가 판을 구웠으면 `bundle`, 아니면 `dev`.
+pub fn install_kind_of(exe: &str, app_launched: bool, release_build: bool) -> &'static str {
+    if app_launched || exe.contains(".app/Contents/MacOS/") {
+        "app"
+    } else if release_build {
+        "bundle"
+    } else {
+        "dev"
+    }
+}
+
+/// 이 프로세스의 표지. `update_channel` 은 모양이 틀리면 싣지 않는다.
+pub fn device_labels(app_launched: bool, update_channel: Option<&str>) -> DeviceLabels {
+    let exe = std::env::current_exe()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    DeviceLabels {
+        platform: Some(std::env::consts::OS.to_string()),
+        arch: Some(std::env::consts::ARCH.to_string()),
+        install_kind: Some(
+            install_kind_of(
+                &exe,
+                app_launched,
+                option_env!("HARKROOM_BUILD_VERSION").is_some(),
+            )
+            .to_string(),
+        ),
+        update_channel: update_channel
+            .map(str::to_ascii_lowercase)
+            .filter(|c| label_ok(c)),
+    }
+}
+
 pub fn build_hello(
     capabilities: Value,
     runners: Vec<RunnerAnnounce>,
     sessions: Vec<Value>,
     version: Option<&str>,
+) -> OperatorToServerFrame {
+    build_hello_labeled(
+        capabilities,
+        runners,
+        sessions,
+        version,
+        &DeviceLabels::default(),
+    )
+}
+
+/// [`build_hello`] + 기기 표지(H1).
+pub fn build_hello_labeled(
+    capabilities: Value,
+    runners: Vec<RunnerAnnounce>,
+    sessions: Vec<Value>,
+    version: Option<&str>,
+    labels: &DeviceLabels,
 ) -> OperatorToServerFrame {
     OperatorToServerFrame::Hello {
         protocol: ProtocolOne,
@@ -58,6 +129,10 @@ pub fn build_hello(
         runners,
         sessions,
         version: version.filter(|v| !v.is_empty()).map(str::to_string),
+        platform: labels.platform.clone(),
+        arch: labels.arch.clone(),
+        install_kind: labels.install_kind.clone(),
+        update_channel: labels.update_channel.clone(),
     }
 }
 
@@ -105,6 +180,66 @@ pub fn read_login_path(shell: Option<&str>, timeout: Duration) -> Option<String>
 mod tests {
     use super::*;
     use std::sync::Arc;
+
+    #[test]
+    fn device_labels_ride_hello_and_absent_ones_are_omitted() {
+        let labels = DeviceLabels {
+            platform: Some("linux".into()),
+            arch: Some("x86_64".into()),
+            install_kind: Some("bundle".into()),
+            update_channel: None,
+        };
+        let v = serde_json::to_value(build_hello_labeled(
+            capabilities(&[], Map::new()),
+            vec![],
+            vec![],
+            Some("0.5.38"),
+            &labels,
+        ))
+        .unwrap();
+        assert_eq!(v["platform"], "linux");
+        assert_eq!(v["arch"], "x86_64");
+        assert_eq!(v["installKind"], "bundle");
+        assert!(v.get("updateChannel").is_none());
+        // 표지 없는 hello 는 예전 모양 그대로다.
+        let old = serde_json::to_value(build_hello(
+            capabilities(&[], Map::new()),
+            vec![],
+            vec![],
+            None,
+        ))
+        .unwrap();
+        for k in ["platform", "arch", "installKind", "updateChannel"] {
+            assert!(old.get(k).is_none(), "{k}");
+        }
+    }
+
+    #[test]
+    fn install_kind_and_label_shape() {
+        assert_eq!(
+            install_kind_of("/Applications/X.app/Contents/MacOS/op", false, true),
+            "app"
+        );
+        assert_eq!(install_kind_of("/home/u/.local/bin/op", true, false), "app");
+        assert_eq!(
+            install_kind_of("/home/u/.local/bin/op", false, true),
+            "bundle"
+        );
+        assert_eq!(install_kind_of("/src/target/debug/op", false, false), "dev");
+        assert!(label_ok("stable") && label_ok("x86_64") && label_ok("a-b.c"));
+        assert!(
+            !label_ok("") && !label_ok("Stable") && !label_ok("a b") && !label_ok(&"a".repeat(33))
+        );
+        let l = device_labels(false, Some("Stable"));
+        assert_eq!(l.update_channel.as_deref(), Some("stable"));
+        assert_eq!(
+            device_labels(false, Some("bad channel")).update_channel,
+            None
+        );
+        assert!(
+            l.platform.as_deref().is_some_and(label_ok) && l.arch.as_deref().is_some_and(label_ok)
+        );
+    }
 
     #[test]
     fn login_path_takes_last_line_with_slash() {

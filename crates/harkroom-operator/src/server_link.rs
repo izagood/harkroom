@@ -376,6 +376,10 @@ mod tests {
             runners: vec![],
             sessions: vec![],
             version: None,
+            platform: None,
+            arch: None,
+            install_kind: None,
+            update_channel: None,
         }
     }
 

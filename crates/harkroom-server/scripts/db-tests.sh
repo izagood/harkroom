@@ -62,6 +62,7 @@ WAKE_GRANTS=(
 RETENTION_GRANTS=('delete on idempotency_key' 'delete on session')
 OUTBOX_PRUNE_GRANTS=('delete on event_outbox')
 MEASURE_GRANTS=('insert on measure_event')
+DEVICE_ALLOW_GRANTS=('select, insert, delete on agent_operator_allow')
 CLAIM_SEED_GRANTS=('select (token_hash), insert (token_hash) on claim_token')
 PUSH_GRANTS=(
   'insert, update, delete on push_job'
@@ -134,6 +135,7 @@ grants_for() {
     bg_produce) echo BG_PRODUCE_GRANTS ;;
     outbox_prune) echo OUTBOX_PRUNE_GRANTS ;;
     measure) echo MEASURE_GRANTS ;;
+    device_allow) echo DEVICE_ALLOW_GRANTS ;;
     push_loop) echo PUSH_GRANTS ;;
     turn_lease) echo TURN_LEASE_GRANTS ;;
     delegation_deadline) echo DELEGATION_DEADLINE_GRANTS ;;
@@ -147,7 +149,7 @@ grants_for() {
 
 TESTS=(auth perm operator loops wake outbox_listener retention mandate_idle permission_expire bg bg_produce outbox_prune push_loop
   turn_lease inbox_list decide_core_db relay_live turn_settle turn_cancel health scheduled stale migrate delegation_deadline
-  automation_grant claim_seed automation_sweep hook_debounce thread_status thread_plan db_retry deny_accounts invoke_gate deny_channels deny_reset work measure)
+  automation_grant claim_seed automation_sweep hook_debounce thread_status thread_plan db_retry deny_accounts invoke_gate deny_channels deny_reset work measure device_allow)
 if [ "$#" -gt 0 ]; then TESTS=("$@"); fi
 
 # 1. 틀 DB — Rust 마이그레이션 실행기로 한 번만 만든다.
