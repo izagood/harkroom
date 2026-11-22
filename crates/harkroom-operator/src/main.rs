@@ -158,6 +158,15 @@ fn main() {
             );
             std::process::exit(code);
         }
+        Some("agent") => {
+            let code = harkroom_operator::agent_cli::agent_main(
+                &args[1..],
+                &|k| std::env::var(k).ok(),
+                &mut std::io::stdout(),
+                &mut std::io::stderr(),
+            );
+            std::process::exit(code);
+        }
         Some("serve") => {
             let (line, exit) =
                 harkroom_operator::serve::serve_main(&args[1..], std::env::var("HOME").ok());

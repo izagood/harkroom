@@ -7,8 +7,9 @@
 //! 서버 스위치가 꺼지면 due 가 빈 목록이라 gh 를 부르지 않는다. 감시 하나의 실패는 로그만 남기고 넘긴다 — 오퍼레이터를 죽이지 않는다.
 //! 저장소는 서버가 돌려준 감시 행의 것이다(서버가 머지 grant 를 보고 만든 행, 보고 때 다시 본다).
 //!
-//! due 에 403 을 받은 에이전트(예: 지운 계정의 키가 로컬 설정에 남은 경우)는 **다음 hello 까지** 묻지 않는다 — 한 줄 로그만 남기고,
-//! 서버 링크가 다시 붙어 hello 세대가 바뀌면 다시 물어본다(그 사이 배정이 돌아왔을 수 있다).
+//! due 에 403 을 받은 에이전트(예: 지운 계정의 키가 로컬 설정에 남은 경우)는 **다음 hello 나 배정까지** 묻지 않는다 — 한 줄 로그만 남기고,
+//! 서버 링크가 다시 붙거나(hello) 서버가 배정(`Assign`)을 보내 세대가 바뀌면 다시 물어본다 — 로컬 목록에만 있고 아직 배정 전인
+//! 에이전트는 403 을 받는데, 배정된 뒤에도 다음 접속까지 감시가 멈춰 있지 않게 한다.
 use crate::forward::{AGENT_HEADER, Transport};
 use crate::local_merge::gh_env;
 use crate::merge::is_repo;
@@ -43,13 +44,13 @@ pub struct PrWatchPoller {
     pub http: AgentHttp,
     pub agent_ids: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
     pub log: Arc<dyn Fn(&str) + Send + Sync>,
-    /// 서버 hello 세대 — 링크가 hello 를 낼 때마다 1 오른다([`HelloGeneration`]).
+    /// 링크 세대 — 링크가 hello 를 내거나 서버가 배정(`Assign`)을 보낼 때마다 1 오른다([`HelloGeneration`]).
     pub hello: HelloGeneration,
     /// due 에 403 을 받은 에이전트 → 그때의 hello 세대. 세대가 같은 동안은 건너뛴다.
     pub denied: Arc<Mutex<HashMap<String, u64>>>,
 }
 
-/// 서버 hello 세대 수. 링크의 hello 손잡이가 [`HelloGeneration::bump`] 하고, 폴러는 [`HelloGeneration::get`] 으로 읽는다.
+/// 링크 세대 수. 링크의 hello 손잡이와 배정 프레임 자리가 [`HelloGeneration::bump`] 하고, 폴러는 [`HelloGeneration::get`] 으로 읽는다.
 #[derive(Clone, Default)]
 pub struct HelloGeneration(Arc<AtomicU64>);
 
@@ -215,7 +216,7 @@ impl PrWatchPoller {
                         .unwrap_or_else(|e| e.into_inner())
                         .insert(agent_id.clone(), generation);
                     (self.log)(&format!(
-                        "pr.watch: 에이전트 {agent_id} due 403 — 다음 hello 까지 건너뜀"
+                        "pr.watch: 에이전트 {agent_id} due 403 — 다음 hello·배정까지 건너뜀"
                     ));
                     continue;
                 }
