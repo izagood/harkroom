@@ -96,6 +96,8 @@ pub(crate) async fn create(
                 .bind(&id)
                 .fetch_all(&mut *conn)
                 .await?;
+            // A1 측정 — 위임 결말(새 위임이 앞 의무를 대체). 기록만.
+            super::measure::delegation_outcomes(&closed, "closed", Some("superseded"));
             if !closed.is_empty() {
                 sqlx::query(s.settled.as_str())
                     .bind(&closed)

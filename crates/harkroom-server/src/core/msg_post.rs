@@ -587,6 +587,8 @@ async fn resolve_post(
         },
     )
     .await
+    // A1 측정 — 호출 누락(새 글). 기록만.
+    .inspect(|r| super::measure::calls_missed(author, channel, &r.missed))
 }
 
 /// TS `chainBound ? Math.max(link.depth, chainDepth) : link.depth`.
@@ -605,6 +607,7 @@ fn no_mention_calls(body: &str) -> mention_calls::Resolved {
         target_call: Vec::new(),
         channel_called: false,
         call_meta: serde_json::Map::new(),
+        missed: Vec::new(),
     }
 }
 
@@ -1163,6 +1166,8 @@ pub(crate) async fn post_tx(
                 if closed.rows_affected() == 0 {
                     continue;
                 }
+                // A1 측정 — 위임 결말(`message.report`·`message.fail` 이 닫음: `reported`·`done`·`failed`). 기록만.
+                super::measure::delegation_outcomes(std::slice::from_ref(&d), outcome, None);
                 if let Some(lead) = turn_settle::notify_if_settled(&mut tx, &d, &mut deleg).await? {
                     deleg_woke.push(lead);
                 }

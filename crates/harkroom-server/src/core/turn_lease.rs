@@ -335,6 +335,16 @@ pub async fn issue(
             );
         }
     }
+    // A1 측정 — 줄 서기(inbox → 임대). 기록만(best-effort, 기다리지 않는다).
+    super::measure::record(super::measure::Event {
+        kind: super::measure::KIND_QUEUE_WAIT,
+        account_id: Some(agent_id.to_string()),
+        channel_id: Some(channel_id.clone()),
+        thread_root_id: Some(thread_root_id.clone()),
+        ref_id: Some(cause_message_id.to_string()),
+        value: Some(round_div(now_ms - inbox_ms, 1000).max(0)),
+        detail: Some(serde_json::json!({ "reissue": reissue.is_some() })),
+    });
     Ok(Issue::Ok(Issued {
         lease_id,
         token,

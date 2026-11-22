@@ -118,6 +118,8 @@ pub struct Resolved {
     pub channel_called: bool,
     /// 글 `meta` 에 얹는 칸 — TS 와 같은 키 순서.
     pub call_meta: Map<String, Value>,
+    /// A1 측정 — 깨우지 못한 호출 (대상, 이유). 대상마다 한 줄. 판정에는 쓰지 않는다.
+    pub missed: Vec<(String, &'static str)>,
 }
 
 #[derive(Clone)]
@@ -297,6 +299,26 @@ pub async fn resolve(conn: &mut PgConnection, input: &Input<'_>) -> Result<Resol
         }
     }
 
+    // A1 측정 — 호출 누락. 에이전트 글이 머리 런 밖에서 에이전트·팀을 적어 깨우지 못한 멘션(`reference`)과 호출 게이트가 막은 부름.
+    // 여기서는 모으기만 한다 — 기록은 부른 쪽이 (글, 대상)마다 한 번(`measure::calls_missed`). 고치기는 새로 적힌 대상만 센다.
+    let mut missed: Vec<(String, &'static str)> = vec![];
+    if input.author_is_agent {
+        missed.extend(
+            split
+                .reference
+                .iter()
+                .map(|id| (id.clone(), "not_head_mention")),
+        );
+        missed.extend(
+            split
+                .target_ref
+                .iter()
+                .map(|t| (target_key(t), "not_head_mention")),
+        );
+        missed.extend(denied_order.iter().map(|id| (id.clone(), "gate_denied")));
+        let mut seen: HashSet<String> = HashSet::new();
+        missed.retain(|(r, _)| seen.insert(r.clone()));
+    }
     let mut principal_shadow: Option<Value> = None;
     let mut invoked_as_principal: Option<Value> = None;
     let mut denied_principal: Option<&'static str> = None;
@@ -472,6 +494,7 @@ pub async fn resolve(conn: &mut PgConnection, input: &Input<'_>) -> Result<Resol
         target_call,
         channel_called,
         call_meta: meta,
+        missed,
     })
 }
 

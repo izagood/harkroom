@@ -5669,6 +5669,7 @@ async fn open_write_pool() -> Option<sqlx::PgPool> {
     match write::missing_privileges(&pool).await {
         Ok(m) if m.is_empty() => {
             eprintln!("front: write pool on");
+            enable_measure(&pool).await;
             Some(pool)
         }
         Ok(m) => {
@@ -5683,6 +5684,24 @@ async fn open_write_pool() -> Option<sqlx::PgPool> {
             );
             None
         }
+    }
+}
+
+/// A1 측정 — 기준선 기록(`measure_event`). 권한이 모자라면 켜지 않는다(기록만 빠지고 나머지는 그대로). 루프가 꺼져 있어도 켠다.
+async fn enable_measure(pool: &sqlx::PgPool) {
+    match write::missing_in(
+        pool,
+        harkroom_server::core::measure::MEASURE_PRIVILEGES,
+        &[],
+    )
+    .await
+    {
+        Ok(m) if m.is_empty() => {
+            eprintln!("front: measure on");
+            harkroom_server::core::measure::enable(pool.clone());
+        }
+        Ok(m) => eprintln!("front: measure off — missing privileges {m:?}"),
+        Err(e) => eprintln!("front: measure off — privilege check failed: {e}"),
     }
 }
 
