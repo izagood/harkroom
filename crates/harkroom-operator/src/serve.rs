@@ -238,6 +238,8 @@ pub fn serve_main(args: &[String], env_home: Option<String>) -> (String, i32) {
                 let app_version = flag(args, "--app-version").map(str::to_string);
                 // 앱만 `--launch-nonce` 를 준다(daemon_client.rs) — Claude in Chrome 판정의 첫 조건(s9 G6, TS run.ts appLaunched).
                 let app_launched = flag(args, "--launch-nonce").is_some();
+                // 기기 표지(H1) — 띄운 쪽이 채널을 알려 줄 때만 hello 에 싣는다.
+                let update_channel = flag(args, "--update-channel").map(str::to_string);
                 let socket_path = paths.socket_path.clone();
                 move || {
                     let Some(state) = weak.upgrade() else { return };
@@ -254,6 +256,7 @@ pub fn serve_main(args: &[String], env_home: Option<String>) -> (String, i32) {
                         std::path::Path::new(&root),
                         socket_path.clone(),
                         app_launched,
+                        update_channel.clone(),
                     );
                 }
             };
@@ -353,9 +356,10 @@ pub fn spawn_server_link(
     root: &std::path::Path,
     socket_path: String,
     app_launched: bool,
+    update_channel: Option<String>,
 ) -> Option<LinkHandle> {
     use crate::harnesses::detect_harnesses;
-    use crate::hello::{announce_of, build_hello, capabilities, read_login_path};
+    use crate::hello::{announce_of, capabilities, read_login_path};
     use crate::server_link::{ServerLink, ServerLinkOptions, SystemClock};
     use crate::ws_dialer::WsDialer;
     use harkroom_proto::p2::OperatorToServerFrame;
@@ -800,13 +804,15 @@ pub fn spawn_server_link(
     let open_gh_kick = gh_kick.clone();
     let runners_state = state.clone();
     let hello_mux = std::sync::Arc::clone(&mux);
+    let labels = crate::hello::device_labels(app_launched, update_channel.as_deref());
     let hello = Box::new(move || {
         hello_gen.bump();
-        build_hello(
+        crate::hello::build_hello_labeled(
             caps(),
             announce_of(&runners_state.runners),
             hello_mux.sessions(),
             version.as_deref(),
+            &labels,
         )
     });
     let frame_mux = std::sync::Arc::clone(&mux);

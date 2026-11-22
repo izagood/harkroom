@@ -73,6 +73,15 @@ const NO_RUNNER_ID: &[&str] = &[
 ];
 
 /// TS `isVersionString` — 빈 문자열이 아니고 64자(UTF-16 단위) 이하.
+/// hello 의 기기 표지 칸(H1) — `operator` 표의 `platform`·`arch`·`install_kind`·`update_channel` 로 간다.
+pub const DEVICE_LABEL_KEYS: &[&str] = &["platform", "arch", "installKind", "updateChannel"];
+
+/// 표지 값 하나 — 소문자·숫자·`_`·`.`·`-` 1~32자(오퍼레이터 `hello::label_ok` 와 같다). 그대로 DB·목록에 실리므로 좁게 받는다.
+pub fn is_device_label(v: &Value) -> bool {
+    matches!(v, Value::String(s) if (1..=32).contains(&s.len())
+        && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'_' | b'.' | b'-')))
+}
+
 pub fn is_version_string(v: &Value) -> bool {
     matches!(v, Value::String(s) if !s.is_empty() && utf16_len(s) <= 64)
 }
@@ -99,6 +108,14 @@ fn parse(raw: &str, known: &[&str]) -> Option<Map<String, Value>> {
     // 버전이 틀린 모양이면 hello 를 버리지 않고 버전만 뗀다(TS 와 같음).
     if ty == "hello" && frame.get("version").is_some_and(|v| !is_version_string(v)) {
         frame.remove("version");
+    }
+    // 기기 표지(H1)도 같다 — 모양이 틀린 칸만 뗀다.
+    if ty == "hello" {
+        for k in DEVICE_LABEL_KEYS {
+            if frame.get(*k).is_some_and(|v| !is_device_label(v)) {
+                frame.remove(*k);
+            }
+        }
     }
     Some(frame)
 }
@@ -869,6 +886,20 @@ mod tests {
         assert!(!h.contains_key("version"));
         let h = parse_operator_frame(r#"{"type":"hello","version":"0.4.1"}"#).unwrap();
         assert_eq!(h["version"], "0.4.1");
+        // 기기 표지(H1) — 맞는 칸은 두고 틀린 칸만 뗀다. hello 는 버리지 않는다.
+        let h = parse_operator_frame(
+            r#"{"type":"hello","platform":"linux","arch":"x86_64","installKind":"Bundle","updateChannel":7}"#,
+        )
+        .unwrap();
+        assert_eq!(h["platform"], "linux");
+        assert_eq!(h["arch"], "x86_64");
+        assert!(!h.contains_key("installKind") && !h.contains_key("updateChannel"));
+        let long = format!(r#"{{"type":"hello","platform":"{}"}}"#, "a".repeat(33));
+        assert!(
+            !parse_operator_frame(&long)
+                .unwrap()
+                .contains_key("platform")
+        );
         assert!(parse_server_frame(r#"{"type":"agent.restart"}"#).is_none());
         assert!(parse_server_frame(r#"{"type":"agent.restart","agentId":"a"}"#).is_some());
         assert!(parse_server_frame(r#"{"type":"hello"}"#).is_none());

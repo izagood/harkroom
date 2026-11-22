@@ -63,7 +63,15 @@ macro_rules! op_json {
             $p,
             "label, 'machineId', ",
             $p,
-            "machine_id)::text"
+            "machine_id, 'platform', ",
+            $p,
+            "platform, 'arch', ",
+            $p,
+            "arch, 'installKind', ",
+            $p,
+            "install_kind, 'updateChannel', ",
+            $p,
+            "update_channel)::text"
         )
     };
 }
