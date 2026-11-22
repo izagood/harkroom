@@ -268,7 +268,7 @@ pub fn judge(f: &Facts) -> Vec<Check> {
             check(
                 "로그",
                 Level::Warn,
-                "이 사용자의 journal 파일이 없다 — `journalctl --user` 가 권한 오류를 낼 수 있다. 그러면 `sudo journalctl _SYSTEMD_USER_UNIT=harkroom-operator@<키>.service -f` 로 읽는다(sudo 없이 읽으려면 `sudo usermod -aG systemd-journal \"$USER\"` 뒤 다시 로그인)",
+                "이 사용자의 journal 파일이 없다 — `journalctl --user` 가 권한 오류를 낼 수 있다. 그러면 `sudo journalctl _SYSTEMD_USER_UNIT=harkroom-operator@<키>.service -f` 로 읽는다(sudo 없이 읽으려면 `sudo usermod -aG systemd-journal \"$USER\"` 뒤 다시 로그인 — 그 그룹은 기기 전체 journal 을 읽으니 여럿이 쓰는 기기면 위 sudo 줄만 쓴다)",
             )
         });
     }

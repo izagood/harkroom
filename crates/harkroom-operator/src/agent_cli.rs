@@ -161,6 +161,24 @@ pub fn render_list(agents: &Map<String, Value>) -> String {
         .join("\n")
 }
 
+/// `list --json` 이 찍는 목록 — `providerLane` 은 사람용 출력처럼 있다는 것(`true`)만 남긴다.
+/// 연결 주소(`baseUrl`)·비밀 이름(`secretName`)은 터미널·로그에 찍지 않는다.
+pub fn json_listing(agents: &Map<String, Value>) -> Map<String, Value> {
+    agents
+        .iter()
+        .map(|(id, a)| {
+            let mut a = a.clone();
+            if let Some(o) = a.as_object_mut()
+                && o.contains_key("providerLane")
+            {
+                let present = o["providerLane"].is_object();
+                o.insert("providerLane".to_string(), Value::Bool(present));
+            }
+            (id.clone(), a)
+        })
+        .collect()
+}
+
 /// `add` 가 보낼 `config` — 인자로 준 값이 이기고, 안 준 값은 있던 칸의 것을 그대로 둔다.
 pub fn merged_config(
     existing: Option<&Value>,
@@ -216,7 +234,7 @@ pub fn agent_main(
         let snapshot = conn.call("operatorAgentsList", json!({}))?;
         let agents = agents_of(&snapshot, &args.base_url);
         match &args.action {
-            Action::List { json: true } => Ok(Value::Object(agents).to_string()),
+            Action::List { json: true } => Ok(Value::Object(json_listing(&agents)).to_string()),
             Action::List { json: false } => Ok(render_list(&agents)),
             Action::Add {
                 agent_id,

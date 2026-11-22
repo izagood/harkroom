@@ -281,3 +281,25 @@ fn main_reports_usage_missing_home_and_not_running() {
     assert_eq!(code, 1);
     assert!(err.contains("떠 있지 않다"), "{err}");
 }
+
+#[test]
+fn json_listing_keeps_only_the_presence_of_a_provider_lane() {
+    let agents = json!({
+        AGENT: {
+            "workingDir": "/srv/a",
+            "providerLane": { "baseUrl": "https://llm.example.com", "secretName": "llm-key" }
+        },
+        "22222222-2222-4222-8222-222222222222": { "workingDir": "/srv/b" }
+    });
+    let out = Value::Object(json_listing(agents.as_object().unwrap())).to_string();
+    assert!(!out.contains("llm.example.com"), "{out}");
+    assert!(!out.contains("llm-key"), "{out}");
+    let v: Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v[AGENT]["providerLane"], json!(true));
+    assert_eq!(v[AGENT]["workingDir"], json!("/srv/a"));
+    assert!(
+        v["22222222-2222-4222-8222-222222222222"]
+            .get("providerLane")
+            .is_none()
+    );
+}
