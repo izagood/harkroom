@@ -76,24 +76,15 @@ pub async fn expire_permission_requests(
     for (id, agent_id, card) in rows {
         let mut closed_card = false;
         if let Some(card_id) = &card {
-            sqlx::query(
-                "update message set meta = jsonb_set(meta, '{permissionRequest}', (meta->'permissionRequest') || $2::jsonb) \
-                  where id = $1::uuid and meta ? 'permissionRequest'",
+            closed_card = crate::core::card_state::close_card_copy(
+                &mut tx,
+                card_id,
+                crate::core::card_state::CardClose::Expired,
+                &at,
+                true,
             )
-            .bind(card_id)
-            .bind(json!({ "status": "expired", "decidedAt": at }).to_string())
-            .execute(&mut *tx)
-            .await?;
-            let closed = sqlx::query(
-                "update message set meta = jsonb_set(meta, '{ask}', (meta->'ask') || $2::jsonb) \
-                  where id = $1::uuid and meta ? 'ask' and meta->'ask'->>'closedAt' is null \
-                    and meta->'ask'->'answeredWith' is null",
-            )
-            .bind(card_id)
-            .bind(json!({ "closedAt": at, "closedReason": "expired" }).to_string())
-            .execute(&mut *tx)
-            .await?;
-            closed_card = closed.rows_affected() > 0;
+            .await?
+            .ask_closed;
         }
         out.push(Expired {
             id,

@@ -4,7 +4,12 @@
 //! 결정 길(승인·거절·카드·거울·대화 승인)은 요청 줄을 잠근 뒤 이 모듈의 [`terminal_refusal`] 하나로 「끝난 상태 → 호출자에게
 //! 돌려줄 거절」을 정한다. 누가 먼저 끝냈는지(만료 sweep 이 먼저 돌았나, 결정이 만료를 만났나)에 따라 답이 달라지지 않게 한다.
 //!
-//! 이 모듈은 아무것도 쓰지 않고, 누가 결정할 수 있는지도 보지 않는다 — 끝난 카드는 언제나 거절(409)이다.
+//! 사본을 끝난 상태로 옮기는 쓰기도 여기 [`close_card_copy`] 하나다(만료 sweep·대체·머지 닫힘이 같이 쓴다). 사본은 열린
+//! 상태에서만 끝난 상태로 간다 — 먼저 쓴 쪽이 남고, 다시 불러도 바뀌지 않는다.
+//!
+//! 이 모듈은 누가 결정할 수 있는지 보지 않는다 — 끝난 카드는 언제나 거절(409)이다.
+use serde_json::{Value, json};
+use sqlx::PgConnection;
 
 /// TS `request_expired` 문구(골든).
 pub const REQUEST_EXPIRED_MESSAGE: &str = "this request expired — the agent has to ask again";
@@ -53,6 +58,122 @@ pub fn card_route_code(via_mirror: bool, code: &str) -> &str {
         "request_expired" if !via_mirror => "already_answered",
         c => c,
     }
+}
+
+/// 요청 줄의 상태 → 「왜 지금 권한이 없나」의 이유 코드(`grant` 읽기 쪽 답). 요청 상태로 정해지지 않으면 `None`
+/// (승인된 뒤의 사정은 호출자가 본다). `past_deadline` 은 시한이 지난 `pending` 인지 — `expired` 와 같은 답이다.
+pub fn request_reason(status: &str, past_deadline: bool) -> Option<&'static str> {
+    Some(match status {
+        "pending" if past_deadline => "request_expired",
+        "pending" => "request_pending",
+        "denied" => "request_denied",
+        "expired" => "request_expired",
+        "obsolete" => "request_closed",
+        "approved_once" => "approved_once",
+        _ => return None,
+    })
+}
+
+/// 카드 사본을 어느 끝난 상태로 닫는가.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CardClose<'a> {
+    /// 시한이 지났다(만료 sweep).
+    Expired,
+    /// 에이전트가 다시 물었다 — 새 요청·새 카드로 대체.
+    Superseded {
+        new_request: &'a str,
+        new_card: &'a str,
+    },
+    /// 그 PR 이 이미 머지·닫힘(`reason`). `actor` 가 닫았다.
+    Obsolete { reason: &'a str, actor: &'a str },
+}
+
+impl CardClose<'_> {
+    /// 정본 상태 이름(`permission_request.status`).
+    pub fn status(&self) -> &'static str {
+        match self {
+            CardClose::Expired => "expired",
+            CardClose::Superseded { .. } => "superseded",
+            CardClose::Obsolete { .. } => "obsolete",
+        }
+    }
+
+    /// `meta.permissionRequest` 에 덧붙일 조각.
+    pub fn status_patch(&self, at: &str) -> Value {
+        match self {
+            CardClose::Expired => json!({ "status": "expired", "decidedAt": at }),
+            CardClose::Superseded { new_request, .. } => {
+                json!({ "status": "superseded", "supersededBy": new_request, "decidedAt": at })
+            }
+            CardClose::Obsolete { reason, .. } => {
+                json!({ "status": "obsolete", "obsoleteReason": reason, "decidedAt": at })
+            }
+        }
+    }
+
+    /// `meta.ask` 에 덧붙일 조각.
+    pub fn ask_patch(&self, at: &str) -> Value {
+        match self {
+            CardClose::Expired => json!({ "closedAt": at, "closedReason": "expired" }),
+            CardClose::Superseded { new_card, .. } => {
+                json!({ "closedAt": at, "closedReason": "superseded", "supersededBy": new_card })
+            }
+            CardClose::Obsolete { actor, .. } => json!({ "closedAt": at, "closedBy": actor }),
+        }
+    }
+}
+
+/// [`close_card_copy`] 가 실제로 바꾼 것.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CardClosed {
+    /// `meta.permissionRequest.status` 를 열린 상태에서 끝난 상태로 옮겼다.
+    pub status_written: bool,
+    /// 열린(답·닫힘 없는) 선택 카드를 닫았다.
+    pub ask_closed: bool,
+}
+
+impl CardClosed {
+    pub fn changed(&self) -> bool {
+        self.status_written || self.ask_closed
+    }
+}
+
+/// 사본 상태 칸 — 아직 열린(`pending` 이거나 칸이 없는) 사본만 옮긴다.
+pub const CLOSE_STATUS_COPY_SQL: &str = "update message set meta = jsonb_set(meta, '{permissionRequest}', (meta->'permissionRequest') || $2::jsonb)      where id = $1::uuid and meta ? 'permissionRequest'        and coalesce(meta->'permissionRequest'->>'status', 'pending') = 'pending'";
+
+/// 선택 카드 닫기 — 답도 닫힘도 없는 카드만.
+pub const CLOSE_ASK_COPY_SQL: &str = "update message set meta = jsonb_set(meta, '{ask}', (meta->'ask') || $2::jsonb)      where id = $1::uuid and meta ? 'ask' and meta->'ask'->>'closedAt' is null and meta->'ask'->'answeredWith' is null";
+
+/// 카드 글의 사본을 끝난 상태로 닫는다. 요청 줄을 옮긴 쪽이 **같은 연결(tx)** 로 부른다 — 이 함수는 요청 줄을 건드리지 않는다.
+///
+/// - `copy_status` 가 참이면 `meta.permissionRequest` 에 상태를 적는다(요청 줄을 이 호출자가 그 상태로 옮겼을 때만 참으로 준다).
+/// - 열린 선택 카드면 `meta.ask` 를 닫는다.
+/// - 둘 다 열린 사본만 옮긴다 — 이미 끝난 사본은 그대로 두고 `false` 를 돌려준다(다시 불러도 같다).
+pub async fn close_card_copy(
+    conn: &mut PgConnection,
+    card_id: &str,
+    close: CardClose<'_>,
+    at: &str,
+    copy_status: bool,
+) -> sqlx::Result<CardClosed> {
+    let mut out = CardClosed::default();
+    if copy_status {
+        out.status_written = sqlx::query(CLOSE_STATUS_COPY_SQL)
+            .bind(card_id)
+            .bind(close.status_patch(at).to_string())
+            .execute(&mut *conn)
+            .await?
+            .rows_affected()
+            > 0;
+    }
+    out.ask_closed = sqlx::query(CLOSE_ASK_COPY_SQL)
+        .bind(card_id)
+        .bind(close.ask_patch(at).to_string())
+        .execute(&mut *conn)
+        .await?
+        .rows_affected()
+        > 0;
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -105,6 +226,66 @@ mod tests {
         ] {
             assert_eq!(terminal_refusal(s).map(|t| t.status), Some(409), "{s}");
         }
+    }
+
+    /// 닫기 문장은 열린 사본만 옮긴다.
+    #[test]
+    fn close_sql_only_moves_open_copies() {
+        assert!(CLOSE_STATUS_COPY_SQL.contains("meta ? 'permissionRequest'"));
+        assert!(CLOSE_STATUS_COPY_SQL.contains("= 'pending'"));
+        assert!(CLOSE_ASK_COPY_SQL.contains("meta->'ask'->>'closedAt' is null"));
+        assert!(CLOSE_ASK_COPY_SQL.contains("meta->'ask'->'answeredWith' is null"));
+    }
+
+    #[test]
+    fn close_patches() {
+        let s = CardClose::Superseded {
+            new_request: "r",
+            new_card: "c",
+        };
+        assert_eq!(s.status(), "superseded");
+        assert_eq!(
+            s.status_patch("t"),
+            json!({ "status": "superseded", "supersededBy": "r", "decidedAt": "t" })
+        );
+        assert_eq!(
+            s.ask_patch("t"),
+            json!({ "closedAt": "t", "closedReason": "superseded", "supersededBy": "c" })
+        );
+        assert_eq!(
+            CardClose::Expired.status_patch("t"),
+            json!({ "status": "expired", "decidedAt": "t" })
+        );
+        assert_eq!(
+            CardClose::Expired.ask_patch("t"),
+            json!({ "closedAt": "t", "closedReason": "expired" })
+        );
+        let o = CardClose::Obsolete {
+            reason: "merged",
+            actor: "a",
+        };
+        assert_eq!(
+            o.status_patch("t"),
+            json!({ "status": "obsolete", "obsoleteReason": "merged", "decidedAt": "t" })
+        );
+        assert_eq!(
+            o.ask_patch("t"),
+            json!({ "closedAt": "t", "closedBy": "a" })
+        );
+    }
+
+    #[test]
+    fn request_reasons() {
+        assert_eq!(request_reason("pending", true), Some("request_expired"));
+        assert_eq!(request_reason("pending", false), Some("request_pending"));
+        assert_eq!(request_reason("denied", false), Some("request_denied"));
+        assert_eq!(request_reason("expired", false), Some("request_expired"));
+        assert_eq!(request_reason("obsolete", false), Some("request_closed"));
+        assert_eq!(
+            request_reason("approved_once", false),
+            Some("approved_once")
+        );
+        assert_eq!(request_reason("granted", false), None);
     }
 
     #[test]
