@@ -15,7 +15,7 @@ pub const KIND_QUEUE_WAIT: &str = "queue.wait";
 pub const KIND_MERGE_DENIED: &str = "merge.denied";
 /// 위임 의무 하나가 닫힌 결말 — `detail.outcome`·`detail.reason`. 기한 스윕·위임자 닫기.
 pub const KIND_DELEGATION_OUTCOME: &str = "delegation.outcome";
-/// 에이전트 글이 `@핸들` 을 적었지만 깨우지 못한 호출.
+/// 에이전트 글이 `@핸들` 을 적었지만 깨우지 못한 호출 — `detail.reason`. `mention_calls::resolve`.
 pub const KIND_CALL_MISSED: &str = "call.missed";
 /// 턴 하나의 토큰 — `detail` 에 input·output·cache.
 pub const KIND_TURN_TOKENS: &str = "turn.tokens";

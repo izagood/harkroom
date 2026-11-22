@@ -4,7 +4,7 @@
 --   - `queue.wait`          — 멘션이 inbox 에 들어온 뒤 턴 임대가 나기까지 기다린 초(`value`).
 --   - `merge.denied`        — 머지 권한 거절 한 건. `detail.code`(거절 코드)·`detail.branch`(끊긴 갈래).
 --   - `delegation.outcome`  — 위임 의무 하나가 닫힌 결말. `detail.outcome`·`detail.reason`, `ref_id` 는 위임 id.
---   - `call.missed`         — 에이전트 글이 `@핸들` 을 적었지만 깨우지 못한 호출(뒤 PR 이 적는다).
+--   - `call.missed`         — 에이전트 글이 `@핸들` 을 적었지만 깨우지 못한 호출. `detail.reason`(`not_head_mention`·`gate_denied`), `ref_id` 는 대상.
 --   - `turn.tokens`         — 턴 하나의 토큰(뒤 PR 이 적는다. `detail` 에 input·output·cache).
 -- - FK 를 걸지 않는다 — 계정·채널이 지워져도 수치는 남고, 기록이 그쪽 지우기를 막거나 늦추지 않는다. 글 본문·핸들은 싣지 않는다(id 와 수만).
 -- - 기록은 best-effort 다. 실패해도 요청은 그대로 간다(로그 한 줄).

@@ -297,6 +297,29 @@ pub async fn resolve(conn: &mut PgConnection, input: &Input<'_>) -> Result<Resol
         }
     }
 
+    // A1 측정 — 호출 누락. 에이전트 글이 머리 런 밖에서 에이전트·팀을 적어 깨우지 못한 멘션(`reference`)과 호출 게이트가 막은 부름.
+    // 기록만(best-effort) — 글 쓰기·고치기 둘 다 이 길을 지난다. 트랜잭션이 되돌려져도 줄은 남는다(근삿값).
+    if input.author_is_agent {
+        let missed = |reference: String, reason: &str| {
+            super::measure::record(super::measure::Event {
+                kind: super::measure::KIND_CALL_MISSED,
+                account_id: Some(input.author_id.to_string()),
+                channel_id: Some(input.channel_id.to_string()),
+                ref_id: Some(reference),
+                detail: Some(serde_json::json!({ "reason": reason })),
+                ..Default::default()
+            });
+        };
+        for id in &split.reference {
+            missed(id.clone(), "not_head_mention");
+        }
+        for t in &split.target_ref {
+            missed(target_key(t), "not_head_mention");
+        }
+        for id in &denied_order {
+            missed(id.clone(), "gate_denied");
+        }
+    }
     let mut principal_shadow: Option<Value> = None;
     let mut invoked_as_principal: Option<Value> = None;
     let mut denied_principal: Option<&'static str> = None;
