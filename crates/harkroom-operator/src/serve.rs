@@ -525,7 +525,7 @@ pub fn spawn_server_link(
     );
     // PR 감시 폴러(위임 재설계 P5, TS run.ts `createPrWatchPoller(...).start()`) — `pr.status` 와 같은 gh 길·같은 「처음 본 시각」.
     // 서버 스위치가 꺼지면 due 가 비어 gh 를 부르지 않는다. 프로세스와 함께 산다(TS 처럼 멈추지 않는다).
-    // hello 세대 — due 403 을 받은 에이전트는 다음 hello 까지 건너뛴다(링크가 다시 붙으면 다시 묻는다).
+    // 링크 세대 — due 403 을 받은 에이전트는 다음 hello 나 배정(`Assign`)까지 건너뛴다(링크가 다시 붙거나 배정이 오면 다시 묻는다).
     let hello_gen = crate::pr_watch_poller::HelloGeneration::default();
     crate::pr_watch_poller::PrWatchPoller {
         pr: merge_handlers.pr_status.clone(),
@@ -810,6 +810,7 @@ pub fn spawn_server_link(
     let runners_state = state.clone();
     let hello_mux = std::sync::Arc::clone(&mux);
     let labels = crate::hello::device_labels(app_launched, update_channel.as_deref());
+    let assign_gen = hello_gen.clone();
     let hello = Box::new(move || {
         hello_gen.bump();
         crate::hello::build_hello_labeled(
@@ -832,6 +833,8 @@ pub fn spawn_server_link(
                 frame,
                 harkroom_proto::p2::ServerToOperatorFrame::Assign { .. }
             ) {
+                // 배정 전에 due 403 을 받아 건너뛰던 에이전트를 PR 감시 폴러가 다시 묻게 한다(다음 hello 를 기다리지 않는다).
+                assign_gen.bump();
                 let _ = gh_kick.send(());
             }
             // 재전송 묶음 끝 — 배정에 없는 채택 러너 회수(①b). `ps` 를 부르므로 링크 스레드 밖에서 한다.
