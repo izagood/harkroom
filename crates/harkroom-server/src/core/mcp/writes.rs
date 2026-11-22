@@ -560,6 +560,8 @@ async fn close_tx(
         .bind(delegate)
         .fetch_all(&mut *tx)
         .await?;
+    // A1 측정 — 위임 결말(위임자가 닫음). 기록만.
+    crate::core::measure::delegation_outcomes(&ids, "closed", Some("delegator_close"));
     if !ids.is_empty() {
         sqlx::query(NOTIFY_DELEGATIONS_SQL)
             .bind(&ids)

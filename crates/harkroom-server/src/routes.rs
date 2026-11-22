@@ -82,6 +82,12 @@ pub const MOVED: &[Moved] = &[
         path: "/audit",
         route: || axum::routing::get(crate::directory::audit),
     },
+    // A1 측정 요약(`core/measure.rs`) — 관리자만. 기록이 꺼져 있으면 404.
+    Moved {
+        key: "GET /measure/summary",
+        path: "/measure/summary",
+        route: || axum::routing::get(crate::core::measure::summary_route),
+    },
     // P2b 인박스 「오늘」(`inbox_today.rs`) — ETag/304.
     Moved {
         key: "GET /inbox/today/open",
