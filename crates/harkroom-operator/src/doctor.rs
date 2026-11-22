@@ -11,6 +11,7 @@
 //! | 로그인 PATH | `$SHELL -lc 'echo "$PATH"'` | 러너가 하네스·git 을 찾는 PATH |
 //! | git | 로그인 PATH 의 `git` | 러너의 저장소 작업 |
 //! | gh | 고정 자리 셋(`default_gh_path`) | 머지 래퍼·`pr.status` |
+//! | avcs | 로그인 PATH 의 `avcs` | 턴에 싣는 avcs MCP(없으면 그 MCP 만 뺀다) |
 //! | 하네스 | 설치·로그인(`detect_harnesses`) | 턴 실행 |
 //! | 러너 | 이 실행 파일 옆의 `harkroom-runner-rs` | 배정된 에이전트 띄우기 |
 //! | 용량 | 메모리·디스크로 잰 동시 턴 상한 | `turn_slots` |
@@ -94,6 +95,8 @@ pub struct Facts {
     pub gh_fixed: Option<String>,
     /// 고정 자리에는 없고 로그인 PATH 에만 있는 gh.
     pub gh_on_path: Option<String>,
+    /// 로그인 PATH 에서 찾은 avcs. 없으면 오퍼레이터가 턴의 MCP 설정에서 avcs 를 뺀다(`mcp_config::without_missing_avcs`).
+    pub avcs: Option<String>,
     pub harnesses: Vec<HarnessFact>,
     /// 옆자리 러너 경로(실행 파일 위치를 모르면 None)와, 그 파일이 실행 가능한가.
     pub runner: Option<(String, bool)>,
@@ -182,6 +185,14 @@ pub fn judge(f: &Facts) -> Vec<Check> {
                 "{} 어디에도 없다 — 머지 래퍼·pr.status 를 못 쓴다",
                 GH_CANDIDATES.join(" · ")
             ),
+        ),
+    });
+    out.push(match &f.avcs {
+        Some(p) => check("avcs", Level::Ok, p.clone()),
+        None => check(
+            "avcs",
+            Level::Warn,
+            "로그인 PATH 에 avcs 가 없다 — 턴에 avcs MCP 를 싣지 않는다(avcs 로 하는 저장소 작업만 빠지고 나머지는 그대로 돈다). 쓰려면 avcs 를 PATH 에 놓고 오퍼레이터를 다시 띄운다",
         ),
     });
     let installed: Vec<&HarnessFact> = f.harnesses.iter().filter(|h| h.installed).collect();
@@ -423,6 +434,7 @@ fn gather(args: &DoctorArgs, env: &dyn Fn(&str) -> Option<String>, home: &str) -
         boot_time_readable: crate::adopt::ps_boot_time_sec(std::process::id() as i32).is_some(),
         du: executable(Path::new(DU_PATH)),
         git: on_path("git"),
+        avcs: on_path("avcs"),
         gh_on_path: if gh_fixed.is_none() {
             on_path("gh")
         } else {
@@ -485,6 +497,7 @@ mod tests {
             git: Some("/usr/bin/git".into()),
             gh_fixed: Some("/usr/bin/gh".into()),
             gh_on_path: None,
+            avcs: Some("/usr/local/bin/avcs".into()),
             harnesses: vec![
                 HarnessFact {
                     name: "claude-code".into(),
@@ -569,6 +582,7 @@ mod tests {
                 "로그인 PATH",
                 "git",
                 "gh",
+                "avcs",
                 "하네스",
                 "러너",
                 "용량"
@@ -579,7 +593,7 @@ mod tests {
         // 빈 PATH 칸은 세지 않는다.
         assert!(c[2].detail.contains("3곳"), "{}", c[2].detail);
         // 설치 안 된 하네스는 목록에 없다.
-        assert_eq!(c[5].detail, "claude-code(로그인됨), codex(로그인 안 됨)");
+        assert_eq!(c[6].detail, "claude-code(로그인됨), codex(로그인 안 됨)");
         assert!(render_text(&c).ends_with("결과: 모두 ok"));
     }
 
@@ -591,15 +605,16 @@ mod tests {
         f.shell = None;
         f.git = None;
         f.gh_fixed = None;
+        f.avcs = None;
         f.memory_readable = false;
         f.harnesses[0].logged_in = false;
         let c = judge(&f);
-        for name in ["du", "로그인 PATH", "git", "gh", "하네스", "용량"] {
+        for name in ["du", "로그인 PATH", "git", "gh", "avcs", "하네스", "용량"] {
             assert_eq!(level_of(&c, name), Level::Warn, "{name}");
         }
         assert_eq!(exit_code(&c), 0);
         assert!(c[2].detail.starts_with("/bin/sh "), "{}", c[2].detail);
-        assert!(render_text(&c).contains("결과: warn 6건"));
+        assert!(render_text(&c).contains("결과: warn 7건"));
     }
 
     #[test]
@@ -762,7 +777,7 @@ mod tests {
         let v: Value = serde_json::from_str(&out).unwrap();
         let checks = v["checks"].as_array().unwrap();
         // 리눅스에서는 「로그」 줄이 하나 더 있다(사용자 journal 판별).
-        let expected = if cfg!(target_os = "linux") { 10 } else { 9 };
+        let expected = if cfg!(target_os = "linux") { 11 } else { 10 };
         assert_eq!(checks.len(), expected, "{out}");
         assert_eq!(checks[0]["level"], json!("ok"), "{out}");
         assert_eq!(checks[2]["level"], json!("ok"), "{out}");

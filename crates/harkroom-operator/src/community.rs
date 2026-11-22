@@ -109,6 +109,8 @@ pub struct SystemDeps {
     /// 하네스 MCP 설정 파일을 쓸 폴더(`<root>/operator/mcp`).
     pub mcp_dir: PathBuf,
     pub operator_bin: String,
+    /// 러너가 하네스에 넘기는 PATH(로그인 셸 PATH, 못 읽었으면 이 프로세스의 PATH) — avcs MCP 를 실을지 여기서 본다.
+    pub harness_path: Option<String>,
     pub owner: Arc<OwnerCell>,
     /// 새로 띄웠으면 서버에 `runner.started` 를 낸다(TS `notifyRunnerStarted`).
     pub on_started: StartedSink,
@@ -257,7 +259,7 @@ impl AssignmentDeps for SystemDeps {
             eprintln!("MCP OAuth 토큰을 읽지 못했다(토큰 없이 띄운다): {e:?}");
             Default::default()
         });
-        let built = build_mcp_config(
+        let mut built = build_mcp_config(
             &self.operator_bin,
             &definition.mcp_servers,
             &definitions,
@@ -266,6 +268,16 @@ impl AssignmentDeps for SystemDeps {
         );
         if !built.missing.is_empty() {
             return Err(built.missing);
+        }
+        if crate::mcp_config::without_missing_avcs(
+            &mut built.mcp_servers,
+            self.harness_path.as_deref(),
+            &crate::mcp_config::is_executable_file,
+        ) {
+            eprintln!(
+                "avcs 가 PATH 에 없어 avcs MCP 를 싣지 않는다: agent={} (`doctor` 의 avcs 줄 참고)",
+                definition.handle
+            );
         }
         if !built.needs_auth.is_empty() {
             eprintln!(
