@@ -757,6 +757,60 @@ async fn deny_writes_request_card_audit_together() {
     );
 }
 
+/// P1 — 끝난 상태마다 거절 답이 하나다. 만료 sweep 이 먼저 `expired` 로 닫은 요청은 `already_decided` 가 아니라
+/// `request_expired`, 대체된 요청은 `superseded`. 어느 쪽도 요청 줄을 고치지 않는다.
+#[tokio::test]
+async fn deny_on_terminal_state_answers_by_state() {
+    let Some(url) = db_url() else { return };
+    let pool = PgPool::connect(&url).await.unwrap();
+    for (status, want) in [
+        ("expired", "request_expired"),
+        ("superseded", "superseded"),
+        ("obsolete", "pr_closed"),
+        ("denied", "already_decided"),
+        ("granted", "already_decided"),
+        ("approved_once", "already_decided"),
+    ] {
+        let f = fixture(&pool, "list").await;
+        let (req, _card) = request_with_card(&pool, &f).await;
+        // sweep·대체·다른 결정이 먼저 이긴 뒤의 줄.
+        sqlx::query(
+            "update permission_request set status = $2, decided_at = now() where id = $1::uuid",
+        )
+        .bind(&req)
+        .bind(status)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let out = decide_deny(
+            &pool,
+            DenyArgs {
+                agent_id: &f.agent,
+                request_id: &req,
+                actor_id: &f.owner,
+                bundle_message_id: None,
+                mirror_message_id: None,
+                chat: None,
+            },
+        )
+        .await
+        .unwrap();
+        match out {
+            DenyOutcome::Refused {
+                status: 409, code, ..
+            } => assert_eq!(code, want, "{status}"),
+            o => panic!("{status}: {o:?}"),
+        }
+        let st: String =
+            sqlx::query_scalar("select status from permission_request where id = $1::uuid")
+                .bind(&req)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(st, status, "거절은 줄을 고치지 않는다");
+    }
+}
+
 /// P3 B2 — 위임장이 붙은 요청의 거절도 Rust 가 끝낸다(TS 로 넘기지 않음). 위임장·그 줄·활동 시각은 그대로다(TS 거절과 같음).
 /// 소유자가 아닌 사람(위임장을 맡기지 않음)과 소유자 둘 다.
 #[tokio::test]

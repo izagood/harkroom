@@ -201,7 +201,7 @@ async fn expire_privileges_ok(pool: &sqlx::PgPool, which: &str) -> bool {
 const DENIAL_REASON: &str = "select reason from merge_denial where id = $1::uuid";
 /// TS `MERGE_NO_MANDATE_MESSAGE`(골든).
 pub const MERGE_NO_MANDATE_MESSAGE: &str = "a merge cannot be approved for 7 days without a mandate on this thread — approve the merge once from the refusal card, or approve from a thread you started";
-pub const REQUEST_EXPIRED_MESSAGE: &str = "this request expired — the agent has to ask again";
+pub use super::card_state::REQUEST_EXPIRED_MESSAGE;
 
 pub const APPROVE_SEQUENCE_PRIVILEGES: &[(&str, &str)] = &[("event_outbox_id_seq", "USAGE")];
 
@@ -486,29 +486,9 @@ pub async fn approve_write(
     decision: Decision,
     as_owner: bool,
 ) -> sqlx::Result<ApproveOutcome> {
-    match locked.status.as_str() {
-        "obsolete" => {
-            return Ok(refused(
-                409,
-                "pr_closed",
-                "that pull request was already merged or closed — this card is closed",
-            ));
-        }
-        "superseded" => {
-            return Ok(refused(
-                409,
-                "superseded",
-                "the agent asked again — decide on the newer card",
-            ));
-        }
-        "pending" => {}
-        s => {
-            return Ok(refused(
-                409,
-                "already_decided",
-                format!("this request is already {s}"),
-            ));
-        }
+    // 끝난 상태 → 거절은 한 곳(`card_state`)에서 정한다.
+    if let Some(t) = super::card_state::terminal_refusal(&locked.status) {
+        return Ok(refused(t.status, t.code, t.message));
     }
     if locked.expired {
         // TS 는 이 자리에서 카드를 만료로 닫는다 — 그 일은 TS 가 한다(쓰기 전).

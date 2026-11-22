@@ -110,11 +110,11 @@ fn refusal(status: u16, code: &str, message: &str) -> Response {
 
 /// 카드·묶음 길의 거절 문구 바꿈(TS: `already_decided`·`request_expired` → `already_answered`).
 fn card_refusal(status: u16, code: &str, message: &str) -> Response {
-    let code = match code {
-        "already_decided" | "request_expired" => "already_answered",
-        c => c,
-    };
-    refusal(status, code, message)
+    refusal(
+        status,
+        super::card_state::card_route_code(false, code),
+        message,
+    )
 }
 
 /// 맡을지 본 결과. `Hand` 면 호출자가 읽은 바이트 그대로 TS 로 넘긴다(쓰기 전).
@@ -210,11 +210,7 @@ enum CardTarget {
 /// 카드·거울 길의 거절 문구 바꿈. 원본 카드 길은 `already_decided`·`request_expired` 를, 거울 길은 TS `messageRoutes.ts`
 /// 대로 `already_decided` 만 `already_answered` 로 바꾼다.
 fn mirror_refusal_code(via_mirror: bool, code: &str) -> &str {
-    match code {
-        "already_decided" => "already_answered",
-        "request_expired" if !via_mirror => "already_answered",
-        c => c,
-    }
+    super::card_state::card_route_code(via_mirror, code)
 }
 
 /// TS 거울 길의 404(누른 거울이 결정 뒤 사라짐).

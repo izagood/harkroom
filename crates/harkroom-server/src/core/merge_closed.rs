@@ -51,14 +51,8 @@ const REQUESTS_SQL: &str = "update permission_request set status = 'obsolete', d
        and denial_id in (select id from merge_denial where scope = $1 and pr_number = $2) \
      returning id::text, card_message_id::text";
 
-const REQUEST_CARD_SQL: &str = "update message set meta = jsonb_set(meta, '{permissionRequest}', (meta->'permissionRequest') || $2::jsonb) \
-     where id = $1::uuid and meta ? 'permissionRequest'";
-
 const DENIAL_CARD_SQL: &str = "update message set meta = jsonb_set(meta, '{mergeDenial,obsolete}', $2::jsonb) \
      where id = $1::uuid and meta ? 'mergeDenial'";
-
-const ASK_CLOSE_SQL: &str = "update message set meta = jsonb_set(meta, '{ask}', (meta->'ask') || $2::jsonb) \
-     where id = any($1::uuid[]) and meta ? 'ask' and meta->'ask'->>'closedAt' is null and meta->'ask'->'answeredWith' is null";
 
 /// zod 를 통과한 본문.
 #[derive(Debug, Clone, PartialEq)]
@@ -190,17 +184,6 @@ pub async fn obsolete_merge_cards(
         .bind(only_agent)
         .fetch_all(&mut *tx)
         .await?;
-    let patch =
-        json!({ "status": "obsolete", "obsoleteReason": reason, "decidedAt": now }).to_string();
-    for (_, card) in &requests {
-        if let Some(card) = card {
-            sqlx::query(REQUEST_CARD_SQL)
-                .bind(card)
-                .bind(&patch)
-                .execute(&mut *tx)
-                .await?;
-        }
-    }
     let obsolete = json!({ "reason": reason, "at": now }).to_string();
     for (_, card) in &denials {
         if let Some(card) = card {
@@ -214,12 +197,17 @@ pub async fn obsolete_merge_cards(
     let all: Vec<(String, Option<String>)> =
         requests.iter().chain(denials.iter()).cloned().collect();
     let cards = card_ids(&all);
-    if !cards.is_empty() {
-        sqlx::query(ASK_CLOSE_SQL)
-            .bind(&cards)
-            .bind(json!({ "closedAt": now, "closedBy": actor }).to_string())
-            .execute(&mut *tx)
-            .await?;
+    // 요청 카드는 상태 칸까지, 거절 카드는 선택 카드 닫기만 — 사본 쓰기는 `card_state` 하나다.
+    for card in &cards {
+        let is_request = requests.iter().any(|(_, c)| c.as_ref() == Some(card));
+        super::card_state::close_card_copy(
+            &mut tx,
+            card,
+            super::card_state::CardClose::Obsolete { reason, actor },
+            now,
+            is_request,
+        )
+        .await?;
     }
     let total = denials.len() + requests.len();
     if total == 0 {

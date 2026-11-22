@@ -410,15 +410,6 @@ pub(crate) const PENDING_SQL: &str = "select id::text, card_message_id::text fro
 pub(crate) const SUPERSEDED_OLD_SQL: &str = "select id::text, status, card_message_id::text from permission_request \
      where superseded_by = $1::uuid and card_message_id is not null";
 
-/// TS `closeSupersededCards` — 대체된(대기였던) 요청 카드의 `permissionRequest` 상태 칸.
-pub(crate) const SUPERSEDED_PR_META_SQL: &str = "update message set meta = jsonb_set(meta, '{permissionRequest}', (meta->'permissionRequest') || $2::jsonb) \
-     where id = $1::uuid and meta ? 'permissionRequest'";
-
-/// TS `closeSupersededCards` — 아직 열린 옛 카드를 `superseded` 로 닫는다.
-pub(crate) const SUPERSEDED_ASK_CLOSE_SQL: &str = "update message set meta = jsonb_set(meta, '{ask}', (meta->'ask') || $2::jsonb) \
-     where id = $1::uuid and meta ? 'ask' and meta->'ask'->>'closedAt' is null and meta->'ask'->'answeredWith' is null \
-     returning id::text";
-
 /// 옛 카드 닫기에 더 쓰는 쓰기 풀 칸(글 `meta` UPDATE·outbox·거울 맞추기 inbox).
 pub(crate) const SUPERSEDE_CARD_PRIVILEGES: &[(&str, &str)] = &[
     ("permission_request.id", "SELECT"),
@@ -447,33 +438,30 @@ async fn close_superseded_cards(write: &PgPool, new_request: &str, new_card: &st
             .await?;
         let at = crate::core::msg_post::iso_ms(crate::core::msg_post::now_ms());
         for (_, status, card) in &old {
-            if status == "superseded" {
-                sqlx::query(SUPERSEDED_PR_META_SQL)
-                    .bind(card)
-                    .bind(
-                        serde_json::json!({ "status": "superseded", "supersededBy": new_request, "decidedAt": at })
-                            .to_string(),
-                    )
-                    .execute(&mut *conn)
-                    .await?;
-            }
-            let closed: Option<String> = sqlx::query_scalar(SUPERSEDED_ASK_CLOSE_SQL)
-                .bind(card)
-                .bind(
-                    serde_json::json!({ "closedAt": at, "closedReason": "superseded", "supersededBy": new_card })
-                        .to_string(),
-                )
-                .fetch_optional(&mut *conn)
-                .await?;
-            if closed.is_none() && status != "superseded" {
+            // 상태 칸은 이 대체가 요청을 `superseded` 로 옮겼을 때만 적는다(대기·만료였던 요청 — 사본이 만료로 적혀 있어도 덮는다).
+            let closed = crate::core::card_state::close_card_copy(
+                &mut conn,
+                card,
+                crate::core::card_state::CardClose::Superseded {
+                    new_request,
+                    new_card,
+                },
+                &at,
+                status == "superseded",
+            )
+            .await?
+            .ask_closed;
+            if !closed && status != "superseded" {
                 continue;
             }
             announce_updated(&mut conn, card).await?;
-            if closed.is_some() {
+            if closed {
                 if let Err(e) =
                     crate::core::ask_bundle_add::carry_bundle_item(&mut conn, card, new_card).await
                 {
-                    eprintln!("permission.request: carry bundle item {card} -> {new_card} failed: {e}");
+                    eprintln!(
+                        "permission.request: carry bundle item {card} -> {new_card} failed: {e}"
+                    );
                 }
                 sync_ask_mirrors(&mut conn, "permission.request supersedes", card).await?;
             }
@@ -1231,9 +1219,10 @@ mod tests {
         assert!(
             SUPERSEDED_OLD_SQL.contains("superseded_by = $1::uuid and card_message_id is not null")
         );
-        assert!(SUPERSEDED_PR_META_SQL.contains("meta ? 'permissionRequest'"));
-        assert!(SUPERSEDED_ASK_CLOSE_SQL.contains("meta->'ask'->>'closedAt' is null"));
-        assert!(SUPERSEDED_ASK_CLOSE_SQL.contains("meta->'ask'->'answeredWith' is null"));
+        use crate::core::card_state::{CLOSE_ASK_COPY_SQL, CLOSE_STATUS_COPY_SQL};
+        assert!(CLOSE_STATUS_COPY_SQL.contains("meta ? 'permissionRequest'"));
+        assert!(CLOSE_ASK_COPY_SQL.contains("meta->'ask'->>'closedAt' is null"));
+        assert!(CLOSE_ASK_COPY_SQL.contains("meta->'ask'->'answeredWith' is null"));
         assert!(SUPERSEDE_CARD_PRIVILEGES.contains(&("message.meta", "UPDATE")));
         assert!(SUPERSEDE_CARD_PRIVILEGES.contains(&("message.deleted_at", "SELECT")));
     }

@@ -261,28 +261,25 @@ async fn not_found_reason(
         .fetch_optional(read)
         .await?;
     if let Some((status, expired)) = r {
-        return Ok(match status.as_str() {
-            "pending" if expired => "request_expired",
-            "pending" => "request_pending",
-            "denied" => "request_denied",
-            "expired" => "request_expired",
-            "obsolete" => "request_closed",
-            "approved_once" => "approved_once",
-            _ => {
-                if kind == "merge"
-                    && sqlx::query_scalar::<_, i32>(REASON_MERGE_LINE_SQL)
-                        .bind(me)
-                        .bind(targets)
-                        .fetch_optional(read)
-                        .await?
-                        .is_some()
-                {
-                    "mandate_line"
-                } else {
-                    "grant_gone"
+        return Ok(
+            match crate::core::card_state::request_reason(&status, expired) {
+                Some(reason) => reason,
+                None => {
+                    if kind == "merge"
+                        && sqlx::query_scalar::<_, i32>(REASON_MERGE_LINE_SQL)
+                            .bind(me)
+                            .bind(targets)
+                            .fetch_optional(read)
+                            .await?
+                            .is_some()
+                    {
+                        "mandate_line"
+                    } else {
+                        "grant_gone"
+                    }
                 }
-            }
-        });
+            },
+        );
     }
     if kind == "tool"
         && crate::core::channels::visible(read, me, channel).await?

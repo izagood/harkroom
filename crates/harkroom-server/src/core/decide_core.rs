@@ -944,29 +944,9 @@ pub async fn deny_write(
     args: DenyArgs<'_>,
     as_owner: bool,
 ) -> sqlx::Result<DenyOutcome> {
-    match locked.status.as_str() {
-        "obsolete" => {
-            return Ok(refused(
-                409,
-                "pr_closed",
-                "that pull request was already merged or closed — this card is closed",
-            ));
-        }
-        "superseded" => {
-            return Ok(refused(
-                409,
-                "superseded",
-                "the agent asked again — decide on the newer card",
-            ));
-        }
-        "pending" => {}
-        s => {
-            return Ok(refused(
-                409,
-                "already_decided",
-                format!("this request is already {s}"),
-            ));
-        }
+    // 끝난 상태 → 거절은 한 곳(`card_state`)에서 정한다.
+    if let Some(t) = super::card_state::terminal_refusal(&locked.status) {
+        return Ok(refused(t.status, t.code, t.message));
     }
     if locked.expired {
         return Ok(DenyOutcome::HandToTs);

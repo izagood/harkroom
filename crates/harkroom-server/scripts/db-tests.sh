@@ -148,7 +148,7 @@ grants_for() {
 }
 
 TESTS=(auth perm operator loops wake outbox_listener retention mandate_idle permission_expire bg bg_produce outbox_prune push_loop
-  turn_lease inbox_list decide_core_db relay_live turn_settle turn_cancel health scheduled stale migrate delegation_deadline
+  turn_lease inbox_list decide_core_db card_state_db relay_live turn_settle turn_cancel health scheduled stale migrate delegation_deadline
   automation_grant claim_seed automation_sweep hook_debounce thread_status thread_plan db_retry deny_accounts invoke_gate deny_channels deny_reset work measure device_allow)
 if [ "$#" -gt 0 ]; then TESTS=("$@"); fi
 
