@@ -3,11 +3,18 @@
 //! - 상태의 정본은 `work` 행이다. `work_event` 는 이력일 뿐이고 추가만 한다.
 //! - 뿌리 작업은 `parent_id` 가 비고 `root_id = id`. 하위 작업은 부모 행에서 채널·스레드·뿌리·원장 칸(위임장·원인 사람)을
 //!   **같은 문장에서** 복사한다 — 부르는 쪽이 넘긴 값으로 뿌리를 바꿀 수 없다.
-//! - 이 모듈은 아직 어떤 운영 경로에서도 불리지 않는다(동작 변화 없음). 뒤 단계(글→작업 라우팅·위임·깨움·원장)가 쓴다.
+//! - 쓰기는 아직 어떤 운영 경로에서도 불리지 않는다. 뒤 단계(글→작업 라우팅·위임·깨움·원장)가 쓴다.
+//!   읽기 줄 `GET /threads/{rootId}/work` 만 붙는다([`routes`] — 읽기 풀에 [`WORK_READ_PRIVILEGES`] 가 있을 때).
 //! - 조회 [`tree`] 는 한 스레드의 작업 나무를 돌려준다. 채널 가시성은 다른 스레드 읽기와 같은 판정([`channel_visible`])이다.
 use super::msg_read::channel_visible;
+use crate::auth::RequireAccount;
+use crate::directory::{internal, json_ok};
+use axum::extract::{Path, RawQuery, State};
+use axum::http::{StatusCode, header};
+use axum::response::{IntoResponse, Response};
 use serde_json::{Value, json};
 use sqlx::PgPool;
+use std::sync::Arc;
 
 /// 쓰기 역할에 줄 권한 — 이 모듈의 문장이 닿는 표 전부. `work_event` 에는 update·delete 를 주지 않는다(추가만).
 pub const WORK_PRIVILEGES: &[(&str, &str)] = &[
@@ -16,6 +23,15 @@ pub const WORK_PRIVILEGES: &[(&str, &str)] = &[
     ("work", "UPDATE"),
     ("work_event", "SELECT"),
     ("work_event", "INSERT"),
+];
+/// 읽기 줄(`GET /threads/{rootId}/work`)이 읽기 풀에서 필요한 권한. `channel_member` 는 가시성 술어가 읽는다.
+/// 없으면 `main.rs` 가 그 줄을 붙이지 않는다.
+pub const WORK_READ_PRIVILEGES: &[(&str, &str)] = &[
+    ("message", "SELECT"),
+    ("channel", "SELECT"),
+    ("channel_member", "SELECT"),
+    ("work", "SELECT"),
+    ("work_event", "SELECT"),
 ];
 pub const WORK_SEQUENCE_PRIVILEGES: &[(&str, &str)] = &[("work_event_id_seq", "USAGE")];
 
@@ -184,6 +200,27 @@ const TREE_SQL: &str = "select coalesce(json_agg(t order by t.\"createdAt\", t.i
 /// `openChildren`(안 끝난 바로 아래 작업 수 — 「기다리는 까닭」의 재료)을 붙인다. 순서는 받은 순서(만든 순) 그대로다.
 /// 부모 고리가 있어도(표의 check 는 자기 자신만 막는다) 끝난다 — 한 행은 한 번만 놓인다.
 pub fn build_tree(rows: Vec<Value>) -> Vec<Value> {
+    build_tree_filtered(rows, None)
+}
+
+/// [`build_tree`] 에 상태 거르개를 얹은 것. `keep` 이 있으면 그 상태의 행만 남긴다 — 걸러진 부모의 자식은 뿌리 자리로 올라온다.
+/// `openChildren` 은 **거르기 전** 목록으로 센다(거르개가 「기다리는 까닭」의 수를 바꾸지 않는다).
+pub fn build_tree_filtered(rows: Vec<Value>, keep: Option<&[&str]>) -> Vec<Value> {
+    let mut open_of: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for r in &rows {
+        if let Some(p) = r["parentId"].as_str()
+            && !is_closed(r["state"].as_str().unwrap_or(""))
+        {
+            *open_of.entry(p.to_owned()).or_default() += 1;
+        }
+    }
+    let rows: Vec<Value> = match keep {
+        Some(k) => rows
+            .into_iter()
+            .filter(|r| k.contains(&r["state"].as_str().unwrap_or("")))
+            .collect(),
+        None => rows,
+    };
     let ids: std::collections::HashSet<String> = rows
         .iter()
         .filter_map(|r| r["id"].as_str().map(str::to_owned))
@@ -199,22 +236,23 @@ pub fn build_tree(rows: Vec<Value>) -> Vec<Value> {
     fn attach(
         mut node: Value,
         kids: &mut std::collections::HashMap<String, Vec<Value>>,
+        open_of: &std::collections::HashMap<String, usize>,
         depth: usize,
     ) -> Value {
         let mine = node["id"]
             .as_str()
             .and_then(|id| kids.remove(id))
             .unwrap_or_default();
-        let open = mine
-            .iter()
-            .filter(|c| !is_closed(c["state"].as_str().unwrap_or("")))
-            .count();
+        let open = node["id"]
+            .as_str()
+            .and_then(|id| open_of.get(id).copied())
+            .unwrap_or(0);
         // 깊이 상한 — 재귀가 스택을 넘지 않게. 넘는 가지는 잘라 낸다(행 수 상한이 TREE_MAX 라 실제로는 닿지 않는다).
         let children: Vec<Value> = if depth >= 64 {
             Vec::new()
         } else {
             mine.into_iter()
-                .map(|c| attach(c, kids, depth + 1))
+                .map(|c| attach(c, kids, open_of, depth + 1))
                 .collect()
         };
         if let Some(o) = node.as_object_mut() {
@@ -223,7 +261,10 @@ pub fn build_tree(rows: Vec<Value>) -> Vec<Value> {
         }
         node
     }
-    roots.into_iter().map(|r| attach(r, &mut kids, 0)).collect()
+    roots
+        .into_iter()
+        .map(|r| attach(r, &mut kids, &open_of, 0))
+        .collect()
 }
 
 /// [`tree`] 의 답.
@@ -239,6 +280,16 @@ pub enum Tree {
 
 /// `work.tree` — 한 스레드의 작업 나무. 다른 스레드 읽기와 같은 채널 가시성 판정을 거친다.
 pub async fn tree(pool: &PgPool, me: &str, thread_root_id: &str) -> sqlx::Result<Tree> {
+    tree_filtered(pool, me, thread_root_id, None).await
+}
+
+/// [`tree`] 에 상태 거르개를 얹은 것 — `states` 가 있으면 그 상태의 작업만 싣는다([`build_tree_filtered`]).
+pub async fn tree_filtered(
+    pool: &PgPool,
+    me: &str,
+    thread_root_id: &str,
+    states: Option<&[&str]>,
+) -> sqlx::Result<Tree> {
     let ch: Option<String> = sqlx::query_scalar(
         "select channel_id::text from message \
           where id = $1::uuid and thread_root_id is null and deleted_at is null",
@@ -264,8 +315,86 @@ pub async fn tree(pool: &PgPool, me: &str, thread_root_id: &str) -> sqlx::Result
     Ok(Tree::Ok(json!({
         "threadRootId": thread_root_id,
         "channelId": ch,
-        "works": build_tree(rows),
+        "works": build_tree_filtered(rows, states),
     })))
+}
+
+/// `?state=open,running` 을 읽는다 — 쉼표로 여러 개. 없거나 비면 `Ok(None)`(거르지 않음), 모르는 상태가 있으면 `Err`.
+pub fn parse_state_filter(raw: Option<&str>) -> Result<Option<Vec<&'static str>>, &'static str> {
+    let Some(v) = raw.unwrap_or("").split('&').find_map(|kv| {
+        let (k, v) = kv.split_once('=')?;
+        (k == "state").then_some(v)
+    }) else {
+        return Ok(None);
+    };
+    let v = v.replace("%2C", ",").replace("%2c", ",");
+    let mut out: Vec<&'static str> = Vec::new();
+    for part in v.split(',').filter(|p| !p.is_empty()) {
+        let s = STATES.iter().find(|s| **s == part).ok_or("invalid_state")?;
+        if !out.contains(s) {
+            out.push(s);
+        }
+    }
+    Ok((!out.is_empty()).then_some(out))
+}
+
+fn json_code(status: StatusCode, body: &'static str) -> Response {
+    (
+        status,
+        [(header::CONTENT_TYPE, "application/json; charset=utf-8")],
+        body,
+    )
+        .into_response()
+}
+
+/// `GET /threads/{rootId}/work[?state=open,running]` — 한 스레드의 작업 나무. 판정 순서는 계획판 읽기(`thread_plan_read`)와 같다:
+/// 로그인(401) → rootId 가 uuid 아님·뿌리 글 없음·그 채널을 못 봄(모두 404 `{ "error": "not_found" }` — 있는지 없는지를 가르지 않는다).
+/// 모르는 상태 값은 400 `{ "error": "invalid_state" }`.
+pub async fn get_thread_work(
+    State(read): State<Arc<PgPool>>,
+    RequireAccount(me, _): RequireAccount,
+    Path(root_id): Path<String>,
+    RawQuery(raw): RawQuery,
+) -> Response {
+    const NOT_FOUND: &str = r#"{"error":"not_found"}"#;
+    if !crate::lists::is_zod_uuid(&root_id) {
+        return json_code(StatusCode::NOT_FOUND, NOT_FOUND);
+    }
+    let Ok(states) = parse_state_filter(raw.as_deref()) else {
+        return json_code(StatusCode::BAD_REQUEST, r#"{"error":"invalid_state"}"#);
+    };
+    match tree_filtered(read.as_ref(), &me.id, &root_id, states.as_deref()).await {
+        Ok(Tree::Ok(v)) => json_ok(v.to_string()),
+        Ok(Tree::NotFound | Tree::Forbidden) => json_code(StatusCode::NOT_FOUND, NOT_FOUND),
+        Err(e) => internal(e),
+    }
+}
+
+/// 읽기 줄 1개. 읽기 풀만 쓴다.
+pub fn routes(
+    pool: PgPool,
+    auth: crate::auth::AuthPools,
+    cors: Arc<crate::cors::Cors>,
+) -> crate::route_table::Routes<()> {
+    use crate::route_table::Table;
+    let t = Table::<Arc<PgPool>>::new()
+        .get("/threads/{rootId}/work", get_thread_work)
+        .map(|r| {
+            r.route_layer(axum::middleware::from_fn_with_state(
+                auth,
+                crate::auth::layer,
+            ))
+            .layer(axum::middleware::from_fn_with_state(
+                cors,
+                crate::cors::layer,
+            ))
+        })
+        .finish();
+    crate::route_table::Routes {
+        router: t.router.with_state(Arc::new(pool)),
+        http: t.http,
+        sockets: t.sockets,
+    }
 }
 
 #[cfg(test)]
@@ -317,6 +446,47 @@ mod tests {
             row("q", Some("p"), "open"),
         ]);
         assert!(t.is_empty());
+    }
+
+    #[test]
+    fn state_filter_keeps_matching_rows_and_full_open_counts() {
+        let rows = || {
+            vec![
+                row("a", None, "done"),
+                row("b", Some("a"), "open"),
+                row("c", Some("b"), "running"),
+                row("d", Some("b"), "done"),
+            ]
+        };
+        // 걸러진 부모(a)의 자식은 뿌리 자리로 올라오고, openChildren 은 거르기 전 수다.
+        let t = build_tree_filtered(rows(), Some(&["open", "running"]));
+        assert_eq!(t.len(), 1);
+        assert_eq!(t[0]["id"], "b");
+        assert_eq!(t[0]["openChildren"], 1);
+        assert_eq!(t[0]["children"].as_array().unwrap().len(), 1);
+        assert_eq!(t[0]["children"][0]["id"], "c");
+        let t = build_tree_filtered(rows(), Some(&["done"]));
+        assert_eq!(t.len(), 2);
+        assert_eq!(t[0]["id"], "a");
+        assert_eq!(t[0]["openChildren"], 1);
+        assert_eq!(t[1]["id"], "d");
+    }
+
+    #[test]
+    fn state_filter_query_parses() {
+        assert_eq!(parse_state_filter(None), Ok(None));
+        assert_eq!(parse_state_filter(Some("x=1")), Ok(None));
+        assert_eq!(parse_state_filter(Some("state=")), Ok(None));
+        assert_eq!(
+            parse_state_filter(Some("a=b&state=open%2Crunning,open")),
+            Ok(Some(vec!["open", "running"]))
+        );
+        assert_eq!(parse_state_filter(Some("state=nope")), Err("invalid_state"));
+    }
+
+    #[test]
+    fn read_privileges_are_select_only() {
+        assert!(WORK_READ_PRIVILEGES.iter().all(|(_, p)| *p == "SELECT"));
     }
 
     #[test]

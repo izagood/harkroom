@@ -1,7 +1,9 @@
 //! 작업 판(`core::work`, B1)을 실제 Postgres 로 본다 — 뿌리·하위 작업 행, 사건 이력, 나무 조회와 채널 가시성.
 //! 쓰기는 `WORK_PRIVILEGES` 만 가진 역할로 한다(`scripts/db-tests.sh` 가 넘긴다 — 없으면 관리 연결).
 //! `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다.
-use harkroom_server::core::work::{NewWork, Tree, append_event, create, set_state, tree};
+use harkroom_server::core::work::{
+    NewWork, Tree, append_event, create, set_state, tree, tree_filtered,
+};
 use serde_json::json;
 use sqlx::PgPool;
 
@@ -181,12 +183,56 @@ async fn work_rows_events_and_tree() {
         Tree::NotFound
     ));
 
-    // 채널을 지우면 작업·사건도 같이 지워진다(FK cascade).
-    sqlx::query("delete from channel where id = $1::uuid")
-        .bind(&ch)
-        .execute(&admin)
+    // 상태 거르개 — 끝난 것만 고르면 뿌리(open)는 빠지고 하위가 뿌리 자리로 올라온다. 읽기는 읽기 권한만으로 된다(관리 연결이 아닌 `w`).
+    let Tree::Ok(t) = tree_filtered(&w, &human, &root_msg, Some(&["done"]))
+        .await
+        .unwrap()
+    else {
+        panic!("member must see the filtered tree");
+    };
+    let works = t["works"].as_array().unwrap();
+    assert_eq!(works.len(), 1);
+    assert_eq!(works[0]["id"], child.as_str());
+    assert_eq!(works[0]["children"], json!([]));
+    let Tree::Ok(t) = tree_filtered(&w, &human, &root_msg, Some(&["open", "running"]))
+        .await
+        .unwrap()
+    else {
+        panic!("member must see the filtered tree");
+    };
+    let works = t["works"].as_array().unwrap();
+    assert_eq!(works.len(), 1);
+    assert_eq!(works[0]["id"], root.as_str());
+    assert_eq!(works[0]["children"], json!([]));
+    assert_eq!(works[0]["openChildren"], 0);
+    let Tree::Ok(t) = tree_filtered(&w, &human, &root_msg, Some(&["failed"]))
+        .await
+        .unwrap()
+    else {
+        panic!("member must see the filtered tree");
+    };
+    assert_eq!(t["works"], json!([]));
+    assert!(matches!(
+        tree_filtered(&w, &outsider, &root_msg, Some(&["done"]))
+            .await
+            .unwrap(),
+        Tree::Forbidden
+    ));
+
+    // 채널을 지우면 작업·사건도 같이 지워진다(FK cascade). `channel_member`·`message` 는 cascade 가 아니라 먼저 지운다
+    // (운영의 채널 삭제와 같은 순서) — 글을 지울 때 `work.thread_root_id` cascade 로 작업·사건이 따라 지워진다.
+    for sql in [
+        "delete from channel_member where channel_id = $1::uuid",
+        "delete from message where channel_id = $1::uuid",
+        "delete from channel where id = $1::uuid",
+    ] {
+        sqlx::query(sql).bind(&ch).execute(&admin).await.unwrap();
+    }
+    let left: i64 = sqlx::query_scalar("select count(*) from work")
+        .fetch_one(&admin)
         .await
         .unwrap();
+    assert_eq!(left, 0);
     let left: i64 = sqlx::query_scalar("select count(*) from work_event")
         .fetch_one(&admin)
         .await
