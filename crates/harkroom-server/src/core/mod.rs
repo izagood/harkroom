@@ -181,6 +181,7 @@ pub mod turn_lease_routes;
 pub mod turn_settle;
 pub mod typing;
 pub mod wake_preempt;
+pub mod work;
 pub mod ws;
 
 /// `HARKROOM_CORE` — 모르는 값이면 기동을 멈춘다(조용히 켜지거나 꺼지지 않게).
