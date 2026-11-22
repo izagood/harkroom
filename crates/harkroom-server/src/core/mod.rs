@@ -90,6 +90,7 @@ pub mod decide_merge_once;
 pub mod decide_owner_notice;
 pub mod decide_routes;
 pub mod delegate_write;
+pub mod device_allow;
 pub mod dm_open;
 pub mod events;
 pub mod grant_decide;
@@ -117,6 +118,7 @@ pub mod mandate_line_write;
 pub mod mandate_lines_read;
 pub mod mandate_stamp;
 pub mod mcp;
+pub mod measure;
 pub mod mem_search;
 pub mod mention_calls;
 pub mod mention_fanout;
@@ -182,6 +184,7 @@ pub mod turn_lease_routes;
 pub mod turn_settle;
 pub mod typing;
 pub mod wake_preempt;
+pub mod work;
 pub mod ws;
 
 /// `HARKROOM_CORE` — 모르는 값이면 기동을 멈춘다(조용히 켜지거나 꺼지지 않게).

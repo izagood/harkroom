@@ -298,6 +298,23 @@ pub mod p2 {
             sessions: Vec<Value>,
             #[serde(default, skip_serializing_if = "Option::is_none")]
             version: Option<String>,
+            /// 기기 표지(H1) — 서버는 적어 두기만 한다. 옛 오퍼레이터는 싣지 않고, 옛 서버는 모르는 칸을 버린다.
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            platform: Option<String>,
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            arch: Option<String>,
+            #[serde(
+                default,
+                rename = "installKind",
+                skip_serializing_if = "Option::is_none"
+            )]
+            install_kind: Option<String>,
+            #[serde(
+                default,
+                rename = "updateChannel",
+                skip_serializing_if = "Option::is_none"
+            )]
+            update_channel: Option<String>,
         },
         #[serde(rename = "runner.started", rename_all = "camelCase")]
         RunnerStarted { agent_id: String, runner_id: String },

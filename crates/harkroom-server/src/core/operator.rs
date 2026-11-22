@@ -211,6 +211,10 @@ fn spawn_revoke_watch(core: Arc<OperatorCore>) {
     });
 }
 
+/// hello 의 버전·기기 표지를 한 문장으로 적는다. 하나라도 바뀌었을 때만 행을 고친다(= `operator.changed` 도 그때만).
+pub(crate) const HELLO_WRITE_SQL: &str = "update operator set version = $2, platform = $3, arch = $4, install_kind = $5, update_channel = $6 \
+     where id = $1::uuid and (version, platform, arch, install_kind, update_channel) is distinct from ($2, $3, $4, $5, $6) returning id";
+
 /// hello 의 버전을 적는다. 없으면 null 로 덮는다(옛 오퍼레이터로 돌아갔을 때 예전 값이 거짓 기준이 되지 않게).
 fn spawn_version_writer(core: Arc<OperatorCore>) {
     let mut frames = core.hub.subscribe_frames();
@@ -224,19 +228,26 @@ fn spawn_version_writer(core: Arc<OperatorCore>) {
             if frame.get("type").and_then(Value::as_str) != Some("hello") {
                 continue;
             }
-            let version = frame
-                .get("version")
-                .and_then(Value::as_str)
-                .map(str::to_owned);
+            let text = |k: &str| frame.get(k).and_then(Value::as_str).map(str::to_owned);
+            let version = text("version");
+            // 기기 표지(H1) — 버전과 같이 hello 마다 덮는다(없으면 null: 옛 오퍼레이터로 돌아갔을 때 옛 값이 남지 않게).
+            let (platform, arch, install_kind, update_channel) = (
+                text("platform"),
+                text("arch"),
+                text("installKind"),
+                text("updateChannel"),
+            );
             let core = core.clone();
             tokio::spawn(async move {
-                let res = sqlx::query(
-                    "update operator set version = $2 where id = $1::uuid and version is distinct from $2 returning id",
-                )
-                .bind(&operator_id)
-                .bind(version)
-                .fetch_optional(&core.write)
-                .await;
+                let res = sqlx::query(HELLO_WRITE_SQL)
+                    .bind(&operator_id)
+                    .bind(version)
+                    .bind(platform)
+                    .bind(arch)
+                    .bind(install_kind)
+                    .bind(update_channel)
+                    .fetch_optional(&core.write)
+                    .await;
                 match res {
                     Ok(Some(_)) => core.changed_all(&operator_id),
                     Ok(None) => {}

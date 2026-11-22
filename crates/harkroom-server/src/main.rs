@@ -1245,6 +1245,29 @@ async fn main() {
         }
         _ => false,
     };
+    // B1 — `GET /threads/{rootId}/work`(작업 나무 읽기). 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 읽기 풀에 그 SELECT 가 다 있을 때만.
+    // 다른 읽기 줄과 같다 — 권한이 없으면 줄만 닫고 뜨고, `HARKROOM_REQUIRE_GRANTS=1` 이면 기동을 거절한다.
+    let work_read_on = match &core_mode {
+        harkroom_server::core::CoreMode::Rust => {
+            use harkroom_server::core::work as wk;
+            match write::missing_in(&state.pool, wk::WORK_READ_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => true,
+                Ok(m) => {
+                    eprintln!("front: work read core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
+                    false
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: work read core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    false
+                }
+            }
+        }
+        _ => false,
+    };
     // S5.4 RD1 — `GET /invites`·`GET /connectors`. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 읽기 풀에 그 SELECT 가 다 있을 때만. 리스·에이전트 목록은 언제나 TS(`/agent/config` 는 `agent_config_read.rs`).
     let misc_reads_on = match &core_mode {
         harkroom_server::core::CoreMode::Rust => {
@@ -4519,6 +4542,17 @@ async fn main() {
             core_routes.http.extend(tp.http);
             core_routes.sockets.extend(tp.sockets);
         }
+        // B1 — 작업 나무 읽기 1줄. 권한이 있을 때만.
+        if work_read_on {
+            let wr = harkroom_server::core::work::routes(
+                state.pool.clone(),
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(wr.router);
+            core_routes.http.extend(wr.http);
+            core_routes.sockets.extend(wr.sockets);
+        }
         // S5.4 RD1 — 초대·API 연결 목록 읽기 2줄. 권한이 있을 때만 — 아니면 TS 에 남는다.
         if misc_reads_on {
             let mr = harkroom_server::core::misc_reads::routes(
@@ -5635,6 +5669,8 @@ async fn open_write_pool() -> Option<sqlx::PgPool> {
     match write::missing_privileges(&pool).await {
         Ok(m) if m.is_empty() => {
             eprintln!("front: write pool on");
+            enable_measure(&pool).await;
+            enable_device_allow(&pool).await;
             Some(pool)
         }
         Ok(m) => {
@@ -5649,6 +5685,42 @@ async fn open_write_pool() -> Option<sqlx::PgPool> {
             );
             None
         }
+    }
+}
+
+/// A1 측정 — 기준선 기록(`measure_event`). 권한이 모자라면 켜지 않는다(기록만 빠지고 나머지는 그대로). 루프가 꺼져 있어도 켠다.
+async fn enable_measure(pool: &sqlx::PgPool) {
+    match write::missing_in(
+        pool,
+        harkroom_server::core::measure::MEASURE_PRIVILEGES,
+        &[],
+    )
+    .await
+    {
+        Ok(m) if m.is_empty() => {
+            eprintln!("front: measure on");
+            harkroom_server::core::measure::enable(pool.clone());
+        }
+        Ok(m) => eprintln!("front: measure off — missing privileges {m:?}"),
+        Err(e) => eprintln!("front: measure off — privilege check failed: {e}"),
+    }
+}
+
+/// H1 에이전트×기기 허용 표(`agent_operator_allow`). 권한이 모자라면 켜지 않는다 — 이 기능만 빠지고 오퍼레이터 코어·배정은 그대로 돈다.
+/// 켤 때 한 번 배정에 맞춘다(꺼져 있던 동안·놓친 맞추기를 메운다).
+async fn enable_device_allow(pool: &sqlx::PgPool) {
+    use harkroom_server::core::device_allow;
+    match write::missing_in(pool, device_allow::DEVICE_ALLOW_PRIVILEGES, &[]).await {
+        Ok(m) if m.is_empty() => {
+            eprintln!("front: device allow on");
+            device_allow::enable(pool.clone());
+            device_allow::sync(None);
+        }
+        Ok(m) => eprintln!("front: device allow off — missing privileges {m:?}"),
+        Err(e) => eprintln!(
+            "front: device allow off — privilege check failed ({})",
+            e.as_database_error().map_or("io", |_| "db")
+        ),
     }
 }
 

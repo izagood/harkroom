@@ -172,6 +172,8 @@ async fn delete_agent_account(pool: &PgPool, id: &str) -> Result<Option<Removed>
         sqlx::query(sql).bind(id).execute(&mut *tx).await?;
     }
     tx.commit().await?;
+    // H1 허용 표(기록만) — 지워진 배정을 따라 맞춘다.
+    super::device_allow::sync(Some(id));
     let (a, s) = pics.unwrap_or((None, None));
     Ok(Some(Removed {
         handle,

@@ -231,13 +231,24 @@ async fn expire_one(pool: &PgPool, v2: bool, skip: &mut Vec<String>) -> Result<O
         .await?;
     } else {
         // ⑤ v0: 남은 미결을 무응답으로 닫는다(이미 닫힌 것은 그대로).
-        sqlx::query(
+        let timed_out = sqlx::query(
             "update team_delegation_item set outcome = 'timeout', closed_at = now() \
               where delegation_id = $1::uuid and outcome is null",
         )
         .bind(&id)
         .execute(&mut *tx)
-        .await?;
+        .await?
+        .rows_affected();
+        // A1 측정 — 위임 결말(무응답). 닫힌 의무 수를 `value` 로.
+        if timed_out > 0 {
+            crate::core::measure::record(crate::core::measure::Event {
+                kind: crate::core::measure::KIND_DELEGATION_OUTCOME,
+                ref_id: Some(id.clone()),
+                value: Some(timed_out as i64),
+                detail: Some(serde_json::json!({ "outcome": "timeout", "reason": null })),
+                ..Default::default()
+            });
+        }
         if let Some(lead) = notify_if_settled(&mut tx, &id, &mut out).await? {
             out.woke.push(lead);
         }
@@ -270,6 +281,9 @@ pub async fn auto_close(conn: &mut sqlx::PgConnection) -> Result<u64, sqlx::Erro
     .bind(DELEGATION_MAX_AGE_SEC)
     .fetch_all(&mut *conn)
     .await?;
+    // A1 측정 — 위임 결말(자동 닫힘). 기록만. 롤백되면 한 번 더 적힐 수 있다(근삿값).
+    crate::core::measure::delegation_outcomes(&idle, "closed", Some("idle"));
+    crate::core::measure::delegation_outcomes(&aged, "closed", Some("max_age"));
     let n = (idle.len() + aged.len()) as u64;
     let ids: Vec<String> = idle.into_iter().chain(aged).collect();
     if !ids.is_empty() {

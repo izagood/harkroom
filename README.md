@@ -57,7 +57,7 @@ visible before it becomes a conflict.
 | | |
 |---|---|
 | **Desktop app** | macOS on Apple silicon (signed and notarized `.dmg`, updates itself) |
-| **Agent machines (operator)** | macOS (ships inside the desktop app). Linux headless runs from a source build — no packaged Linux build yet (systemd / launchd templates included) |
+| **Agent machines (operator)** | macOS (ships inside the desktop app). Linux headless: packaged for glibc 2.35+ on x86_64 and aarch64 (see [Install the operator on Linux](#install-the-operator-on-linux)); anything else from a source build |
 | **Server** | Docker image for `linux/amd64` and `linux/arm64`, with PostgreSQL |
 | **Agent CLIs (harnesses)** | [Claude Code](https://github.com/anthropics/claude-code) (`claude`), [Codex](https://github.com/openai/codex) (`codex`), [opencode](https://opencode.ai) (`opencode`) |
 | **App languages** | English, 한국어 |
@@ -245,18 +245,50 @@ to a teammate. They install the app, enter your server URL and choose
 An always-on box can run agents too. Install a harness CLI there, and get the
 operator: on a Mac, install the desktop app (the operator is
 `/Applications/Harkroom.app/Contents/MacOS/harkroom-operator-rs`, next to the runner `harkroom-runner-rs`).
-There is no packaged Linux build yet — build the operator with `cargo build --release` in
-`crates/harkroom-operator` and the runner the same way in `crates/harkroom-runner`, then put
-`harkroom-runner-rs` in the same directory as `harkroom-operator-rs` (the operator looks for it there).
-Then under **Settings › Agents › Operators** mint a registration code and, within five minutes,
-run on that machine:
+On Linux, use the installer below. Then under **Settings › Agents › Operators** mint a registration
+code and, within five minutes, run on that machine:
 
 ```sh
-harkroom-operator-rs register https://<your-server> <code>
+harkroom-operator register https://chat.example.com <code>
 # it prints the command that keeps this community's operator running — one operator per community:
-harkroom-operator-rs serve --base-url https://<your-server>
+harkroom-operator serve --base-url https://chat.example.com
 # to keep it running, see ops/operator@.service.template (systemd) or ops/operator.plist.template (launchd)
 ```
+
+(On a Mac the command is `harkroom-operator-rs`, at the path above.)
+
+#### Install the operator on Linux
+
+Supported: **Linux with glibc 2.35 or newer** (Ubuntu 22.04+, Debian 12+, Fedora, RHEL 10+) on
+**x86_64** or **aarch64**. musl systems such as Alpine and older glibc are not supported by the
+packaged build — build from source there (`cargo build --release` in `crates/harkroom-operator` and
+`crates/harkroom-runner`, and keep `harkroom-runner-rs` next to `harkroom-operator-rs`).
+
+Download the installer, read it, then run it:
+
+```sh
+curl --proto '=https' --tlsv1.2 -fsSLO https://github.com/izagood/harkroom/releases/latest/download/install.sh
+less install.sh
+sh install.sh
+```
+
+What it does:
+
+- downloads `harkroom-operator-<version>-linux-<arch>.tar.gz` and `SHA256SUMS` from the GitHub release
+  over HTTPS and refuses to install unless the SHA-256 matches. This protects against a damaged or
+  truncated download; release signatures are not checked yet.
+- installs without `sudo` into `~/.local/share/harkroom` and links `harkroom-operator` into `~/.local/bin`
+- writes the systemd **user** unit `~/.config/systemd/user/harkroom-operator@.service`. It does not
+  enable or start anything — the script prints the remaining steps (`doctor`, `register`,
+  `account login`, `systemctl --user enable --now harkroom-operator@<key>`)
+- leaves operator state and your `~/.config/harkroom/*.env` files alone, so running it again upgrades in place
+
+Options: `--version <x.y.z>` (or `HARKROOM_VERSION`) pins a release, `--prefix <dir>` and
+`--bin-dir <dir>` change where it installs, `--no-unit` skips the systemd unit, `--from-dir <dir>`
+installs from files you already downloaded. Run `sh install.sh --help` for the full list.
+
+To uninstall: `sh install.sh --uninstall` stops and removes the units, the binaries and the link. It
+keeps operator state (`~/.harkroom-agent`) and the env files; delete those yourself if you are done.
 
 Assign agents to it from the agent's **Where it runs** setting.
 
