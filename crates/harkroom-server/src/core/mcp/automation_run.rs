@@ -47,14 +47,12 @@ pub const AUTOMATION_RUN_PRIVILEGES: &[(&str, &str)] = &[
     ("automation_run.not_before", "INSERT"),
     ("automation_run.initiated_by", "INSERT"),
     ("automation_run.cause_message_id", "INSERT"),
-    ("automation_run.chain_depth", "INSERT"),
 ];
 
 /// TS 상수(`automations.ts`).
 pub(crate) const RATE_LIMIT_PER_HOUR: i32 = 20;
 const AGENT_RUNS_PER_HOUR: i32 = 3;
 const AGENT_RUN_MIN_GAP_MS: i64 = 10 * 60 * 1000;
-const AGENT_RUN_CHAIN_DEPTH: i32 = 1;
 
 /// TS `getAutomation`(소유자·지워지지 않음) 중 여기서 쓰는 칸.
 const AUTOMATION_SQL: &str = "select a.id::text, a.owner_id::text, a.channel_id::text, a.name, a.trigger::text, \
@@ -70,8 +68,8 @@ pub(crate) const RECENT_SQL: &str = "select count(*)::int from automation_run \
      where automation_id = $1::uuid and created_at > now() - interval '1 hour'";
 /// TS `enqueueRun` 의 INSERT(수동 회차 — `not_before` 는 늘 null). `returning` 은 TS `RUN_COLS` 칸.
 pub(crate) const INSERT_SQL: &str = "insert into automation_run (automation_id, event_key, trigger_kind, payload, not_before, \
-                                 initiated_by, cause_message_id, chain_depth) \
-     values ($1::uuid, $2, 'manual', $3::jsonb, null, $4::uuid, $5::uuid, $6) \
+                                 initiated_by, cause_message_id) \
+     values ($1::uuid, $2, 'manual', $3::jsonb, null, $4::uuid, $5::uuid) \
      on conflict (automation_id, event_key) do nothing \
      returning id::text, automation_id::text, event_key, trigger_kind, status, message_id::text, error, \
        floor(extract(epoch from created_at) * 1000)::bigint as created_ms, \
@@ -351,7 +349,6 @@ pub async fn enqueue_tx(
         .bind(payload.to_string())
         .bind(agent)
         .bind(cause)
-        .bind(AGENT_RUN_CHAIN_DEPTH)
         .fetch_optional(&mut **tx)
         .await?;
     let Some(ins) = ins else {

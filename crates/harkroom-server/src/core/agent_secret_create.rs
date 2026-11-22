@@ -987,7 +987,6 @@ async fn notify_owner(
             also_in_channel: false,
         };
         let origin = Origin {
-            cause: Some(&lease.cause_message_id),
             meta,
             system: true,
             server_notice: true,

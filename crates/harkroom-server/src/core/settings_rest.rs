@@ -1,6 +1,6 @@
 //! S5.4 MI3 — 설정 REST 의 남은 읽기 한 줄. TS `routes/settingsRoutes.ts` 의 `GET /settings/projection` 을 옮긴다.
 //!
-//! - `GET`·`PUT /settings/agent-defaults`·`/settings/mention-policy` 는 이미 앞단에 있다(S5.2 `lists.rs`·`writes_settings.rs`).
+//! - `GET`·`PUT /settings/agent-defaults` 는 이미 앞단에 있다(`/settings/mention-policy` 는 O2 에서 없앴다)(S5.2 `lists.rs`·`writes_settings.rs`).
 //!   둘 다 서비스에 캐시가 없다 — TS 는 쓰임마다 DB 를 읽는다(`mentionPolicy.ts` 「캐시하지 않는다」, `createAgentAccount` 는
 //!   `getAgentDefaults` 를 그때 읽는다).
 //! - `GET /settings/projection` 은 TS 와 같이 매번 `projection_config` 를 읽는다(TS `getProjectionConfig` 도 캐시 없음).

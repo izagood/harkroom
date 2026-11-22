@@ -14,7 +14,7 @@
 //!    - 보낼 수 있게 된 때(`max(created_at, not_before)`)부터 1시간 지남 → `failed / expired`
 //!    - `refuseReason`(owner_deleted·owner_disabled·channel_deleted·channel_archived·forbidden) → `failed` + `pauseForRefusal`
 //!    - 아니면 `postMessage`(작성자 = 자동화 주인, 본문 = `renderBody(body, vars + events + events.count)`, 재시도 키
-//!      `automation:<run id>`, `meta.automation = {id,name,trigger,runId,initiatedBy?}`, `chainDepth = run.chain_depth`)
+//!      `automation:<run id>`, `meta.automation = {id,name,trigger,runId,initiatedBy?}`)
 //!      → 글이면 `sent` + `consecutive_failures = 0`, 거절이면 `failed / <code>` + `pauseForRefusal`.
 //!    - `finish` = `update automation_run set status, error, message_id, finished_at = now()`.
 //!    - DB 순간 오류는 되돌리고 다음 sweep 이 다시 한다(회차는 `pending` 으로 남는다).
@@ -34,8 +34,7 @@
 //!   `pool.begin` 실패는 TS 에선 sweep 전체를 끝내지만 여기선 그 한 건만 넘긴다(다음 건도 같은 실패라 결과는 같다).
 //! - [x] 3 `pauseForRefusal` + `endAutomationMandatesTx` — [`pause_for_refusal`]·[`end_automation_mandates_tx`].
 //!   남은 차이: 위임장 `ended_at`·줄 `revoked_at` 이 TS 는 프로세스 시각(`new Date()`), 여기는 DB `now()`(tx 시작 시각)다.
-//! - [x] `chain_depth` 가 있는 회차(에이전트가 돌린 회차, 082) — [`Origin::chain_depth`] 로 넘긴다. 글 경로가 TS `postMessage` 처럼
-//!   `max(스캔 깊이, chain_depth)` 로 부름을 판정(`chain_bound`)하고 그 깊이를 저장한다.
+//! - [x] `chain_depth`(082) — 사슬 상한이 없어진 뒤로(O1) 판정에 쓰이지 않는다. 이제 읽지도 쓰지도 않는다(칸은 남아 있다).
 //! - [x] 본문 갈래(URL·글 승인 낱말) — TS 의 링크 미리보기(`queueLinkPreviewFetch`)·글 승인(`applyChatApproval`)·카드 닫기
 //!   (`closeAsksByReply`)는 **REST 라우트**(`routes/messageRoutes.ts`) 몫이고, TS sweeper 는 서비스 `postMessage` 를 바로 부르니
 //!   그 셋을 하지 않는다. 그래서 여기서도 본문을 거르지 않는다(옛 `ts_body` 보류는 TS 보다 넓은 과잉이었다). [`Origin::service_call`]
@@ -75,7 +74,6 @@ pub const AUTOMATION_SWEEP_PRIVILEGES: &[(&str, &str)] = &[
     ("automation_run.created_at", "SELECT"),
     ("automation_run.not_before", "SELECT"),
     ("automation_run.initiated_by", "SELECT"),
-    ("automation_run.chain_depth", "SELECT"),
     ("automation_run.status", "SELECT"),
     ("automation_run.status", "UPDATE"),
     ("automation_run.error", "UPDATE"),
@@ -119,7 +117,6 @@ pub const AUTOMATION_SWEEP_PRIVILEGES: &[(&str, &str)] = &[
     ("automation_run.not_before", "INSERT"),
     ("automation_run.initiated_by", "INSERT"),
     ("automation_run.cause_message_id", "INSERT"),
-    ("automation_run.chain_depth", "INSERT"),
 ];
 
 /// TS `fireOneSchedule` 의 잡기 그대로. `$2` 는 TS 처럼 프로세스 시각(`now()`)이다. `next_at` 은 ms(TS `Date` 정밀도).
@@ -140,8 +137,8 @@ pub const RATE_LIMIT_SQL: &str = "update automation set enabled = false, paused_
 /// TS `enqueueRun` 의 INSERT(schedule 갈래 — 디바운스 없음이라 `not_before` null, 에이전트 칸 null).
 /// `returning` 은 TS `RUN_COLS` 대신 id 만(sweeper 는 회차 행을 쓰지 않는다).
 pub const INSERT_SCHEDULE_RUN_SQL: &str = "insert into automation_run (automation_id, event_key, trigger_kind, payload, not_before, \
-                                 initiated_by, cause_message_id, chain_depth) \
-     values ($1::uuid, $2, $3, $4::jsonb, null, null, null, null) \
+                                 initiated_by, cause_message_id) \
+     values ($1::uuid, $2, $3, $4::jsonb, null, null, null) \
      on conflict (automation_id, event_key) do nothing \
      returning id::text";
 /// TS `fireOneSchedule` 의 다음 시각.
@@ -151,7 +148,7 @@ pub const SET_NEXT_AT_SQL: &str =
 /// TS `deliverOne` 의 select 그대로(칸은 Rust 튜플에 맞춤). TS 의 `$2`(프로세스 시각) 자리는 DB `now()` 다.
 pub const DUE_SQL: &str = "select r.id::text, r.automation_id::text, r.trigger_kind, r.payload, \
        (extract(epoch from r.created_at) * 1000)::bigint, (extract(epoch from r.not_before) * 1000)::bigint, \
-       r.initiated_by::text, r.chain_depth, a.owner_id::text, a.channel_id::text, a.name, a.body, \
+       r.initiated_by::text, a.owner_id::text, a.channel_id::text, a.name, a.body, \
        a.deleted_at is not null \
      from automation_run r join automation a on a.id = r.automation_id \
      where r.status = 'pending' and not (r.id = any($1::uuid[])) \
@@ -183,7 +180,6 @@ type DueRow = (
     i64,
     Option<i64>,
     Option<String>,
-    Option<i32>,
     String,
     String,
     String,
@@ -382,7 +378,6 @@ pub async fn deliver_one(
         created_ms,
         not_before_ms,
         initiated_by,
-        chain_depth,
         owner,
         channel,
         name,
@@ -433,7 +428,6 @@ pub async fn deliver_one(
     meta.insert("automation".into(), auto);
     let origin = Origin {
         meta,
-        chain_depth,
         // TS sweeper 는 서비스 `postMessage` 를 바로 부른다 — 라우트 몫(카드 고르기·카드 닫기)은 없다.
         service_call: true,
         ..Origin::default()

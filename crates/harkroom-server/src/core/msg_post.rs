@@ -18,8 +18,8 @@
 //!   (`REPLY_LOCK_CLASS`)을 채널 락 앞에 잡고, 부름이 실제로 간 에이전트에게 회신권을 열고(`openReplyGrants`) 답글이면 받은
 //!   회신권을 닫는다(`closeReplyGrants`). 위임 키·깨움 선점·카드 닫기는 TS 와 같이 사람 글에만. 아직 TS 로 넘기는 것:
 //!   암묵 위임 쓰기 권한이 빠진 서버의 부름. 스위치 값이 없으면 TS 기본값으로 맡고, 암묵 위임은 [`implicit_delegation`] 이 적는다(C1c-4d).
-//! - **사슬 안의 에이전트 글**(C1c-4b): 앞 고리([`chain_link`])에서 깊이·사슬 시작을 잇고, 정체 홉([`super::chain_stall`])을 적는다.
-//!   깊이·정체 칸은 **적기만 한다** — 홉 수·사슬 나이로 부름을 막지 않고(O1), 정체 그림자(`meta.mentionStallShadow`)도 남기지 않는다.
+//! - **사슬 깊이·정체 홉·사슬 시작은 적지 않는다**(O2): 홉 수·사슬 나이로 부름을 막지 않게 된 뒤로(O1) 읽는 곳이 없다.
+//!   `message.mention_depth`·`stall_depth`·`chain_started_at` 은 기본값으로 남는다.
 //! - 순서(TS 와 같다): 본문 읽기(413·400·415) → 인증(401, `route_layer`) → 경로·본문 검사(400) → 쓰기 게이트(403 `forbidden`·
 //!   `channel_archived`) → **쓰기 트랜잭션 하나**: seq 락(TS `lockChannelForSeq`) → 재시도 키 재생(200, 헤더 없음) → insert →
 //!   첨부 잇기(실패면 되돌리고 400 `bad_attachment`) → 다시 읽기 → 재시도 키 기록 → 부름 넣기 → 위임 → `message.created`·
@@ -30,14 +30,12 @@
 use super::ask_reply_close;
 use super::audience::audience_for;
 use super::cause_link;
-use super::chain_stall;
 use super::delegate_write;
 use super::implicit_delegation;
 use super::invoke_gate;
 use super::mandate_stamp;
 use super::mention_calls::{self, Input};
 use super::mention_fanout::{self, Post};
-use super::mention_parse::split_mention_calls;
 use super::msg_edit::{
     MAX_MESSAGE_BODY_CHARS, NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, NOTIFIED_HEADER_MAX_IDS,
 };
@@ -166,9 +164,6 @@ struct Sql {
     close_open: String,
     close_item_v0: String,
     close_item_v2: String,
-    depth_scan: String,
-    recent_bodies: String,
-    own_links: String,
     reply_open: String,
     reply_close: String,
     reply_lock_class: i32,
@@ -267,16 +262,6 @@ fn sql() -> &'static Sql {
             close_open: frag("close_reply_open"),
             close_item_v0: frag("close_reply_item_v0"),
             close_item_v2: frag("close_reply_item_v2"),
-            // 시각은 TS 가 `Date` 로 읽는 것과 같게 밀리초로 자른다(백스톱 나이 판정과 `chain_started_at` 옮겨 적기가 같은 값을 쓴다).
-            depth_scan: format!(
-                "select s.body, s.author_is_agent, s.woke, s.depth::int, s.stall::int, \
-                 (extract(epoch from date_trunc('milliseconds', s.created_at)) * 1000)::bigint, \
-                 (extract(epoch from date_trunc('milliseconds', s.chain_started_at)) * 1000)::bigint \
-                 from ({}) s",
-                frag("mention_depth_scan")
-            ),
-            recent_bodies: frag("stall_recent_bodies"),
-            own_links: frag("stall_own_thread_links"),
             reply_open: frag("reply_grant_open"),
             reply_close: frag("reply_grant_close"),
             set_mandate: frag("message_set_mandate"),
@@ -334,8 +319,6 @@ pub(crate) struct PostBody {
 /// 글의 **원인 입력**(C1c-4c) — MCP 발화만 싣는다. REST 글은 비어 있다(`Origin::default()`).
 #[derive(Debug, Default)]
 pub(crate) struct Origin<'a> {
-    /// TS `causeMessageId` — 깊이를 물려받을 원인(모양만 본 헤더 값, 확인은 [`super::cause_link::cause_depth`]).
-    pub(crate) cause: Option<&'a str>,
     /// TS `chainCause` — 사슬 고리·principal·위임에 쓰는 원인(오퍼레이터를 거친 요청의 헤더만).
     pub(crate) chain_cause: Option<&'a str>,
     /// TS `turnId` — 에이전트 글의 `meta.turnId`(오퍼레이터를 거친 요청의 헤더만).
@@ -374,10 +357,6 @@ pub(crate) struct Origin<'a> {
     /// 카드 고르기(`applyChatApproval`)·카드 닫기(`closeAsksByReply`)가 없다. 그래서 카드 갈래 TS 몫 판정과 [`ask_reply_close`] 를 끈다.
     /// 서비스 몫(부름·`thread_reply`·깨움 선점·위임 기한·위임 키)은 그대로다. 라우트 입력에서는 켜지 않는다.
     pub(crate) service_call: bool,
-    /// TS `chainDepth`(082) — 자동화 회차가 물려준 사슬 깊이. 있으면 이 글은 사람 이름 글이라도 사슬의 고리다: 부름 판정에
-    /// `max(스캔 깊이, chain_depth)` 와 `chain_bound` 를 넘기고 그 깊이를 `mention_depth` 로 저장한다(TS `postMessage` 와 같다).
-    /// 정체 홉·사슬 시작은 TS 처럼 스캔 깊이만 본다. 라우트 입력에서는 켜지 않는다.
-    pub(crate) chain_depth: Option<i32>,
     /// P3b-2 — 받은 사람의 `inbox.updated` 를 커밋 tx 에서 내지 않는다. 호출자가 글 승인 판정 **뒤에** 낸다
     /// (TS 라우트는 `applyChatApproval` 뒤에 낸다 — security n2: 같은 스레드의 `thread_reply` 턴이 뜰 때 grant 가 이미 있게).
     pub(crate) defer_inbox_events: bool,
@@ -556,7 +535,7 @@ pub(crate) enum Outcome {
     },
 }
 
-/// TS `resolveMentionCalls` 의 입력 — 깊이·사슬 시작은 [`chain_link`](사람은 언제나 0·없음), principal 없음(REST 에는 원인이 없다).
+/// TS `resolveMentionCalls` 의 입력 — principal 없음(REST 에는 원인이 없다).
 /// 회신권 스레드는 결과 발화면 머리다(REST 글은 언제나 `user` 라 결과다).
 #[allow(clippy::too_many_arguments)]
 async fn resolve_post(
@@ -566,7 +545,7 @@ async fn resolve_post(
     author_is_agent: bool,
     body: &str,
     thread_root: Option<&str>,
-    link: &Chain,
+    now_ms: i64,
     principal: Option<&str>,
 ) -> Result<mention_calls::Resolved, sqlx::Error> {
     mention_calls::resolve(
@@ -579,7 +558,7 @@ async fn resolve_post(
             // TS 는 결과 발화면 사람 글에도 머리를 넘긴다(사람은 회신권 대상이 아니라 판정은 같다).
             reply_grant_thread_id: thread_root,
             principal: principal.map(|id| mention_calls::Principal { id }),
-            now_ms: link.now_ms,
+            now_ms,
             // 값이 없으면 TS 기본값(켬)이다.
             principal_invoke_enabled: mention_calls::principal_invoke_enabled(
                 crate::env_once::get(&crate::env_once::PRINCIPAL_INVOKE),
@@ -589,11 +568,6 @@ async fn resolve_post(
     .await
     // A1 측정 — 호출 누락(새 글). 기록만.
     .inspect(|r| super::measure::calls_missed(author, channel, &r.missed))
-}
-
-/// TS `chainBound ? Math.max(link.depth, chainDepth) : link.depth`.
-fn mention_depth(scan: i32, chain_depth: Option<i32>) -> i32 {
-    chain_depth.map_or(scan, |d| scan.max(d))
 }
 
 /// TS `noMentionCalls` — 본문은 그대로, 부름·meta 는 없다.
@@ -611,64 +585,11 @@ fn no_mention_calls(body: &str) -> mention_calls::Resolved {
     }
 }
 
-/// 이 글의 사슬 자리 — TS `mentionDepthFor`(원인 없는 판)의 앞 고리와 그 위에서 정한 이 글의 정체 홉·사슬 시작.
-#[derive(Debug, Default)]
-struct Chain {
-    /// 이 글의 깊이(앞 고리 + 1, 사슬 밖이면 0).
-    depth: i32,
-    /// 앞 고리의 정체 홉(사람 고리는 0).
-    prev_stall: i32,
-    /// TS `chainStartedAt` — 사슬 안의 에이전트 글만 갖는다(앞 고리에 없으면 지금).
-    started_ms: Option<i64>,
-    now_ms: i64,
-}
-
 pub(crate) fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or_default()
-}
-
-/// TS `mentionDepthFor`(원인 없는 판 — REST 에는 원인이 없다). 이 대화에서 나를 **실제로 깨운**(inbox 가 생긴) 부름 가운데
-/// 가장 최근 하나가 앞 고리다. 없으면 사슬 밖(0). 에이전트 고리면 그 고리의 정체·사슬 시작을, 사람 고리면 0·그 글 시각을 물려받는다.
-async fn chain_link(
-    conn: &mut sqlx::PgConnection,
-    channel: &str,
-    root: Option<&str>,
-    author: &str,
-) -> Result<Chain, sqlx::Error> {
-    type Row = (String, bool, bool, i32, i32, i64, Option<i64>);
-    let rows: Vec<Row> = sqlx::query_as(sql().depth_scan.as_str())
-        .bind(channel)
-        .bind(root)
-        .bind(author)
-        .fetch_all(&mut *conn)
-        .await?;
-    let now = now_ms();
-    let hit = rows.iter().find(|(body, row_agent, woke, ..)| {
-        *woke
-            && split_mention_calls(body, *row_agent, |id| id == author)
-                .call
-                .iter()
-                .any(|c| c == author)
-    });
-    Ok(match hit {
-        None => Chain {
-            now_ms: now,
-            ..Chain::default()
-        },
-        Some((_, row_agent, _, depth, stall, created, chain_started)) => Chain {
-            depth: depth + 1,
-            prev_stall: if *row_agent { *stall } else { 0 },
-            started_ms: Some(if *row_agent {
-                chain_started.unwrap_or(*created)
-            } else {
-                *created
-            }),
-            now_ms: now,
-        },
-    })
 }
 
 /// 밀리초 시각을 ISO 8601(UTC, 밀리초)로 — TS 가 `Date` 를 넘기는 것과 같은 값을 `$11::timestamptz` 에 넣는다.
@@ -769,62 +690,6 @@ pub(crate) async fn post_tx(
     }
     // 위임 스위치 — 값이 없으면 TS 기본값(꺼짐, v0)으로 글을 맡는다([`delegation_v2_on`]). 모른다고 TS 로 넘기지 않는다.
     let v2 = delegation_v2_on(crate::env_once::get(&crate::env_once::DELEGATION_V2));
-    // TS `mentionDepthFor` — 사람 글은 언제나 사슬 밖이다. 원인이 있으면 먼저 그 원인에서 물려받고(C1c-4c), 원인이 나를 깨운
-    // 것이 아니면 스레드 스캔으로 간다.
-    let from_cause = match (author_is_agent, origin.cause) {
-        (true, Some(c)) => cause_link::cause_depth(&mut tx, author, c).await?,
-        _ => None,
-    };
-    let mut link = if let Some(c) = from_cause {
-        Chain {
-            depth: c.depth,
-            prev_stall: c.prev_stall,
-            started_ms: c.started_ms,
-            now_ms: now_ms(),
-        }
-    } else if author_is_agent {
-        chain_link(&mut tx, channel, root, author).await?
-    } else {
-        Chain {
-            now_ms: now_ms(),
-            ..Chain::default()
-        }
-    };
-    // 정체 홉(146) — 사슬 안의 에이전트 글만 센다. **그림자다**: 막지 않고 막았을 부름만 meta 에 남긴다(아래).
-    let stall = if author_is_agent && link.depth > 0 {
-        let recent: Vec<String> = sqlx::query_scalar(s.recent_bodies.as_str())
-            .bind(channel)
-            .bind(root)
-            .fetch_all(&mut *tx)
-            .await?;
-        let ids = chain_stall::message_link_ids(body);
-        let own: HashSet<String> = if ids.is_empty() {
-            HashSet::new()
-        } else {
-            sqlx::query_scalar::<_, String>(s.own_links.as_str())
-                .bind(&ids)
-                .bind(channel)
-                .bind(root)
-                .fetch_all(&mut *tx)
-                .await?
-                .into_iter()
-                .collect()
-        };
-        chain_stall::stall_step(
-            link.depth,
-            link.prev_stall,
-            body,
-            &recent,
-            !attachment_ids.is_empty(),
-            &own,
-        )
-    } else {
-        chain_stall::StallStep::default()
-    };
-    // 사슬의 시작 시각(147) — 앞 고리가 시작이면(사람 고리) 그 글 시각, 사슬 밖이면 없다.
-    if link.depth > 0 && link.started_ms.is_none() {
-        link.started_ms = Some(link.now_ms);
-    }
     // TS 와 같이 멘션 해석은 seq 락 **앞**이다(그 읽기는 seq 순서와 무관하고, 락 안에서 하면 줄 선 트랜잭션이 커넥션을 쥔다).
     // principal(152) — 이 원인으로 받은 살아 있는 임대에서만 읽는다. 판정(부름)과 아래 옮겨 적기가 같은 값을 쓴다.
     let principal = match (author_is_agent, origin.chain_cause) {
@@ -851,7 +716,7 @@ pub(crate) async fn post_tx(
             body,
             // TS `replyGrantThreadId: isResult ? threadRootId : null`.
             root.filter(|_| is_result),
-            &link,
+            now_ms(),
             principal.as_ref().map(|(p, _)| p.as_str()),
         )
         .await?
@@ -918,16 +783,13 @@ pub(crate) async fn post_tx(
             });
         }
     }
-    // TS `{...input.meta, ...calls.callMeta, turnId?, mentionStall…}` — 입력 meta(모델 신고) 위에 부름 meta 가 얹힌다.
+    // TS `{...input.meta, ...calls.callMeta, turnId?}` — 입력 meta(모델 신고) 위에 부름 meta 가 얹힌다.
     let mut meta = origin.meta.clone();
     for (k, v) in &calls.call_meta {
         meta.insert(k.clone(), v.clone());
     }
     if let (true, Some(t)) = (author_is_agent, origin.turn_id) {
         meta.insert("turnId".into(), Value::String(t.to_owned()));
-    }
-    if stall.link_only_reset {
-        meta.insert("mentionStallLinkReset".into(), Value::Bool(true));
     }
     // TS `verifiedCauseLink` — 사슬 고리(118)는 오퍼레이터를 거친 원인이 나를 최근에 깨웠을 때만 적는다.
     let cause_link_id = match (author_is_agent, origin.chain_cause) {
@@ -944,10 +806,7 @@ pub(crate) async fn post_tx(
         .bind(kind)
         .bind(Value::Object(meta).to_string())
         .bind(input.also_in_channel)
-        .bind(mention_depth(link.depth, origin.chain_depth))
         .bind(cause_link_id)
-        .bind(stall.stall_depth)
-        .bind(link.started_ms.map(iso_ms))
         .fetch_one(&mut *tx)
         .await?;
     if !attachment_ids.is_empty() {

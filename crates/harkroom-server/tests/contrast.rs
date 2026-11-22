@@ -33,7 +33,6 @@ fn cases<'a>(
         Case::get("anon /skills", "/skills"),
         Case::get("anon /inbox/today/open", "/inbox/today/open"),
         Case::get("anon /inbox/today/done", "/inbox/today/done"),
-        Case::get("anon /settings/mention-policy", "/settings/mention-policy"),
         Case::get("anon /settings/agent-defaults", "/settings/agent-defaults"),
     ];
     if let Some(a) = admin {
@@ -108,10 +107,6 @@ fn cases<'a>(
                 "/settings/agent-defaults",
                 "/settings/agent-defaults",
             )),
-            h(Case::get(
-                "/settings/mention-policy",
-                "/settings/mention-policy",
-            )),
         ]);
         for (team, group) in ids {
             v.extend([
@@ -130,10 +125,6 @@ fn cases<'a>(
             h(Case::get("member /audit limit=0", "/audit?limit=0")),
             h(Case::get("member /teams", "/teams")),
             h(Case::get("member /skills", "/skills")),
-            h(Case::get(
-                "member /settings/mention-policy",
-                "/settings/mention-policy",
-            )),
             // 권한 판정이 먼저 — 멤버는 집합을 못 읽고(403), 잘못된 id 도 403.
             h(Case::get("member /handle-groups", "/handle-groups")),
             h(Case::get("member /inbox/today/open", "/inbox/today/open")),

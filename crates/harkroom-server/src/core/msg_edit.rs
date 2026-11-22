@@ -85,7 +85,7 @@ fn sql() -> &'static Sql {
         };
         Sql {
             find: format!(
-                "select f.author_id::text, f.kind, f.body, f.meta::text, f.depth::int8, \
+                "select f.author_id::text, f.kind, f.body, f.meta::text, \
                    (extract(epoch from f.created_at) * 1000)::int8, f.author_is_agent from ({}) f",
                 frag("edit_find")
             ),
@@ -201,14 +201,13 @@ async fn edit_in_tx(
 ) -> Result<Outcome, sqlx::Error> {
     let s = sql();
     let mut tx = st.write.begin().await?;
-    type Found = (String, String, String, Option<String>, i64, i64, bool);
+    type Found = (String, String, String, Option<String>, i64, bool);
     let found: Option<Found> = sqlx::query_as(s.find.as_str())
         .bind(message)
         .bind(channel)
         .fetch_optional(&mut *tx)
         .await?;
-    let Some((author, kind, old_body, old_meta, _depth, created_ms, author_is_agent)) = found
-    else {
+    let Some((author, kind, old_body, old_meta, created_ms, author_is_agent)) = found else {
         return Ok(Outcome::NotFound);
     };
     if author != actor || kind != "user" {

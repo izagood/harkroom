@@ -915,7 +915,6 @@ async fn post_service(
         defer_inbox_events: false,
         chat_ask_rust: false,
         close_asks_after_commit: false,
-        cause,
         chain_cause: cause.filter(|_| operator),
         turn_id: turn.filter(|_| operator),
         meta,
@@ -931,7 +930,6 @@ async fn post_service(
         // (`applyChatApproval`)가 없다. 꺼 두면 스레드에 열린 옛 카드(대체될 권한 카드 등)가 있을 때 [`TS_THREAD_SQL`] 의
         // ask 갈래가 참이 돼 까닭 없이 TS 로 넘어간다(P6-2b bus-e2e 「옛 요청에 카드 → 옛 카드 닫기」).
         service_call: true,
-        chain_depth: None,
     };
     let out = msg_post::post_in_tx(
         st,
@@ -1193,7 +1191,6 @@ async fn post_with(
         // 카드를 닫지 않는다 — 그래서 에이전트의 대신하기 카드만 그 갈래를 끈다(사람 작성자는 지금처럼 TS).
         chat_ask_rust: !supersedes.is_empty() && me.kind == "agent",
         close_asks_after_commit: false,
-        cause,
         chain_cause: cause.filter(|_| operator),
         turn_id: turn.filter(|_| operator),
         meta,
@@ -1209,7 +1206,6 @@ async fn post_with(
             .or(picks.map(|h| h as &dyn msg_post::BeforeCommit))
             .or(gate.map(|h| h as &dyn msg_post::BeforeCommit)),
         service_call: false,
-        chain_depth: None,
     };
     let out = msg_post::post_in_tx(
         st,

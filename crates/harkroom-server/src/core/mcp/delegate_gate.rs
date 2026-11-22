@@ -547,7 +547,6 @@ async fn write(
         defer_inbox_events: false,
         chat_ask_rust: false,
         close_asks_after_commit: false,
-        cause,
         chain_cause: cause.filter(|_| operator),
         turn_id: turn.filter(|_| operator),
         meta,
@@ -564,7 +563,6 @@ async fn write(
         no_mentions: false,
         before_commit: hook.as_ref().map(|h| h as &dyn msg_post::BeforeCommit),
         service_call: service_call_for(me.kind == "agent"),
-        chain_depth: None,
     };
     let post = PostBody {
         body: a.body.clone(),
