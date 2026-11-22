@@ -95,6 +95,17 @@ fn hook_entry(argv: &[String]) -> ! {
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
+        Some(a) if harkroom_proto::version_line::is_version_arg(a) => {
+            println!(
+                "{}",
+                harkroom_proto::version_line::version_line(
+                    "harkroom-operator",
+                    option_env!("HARKROOM_BUILD_VERSION"),
+                    env!("CARGO_PKG_VERSION"),
+                    option_env!("HARKROOM_BUILD_COMMIT"),
+                )
+            );
+        }
         Some("merge") => {
             let cwd = std::env::current_dir()
                 .ok()
@@ -175,7 +186,7 @@ fn main() {
         }
         other => {
             eprintln!(
-                "harkroom-operator-rs: {} is not implemented yet (only `merge`, `api`, `hook`, `mcp-bridge`, `register`, `doctor`, `account` and `serve`)",
+                "harkroom-operator-rs: {} is not implemented yet (only `merge`, `api`, `hook`, `mcp-bridge`, `register`, `doctor`, `account`, `serve` and `--version`)",
                 other.unwrap_or("(none)")
             );
             std::process::exit(2);

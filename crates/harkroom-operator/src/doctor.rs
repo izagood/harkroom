@@ -101,6 +101,21 @@ pub struct Facts {
     pub capacity: String,
     pub memory_readable: bool,
     pub root: Option<RootFact>,
+    /// 이 사용자의 journal 파일(`user-<uid>.journal`)이 있는가. systemd 가 감독하는 기기(Linux)에서만 잰다 — 아니면 None(줄 없음).
+    pub user_journal: Option<bool>,
+}
+
+/// journald 가 journal 파일을 두는 자리(영속 → 휘발).
+const JOURNAL_DIRS: [&str; 2] = ["/var/log/journal", "/run/log/journal"];
+
+/// `<dir>/<machine-id>/user-<uid>.journal` 이 하나라도 있는가. 없으면 이 사용자의 유닛 로그는 시스템 journal 에만 있어
+/// `journalctl --user` 가 권한 오류로 끝난다(사용자별로 나누지 않는 기기).
+pub fn user_journal_present(dirs: &[&Path], uid: u32) -> bool {
+    let name = format!("user-{uid}.journal");
+    dirs.iter().any(|d| {
+        std::fs::read_dir(d)
+            .is_ok_and(|machines| machines.flatten().any(|m| m.path().join(&name).is_file()))
+    })
 }
 
 /// 사실 → 판정 줄. 줄의 순서는 고정이다(출력·시험이 기댄다).
@@ -231,6 +246,21 @@ pub fn judge(f: &Facts) -> Vec<Check> {
             format!("{} — 메모리를 못 읽어 고정값으로 간다", f.capacity)
         },
     ));
+    if let Some(present) = f.user_journal {
+        out.push(if present {
+            check(
+                "로그",
+                Level::Ok,
+                "journalctl --user -u 'harkroom-operator@<키>' -f 로 읽힌다",
+            )
+        } else {
+            check(
+                "로그",
+                Level::Warn,
+                "이 사용자의 journal 파일이 없다 — `journalctl --user` 가 권한 오류를 낼 수 있다. 그러면 `sudo journalctl _SYSTEMD_USER_UNIT=harkroom-operator@<키>.service -f` 로 읽는다(sudo 없이 읽으려면 `sudo usermod -aG systemd-journal \"$USER\"` 뒤 다시 로그인)",
+            )
+        });
+    }
     if let Some(r) = &f.root {
         out.push(match (&r.root, r.registered) {
             (Ok(root), true) => check("뿌리", Level::Ok, format!("{root} (등록됨)")),
@@ -406,6 +436,11 @@ fn gather(args: &DoctorArgs, env: &dyn Fn(&str) -> Option<String>, home: &str) -
         capacity: crate::device_capacity::describe(&decision, &cap, 0),
         memory_readable: cap.mem_total.is_some(),
         root,
+        user_journal: cfg!(target_os = "linux").then(|| {
+            // SAFETY: 인자도 실패도 없는 호출이다.
+            let uid = unsafe { libc::getuid() };
+            user_journal_present(&JOURNAL_DIRS.map(Path::new), uid)
+        }),
     }
 }
 
@@ -471,7 +506,47 @@ mod tests {
             capacity: "동시 턴 상한: 8".into(),
             memory_readable: true,
             root: None,
+            user_journal: None,
         }
+    }
+
+    /// 사용자별 journal 이 없는 기기는 `journalctl --user` 가 막힌다 — 경고로 다른 명령을 알려 준다(턴은 멈추지 않는다).
+    #[test]
+    fn missing_user_journal_warns_with_the_command_that_works() {
+        let mut f = healthy();
+        f.user_journal = Some(true);
+        let c = judge(&f);
+        assert_eq!(level_of(&c, "로그"), Level::Ok);
+        // 뿌리 줄보다 앞, 용량 줄 다음이다.
+        assert_eq!(c.last().unwrap().name, "로그");
+        f.user_journal = Some(false);
+        let c = judge(&f);
+        assert_eq!(level_of(&c, "로그"), Level::Warn);
+        assert_eq!(exit_code(&c), 0);
+        let d = &c.iter().find(|x| x.name == "로그").unwrap().detail;
+        assert!(d.contains("sudo journalctl _SYSTEMD_USER_UNIT=harkroom-operator@<키>.service -f"));
+        assert!(d.contains("usermod -aG systemd-journal"));
+    }
+
+    #[test]
+    fn user_journal_is_found_per_machine_dir_and_uid() {
+        let base = std::env::temp_dir().join(format!("hr-doctor-journal-{}", std::process::id()));
+        let machine = base.join("persist").join("0123abcd");
+        std::fs::create_dir_all(&machine).unwrap();
+        std::fs::create_dir_all(base.join("volatile")).unwrap();
+        std::fs::write(machine.join("system.journal"), b"").unwrap();
+        std::fs::write(machine.join("user-1000.journal"), b"").unwrap();
+        let (persist, volatile, gone) = (
+            base.join("persist"),
+            base.join("volatile"),
+            base.join("gone"),
+        );
+        let dirs = [gone.as_path(), volatile.as_path(), persist.as_path()];
+        assert!(user_journal_present(&dirs, 1000));
+        // 남의 uid 파일·시스템 journal 만으로는 아니다.
+        assert!(!user_journal_present(&dirs, 1001));
+        assert!(!user_journal_present(&dirs[..2], 1000));
+        std::fs::remove_dir_all(&base).unwrap();
     }
 
     fn level_of(checks: &[Check], name: &str) -> Level {
@@ -686,12 +761,15 @@ mod tests {
         assert_eq!(err, "");
         let v: Value = serde_json::from_str(&out).unwrap();
         let checks = v["checks"].as_array().unwrap();
-        assert_eq!(checks.len(), 9, "{out}");
+        // 리눅스에서는 「로그」 줄이 하나 더 있다(사용자 journal 판별).
+        let expected = if cfg!(target_os = "linux") { 10 } else { 9 };
+        assert_eq!(checks.len(), expected, "{out}");
         assert_eq!(checks[0]["level"], json!("ok"), "{out}");
         assert_eq!(checks[2]["level"], json!("ok"), "{out}");
-        // 빈 홈: 등록 전이라 뿌리는 warn 이다.
-        assert_eq!(checks[8]["name"], json!("뿌리"));
-        assert_eq!(checks[8]["level"], json!("warn"), "{out}");
+        // 빈 홈: 등록 전이라 뿌리는 warn 이다. 뿌리는 늘 마지막 줄이다.
+        let root = checks.last().unwrap();
+        assert_eq!(root["name"], json!("뿌리"));
+        assert_eq!(root["level"], json!("warn"), "{out}");
         assert_eq!(code, i32::from(v["ok"] == json!(false)));
         // 아무것도 만들지 않았다.
         assert_eq!(std::fs::read_dir(&home).unwrap().count(), 0);

@@ -298,7 +298,11 @@ fn list_asks_the_running_operator_and_renders() {
         render_list(&snap),
         "풀 main (기본)\n  work\t로그인됨\ta@example.com\n  old\t로그인 안 됨\t[다시 로그인 필요]\n풀 spare\n  (계정 없음)"
     );
-    assert!(render_list(&json!({"pools": []})).contains("계정이 없다"));
+    let empty = render_list(&json!({"pools": []}));
+    // 풀이 없는 것은 고칠 것이 아니다 — 꼭 해야 하는 일처럼 읽히지 않게 적는다.
+    assert_eq!(empty, NO_POOLS);
+    assert!(empty.contains("이대로도 돈다"));
+    assert!(empty.contains("때만 `account login <pool> <account>`"));
 }
 
 #[test]
