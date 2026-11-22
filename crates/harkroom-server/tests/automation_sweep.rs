@@ -50,14 +50,14 @@ async fn status(admin: &PgPool, id: &str) -> (String, Option<String>, Option<Str
         .unwrap()
 }
 
-async fn message(admin: &PgPool, id: &str) -> (String, i32, Value) {
-    let (body, depth, meta): (String, i32, String) =
-        sqlx::query_as("select body, mention_depth, meta::text from message where id = $1::uuid")
+async fn message(admin: &PgPool, id: &str) -> (String, Value) {
+    let (body, meta): (String, String) =
+        sqlx::query_as("select body, meta::text from message where id = $1::uuid")
             .bind(id)
             .fetch_one(admin)
             .await
             .unwrap();
-    (body, depth, serde_json::from_str(&meta).unwrap())
+    (body, serde_json::from_str(&meta).unwrap())
 }
 
 #[tokio::test]
@@ -166,17 +166,15 @@ async fn automation_sweep_like_ts() {
 
     let (s, e, m) = status(&admin, &r_plain).await;
     assert_eq!((s.as_str(), e), ("sent", None));
-    let (body, depth, meta) = message(&admin, &m.unwrap()).await;
+    let (body, meta) = message(&admin, &m.unwrap()).await;
     assert_eq!(body, "승인 대기 PR: https://example.com/pr/1");
-    assert_eq!(depth, 0);
     assert_eq!(meta["automation"]["id"], Value::String(plain.clone()));
     assert_eq!(meta["automation"]["runId"], Value::String(r_plain.clone()));
 
-    // 사슬 깊이 99 — TS `max(scan, chainDepth)` 를 저장한다. 사슬 상한은 없다(O1) — 깊이가 아무리 깊어도 부름을 막지 않는다.
+    // 회차에 옛 사슬 깊이 99 가 적혀 있어도(칸은 남아 있다) 읽지 않는다 — 글은 그대로 나가고 부름도 막히지 않는다.
     let (s, _, m) = status(&admin, &r_deep).await;
     assert_eq!(s, "sent");
-    let (_, depth, meta) = message(&admin, &m.unwrap()).await;
-    assert_eq!(depth, 99);
+    let (_, meta) = message(&admin, &m.unwrap()).await;
     assert!(
         meta.get("mentionChainCapped").is_none(),
         "a deep chain-bound post is not capped: {meta}"
@@ -184,8 +182,7 @@ async fn automation_sweep_like_ts() {
     // 같은 자동화의 사슬 밖 회차.
     let (s, _, m) = status(&admin, &r_free).await;
     assert_eq!(s, "sent");
-    let (_, depth, meta) = message(&admin, &m.unwrap()).await;
-    assert_eq!(depth, 0);
+    let (_, meta) = message(&admin, &m.unwrap()).await;
     assert!(meta.get("mentionChainCapped").is_none(), "{meta}");
 
     assert_eq!(

@@ -767,8 +767,8 @@ pub const DEBOUNCE_PRIVILEGES: &[(&str, &str)] = &[
 
 /// TS `enqueueRun` 의 INSERT — `not_before` 는 디바운스가 있을 때만(초).
 pub(crate) const INSERT_HOOK_RUN_SQL: &str = "insert into automation_run (automation_id, event_key, trigger_kind, payload, not_before, \
-                                 initiated_by, cause_message_id, chain_depth) \
-     values ($1::uuid, $2, $3, $4::jsonb, now() + make_interval(secs => $5::int), null, null, null) \
+                                 initiated_by, cause_message_id) \
+     values ($1::uuid, $2, $3, $4::jsonb, now() + make_interval(secs => $5::int), null, null) \
      on conflict (automation_id, event_key) do nothing \
      returning id::text";
 

@@ -141,11 +141,6 @@ pub const MOVED: &[Moved] = &[
         path: "/settings/agent-defaults",
         route: || axum::routing::get(crate::lists::agent_defaults),
     },
-    Moved {
-        key: "GET /settings/mention-policy",
-        path: "/settings/mention-policy",
-        route: || axum::routing::get(crate::lists::mention_policy),
-    },
     // P4c 신고·차단 읽기(`writes_moderation.rs`).
     Moved {
         key: "GET /admin/reports",
@@ -250,11 +245,6 @@ pub const MOVED_WRITE: &[Moved] = &[
         key: "PUT /settings/agent-defaults",
         path: "/settings/agent-defaults",
         route: || axum::routing::put(crate::writes_settings::put_agent_defaults),
-    },
-    Moved {
-        key: "PUT /settings/mention-policy",
-        path: "/settings/mention-policy",
-        route: || axum::routing::put(crate::writes_settings::put_mention_policy),
     },
     Moved {
         key: "POST /skills/usage",

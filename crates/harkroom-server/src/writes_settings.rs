@@ -1,6 +1,6 @@
 //! 가벼운 쓰기①(S5.2 P4a) — 설정 PUT 둘과 스킬 승인·비활성·사용 기록.
 //!
-//! TS 짝: `routes/settingsRoutes.ts`(PUT agent-defaults·mention-policy) · `routes/skillRoutes.ts`(POST usage·approve, DELETE).
+//! TS 짝: `routes/settingsRoutes.ts`(PUT agent-defaults) · `routes/skillRoutes.ts`(POST usage·approve, DELETE).
 //! 순서는 TS 와 같다: fastify 본문 읽기 → preHandler(인증·권한) → zod. 거절은 상태·코드가 같아야 하고(문구는 zod 와 다르다),
 //! 성공은 본문까지 같아야 한다(`test/rustFrontDb.test.ts`).
 use crate::auth::{RequireAccount, RequireAdmin};
@@ -17,9 +17,6 @@ use sqlx::PgPool;
 /// shared `RUNNABLE_HARNESSES`.
 const RUNNABLE_HARNESSES: &[&str] = &["claude-code", "codex", "opencode", "kilo", "pi", "omp"];
 const EFFORTS: &[&str] = &["low", "medium", "high", "xhigh", "max"];
-/// shared `MENTION_CHAIN_LIMIT_MIN`·`MAX`.
-const CHAIN_LIMIT_MIN: f64 = 1.0;
-const CHAIN_LIMIT_MAX: f64 = 200.0;
 /// services/skills.ts `SKILL_USE_MAX_SLUGS`.
 const SKILL_USE_MAX_SLUGS: usize = 20;
 /// services/skills.ts `BUILTIN_SKILL_PREFIX`.
@@ -161,70 +158,6 @@ pub async fn put_agent_defaults(State(st): State<AppState>, req: Request) -> Res
         pool,
         &st.trust,
         "agent.defaults.updated",
-        &me,
-        &parts,
-        &before,
-        &after,
-    )
-    .await;
-    json_ok(after)
-}
-
-/// zod `{ chainLimit: number.int().min(1).max(200) }`.
-pub fn parse_chain_limit(body: &Body) -> Result<i32, &'static str> {
-    let Body::Json(Value::Object(o)) = body else {
-        return Err("expected object");
-    };
-    let n = o
-        .get("chainLimit")
-        .and_then(Value::as_f64)
-        .ok_or("chainLimit")?;
-    if !n.is_finite() || n.fract() != 0.0 || !(CHAIN_LIMIT_MIN..=CHAIN_LIMIT_MAX).contains(&n) {
-        return Err("chainLimit");
-    }
-    Ok(n as i32)
-}
-
-/// `PUT /settings/mention-policy` — admin. 감사 `mention.policy.updated` {before, after}.
-pub async fn put_mention_policy(State(st): State<AppState>, req: Request) -> Response {
-    let (body, RequireAdmin(me), parts) = match body_then::<RequireAdmin>(req).await {
-        Ok(v) => v,
-        Err(r) => return r,
-    };
-    let limit = match parse_chain_limit(&body) {
-        Ok(n) => n,
-        Err(f) => return bad(f),
-    };
-    let pool = match write_pool(&st) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
-    // 행이 없으면 shared `MENTION_CHAIN_LIMIT`(8) — `getMentionPolicy`.
-    let before: Result<String, _> = sqlx::query_scalar(
-        "select json_build_object('chainLimit', coalesce((select chain_limit from mention_policy where id = true), 8))::text",
-    )
-    .fetch_one(pool)
-    .await;
-    let before = match before {
-        Ok(b) => b,
-        Err(e) => return internal(e),
-    };
-    let after: Result<String, _> = sqlx::query_scalar(
-        "insert into mention_policy (id, chain_limit) values (true, $1) \
-           on conflict (id) do update set chain_limit = excluded.chain_limit \
-         returning json_build_object('chainLimit', chain_limit)::text",
-    )
-    .bind(limit)
-    .fetch_one(pool)
-    .await;
-    let after = match after {
-        Ok(a) => a,
-        Err(e) => return internal(e),
-    };
-    audit_change(
-        pool,
-        &st.trust,
-        "mention.policy.updated",
         &me,
         &parts,
         &before,
@@ -662,16 +595,6 @@ mod tests {
         assert!(parse_defaults(&j(json!({ "model": "a".repeat(65) }))).is_err());
         assert!(parse_defaults(&j(json!([]))).is_err());
         assert!(parse_defaults(&Body::None).is_err());
-    }
-
-    #[test]
-    fn chain_limit_shape() {
-        assert_eq!(parse_chain_limit(&j(json!({ "chainLimit": 5 }))), Ok(5));
-        assert_eq!(parse_chain_limit(&j(json!({ "chainLimit": 5.0 }))), Ok(5));
-        assert!(parse_chain_limit(&j(json!({ "chainLimit": 5.5 }))).is_err());
-        assert!(parse_chain_limit(&j(json!({ "chainLimit": 0 }))).is_err());
-        assert!(parse_chain_limit(&j(json!({ "chainLimit": 201 }))).is_err());
-        assert!(parse_chain_limit(&j(json!({ "chainLimit": "5" }))).is_err());
     }
 
     #[test]

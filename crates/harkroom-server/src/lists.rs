@@ -270,14 +270,6 @@ pub async fn agent_defaults(State(pool): State<PgPool>, _: RequireAdmin) -> Resp
     reply(one_json(&pool, AGENT_DEFAULTS, None).await)
 }
 
-/// 행이 없으면 `MENTION_CHAIN_LIMIT`(shared, 8)로 떨어진다(`getMentionPolicy`).
-const MENTION_POLICY: &str = "select json_build_object('chainLimit', coalesce((select chain_limit from mention_policy where id = true), 8))::text";
-
-/// `GET /settings/mention-policy` — 로그인한 누구나.
-pub async fn mention_policy(State(pool): State<PgPool>, _: RequireAccount) -> Response {
-    reply(one_json(&pool, MENTION_POLICY, None).await)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -26,8 +26,6 @@ pub const REQUIRED_PRIVILEGES: &[(&str, &str)] = &[
     ("pat", "UPDATE"),
     // P4a — 설정 PUT 둘·스킬 승인/비활성/사용 기록(`writes_settings.rs`).
     ("agent_defaults", "UPDATE"),
-    ("mention_policy", "INSERT"),
-    ("mention_policy", "UPDATE"),
     ("workspace_skill", "UPDATE"),
     ("workspace_skill_usage", "INSERT"),
     ("builtin_skill_usage", "INSERT"),
@@ -509,7 +507,6 @@ mod tests {
                 "inbox_view_cursor",
                 "mcp_server",
                 "mcp_server.credential_kind",
-                "mention_policy",
                 "message_report",
                 "pat",
                 "push_device",

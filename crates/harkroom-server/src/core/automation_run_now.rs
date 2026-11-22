@@ -47,7 +47,6 @@ pub const AUTOMATION_RUN_NOW_PRIVILEGES: &[(&str, &str)] = &[
     ("automation_run.not_before", "INSERT"),
     ("automation_run.initiated_by", "INSERT"),
     ("automation_run.cause_message_id", "INSERT"),
-    ("automation_run.chain_depth", "INSERT"),
 ];
 
 /// 시간당 상한에 닿았을 때의 일시정지·위임장 끝내기 칸(sweeper `AUTOMATION_SWEEP_PRIVILEGES` 의 같은 칸).

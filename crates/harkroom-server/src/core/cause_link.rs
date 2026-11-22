@@ -1,5 +1,5 @@
 //! S5.3 C1c-4c — 에이전트 글의 **원인 입력**. MCP 발화는 턴의 원인(`X-Harkroom-Cause`)·턴 id 를 싣고 오고, TS `postMessage` 는 그것으로
-//! 깊이를 물려받고(`causeDepth`), 사슬 고리를 적고(`verifiedCauseLink`), principal·위임을 잇는다(`principalForAgentPost`·
+//! 사슬 고리를 적고(`verifiedCauseLink`), principal·위임을 잇는다(`principalForAgentPost`·
 //! `causeReasonsFor`·`mandateForAgentPost`). 발화가 실어 온 모델은 설정과 견준다(`reportedModelMeta`). 여기는 그 포트다 —
 //! 문장은 전부 TS 상수를 골든(`sql_fragments.json` 의 `cause_*`·`effective_model`)으로 받는다.
 //!
@@ -17,7 +17,6 @@ pub const MODEL_ID_MAX: usize = 120;
 const MODEL_FAMILIES: &[&str] = &["opus", "sonnet", "haiku", "fable", "gpt", "codex", "gemini"];
 
 struct Sql {
-    depth: String,
     verified: String,
     principal: String,
     reasons: String,
@@ -36,14 +35,6 @@ fn sql() -> &'static Sql {
                 .to_string()
         };
         Sql {
-            // 시각은 TS `Date` 처럼 밀리초로 자른다(사슬 시작을 옮겨 적고 백스톱 나이를 재는 값이다).
-            depth: format!(
-                "select c.depth::int, c.stall::int, c.author_is_agent, \
-                 (extract(epoch from date_trunc('milliseconds', c.created_at)) * 1000)::bigint, \
-                 (extract(epoch from date_trunc('milliseconds', c.chain_started_at)) * 1000)::bigint, \
-                 c.from_automation, c.human_card from ({}) c",
-                frag("cause_depth")
-            ),
             verified: frag("cause_verified_link"),
             principal: frag("cause_principal"),
             reasons: frag("cause_reasons"),
@@ -51,52 +42,6 @@ fn sql() -> &'static Sql {
             effective_model: frag("effective_model"),
         }
     })
-}
-
-/// TS `ChainLink` — 원인에서 물려받은 앞 고리. `started_ms` 가 없으면 이 글이 사슬의 시작이다.
-#[derive(Debug, PartialEq, Eq)]
-pub struct CauseLink {
-    pub depth: i32,
-    pub prev_stall: i32,
-    pub started_ms: Option<i64>,
-}
-
-/// TS `causeDepth` — 그 원인이 나를 실제로 깨웠을 때만(부름·사람 글의 답·사람이 누른 카드) 깊이를 물려받는다. 아니면 `None`
-/// (→ 스레드 스캔, TS 와 같다).
-pub async fn cause_depth(
-    conn: &mut sqlx::PgConnection,
-    author: &str,
-    cause: &str,
-) -> Result<Option<CauseLink>, sqlx::Error> {
-    type Row = (i32, i32, bool, i64, Option<i64>, bool, bool);
-    let row: Option<Row> = sqlx::query_as(sql().depth.as_str())
-        .bind(cause)
-        .bind(author)
-        .fetch_optional(&mut *conn)
-        .await?;
-    Ok(row.map(
-        |(depth, stall, author_is_agent, created, chain_started, from_automation, human_card)| {
-            if human_card {
-                CauseLink {
-                    depth: 1,
-                    prev_stall: 0,
-                    started_ms: None,
-                }
-            } else if author_is_agent || from_automation {
-                CauseLink {
-                    depth: depth + 1,
-                    prev_stall: stall,
-                    started_ms: Some(chain_started.unwrap_or(created)),
-                }
-            } else {
-                CauseLink {
-                    depth: 1,
-                    prev_stall: 0,
-                    started_ms: Some(created),
-                }
-            }
-        },
-    ))
 }
 
 /// TS `verifiedCauseLink` — 그 원인이 이 작성자에게 최근(60분) inbox 를 만들었고 지워지지 않았을 때만 그 id.
@@ -242,6 +187,53 @@ mod tests {
     #[test]
     fn golden_loads() {
         let _ = sql();
+    }
+
+    /// O2 — 깊이를 물려받던 문장(`cause_depth`)을 걷어도 사슬 고리·principal·사유·위임 판정 문장은 한 글자도 바뀌지 않는다.
+    /// 이 넷을 고치려면 여기 지문도 같이 고쳐야 한다(판정이 바뀐다는 뜻이다).
+    #[test]
+    fn cause_judgement_sql_is_pinned() {
+        use sha2::{Digest, Sha256};
+        let s = sql();
+        for (name, text, want) in [
+            (
+                "cause_verified_link",
+                &s.verified,
+                "40523fddc443592038e8a1f811dff2cd955e2bd427fddcb5116b7549955739a6",
+            ),
+            (
+                "cause_principal",
+                &s.principal,
+                "d3dd79991ece71ef2d2925745ab3c6b428469c7543c10b743f39b215ec9a44a7",
+            ),
+            (
+                "cause_reasons",
+                &s.reasons,
+                "43f6248574b8d1c148fcbcaf313fdaf33c26bfb4faed4ddbc6404ca5eb55bb62",
+            ),
+            (
+                "cause_mandate",
+                &s.mandate,
+                "c0297037fba69dcf4ec58aebe22ed1daaf0617955c39e56cfccc768b96f51fe3",
+            ),
+        ] {
+            assert_eq!(hex::encode(Sha256::digest(text.as_bytes())), want, "{name}");
+        }
+    }
+
+    /// O2 — 서버가 쓰는 문장 어디에도 지울 칸·표가 남아 있지 않다(다음 릴리스에서 칸을 지워도 옛 pod 가 깨지지 않게).
+    #[test]
+    fn golden_does_not_touch_retired_columns() {
+        let raw = include_str!("../../golden/sql_fragments.json");
+        for gone in [
+            "mention_depth",
+            "stall_depth",
+            "chain_started_at",
+            "mention_policy",
+            "chain_depth",
+        ] {
+            assert!(!raw.contains(gone), "golden sql still mentions {gone}");
+        }
     }
 
     #[test]

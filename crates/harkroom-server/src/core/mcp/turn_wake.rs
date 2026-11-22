@@ -393,7 +393,6 @@ pub async fn answer(
         defer_inbox_events: false,
         chat_ask_rust: false,
         close_asks_after_commit: false,
-        cause: None,
         chain_cause,
         turn_id: turn.filter(|_| operator),
         meta,
@@ -406,7 +405,6 @@ pub async fn answer(
         no_mentions: false,
         before_commit: None,
         service_call: false,
-        chain_depth: None,
     };
     let post = PostBody {
         body: a.reason.clone(),

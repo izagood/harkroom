@@ -108,7 +108,7 @@ DELEGATION_DEADLINE_GRANTS=(
 )
 HOOK_DEBOUNCE_GRANTS=(
   'update (enabled, next_at, paused_reason, updated_at) on automation'
-  'insert (automation_id, event_key, trigger_kind, payload, not_before, initiated_by, cause_message_id, chain_depth) on automation_run'
+  'insert (automation_id, event_key, trigger_kind, payload, not_before, initiated_by, cause_message_id) on automation_run'
   'update (payload) on automation_run'
 )
 THREAD_STATUS_GRANTS=(
