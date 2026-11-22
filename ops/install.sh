@@ -317,6 +317,8 @@ Next steps
        sudo journalctl _SYSTEMD_USER_UNIT=harkroom-operator@<key>.service -f
      To drop the sudo, join the journal group and log in again:
        sudo usermod -aG systemd-journal "\$USER"
+     That group can read the whole machine's journal (other users' and services' logs).
+     On a machine shared with other people, use only the sudo line above.
 
 After an upgrade, restart running instances:  systemctl --user restart 'harkroom-operator@*'
 Uninstall:  sh install.sh --uninstall

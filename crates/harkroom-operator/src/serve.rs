@@ -603,6 +603,11 @@ pub fn spawn_server_link(
             operator_bin: std::env::current_exe()
                 .map(|p| p.to_string_lossy().into_owned())
                 .unwrap_or_default(),
+            // 러너 env 의 PATH 와 같은 규칙(`assignments`): 로그인 PATH 가 있으면 그것, 없으면 물려받는 이 프로세스의 PATH.
+            harness_path: assign_login_path
+                .clone()
+                .filter(|p| !p.is_empty())
+                .or_else(|| std::env::var("PATH").ok()),
             owner: std::sync::Arc::clone(&owner),
             on_started: Box::new(move |agent_id: &str, runner_id: &str| {
                 let _ = started_link.send(&OperatorToServerFrame::RunnerStarted {

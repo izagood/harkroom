@@ -100,6 +100,27 @@ pub fn build_mcp_config(
     }
 }
 
+/// 늘 싣는 `avcs`(`command: "avcs"`)를 이 기기에서 띄울 수 없으면 설정에서 뺀다. `path` 는 러너가 하네스에 넘기는 PATH 다.
+/// 뺐으면 `true`. 없는 명령을 그대로 실으면 하네스가 턴마다 연결 실패를 낸다 — claude 는 못 찾은 명령 이름을 가려
+/// `Executable not found in $PATH: "stdio"` 로 찍어서, 무엇이 없는지도 읽히지 않는다. avcs 는 오퍼레이터 묶음에 들어 있지 않다.
+pub fn without_missing_avcs(
+    mcp_servers: &mut Map<String, Value>,
+    path: Option<&str>,
+    is_exec: &dyn Fn(&Path) -> bool,
+) -> bool {
+    let found = path.is_some_and(|p| {
+        p.split(':')
+            .filter(|d| !d.is_empty())
+            .any(|d| is_exec(&Path::new(d).join("avcs")))
+    });
+    !found && mcp_servers.shift_remove("avcs").is_some()
+}
+
+/// 실행 가능한 보통 파일인가(심링크는 따라간다).
+pub fn is_executable_file(p: &Path) -> bool {
+    fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+}
+
 /// JS 참값(`if (def.oauth)`) — null·false·0·"" 가 아니면 참.
 fn truthy(v: Option<&Value>) -> bool {
     match v {
@@ -311,6 +332,42 @@ mod tests {
         );
         assert_eq!(b.mcp_servers["avcs"]["command"], "avcs");
         assert!(b.missing.is_empty());
+    }
+
+    /// 리눅스 실측: avcs 가 PATH 에 없는 기기에서 avcs MCP 만 턴마다 연결에 실패했다. 없으면 빼고, harkroom 은 그대로 둔다.
+    #[test]
+    fn avcs_is_dropped_only_when_not_on_the_runner_path() {
+        let build =
+            || build_mcp_config("/bin/op", &[], &Map::new(), &BTreeMap::new(), &[]).mcp_servers;
+        let has = |p: &Path| p == Path::new("/opt/tools/avcs");
+        let mut s = build();
+        assert!(!without_missing_avcs(
+            &mut s,
+            Some("/usr/bin::/opt/tools"),
+            &has
+        ));
+        assert!(s.contains_key("avcs"));
+        let mut s = build();
+        assert!(without_missing_avcs(&mut s, Some("/usr/bin:/bin"), &has));
+        assert_eq!(s.keys().collect::<Vec<_>>(), ["harkroom"]);
+        // 이미 뺀 설정은 다시 「뺐다」고 하지 않는다. PATH 를 모르면 없는 것으로 본다.
+        assert!(!without_missing_avcs(&mut s, Some("/usr/bin"), &has));
+        let mut s = build();
+        assert!(without_missing_avcs(&mut s, None, &has));
+        // 폴더·실행 비트 없는 파일은 실행 파일이 아니다.
+        let d = tmp("avcs-exec");
+        fs::write(d.join("avcs"), b"#!/bin/sh\n").unwrap();
+        assert!(!is_executable_file(&d.join("avcs")));
+        assert!(!is_executable_file(&d));
+        fs::set_permissions(d.join("avcs"), fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(is_executable_file(&d.join("avcs")));
+        let mut s = build();
+        assert!(!without_missing_avcs(
+            &mut s,
+            d.to_str(),
+            &is_executable_file
+        ));
+        let _ = fs::remove_dir_all(&d);
     }
 
     #[test]
