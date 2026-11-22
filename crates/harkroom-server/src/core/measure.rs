@@ -4,7 +4,7 @@
 //!   부른 쪽의 트랜잭션·응답·지연에 닿지 않는다.
 //! - 켜는 곳은 `main.rs` 한 군데([`enable`]) — 쓰기 풀에 [`MEASURE_PRIVILEGES`] 가 다 있을 때만. 안 켜졌으면 [`record`] 는 아무것도 안 한다.
 //! - 글 본문·핸들은 싣지 않는다 — id 와 수, 갈래 이름만.
-//! - 읽기는 [`summary`] — 기간 안의 `kind`·갈래별 건수와 `value` 의 합·평균·p50·p95·최댓값.
+//! - 읽기는 [`summary`]·`GET /measure/summary`([`summary_route`], 관리자만) — 기간 안의 `kind`·갈래별 건수와 `value` 의 합·평균·p50·p95·최댓값.
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use std::sync::OnceLock;
@@ -29,6 +29,11 @@ static POOL: OnceLock<PgPool> = OnceLock::new();
 /// 기록을 켠다(프로세스에 한 번). 두 번째 부름은 무시한다.
 pub fn enable(pool: PgPool) {
     let _ = POOL.set(pool);
+}
+
+/// 켜졌을 때의 풀 — 읽기 길([`summary_route`])이 같은 역할로 읽는다. 안 켜졌으면 `None`.
+pub fn pool() -> Option<&'static PgPool> {
+    POOL.get()
 }
 
 /// 사건 한 줄. id 칸은 uuid 글자(아니면 그 줄은 버려진다 — 기록 실패로 삼킨다).
@@ -113,17 +118,58 @@ pub fn delegation_outcomes(ids: &[String], outcome: &str, reason: Option<&str>) 
     }
 }
 
-/// 기간(`$1` 초) 안의 `kind`·갈래별 집계. 갈래는 `detail` 의 `branch` → `reason` → `outcome` 순으로 처음 있는 값.
-pub const SUMMARY_SQL: &str = "select kind, coalesce(detail->>'branch', detail->>'reason', detail->>'outcome', '') as branch, \
+/// 닫힌 호출 누락들 — 대상 하나에 한 줄(`ref_id`). `missed` 는 `mention_calls::Resolved::missed`(대상, 이유).
+pub fn calls_missed<'a>(
+    author: &str,
+    channel: &str,
+    missed: impl IntoIterator<Item = &'a (String, &'static str)>,
+) {
+    for (reference, reason) in missed {
+        record(Event {
+            kind: KIND_CALL_MISSED,
+            account_id: Some(author.to_string()),
+            channel_id: Some(channel.to_string()),
+            ref_id: Some(reference.clone()),
+            detail: Some(json!({ "reason": reason })),
+            ..Event::default()
+        });
+    }
+}
+
+macro_rules! summary_sql {
+    ($cond:literal) => {
+        concat!(
+            "select kind, coalesce(detail->>'branch', detail->>'reason', detail->>'outcome', '') as branch, \
             count(*)::int8 as n, coalesce(sum(value), 0)::int8 as total, \
             coalesce(avg(value), 0)::float8 as mean, \
             coalesce(percentile_cont(0.5) within group (order by value), 0)::float8 as p50, \
             coalesce(percentile_cont(0.95) within group (order by value), 0)::float8 as p95, \
             coalesce(max(value), 0)::int8 as max \
-       from measure_event where created_at >= now() - make_interval(secs => $1::float8) \
-      group by 1, 2 order by 1, 2";
+       from measure_event where ",
+            $cond,
+            " group by 1, 2 order by 1, 2"
+        )
+    };
+}
+
+/// 기간(`$1` 초) 안의 `kind`·갈래별 집계. 갈래는 `detail` 의 `branch` → `reason` → `outcome` 순으로 처음 있는 값.
+pub const SUMMARY_SQL: &str =
+    summary_sql!("created_at >= now() - make_interval(secs => $1::float8)");
+
+/// 같은 집계를 `[$1, $2)`(epoch ms) 구간으로.
+pub const SUMMARY_BETWEEN_SQL: &str = summary_sql!(
+    "created_at >= to_timestamp($1::float8 / 1000.0) and created_at < to_timestamp($2::float8 / 1000.0)"
+);
 
 type SummaryRow = (String, String, i64, i64, f64, f64, f64, i64);
+
+fn summary_json(rows: Vec<SummaryRow>) -> Vec<Value> {
+    rows.into_iter()
+        .map(|(kind, branch, n, total, mean, p50, p95, max)| {
+            json!({ "kind": kind, "branch": branch, "count": n, "sum": total, "mean": mean, "p50": p50, "p95": p95, "max": max })
+        })
+        .collect()
+}
 
 /// [`SUMMARY_SQL`] 을 돌려 JSON 줄로.
 pub async fn summary(pool: &PgPool, window_sec: i64) -> Result<Vec<Value>, sqlx::Error> {
@@ -131,12 +177,94 @@ pub async fn summary(pool: &PgPool, window_sec: i64) -> Result<Vec<Value>, sqlx:
         .bind(window_sec as f64)
         .fetch_all(pool)
         .await?;
-    Ok(rows
-        .into_iter()
-        .map(|(kind, branch, n, total, mean, p50, p95, max)| {
-            json!({ "kind": kind, "branch": branch, "count": n, "sum": total, "mean": mean, "p50": p50, "p95": p95, "max": max })
-        })
-        .collect())
+    Ok(summary_json(rows))
+}
+
+/// [`SUMMARY_BETWEEN_SQL`] — `[since_ms, until_ms)` 구간의 줄.
+pub async fn summary_between(
+    pool: &PgPool,
+    since_ms: i64,
+    until_ms: i64,
+) -> Result<Vec<Value>, sqlx::Error> {
+    let rows: Vec<SummaryRow> = sqlx::query_as(SUMMARY_BETWEEN_SQL)
+        .bind(since_ms as f64)
+        .bind(until_ms as f64)
+        .fetch_all(pool)
+        .await?;
+    Ok(summary_json(rows))
+}
+
+/// 줄들을 `kind` 별 건수로 접는다(줄 순서 = `kind` 순서).
+pub fn kind_counts(rows: &[Value]) -> Vec<Value> {
+    let mut out: Vec<(String, i64)> = vec![];
+    for r in rows {
+        let (k, n) = (
+            r["kind"].as_str().unwrap_or_default(),
+            r["count"].as_i64().unwrap_or(0),
+        );
+        match out.last_mut() {
+            Some((last, total)) if last == k => *total += n,
+            _ => out.push((k.to_string(), n)),
+        }
+    }
+    out.into_iter()
+        .map(|(kind, count)| json!({ "kind": kind, "count": count }))
+        .collect()
+}
+
+/// 읽기 창의 기본(7일)·상한(31일), ms.
+pub const DEFAULT_WINDOW_MS: i64 = 7 * 86_400_000;
+pub const MAX_WINDOW_MS: i64 = 31 * 86_400_000;
+
+/// `since`·`until`(epoch ms, 숫자만) → `[since, until)`. 없으면 `until = now`, `since = until - 7일`. 창이 31일을 넘으면 `since` 를 당긴다.
+/// 모르는 키는 버린다. 꼴이 틀리거나 `since >= until` 이면 `Err`.
+pub fn parse_window(raw: Option<&str>, now_ms: i64) -> Result<(i64, i64), &'static str> {
+    let (mut since, mut until): (Option<i64>, Option<i64>) = (None, None);
+    for (k, v) in crate::directory::form_pairs(raw.unwrap_or("")) {
+        let slot = match k.as_str() {
+            "since" => &mut since,
+            "until" => &mut until,
+            _ => continue,
+        };
+        if slot.is_some() {
+            return Err("duplicate query key");
+        }
+        if v.is_empty() || v.len() > 15 || !v.bytes().all(|b| b.is_ascii_digit()) {
+            return Err("since/until must be epoch milliseconds");
+        }
+        *slot = v.parse().ok();
+    }
+    let until = until.unwrap_or(now_ms);
+    let since = since.unwrap_or(until - DEFAULT_WINDOW_MS);
+    if since >= until {
+        return Err("since must be before until");
+    }
+    Ok((since.max(until - MAX_WINDOW_MS), until))
+}
+
+/// `GET /measure/summary` — 관리자만(`RequireAdmin`). 기록이 안 켜졌으면(권한 없음) 옮기지 않은 줄처럼 404 `not_found`.
+pub async fn summary_route(
+    _admin: crate::auth::RequireAdmin,
+    axum::extract::RawQuery(raw): axum::extract::RawQuery,
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    let Some(pool) = pool() else {
+        return crate::directory::json_err(StatusCode::NOT_FOUND, "not_found", "not found");
+    };
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as i64);
+    let (since, until) = match parse_window(raw.as_deref(), now_ms) {
+        Ok(w) => w,
+        Err(m) => return crate::directory::json_err(StatusCode::BAD_REQUEST, "invalid_request", m),
+    };
+    match summary_between(pool, since, until).await {
+        Ok(rows) => crate::directory::json_ok(
+            json!({ "since": since, "until": until, "kinds": kind_counts(&rows), "rows": rows })
+                .to_string(),
+        ),
+        Err(e) => crate::directory::internal(e),
+    }
 }
 
 #[cfg(test)]
@@ -166,7 +294,55 @@ mod tests {
     }
 
     #[test]
+    fn window_defaults_caps_and_rejects() {
+        let now = 1_800_000_000_000_i64;
+        assert_eq!(parse_window(None, now), Ok((now - DEFAULT_WINDOW_MS, now)));
+        assert_eq!(
+            parse_window(Some("since=10&until=20&x=1"), now),
+            Ok((10, 20))
+        );
+        // 상한을 넘는 창은 since 를 당긴다.
+        assert_eq!(
+            parse_window(Some("since=0"), now),
+            Ok((now - MAX_WINDOW_MS, now))
+        );
+        assert_eq!(
+            parse_window(Some("until=5000000000"), now),
+            Ok((5_000_000_000 - DEFAULT_WINDOW_MS, 5_000_000_000))
+        );
+        for bad in [
+            "since=abc",
+            "since=",
+            "since=-1",
+            "since=20&until=10",
+            "since=1&since=2",
+        ] {
+            assert!(parse_window(Some(bad), now).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn kind_counts_fold_branches() {
+        let rows = vec![
+            json!({ "kind": "a", "branch": "x", "count": 2 }),
+            json!({ "kind": "a", "branch": "y", "count": 3 }),
+            json!({ "kind": "b", "branch": "", "count": 1 }),
+        ];
+        assert_eq!(
+            kind_counts(&rows),
+            vec![
+                json!({ "kind": "a", "count": 5 }),
+                json!({ "kind": "b", "count": 1 })
+            ]
+        );
+    }
+
+    #[test]
     fn privileges_cover_insert_and_summary() {
+        assert!(
+            SUMMARY_BETWEEN_SQL.contains("from measure_event where created_at >= to_timestamp")
+        );
+        assert!(SUMMARY_BETWEEN_SQL.ends_with("group by 1, 2 order by 1, 2"));
         for p in ["SELECT", "INSERT"] {
             assert!(MEASURE_PRIVILEGES.contains(&("measure_event", p)));
         }

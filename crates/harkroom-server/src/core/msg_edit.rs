@@ -229,6 +229,12 @@ async fn edit_in_tx(
     )
     .await?;
     let before = mention_tokens(&old_body);
+    // A1 측정 — 호출 누락(고치기). 옛 본문에 이미 있던 대상은 글 쓸 때 셌으므로 새로 적힌 대상만. 기록만.
+    super::measure::calls_missed(
+        actor,
+        channel,
+        calls.missed.iter().filter(|(r, _)| !before.contains(r)),
+    );
     let added = mention_tokens(&calls.normalized_body)
         .iter()
         .any(|t| !before.contains(t));

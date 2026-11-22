@@ -2,7 +2,8 @@
 //! `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `scripts/db-tests.sh` 가 넘긴다).
 //! - `HARKROOM_TEST_WRITE_DATABASE_URL` 이 있으면 기록은 그 역할(`MEASURE_PRIVILEGES` 만 가진 쓰기 역할)로 한다.
 use harkroom_server::core::measure::{
-    Event, KIND_MERGE_DENIED, KIND_QUEUE_WAIT, MEASURE_PRIVILEGES, record_with, summary,
+    Event, KIND_DELEGATION_OUTCOME, KIND_MERGE_DENIED, KIND_QUEUE_WAIT, MEASURE_PRIVILEGES,
+    kind_counts, record_with, summary, summary_between,
 };
 use serde_json::json;
 use sqlx::PgPool;
@@ -71,4 +72,70 @@ async fn records_and_summarizes() {
         .expect("merge.denied row");
     assert_eq!(denied["branch"], "grant");
     assert_eq!(denied["count"], 1);
+
+    // 위임 결말 — 보고·실패·대체. 갈래는 `reason` 이 있으면 그것, 없으면(null) `outcome`.
+    for (outcome, reason) in [
+        ("reported", None),
+        ("reported", None),
+        ("failed", None),
+        ("closed", Some("superseded")),
+    ] {
+        record_with(
+            &w,
+            Event {
+                kind: KIND_DELEGATION_OUTCOME,
+                ref_id: Some("d".into()),
+                detail: Some(json!({ "outcome": outcome, "reason": reason })),
+                ..Event::default()
+            },
+        )
+        .await;
+    }
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
+    let rows = summary_between(&w, now_ms - 3_600_000, now_ms + 3_600_000)
+        .await
+        .unwrap();
+    let branch = |b: &str| {
+        rows.iter()
+            .find(|r| r["kind"] == KIND_DELEGATION_OUTCOME && r["branch"] == b)
+            .unwrap_or_else(|| panic!("delegation.outcome/{b} row"))["count"]
+            .clone()
+    };
+    assert_eq!(branch("reported"), 2);
+    assert_eq!(branch("failed"), 1);
+    assert_eq!(branch("superseded"), 1);
+    // 값이 없는 갈래의 통계는 0 이다.
+    let failed = rows
+        .iter()
+        .find(|r| r["kind"] == KIND_DELEGATION_OUTCOME && r["branch"] == "failed")
+        .unwrap();
+    assert_eq!(failed["sum"], 0);
+    assert_eq!(failed["p95"], 0.0);
+    let wait = rows
+        .iter()
+        .find(|r| r["kind"] == KIND_QUEUE_WAIT)
+        .expect("queue.wait row in window");
+    assert_eq!(wait["count"], 3);
+    assert_eq!(wait["p50"], 4.0);
+    let kinds = kind_counts(&rows);
+    let total = |k: &str| {
+        kinds
+            .iter()
+            .find(|r| r["kind"] == k)
+            .unwrap_or_else(|| panic!("{k} total"))["count"]
+            .clone()
+    };
+    assert_eq!(total(KIND_DELEGATION_OUTCOME), 4);
+    assert_eq!(total(KIND_QUEUE_WAIT), 3);
+    // 구간 밖(끝은 열린 구간)이면 줄이 없다.
+    assert!(summary_between(&w, 0, 1000).await.unwrap().is_empty());
+    assert!(
+        summary_between(&w, now_ms + 3_600_000, now_ms + 7_200_000)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }
