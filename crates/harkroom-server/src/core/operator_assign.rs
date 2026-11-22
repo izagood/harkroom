@@ -314,6 +314,8 @@ pub async fn put_assignment(
         .await
     );
     db!(tx.commit().await);
+    // H1 허용 표(기록만) — 커밋 뒤, 요청 밖에서 맞춘다. 실패해도 배정은 그대로다.
+    super::device_allow::sync(Some(&agent_id));
 
     // 순서가 계약이다: 이전 곳이 먼저 놓고(drain), 새 곳이 잡는다.
     if let Some(prev) = previous.as_deref()
@@ -377,6 +379,7 @@ pub async fn delete_assignment(
     let Some(previous) = previous else {
         return err(StatusCode::NOT_FOUND, "not_found", "배정이 없다");
     };
+    super::device_allow::sync(Some(&agent_id));
     core.hub.send(
         &previous,
         &json!({ "type": "unassign", "agentId": agent_id, "drain": true }),

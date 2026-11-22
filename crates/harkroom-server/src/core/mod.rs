@@ -89,6 +89,7 @@ pub mod decide_merge_once;
 pub mod decide_owner_notice;
 pub mod decide_routes;
 pub mod delegate_write;
+pub mod device_allow;
 pub mod dm_open;
 pub mod events;
 pub mod grant_decide;

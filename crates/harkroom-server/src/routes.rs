@@ -88,6 +88,12 @@ pub const MOVED: &[Moved] = &[
         path: "/measure/summary",
         route: || axum::routing::get(crate::core::measure::summary_route),
     },
+    // H1 에이전트×기기 허용 표(`core/device_allow.rs`) — 관리자만. 기능이 꺼져 있으면 404.
+    Moved {
+        key: "GET /accounts/agents/{id}/allowed-operators",
+        path: "/accounts/agents/{id}/allowed-operators",
+        route: || axum::routing::get(crate::core::device_allow::list_route),
+    },
     // P2b 인박스 「오늘」(`inbox_today.rs`) — ETag/304.
     Moved {
         key: "GET /inbox/today/open",

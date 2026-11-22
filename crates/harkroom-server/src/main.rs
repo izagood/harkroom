@@ -5670,6 +5670,7 @@ async fn open_write_pool() -> Option<sqlx::PgPool> {
         Ok(m) if m.is_empty() => {
             eprintln!("front: write pool on");
             enable_measure(&pool).await;
+            enable_device_allow(&pool).await;
             Some(pool)
         }
         Ok(m) => {
@@ -5702,6 +5703,24 @@ async fn enable_measure(pool: &sqlx::PgPool) {
         }
         Ok(m) => eprintln!("front: measure off — missing privileges {m:?}"),
         Err(e) => eprintln!("front: measure off — privilege check failed: {e}"),
+    }
+}
+
+/// H1 에이전트×기기 허용 표(`agent_operator_allow`). 권한이 모자라면 켜지 않는다 — 이 기능만 빠지고 오퍼레이터 코어·배정은 그대로 돈다.
+/// 켤 때 한 번 배정에 맞춘다(꺼져 있던 동안·놓친 맞추기를 메운다).
+async fn enable_device_allow(pool: &sqlx::PgPool) {
+    use harkroom_server::core::device_allow;
+    match write::missing_in(pool, device_allow::DEVICE_ALLOW_PRIVILEGES, &[]).await {
+        Ok(m) if m.is_empty() => {
+            eprintln!("front: device allow on");
+            device_allow::enable(pool.clone());
+            device_allow::sync(None);
+        }
+        Ok(m) => eprintln!("front: device allow off — missing privileges {m:?}"),
+        Err(e) => eprintln!(
+            "front: device allow off — privilege check failed ({})",
+            e.as_database_error().map_or("io", |_| "db")
+        ),
     }
 }
 

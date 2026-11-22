@@ -300,6 +300,12 @@ pub async fn claim(State(core): State<Arc<OperatorCore>>, req: Request) -> Respo
         }
     }
     db!(tx.commit().await);
+    // H1 허용 표(기록만) — 옮겨진 배정을 따라 맞춘다.
+    if let Some((_, moved)) = &replaced {
+        for agent in moved {
+            super::device_allow::sync(Some(agent));
+        }
+    }
     let operator = view(&core, &row, None);
     // commit 뒤의 일은 응답을 막지 못한다(security #1025) — 끊기·감사·이벤트가 실패해도 토큰은 돌려준다.
     if let Some((old, _)) = &replaced {
