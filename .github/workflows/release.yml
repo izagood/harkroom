@@ -895,6 +895,10 @@ jobs:
           - macOS (Apple Silicon · M1 이상): `_aarch64.dmg` 를 받아라.
 
           서명·공증된 빌드다 — 받아서 바로 열 수 있다.
+
+          Linux 헤드리스 오퍼레이터(glibc 2.35 이상 · x86_64/aarch64)는 `install.sh` 를 받아 읽고 실행하라 —
+          README 의 「Install the operator on Linux」. 묶음(`harkroom-operator-<판>-linux-<arch>.tar.gz`)과 `SHA256SUMS` 는
+          데스크톱 파일과 따로 올라와 몇 분 늦게 붙을 수 있다. 목록에 없으면 이 판에는 Linux 묶음이 없는 것이다.
           EOF
           if [ -n "$changelog" ]; then printf '\n%s\n' "$changelog" >> "$notes"; fi
 
