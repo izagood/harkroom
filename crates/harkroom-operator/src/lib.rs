@@ -26,6 +26,7 @@ macro_rules! eprintln {
 
 pub mod account_cli;
 pub mod adopt;
+pub mod agent_cli;
 pub mod api_cli;
 pub mod assignments;
 pub mod bridge;
