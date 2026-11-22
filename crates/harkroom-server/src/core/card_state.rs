@@ -5,7 +5,8 @@
 //! 돌려줄 거절」을 정한다. 누가 먼저 끝냈는지(만료 sweep 이 먼저 돌았나, 결정이 만료를 만났나)에 따라 답이 달라지지 않게 한다.
 //!
 //! 사본을 끝난 상태로 옮기는 쓰기도 여기 [`close_card_copy`] 하나다(만료 sweep·대체·머지 닫힘이 같이 쓴다). 사본은 열린
-//! 상태에서만 끝난 상태로 간다 — 먼저 쓴 쪽이 남고, 다시 불러도 바뀌지 않는다.
+//! 상태에서만 끝난 상태로 간다 — 먼저 쓴 쪽이 남고, 다시 불러도 바뀌지 않는다. 예외는 하나다: 만료된 사본은 대체가
+//! 덮는다(에이전트가 다시 청했으면 옛 카드는 새 카드를 가리킨다 — 만료 sweep 과 대체 중 누가 먼저 돌았든 같은 끝).
 //!
 //! 이 모듈은 누가 결정할 수 있는지 보지 않는다 — 끝난 카드는 언제나 거절(409)이다.
 use serde_json::{Value, json};
@@ -123,6 +124,24 @@ impl CardClose<'_> {
     }
 }
 
+impl CardClose<'_> {
+    /// 사본 상태 칸을 옮기는 문장.
+    fn status_sql(&self) -> &'static str {
+        match self {
+            CardClose::Superseded { .. } => SUPERSEDE_STATUS_COPY_SQL,
+            _ => CLOSE_STATUS_COPY_SQL,
+        }
+    }
+
+    /// 선택 카드를 닫는 문장.
+    fn ask_sql(&self) -> &'static str {
+        match self {
+            CardClose::Superseded { .. } => SUPERSEDE_ASK_COPY_SQL,
+            _ => CLOSE_ASK_COPY_SQL,
+        }
+    }
+}
+
 /// [`close_card_copy`] 가 실제로 바꾼 것.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct CardClosed {
@@ -144,11 +163,18 @@ pub const CLOSE_STATUS_COPY_SQL: &str = "update message set meta = jsonb_set(met
 /// 선택 카드 닫기 — 답도 닫힘도 없는 카드만.
 pub const CLOSE_ASK_COPY_SQL: &str = "update message set meta = jsonb_set(meta, '{ask}', (meta->'ask') || $2::jsonb)      where id = $1::uuid and meta ? 'ask' and meta->'ask'->>'closedAt' is null and meta->'ask'->'answeredWith' is null";
 
+/// 대체의 사본 상태 칸 — 열린 사본과 만료된 사본을 옮긴다(다른 끝난 상태는 그대로).
+pub const SUPERSEDE_STATUS_COPY_SQL: &str = "update message set meta = jsonb_set(meta, '{permissionRequest}', (meta->'permissionRequest') || $2::jsonb)      where id = $1::uuid and meta ? 'permissionRequest'        and coalesce(meta->'permissionRequest'->>'status', 'pending') in ('pending', 'expired')";
+
+/// 대체의 선택 카드 닫기 — 답이 없고, 열려 있거나 만료로 닫힌 카드만(사람이 닫은 카드는 그대로).
+pub const SUPERSEDE_ASK_COPY_SQL: &str = "update message set meta = jsonb_set(meta, '{ask}', (meta->'ask') || $2::jsonb)      where id = $1::uuid and meta ? 'ask' and meta->'ask'->'answeredWith' is null        and (meta->'ask'->>'closedAt' is null or meta->'ask'->>'closedReason' = 'expired')";
+
 /// 카드 글의 사본을 끝난 상태로 닫는다. 요청 줄을 옮긴 쪽이 **같은 연결(tx)** 로 부른다 — 이 함수는 요청 줄을 건드리지 않는다.
 ///
 /// - `copy_status` 가 참이면 `meta.permissionRequest` 에 상태를 적는다(요청 줄을 이 호출자가 그 상태로 옮겼을 때만 참으로 준다).
 /// - 열린 선택 카드면 `meta.ask` 를 닫는다.
 /// - 둘 다 열린 사본만 옮긴다 — 이미 끝난 사본은 그대로 두고 `false` 를 돌려준다(다시 불러도 같다).
+///   [`CardClose::Superseded`] 만 만료된 사본도 옮긴다.
 pub async fn close_card_copy(
     conn: &mut PgConnection,
     card_id: &str,
@@ -158,7 +184,7 @@ pub async fn close_card_copy(
 ) -> sqlx::Result<CardClosed> {
     let mut out = CardClosed::default();
     if copy_status {
-        out.status_written = sqlx::query(CLOSE_STATUS_COPY_SQL)
+        out.status_written = sqlx::query(close.status_sql())
             .bind(card_id)
             .bind(close.status_patch(at).to_string())
             .execute(&mut *conn)
@@ -166,7 +192,7 @@ pub async fn close_card_copy(
             .rows_affected()
             > 0;
     }
-    out.ask_closed = sqlx::query(CLOSE_ASK_COPY_SQL)
+    out.ask_closed = sqlx::query(close.ask_sql())
         .bind(card_id)
         .bind(close.ask_patch(at).to_string())
         .execute(&mut *conn)
@@ -235,6 +261,32 @@ mod tests {
         assert!(CLOSE_STATUS_COPY_SQL.contains("= 'pending'"));
         assert!(CLOSE_ASK_COPY_SQL.contains("meta->'ask'->>'closedAt' is null"));
         assert!(CLOSE_ASK_COPY_SQL.contains("meta->'ask'->'answeredWith' is null"));
+    }
+
+    /// 대체만 만료된 사본을 덮는다 — 답이 달렸거나 사람이 닫은 카드, 다른 끝난 상태는 건드리지 않는다.
+    #[test]
+    fn supersede_sql_also_moves_expired_copies() {
+        assert!(SUPERSEDE_STATUS_COPY_SQL.contains("in ('pending', 'expired')"));
+        assert!(SUPERSEDE_ASK_COPY_SQL.contains("meta->'ask'->'answeredWith' is null"));
+        assert!(SUPERSEDE_ASK_COPY_SQL.contains(
+            "(meta->'ask'->>'closedAt' is null or meta->'ask'->>'closedReason' = 'expired')"
+        ));
+        let s = CardClose::Superseded {
+            new_request: "r",
+            new_card: "c",
+        };
+        assert_eq!(s.status_sql(), SUPERSEDE_STATUS_COPY_SQL);
+        assert_eq!(s.ask_sql(), SUPERSEDE_ASK_COPY_SQL);
+        for c in [
+            CardClose::Expired,
+            CardClose::Obsolete {
+                reason: "merged",
+                actor: "a",
+            },
+        ] {
+            assert_eq!(c.status_sql(), CLOSE_STATUS_COPY_SQL);
+            assert_eq!(c.ask_sql(), CLOSE_ASK_COPY_SQL);
+        }
     }
 
     #[test]

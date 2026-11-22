@@ -71,9 +71,9 @@ const SUPERSEDED: CardClose<'static> = CardClose::Superseded {
     new_card: "00000000-0000-0000-0000-000000000002",
 };
 
-/// 만료가 먼저 — 뒤의 대체는 아무것도 바꾸지 않는다.
+/// 만료가 먼저 — 뒤의 대체가 사본을 덮는다(다시 청하면 옛 카드는 새 카드를 가리킨다). 그 뒤로는 바뀌지 않는다.
 #[tokio::test]
-async fn expire_then_supersede_keeps_expired() {
+async fn expire_then_supersede_ends_superseded() {
     let Some(pool) = pool().await else { return };
     let id = card(&pool, "exp_sup", open_card()).await;
 
@@ -87,14 +87,53 @@ async fn expire_then_supersede_keeps_expired() {
     assert_eq!(after_first["ask"]["closedAt"], AT1);
 
     let second = close(&pool, &id, SUPERSEDED, AT2).await;
-    assert_eq!(second, CardClosed::default());
-    assert!(!second.changed());
-    assert_eq!(meta(&pool, &id).await, after_first);
+    assert!(second.status_written && second.ask_closed);
+    let after_second = meta(&pool, &id).await;
+    assert_eq!(after_second["permissionRequest"]["status"], "superseded");
+    assert_eq!(after_second["permissionRequest"]["requestId"], "r0");
+    assert_eq!(
+        after_second["permissionRequest"]["supersededBy"],
+        "00000000-0000-0000-0000-000000000001"
+    );
+    assert_eq!(after_second["ask"]["closedReason"], "superseded");
+    assert_eq!(
+        after_second["ask"]["supersededBy"],
+        "00000000-0000-0000-0000-000000000002"
+    );
+    assert_eq!(after_second["ask"]["question"], "q");
 
-    // 같은 닫기를 다시 불러도 그대로다.
+    // 대체된 뒤에는 만료도, 또 한 번의 대체도 아무것도 바꾸지 않는다.
     let again = close(&pool, &id, CardClose::Expired, AT2).await;
     assert!(!again.changed());
-    assert_eq!(meta(&pool, &id).await, after_first);
+    let again = close(&pool, &id, SUPERSEDED, AT2).await;
+    assert!(!again.changed());
+    assert_eq!(meta(&pool, &id).await, after_second);
+}
+
+/// 대체는 만료된 사본만 덮는다 — 사람이 닫았거나 다른 끝난 상태인 사본은 그대로다.
+#[tokio::test]
+async fn supersede_leaves_other_closed_copies() {
+    let Some(pool) = pool().await else { return };
+    for (tag, m) in [
+        (
+            "sup_denied",
+            json!({
+                "permissionRequest": { "requestId": "r0", "status": "denied" },
+                "ask": { "question": "q", "options": ["ok"], "closedAt": AT1, "closedBy": "someone" }
+            }),
+        ),
+        (
+            "sup_obsolete",
+            json!({
+                "permissionRequest": { "requestId": "r0", "status": "obsolete" },
+                "ask": { "question": "q", "options": ["ok"], "closedAt": AT1, "closedReason": "declined" }
+            }),
+        ),
+    ] {
+        let id = card(&pool, tag, m.clone()).await;
+        assert!(!close(&pool, &id, SUPERSEDED, AT2).await.changed(), "{tag}");
+        assert_eq!(meta(&pool, &id).await, m, "{tag}");
+    }
 }
 
 /// 대체가 먼저 — 뒤의 만료는 아무것도 바꾸지 않는다.
@@ -174,4 +213,106 @@ async fn answered_card_and_ask_only_close() {
         meta(&pool, &id).await["permissionRequest"]["status"],
         "expired"
     );
+}
+
+/// 다시 청하면 옛 요청 줄은 `superseded` 다 — sweep 이 먼저 `expired` 로 옮긴 줄도, 시한만 지난 `pending` 도 같은 끝.
+/// 사람이 정한 줄(granted·denied)과 다른 스레드의 줄은 건드리지 않는다.
+#[tokio::test]
+async fn asking_again_supersedes_expired_and_lapsed_requests() {
+    use harkroom_server::core::permission_card::{NewRequest, Opened, open_request};
+    let Some(pool) = pool().await else { return };
+    let agent: String = sqlx::query_scalar(
+        "insert into account(handle, display_name, kind) values ('cs_again', 'cs_again', 'agent') returning id::text",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let ch: String = sqlx::query_scalar(
+        "insert into channel(name, kind) values ('cs-again', 'standard') returning id::text",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    const THREAD: &str = "00000000-0000-0000-0000-0000000000a1";
+    const OTHER_THREAD: &str = "00000000-0000-0000-0000-0000000000a2";
+    const TARGET: &str = "Bash(cs again:*)";
+
+    // (꼬리표, 상태, 스레드) — 모두 시한이 지난 줄이다.
+    let seeds = [
+        ("expired", "expired", THREAD),
+        ("lapsed", "pending", THREAD),
+        ("granted", "granted", THREAD),
+        ("denied", "denied", THREAD),
+        ("elsewhere", "expired", OTHER_THREAD),
+    ];
+    let mut ids = Vec::new();
+    for (_, status, thread) in seeds {
+        let id: String = sqlx::query_scalar(
+            "insert into permission_request (agent_id, kind, target, reason, channel_id, thread_root_id, status, created_at, expires_at) \
+             values ($1::uuid, 'tool', $2, 'r', $3::uuid, $4::uuid, $5, '2025-12-30T00:00:00Z', '2025-12-31T00:00:00Z') returning id::text",
+        )
+        .bind(&agent)
+        .bind(TARGET)
+        .bind(&ch)
+        .bind(thread)
+        .bind(status)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        ids.push(id);
+    }
+
+    let mut tx = pool.begin().await.unwrap();
+    let opened = open_request(
+        &mut tx,
+        &NewRequest {
+            kind: "tool",
+            agent: &agent,
+            target: TARGET,
+            reason: "again",
+            warnings: &[],
+            channel: &ch,
+            thread: THREAD,
+            denial: None,
+            mandate: None,
+            now: AT1,
+            expires: AT2,
+        },
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let Opened::Created { request_id: new_id } = opened else {
+        panic!("request was not created");
+    };
+
+    let mut seen = Vec::new();
+    for ((tag, _, _), id) in seeds.iter().zip(&ids) {
+        let (status, by): (String, Option<String>) = sqlx::query_as(
+            "select status, superseded_by::text from permission_request where id = $1::uuid",
+        )
+        .bind(id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        seen.push((*tag, status, by));
+    }
+    let new = Some(new_id.clone());
+    assert_eq!(
+        seen,
+        vec![
+            ("expired", "superseded".to_string(), new.clone()),
+            ("lapsed", "superseded".to_string(), new),
+            ("granted", "granted".to_string(), None),
+            ("denied", "denied".to_string(), None),
+            ("elsewhere", "expired".to_string(), None),
+        ]
+    );
+    let status: String =
+        sqlx::query_scalar("select status from permission_request where id = $1::uuid")
+            .bind(&new_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(status, "pending");
 }

@@ -271,9 +271,11 @@ pub const REQUEST_INSERT_SQL: &str = "insert into permission_request \
      returning id::text";
 
 /// TS `supersedeOlderRequests`(거절 카드 — `denialPr` 가 있다: 같은 PR 의 카드만, 살아 있는 pending 도 대체).
+/// 다시 청하면 옛 요청은 `superseded` 다 — 시한이 지난 `pending` 이든 sweep 이 먼저 `expired` 로 옮긴 것이든 같다
+/// (어느 쪽이 먼저 돌았는지에 따라 옛 카드가 달리 보이지 않게). 잡히는 줄은 where 절대로 `pending`·`expired` 뿐이다.
 pub const SUPERSEDE_OLDER_SQL: &str = "update permission_request \
         set superseded_by = $6::uuid, \
-            status = case when status = 'pending' then 'superseded' else status end, \
+            status = 'superseded', \
             decided_at = coalesce(decided_at, $7::timestamptz) \
       where agent_id = $1::uuid and kind = $2 and target = $3 and channel_id = $4::uuid and thread_root_id = $5::uuid \
         and id <> $6::uuid and superseded_by is null \
@@ -874,6 +876,11 @@ mod tests {
     fn request_sql_follows_ts() {
         assert!(SUPERSEDE_OLDER_SQL.contains("d.pr_number = $8"));
         assert!(SUPERSEDE_OLDER_SQL.contains("$8::int is not null"));
+        // 다시 청하면 만료된 옛 요청도 `superseded` 로 간다 — 끝난 다른 상태(granted·denied·obsolete)는 잡지 않는다.
+        assert!(SUPERSEDE_OLDER_SQL.contains("status = 'superseded',"));
+        assert!(SUPERSEDE_OLDER_SQL.contains(
+            "(status = 'expired' or (status = 'pending' and (expires_at <= $7::timestamptz or $8::int is not null)))"
+        ));
         assert!(REQUEST_INSERT_SQL.contains("$5::text[]"));
         assert!(LINK_CARD_SQL.contains("card_message_id is null"));
         assert_eq!(too_many_message(), "at most 20 permission requests a day");

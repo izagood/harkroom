@@ -438,7 +438,7 @@ async fn close_superseded_cards(write: &PgPool, new_request: &str, new_card: &st
             .await?;
         let at = crate::core::msg_post::iso_ms(crate::core::msg_post::now_ms());
         for (_, status, card) in &old {
-            // 상태 칸은 이 대체가 대기 요청을 `superseded` 로 옮겼을 때만 적는다(이미 끝난 요청의 사본은 그대로).
+            // 상태 칸은 이 대체가 요청을 `superseded` 로 옮겼을 때만 적는다(대기·만료였던 요청 — 사본이 만료로 적혀 있어도 덮는다).
             let closed = crate::core::card_state::close_card_copy(
                 &mut conn,
                 card,
