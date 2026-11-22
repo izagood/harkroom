@@ -688,6 +688,19 @@ PAT 절에서 폐기한다.
 | macOS | [`ops/operator.plist.template`](../ops/operator.plist.template) | `@BIN@`·`@RUNNER@`·`@BASE_URL@`·`@KEY@`·`@USER@` 를 채워 `~/Library/LaunchAgents/dev.harkroom.operator.<8자>.plist` 로, `launchctl load` |
 | Linux | [`ops/operator@.service.template`](../ops/operator@.service.template) | `@BIN@`·`@RUNNER@` 을 채워 `~/.config/systemd/user/harkroom-operator@.service` 로(한 번), 커뮤니티마다 `~/.config/harkroom/operator-<8자>.env` 에 `BASE_URL=`, `systemctl --user enable --now harkroom-operator@<8자>`, `loginctl enable-linger` |
 
+**Linux 는 설치 스크립트가 위 표의 앞 절반을 대신한다**(L1b). 릴리스의 `install.sh` 는 묶음을 https 로 받아
+`SHA256SUMS` 와 맞지 않으면 멈추고, sudo 없이 `~/.local/share/harkroom` 에 풀고 `~/.local/bin/harkroom-operator` 를 잇고,
+유닛 `~/.config/systemd/user/harkroom-operator@.service` 를 쓴다. **아무것도 켜지 않는다** — 남은 순서는 사람 몫이다:
+
+1. `harkroom-operator doctor` — 이 기기의 환경 점검을 먼저 본다.
+2. `harkroom-operator register <서버 주소> <등록 코드>` — 찍힌 설정 경로의 `c/<8자>` 가 커뮤니티 키다.
+3. `~/.config/harkroom/operator-<8자>.env` 에 `BASE_URL=<서버 주소>` (필요하면 `EXTRA_ARGS=`).
+4. `systemctl --user enable --now harkroom-operator@<8자>` 와 `loginctl enable-linger "$USER"`(로그아웃 뒤에도 돈다).
+
+판올림은 `install.sh` 를 다시 돌린 뒤 `systemctl --user restart 'harkroom-operator@*'` 다 — 상태(`~/.harkroom-agent`)와
+env 파일은 건드리지 않는다. 지울 때는 `sh install.sh --uninstall`(유닛·실행 파일·링크만 지우고 상태·env 는 남긴다).
+체크섬은 받다가 깨진 파일만 막는다 — 릴리스 서명 검증은 아직 없다(M1). glibc 2.35 미만·musl 은 소스 빌드다.
+
 함정은 셋이고 전부 템플릿 주석에 있다:
 
 - **감독할 대상은 실행 파일 그 자체다.** `pnpm` 같은 중간 프로세스를 감독하면 오퍼레이터가

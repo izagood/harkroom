@@ -113,7 +113,8 @@ pub fn serve_main(args: &[String], env_home: Option<String>) -> (String, i32) {
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_default(),
         app_version: flag(args, "--app-version")
-            .unwrap_or(env!("CARGO_PKG_VERSION"))
+            // 릴리즈 묶음(Linux tarball)은 `HARKROOM_BUILD_VERSION` 으로 판을 굽는다 — 없으면 crate 판이다.
+            .unwrap_or(option_env!("HARKROOM_BUILD_VERSION").unwrap_or(env!("CARGO_PKG_VERSION")))
             .to_string(),
     };
     let state = ServerState::new(identity.clone(), launch);
