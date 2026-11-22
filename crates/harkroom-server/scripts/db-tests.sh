@@ -116,6 +116,11 @@ THREAD_STATUS_GRANTS=(
   'insert on event_outbox'
   'usage on sequence event_outbox_id_seq'
 )
+WORK_GRANTS=(
+  'insert, update on work'
+  'insert on work_event'
+  'usage on sequence work_event_id_seq'
+)
 
 # 시험 → 쓰기 역할 표(없으면 쓰기 풀 없이 돈다).
 grants_for() {
@@ -135,13 +140,14 @@ grants_for() {
     claim_seed) echo CLAIM_SEED_GRANTS ;;
     hook_debounce) echo HOOK_DEBOUNCE_GRANTS ;;
     thread_status) echo THREAD_STATUS_GRANTS ;;
+    work) echo WORK_GRANTS ;;
     *) echo '' ;;
   esac
 }
 
 TESTS=(auth perm operator loops wake outbox_listener retention mandate_idle permission_expire bg bg_produce outbox_prune push_loop
   turn_lease inbox_list decide_core_db relay_live turn_settle turn_cancel health scheduled stale migrate delegation_deadline
-  automation_grant claim_seed automation_sweep hook_debounce thread_status thread_plan db_retry deny_accounts invoke_gate deny_channels deny_reset measure)
+  automation_grant claim_seed automation_sweep hook_debounce thread_status thread_plan db_retry deny_accounts invoke_gate deny_channels deny_reset work measure)
 if [ "$#" -gt 0 ]; then TESTS=("$@"); fi
 
 # 1. 틀 DB — Rust 마이그레이션 실행기로 한 번만 만든다.
