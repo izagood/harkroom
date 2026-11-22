@@ -761,12 +761,15 @@ mod tests {
         assert_eq!(err, "");
         let v: Value = serde_json::from_str(&out).unwrap();
         let checks = v["checks"].as_array().unwrap();
-        assert_eq!(checks.len(), 9, "{out}");
+        // 리눅스에서는 「로그」 줄이 하나 더 있다(사용자 journal 판별).
+        let expected = if cfg!(target_os = "linux") { 10 } else { 9 };
+        assert_eq!(checks.len(), expected, "{out}");
         assert_eq!(checks[0]["level"], json!("ok"), "{out}");
         assert_eq!(checks[2]["level"], json!("ok"), "{out}");
-        // 빈 홈: 등록 전이라 뿌리는 warn 이다.
-        assert_eq!(checks[8]["name"], json!("뿌리"));
-        assert_eq!(checks[8]["level"], json!("warn"), "{out}");
+        // 빈 홈: 등록 전이라 뿌리는 warn 이다. 뿌리는 늘 마지막 줄이다.
+        let root = checks.last().unwrap();
+        assert_eq!(root["name"], json!("뿌리"));
+        assert_eq!(root["level"], json!("warn"), "{out}");
         assert_eq!(code, i32::from(v["ok"] == json!(false)));
         // 아무것도 만들지 않았다.
         assert_eq!(std::fs::read_dir(&home).unwrap().count(), 0);
