@@ -136,13 +136,19 @@ pub async fn delegation_created_with(pool: &PgPool, delegation_id: &str) -> sqlx
         return Ok(0);
     }
     // 위임자의 부모 작업 — 그 스레드에서 위임자가 맡은 열린 작업 가운데 가장 새것(위임자 자신이 받은 위임의 하위 작업일 수 있다).
+    // F1a 자기 조각(담당 = 위임자)이면 앞서 세운 자기 조각의 작업은 부모로 잡지 않는다 — 조각끼리는 사슬이 아니라 형제다.
+    let self_piece = delegates.iter().any(|d| d == &lead);
     let found: Option<String> = sqlx::query_scalar(
-        "select id::text from work \
-          where thread_root_id = $1::uuid and assignee_account_id = $2::uuid and closed_at is null \
-          order by created_at desc, id desc limit 1",
+        "select w.id::text from work w \
+          where w.thread_root_id = $1::uuid and w.assignee_account_id = $2::uuid and w.closed_at is null \
+            and not ($3::bool and exists ( \
+                  select 1 from team_delegation sd \
+                   where sd.id = w.delegation_id and sd.lead_account_id = w.assignee_account_id)) \
+          order by w.created_at desc, w.id desc limit 1",
     )
     .bind(&thread)
     .bind(&lead)
+    .bind(self_piece)
     .fetch_optional(pool)
     .await?;
     let parent = match found {

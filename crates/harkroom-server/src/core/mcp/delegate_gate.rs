@@ -15,6 +15,9 @@
 //! - P6-5: 계획판 칸(`planRootId`·`planGroupId`)도 맡는다 — 가시성 뒤·자기 위임 앞에서 `bad_request`(하나만)·`self_link` 를 답하고,
 //!   위임 글이 선 뒤 TS `linkPlanGroup` 처럼 부모 계획의 그룹을 잇는다([`super::plan_write::link_plan_group`]). 결과·거절은 답의
 //!   `plan` 칸에만 싣는다(위임은 되돌리지 않는다). 계획 쓰기 권한(`PLAN_WRITE_PRIVILEGES`)이 없으면 글을 쓰기 전에 TS.
+//! - F1a 자기 쪼개기: 스위치(`HARKROOM_SELF_SPLIT`)가 켜졌고 `to` 가 부른 에이전트 자신 하나뿐이면 `self_delegation` 대신 자기 조각을
+//!   세운다 — 팀 명단 갈래를 타지 않고(`team_id` 없음) 게이트 길로 간다. 조각은 같은 스레드의 다른 의무를 대체하지 않는다
+//!   ([`crate::core::delegate_write`]).
 //! - **TS 로 넘기는 것**(`None` — fail-closed): 위 밖의 팀 명단 갈래 · 권한 없는 `agentModels`·계획판 칸 · zod 가 받지 않을 인자 ·
 //!   자른 자리가 서로게이트 쌍을 가르는 모델 신고 · `to` 에 접속한 같은 담당이 두 번(TS 는 글만 남기고 `delegation_failed`) · 위임 스위치를 모름 · DB 오류.
 //! - 접속 확인: TS 는 프로세스 메모리(`presence.online()`)를, Rust 는 DB `agent_presence`(`expires_at > now()`)를 읽는다. TS 는
@@ -294,6 +297,36 @@ async fn team_gate_idx(
     ))
 }
 
+/// `to` 에 내가 들어 있을 때의 갈래(F1a).
+#[derive(Debug, PartialEq, Eq)]
+enum SelfSplit {
+    /// `to` 에 내가 없다 — 보통의 위임.
+    No,
+    /// 자기 조각 — `to` 가 나 하나뿐인 에이전트의 부름(스위치 켬).
+    Piece,
+    /// 그 밖(스위치 꺼짐 · 남과 섞임 · 사람) — `self_delegation`.
+    Refused,
+}
+
+/// `HARKROOM_SELF_SPLIT` — `on`·`1`·`true` 만 켬. 없거나 다른 값이면 꺼짐(예전 그대로 `self_delegation`).
+fn self_split_on(raw: Option<&str>) -> bool {
+    matches!(
+        raw.map(|v| v.trim().to_ascii_lowercase()).as_deref(),
+        Some("on" | "1" | "true")
+    )
+}
+
+fn self_split_for(wanted: &[String], mine: &str, is_agent: bool, on: bool) -> SelfSplit {
+    if !wanted.iter().any(|w| w == mine) {
+        return SelfSplit::No;
+    }
+    if on && is_agent && wanted.len() == 1 {
+        SelfSplit::Piece
+    } else {
+        SelfSplit::Refused
+    }
+}
+
 /// TS 도구는 서비스 `postMessage` 를 바로 부른다 — 라우트 몫(카드 고르기·`closeAsksByReply`)이 없다. 사람 작성자에게만 뜻이 있다
 /// (에이전트 글은 그 갈래를 이미 타지 않는다) — 에이전트는 예전 그대로 끈다.
 fn service_call_for(is_agent: bool) -> bool {
@@ -352,8 +385,25 @@ pub async fn answer(
     }
     let mine = me.handle.to_ascii_lowercase();
     let wanted: Vec<String> = a.to.iter().map(|h| h.to_ascii_lowercase()).collect();
-    if wanted.contains(&mine) {
-        return Some(err("self_delegation", "you cannot delegate to yourself"));
+    // F1a 자기 쪼개기 — `to` 가 나 하나뿐이고 스위치가 켜졌을 때만 지난다. 자기 조각은 팀 명단을 읽지 않는다:
+    // 늘 게이트 길이고 위임 행·부름에 `team_id` 를 적지 않는다(팀장이 자기 팀의 팀원이어도).
+    match self_split_for(
+        &wanted,
+        &mine,
+        me.kind == "agent",
+        self_split_on(crate::env_once::get(&crate::env_once::SELF_SPLIT)),
+    ) {
+        SelfSplit::No => {}
+        SelfSplit::Refused => {
+            return Some(err("self_delegation", "you cannot delegate to yourself"));
+        }
+        SelfSplit::Piece => {
+            let members = match gate(pool, me, &a, &wanted, &[0]).await? {
+                Ok(m) => m,
+                Err(refused) => return Some(refused),
+            };
+            return write_or_ts(st, me, &a, &wanted, &members, None, cause, turn, operator).await;
+        }
     }
     // TS `leadTeamFor` — (팀, handle, 계정, 꺼짐). handle 은 TS 처럼 읽은 뒤 소문자로.
     let rows: Vec<(String, String, String, bool)> = sqlx::query_as(&*sql().lead_team)
@@ -445,6 +495,10 @@ async fn gate(
         }
         let fact = by_handle.get(h.as_str()).and_then(|id| facts.get(*id));
         let ok = match fact {
+            // 자기 조각(F1a) — 받는 쪽이 부른 에이전트 자신이면 호출 범위를 재지 않는다(범위는 「남이 나를 부를 수 있는가」다:
+            // 범위가 owner 면 본인도 걸린다). 권한이 넓어지지 않는다 — 같은 계정이고, 조각 턴의 원인 사람·위임장은 위임 글 행에서 온다.
+            // 꺼진 계정만 막는다. 이 갈래에는 [`SelfSplit::Piece`] 만 온다(`to` 에 내가 있으면 다른 길은 앞에서 거절).
+            Some(f) if f.agent_id == me.id => !f.off,
             Some(f) => invoke_gate::may_invoke(&mut conn, f, &ctx)
                 .await
                 .map_err(ts_err("may_invoke"))
@@ -864,6 +918,39 @@ mod tests {
             panic!("first team");
         };
         assert_eq!(t, "t2");
+    }
+
+    #[test]
+    fn self_split_only_alone_agent_and_switched_on() {
+        let w = |xs: &[&str]| xs.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
+        assert_eq!(self_split_for(&w(&["a"]), "me", true, true), SelfSplit::No);
+        assert_eq!(
+            self_split_for(&w(&["me"]), "me", true, true),
+            SelfSplit::Piece
+        );
+        // 스위치 꺼짐 · 남과 섞임 · 같은 이름 두 번 · 사람 — 전부 예전 거절.
+        assert_eq!(
+            self_split_for(&w(&["me"]), "me", true, false),
+            SelfSplit::Refused
+        );
+        assert_eq!(
+            self_split_for(&w(&["me", "a"]), "me", true, true),
+            SelfSplit::Refused
+        );
+        assert_eq!(
+            self_split_for(&w(&["me", "me"]), "me", true, true),
+            SelfSplit::Refused
+        );
+        assert_eq!(
+            self_split_for(&w(&["me"]), "me", false, true),
+            SelfSplit::Refused
+        );
+        for on in ["on", "1", "true", " ON "] {
+            assert!(self_split_on(Some(on)), "{on}");
+        }
+        for off in [None, Some(""), Some("off"), Some("0"), Some("shadow")] {
+            assert!(!self_split_on(off), "{off:?}");
+        }
     }
 
     #[test]

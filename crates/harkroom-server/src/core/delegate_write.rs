@@ -89,7 +89,8 @@ pub(crate) async fn create(
         .await?;
     for d in plan.delegate_ids {
         // TS `supersedePrevious` — v1 에서 같은 스레드·같은 담당의 앞 의무(열린·보고된)는 대체된다. 깨우지 않는다.
-        if v2 {
+        // F1a 자기 조각(담당 = 위임자)은 대체하지 않는다 — 내가 위에서 받은 의무와 앞서 세운 자기 조각이 열린 채 남는다.
+        if v2 && d != lead_id {
             let closed: Vec<String> = sqlx::query_scalar(s.supersede.as_str())
                 .bind(thread_root_id)
                 .bind(d)
