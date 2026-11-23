@@ -187,6 +187,8 @@ pub(crate) enum TeamCall {
         team_id: String,
         name: String,
         members: Vec<(String, String)>,
+        /// 펼칠 때 뺀 팀원 `(handle, 이유)` — `not_agent`(에이전트가 아닌 계정)·`disabled`(꺼진 에이전트). 부른 쪽 `notCalled` 에 싣는다.
+        skipped: Vec<(String, &'static str)>,
     },
 }
 
@@ -215,27 +217,32 @@ pub(crate) async fn team_for_call(
     if !invoke_gate::may_invoke_team(conn, &tf, caller_id, channel_id).await? {
         return Ok(Some(TeamCall::Denied(team.name)));
     }
-    let awake: Vec<(String, String)> = team_members(conn, &team.id)
-        .await?
-        .into_iter()
-        .filter(|(_, _, disabled)| !disabled)
-        .map(|(id, handle, _)| (id, handle))
-        .collect();
+    let roster = team_members(conn, &team.id).await?;
     // 팀원은 에이전트만 넣을 수 있지만(라우트 판정) 표에는 그 제약이 없다 — 지금 에이전트인 계정만 남긴다.
-    let ids: Vec<String> = awake.iter().map(|(id, _)| id.clone()).collect();
+    let ids: Vec<String> = roster.iter().map(|(id, _, _)| id.clone()).collect();
     let agents: HashSet<String> = accounts_by_ids(conn, &ids)
         .await?
         .into_iter()
         .filter(|a| a.kind == "agent")
         .map(|a| a.id)
         .collect();
+    // 뺀 팀원도 이유와 함께 돌려준다 — 팀의 호출 범위를 지난 뒤라 명단(`teams.members`)을 보는 쪽에게만 간다.
+    let mut members = Vec::new();
+    let mut skipped = Vec::new();
+    for (id, handle, disabled) in roster {
+        if !agents.contains(&id) {
+            skipped.push((handle, "not_agent"));
+        } else if disabled {
+            skipped.push((handle, "disabled"));
+        } else {
+            members.push((id, handle));
+        }
+    }
     Ok(Some(TeamCall::Members {
         team_id: team.id,
         name: team.name,
-        members: awake
-            .into_iter()
-            .filter(|(id, _)| agents.contains(id))
-            .collect(),
+        members,
+        skipped,
     }))
 }
 
