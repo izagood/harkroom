@@ -7,7 +7,7 @@ use sqlx::PgPool;
 
 async fn account(admin: &PgPool, handle: &str, kind: &str) -> String {
     sqlx::query_scalar(
-        "insert into account(handle, display_name, kind) values ($1, $1, $2) returning id::text",
+        "insert into account(handle, display_name, kind, login_id) values ($1, $1, $2, case when $2 = 'human' then $1 end) returning id::text",
     )
     .bind(handle)
     .bind(kind)
