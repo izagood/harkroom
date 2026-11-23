@@ -387,13 +387,17 @@ pub fn derive_plan(doc: &Value, linked: &HashMap<String, Linked>) -> Vec<(String
         step_nodes.push((gid(s), node));
     }
     // TS `result` — 그룹 먼저 넣고 단계가 뒤에 덮는다. 같은 키는 처음 자리에 나중 값.
-    let mut out: Vec<(String, DerivedNode)> = Vec::new();
-    let put = |out: &mut Vec<(String, DerivedNode)>, id: String, node: DerivedNode| match out
-        .iter_mut()
-        .find(|(k, _)| *k == id)
-    {
-        Some(slot) => slot.1 = node,
-        None => out.push((id, node)),
+    let mut out: Vec<(String, DerivedNode)> = Vec::with_capacity(groups_v.len() + steps_v.len());
+    // 자리표로 찾는다 — 노드마다 앞을 훑으면 노드 수의 제곱이 된다.
+    let mut slot_of: HashMap<String, usize> = HashMap::with_capacity(out.capacity());
+    let mut put = |out: &mut Vec<(String, DerivedNode)>, id: String, node: DerivedNode| {
+        match slot_of.get(&id) {
+            Some(&i) => out[i].1 = node,
+            None => {
+                slot_of.insert(id.clone(), out.len());
+                out.push((id, node));
+            }
+        }
     };
     for g in groups_v {
         let id = gid(g);

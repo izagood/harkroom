@@ -146,6 +146,100 @@ fn validate_cycles() {
     assert!(err(&d).starts_with(r#"{"code":"dependency_cycle""#));
 }
 
+/// 노드가 많은 계획 — 그룹·단계 수에는 상한이 없으므로 검증은 깊이에 호출 스택을 쓰지 않아야 한다.
+/// 서버 작업 스레드와 같은 2MiB 스택에서 돌려, 넘치지 않고 **돌아오는지**를 본다.
+fn on_small_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+    std::thread::Builder::new()
+        .stack_size(2 * 1024 * 1024)
+        .spawn(f)
+        .expect("spawn")
+        .join()
+        .expect("validation must return, not overflow the stack")
+}
+
+const MANY: usize = 9_999;
+
+#[test]
+fn validate_long_step_chain_returns_on_small_stack() {
+    // s1 ← s2 ← … ← s9999: 깊이가 노드 수와 같은 사슬.
+    let chain = |close: bool| {
+        let steps: Vec<Value> = (1..=MANY)
+            .map(|i| {
+                let dep = if i > 1 {
+                    json!([format!("s{}", i - 1)])
+                } else if close {
+                    json!([format!("s{MANY}")])
+                } else {
+                    json!([])
+                };
+                step(&format!("s{i}"), json!({ "dependsOn": dep }))
+            })
+            .collect();
+        plan(vec![], steps)
+    };
+    let open = chain(false);
+    assert_eq!(on_small_stack(move || err(&open)), "ok");
+    // 사슬의 끝을 처음에 이으면 노드 전부를 도는 순환 — 거절로 돌아온다.
+    let closed = chain(true);
+    let out = on_small_stack(move || validate_plan(&closed));
+    match out {
+        Err(PlanError::DependencyCycle { path }) => {
+            assert_eq!(path.len(), MANY + 1);
+            assert_eq!(path.first(), path.last());
+        }
+        other => panic!("expected a cycle, got {other:?}"),
+    }
+}
+
+#[test]
+fn validate_long_group_chain_returns_on_small_stack() {
+    // g1 ← g2 ← … ← g9999, 그룹마다 단계 하나(그룹 → 단계 변과 단계 → 그룹의 앞 노드 변도 함께 선다).
+    let chain = |close: bool| {
+        let groups: Vec<Value> = (1..=MANY)
+            .map(|i| {
+                let dep = if i > 1 {
+                    json!([format!("g{}", i - 1)])
+                } else if close {
+                    json!([format!("g{MANY}")])
+                } else {
+                    json!([])
+                };
+                group(&format!("g{i}"), json!({ "dependsOn": dep }))
+            })
+            .collect();
+        let steps: Vec<Value> = (1..=MANY)
+            .map(|i| step(&format!("s{i}"), json!({ "groupId": format!("g{i}") })))
+            .collect();
+        plan(groups, steps)
+    };
+    let open = chain(false);
+    assert_eq!(on_small_stack(move || err(&open)), "ok");
+    let closed = chain(true);
+    let out = on_small_stack(move || err(&closed));
+    assert!(out.starts_with(r#"{"code":"dependency_cycle""#), "{out}");
+}
+
+#[test]
+fn derive_and_diff_many_nodes_return_on_small_stack() {
+    let steps: Vec<Value> = (1..=MANY)
+        .map(|i| {
+            let dep = if i > 1 {
+                json!([format!("s{}", i - 1)])
+            } else {
+                json!([])
+            };
+            step(&format!("s{i}"), json!({ "dependsOn": dep }))
+        })
+        .collect();
+    let doc = plan(vec![], steps);
+    let (ready, waiting) = on_small_stack(move || {
+        let after = derive_plan(&doc, &HashMap::new());
+        diff_derived(&[], &after)
+    });
+    assert_eq!(ready, vec!["s1".to_string()]);
+    assert_eq!(waiting.len(), MANY - 1);
+}
+
 #[test]
 fn validate_limits() {
     let steps = |k: usize| {

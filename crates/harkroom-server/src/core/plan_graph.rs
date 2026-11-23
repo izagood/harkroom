@@ -8,6 +8,7 @@
 //! - 거절의 JSON 은 TS 객체의 키 순서 그대로 글자를 짓는다([`PlanError::fields_json`]) — 도구 답이 TS 와 글자까지 같아야 한다.
 use super::msg_list::DerivedNode;
 use serde_json::{Map, Value};
+use std::collections::{HashMap, HashSet};
 
 /// TS `PLAN_LIMITS`. 그룹·단계 **수**에는 상한이 없다 — 끝난 일을 합쳐 줄이게 만들면 계획이 읽히지 않는다.
 /// 수를 묶는 것은 id 꼴(`s1`~`s9999`·`g1`~`g9999`, 겹치면 `duplicate_id`)과 요청 본문 크기뿐이다.
@@ -160,85 +161,113 @@ fn valid_node_id(id: &str, prefix: u8) -> bool {
         && b[2..].iter().all(u8::is_ascii_digit)
 }
 
-/// TS `edges` — 노드 id → 앞 노드(삽입 순서 = 그룹 뒤 단계).
+/// TS `edges` — 노드 id → 앞 노드(삽입 순서 = 그룹 뒤 단계). id 는 자리표(`HashMap`)로 찾는다 — 노드 수에 선형이다.
 fn edges(doc: &Value) -> Vec<(String, Vec<String>)> {
     let groups = arr(&doc["groups"]);
-    let mut out: Vec<(String, Vec<String>)> = Vec::new();
-    let set = |out: &mut Vec<(String, Vec<String>)>, k: String, v: Vec<String>| {
-        if let Some(e) = out.iter_mut().find(|(id, _)| *id == k) {
-            e.1 = v;
-        } else {
-            out.push((k, v));
-        }
-    };
-    for g in groups {
-        set(&mut out, id_of(g).to_string(), strs(&g["dependsOn"]));
+    let steps = arr(&doc["steps"]);
+    let mut out: Vec<(String, Vec<String>)> = Vec::with_capacity(groups.len() + steps.len());
+    let mut at: HashMap<&str, usize> = HashMap::with_capacity(groups.len() + steps.len());
+    // 같은 id 가 둘이면 TS `find` 처럼 첫 그룹이 부모다.
+    let mut group_at: HashMap<&str, usize> = HashMap::with_capacity(groups.len());
+    for (i, g) in groups.iter().enumerate() {
+        group_at.entry(id_of(g)).or_insert(i);
     }
-    for s in arr(&doc["steps"]) {
+    // 있던 id 면 그 자리의 변을 덮고(TS `Map.set`), 없으면 뒤에 더한다.
+    fn set<'a>(
+        out: &mut Vec<(String, Vec<String>)>,
+        at: &mut HashMap<&'a str, usize>,
+        k: &'a str,
+        v: Vec<String>,
+    ) {
+        match at.get(k) {
+            Some(&i) => out[i].1 = v,
+            None => {
+                at.insert(k, out.len());
+                out.push((k.to_string(), v));
+            }
+        }
+    }
+    for g in groups {
+        set(&mut out, &mut at, id_of(g), strs(&g["dependsOn"]));
+    }
+    for s in steps {
         let parent = truthy(&s["groupId"]);
         let mut deps = strs(&s["dependsOn"]);
         if let Some(p) = parent
-            && let Some(g) = groups.iter().find(|g| id_of(g) == p)
+            && let Some(&gi) = group_at.get(p)
         {
-            deps.extend(strs(&g["dependsOn"]));
+            deps.extend(strs(&groups[gi]["dependsOn"]));
         }
-        set(&mut out, id_of(s).to_string(), deps);
+        set(&mut out, &mut at, id_of(s), deps);
         if let Some(p) = parent
-            && let Some(e) = out.iter_mut().find(|(id, _)| id == p)
+            && let Some(&pi) = at.get(p)
         {
-            e.1.push(id_of(s).to_string());
+            out[pi].1.push(id_of(s).to_string());
         }
     }
     out
 }
 
 /// TS `findCycle` — 문서 순서의 DFS. 처음과 끝이 같은 id 열.
+///
+/// **재귀하지 않는다.** 방문 경로를 힙의 명시 스택(`path`)에 둔다 — 의존 사슬의 깊이가 호출 스택을 쓰지 않으므로
+/// 노드가 아무리 많아도 스택이 넘치지 않는다. 방문 순서와 돌려주는 경로는 재귀 DFS 와 같다.
 fn find_cycle(doc: &Value) -> Option<Vec<String>> {
-    let g = edges(doc);
     #[derive(Clone, Copy, PartialEq)]
     enum C {
         White,
         Grey,
         Black,
     }
-    let idx = |id: &str| g.iter().position(|(k, _)| k == id);
-    let mut color: std::collections::HashMap<String, C> = std::collections::HashMap::new();
-    fn visit(
-        id: &str,
-        g: &[(String, Vec<String>)],
-        idx: &dyn Fn(&str) -> Option<usize>,
-        color: &mut std::collections::HashMap<String, C>,
-        stack: &mut Vec<String>,
-    ) -> Option<Vec<String>> {
-        color.insert(id.to_string(), C::Grey);
-        stack.push(id.to_string());
-        let nexts = idx(id).map(|i| g[i].1.clone()).unwrap_or_default();
-        for next in nexts {
-            match color.get(&next).copied().unwrap_or(C::White) {
+    let g = edges(doc);
+    let at: HashMap<&str, usize> = {
+        let mut m = HashMap::with_capacity(g.len());
+        for (i, (k, _)) in g.iter().enumerate() {
+            m.entry(k.as_str()).or_insert(i);
+        }
+        m
+    };
+    // 모르는 id 로 가는 변은 뺀다 — 나가는 변이 없는 노드라 순환을 만들지 못한다.
+    let adj: Vec<Vec<usize>> = g
+        .iter()
+        .map(|(_, nexts)| {
+            nexts
+                .iter()
+                .filter_map(|n| at.get(n.as_str()).copied())
+                .collect()
+        })
+        .collect();
+    let mut color = vec![C::White; g.len()];
+    // (노드, 다음에 볼 변의 자리) — 재귀 DFS 의 호출 프레임이다.
+    let mut path: Vec<(usize, usize)> = Vec::new();
+    for root in 0..g.len() {
+        if color[root] != C::White {
+            continue;
+        }
+        color[root] = C::Grey;
+        path.push((root, 0));
+        while let Some(top) = path.last_mut() {
+            let (node, edge) = *top;
+            let Some(&next) = adj[node].get(edge) else {
+                color[node] = C::Black;
+                path.pop();
+                continue;
+            };
+            top.1 += 1;
+            match color[next] {
                 C::Grey => {
-                    let at = stack.iter().position(|s| *s == next).unwrap_or(0);
-                    let mut path = stack[at..].to_vec();
-                    path.push(next);
-                    return Some(path);
+                    let from = path.iter().position(|(n, _)| *n == next).unwrap_or(0);
+                    let mut found: Vec<String> =
+                        path[from..].iter().map(|(n, _)| g[*n].0.clone()).collect();
+                    found.push(g[next].0.clone());
+                    return Some(found);
                 }
                 C::White => {
-                    if let Some(found) = visit(&next, g, idx, color, stack) {
-                        return Some(found);
-                    }
+                    color[next] = C::Grey;
+                    path.push((next, 0));
                 }
                 C::Black => {}
             }
-        }
-        stack.pop();
-        color.insert(id.to_string(), C::Black);
-        None
-    }
-    let mut stack = Vec::new();
-    for (id, _) in &g {
-        if color.get(id).copied().unwrap_or(C::White) == C::White
-            && let Some(found) = visit(id, &g, &idx, &mut color, &mut stack)
-        {
-            return Some(found);
         }
     }
     None
@@ -282,23 +311,24 @@ pub fn validate_plan(doc: &Value) -> Result<(), PlanError> {
         }
     }
 
-    let mut seen: Vec<&str> = Vec::new();
+    // 아래 검사는 모두 집합·표로 찾는다 — 노드 수에 선형이다(수 상한이 없다).
+    let mut seen: HashSet<&str> = HashSet::with_capacity(groups.len() + steps.len());
     for (nodes, prefix) in [(groups, b'g'), (steps, b's')] {
         for n in nodes {
             let id = id_of(n);
             if !valid_node_id(id, prefix) {
                 return Err(PlanError::InvalidId { id: id.into() });
             }
-            if seen.contains(&id) {
+            if !seen.insert(id) {
                 return Err(PlanError::DuplicateId { id: id.into() });
             }
-            seen.push(id);
         }
     }
 
+    let group_ids: HashSet<&str> = groups.iter().map(id_of).collect();
     for s in steps {
         if let Some(g) = truthy(&s["groupId"])
-            && !groups.iter().any(|x| id_of(x) == g)
+            && !group_ids.contains(g)
         {
             return Err(PlanError::UnknownRef {
                 id: g.into(),
@@ -320,20 +350,23 @@ pub fn validate_plan(doc: &Value) -> Result<(), PlanError> {
         }
     }
 
-    for g in groups {
-        if truthy(&g["linkedRootId"]).is_none() {
-            continue;
+    if groups.iter().any(|g| truthy(&g["linkedRootId"]).is_some()) {
+        let mut steps_of: HashMap<&str, Vec<&str>> = HashMap::new();
+        for s in steps {
+            if let Some(g) = s["groupId"].as_str() {
+                steps_of.entry(g).or_default().push(id_of(s));
+            }
         }
-        let step_ids: Vec<String> = steps
-            .iter()
-            .filter(|s| s["groupId"].as_str() == Some(id_of(g)))
-            .map(|s| id_of(s).to_string())
-            .collect();
-        if !step_ids.is_empty() {
-            return Err(PlanError::LinkedGroupHasSteps {
-                id: id_of(g).into(),
-                step_ids,
-            });
+        for g in groups {
+            if truthy(&g["linkedRootId"]).is_none() {
+                continue;
+            }
+            if let Some(ids) = steps_of.get(id_of(g)) {
+                return Err(PlanError::LinkedGroupHasSteps {
+                    id: id_of(g).into(),
+                    step_ids: ids.iter().map(|s| s.to_string()).collect(),
+                });
+            }
         }
     }
 
@@ -397,11 +430,13 @@ pub fn diff_derived(
     after: &[(String, DerivedNode)],
 ) -> (Vec<String>, Vec<String>) {
     let (mut ready, mut waiting) = (Vec::new(), Vec::new());
+    // 같은 id 가 둘이면 첫 것(TS `find`).
+    let mut was: HashMap<&str, &str> = HashMap::with_capacity(before.len());
+    for (k, n) in before {
+        was.entry(k.as_str()).or_insert(n.derived.as_str());
+    }
     for (id, node) in after {
-        let prev = before
-            .iter()
-            .find(|(k, _)| k == id)
-            .map(|(_, n)| n.derived.as_str());
+        let prev = was.get(id.as_str()).copied();
         if node.derived == "ready" && prev != Some("ready") {
             ready.push(id.clone());
         }
