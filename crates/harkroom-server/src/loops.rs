@@ -25,6 +25,7 @@ pub mod thread_plan;
 pub mod thread_plan_auto;
 pub mod thread_status;
 pub mod wake;
+pub mod wake_mirror;
 
 use sqlx::PgPool;
 use std::future::Future;
@@ -36,7 +37,7 @@ pub const DEFAULT_OWNER: &str = "rust";
 pub const LOOP_LOCK_CLASS: i32 = 0x4c4f_4f50;
 
 /// 루프 이름 — TS `LOOP_NAMES` 와 같아야 한다(`server_loop.name` 의 키).
-pub const LOOP_NAMES: [&str; 15] = [
+pub const LOOP_NAMES: [&str; 16] = [
     "wake",
     "delegation.deadline",
     "automation",
@@ -54,6 +55,8 @@ pub const LOOP_NAMES: [&str; 15] = [
     "thread.plan",
     // avcs 투영(decision 4, `loops::projection`).
     "projection",
+    // 깨움 거울(E1, `loops::wake_mirror`) — 그림자: inbox 를 `wake` 표로 베낄 뿐이다.
+    "wake.mirror",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
