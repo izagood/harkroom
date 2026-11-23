@@ -3,6 +3,7 @@
 //! - 상태의 정본은 `work` 행이다. `work_event` 는 이력일 뿐이고 추가만 한다.
 //! - 뿌리 작업은 `parent_id` 가 비고 `root_id = id`. 하위 작업은 부모 행에서 채널·스레드·뿌리·원장 칸(위임장·원인 사람)을
 //!   **같은 문장에서** 복사한다 — 부르는 쪽이 넘긴 값으로 뿌리를 바꿀 수 없다.
+//! - 예외: 위임이 낳은 작업(`delegation_id`)의 위임장·원인 사람은 부모가 아니라 **그 위임 글의 행**에서 같은 문장으로 읽는다.
 //! - 쓰기는 아직 어떤 운영 경로에서도 불리지 않는다. 뒤 단계(글→작업 라우팅·위임·깨움·원장)가 쓴다.
 //!   읽기 줄 `GET /threads/{rootId}/work` 만 붙는다([`routes`] — 읽기 풀에 [`WORK_READ_PRIVILEGES`] 가 있을 때).
 //! - 조회 [`tree`] 는 한 스레드의 작업 나무를 돌려준다. 채널 가시성은 다른 스레드 읽기와 같은 판정([`channel_visible`])이다.
@@ -47,6 +48,7 @@ pub fn is_closed(state: &str) -> bool {
 pub const TREE_MAX: i64 = 500;
 
 /// 새 작업 하나에 적을 값. 하위 작업(`parent_id` 있음)이면 채널·스레드·뿌리·위임장·원인 사람은 부모 행 값이 이긴다.
+/// 위임이 낳은 작업(`delegation_id` 있음)의 위임장·원인 사람은 그 위임 글의 행에서 읽는다(넘긴 값·부모 값 모두 쓰지 않는다).
 #[derive(Debug, Default, Clone)]
 pub struct NewWork<'a> {
     pub channel_id: &'a str,
@@ -68,20 +70,46 @@ pub struct NewWork<'a> {
     pub delegation_id: Option<&'a str>,
 }
 
-/// `$15` 가 비면 뿌리 작업(`root_id = id`), 있으면 하위 작업 — 채널·스레드·뿌리·위임장·원인 사람을 부모 행에서 복사한다.
-/// 부모를 적었는데 그 행이 없으면 0줄이다. `$16`(위임 id)이 있고 같은 (위임, 담당) 행이 이미 있으면 역시 0줄이다(182 의 부분 유일 인덱스).
-const INSERT_SQL: &str = "with n as (select gen_random_uuid() as id) \
+/// 작업 한 줄을 넣는 문장을 짓는다 — `$cause`·`$mandate` 는 원인 사람·위임장 칸의 식, `$from` 은 `from` 절이다.
+macro_rules! insert_sql {
+    ($cause:literal, $mandate:literal, $from:literal) => {
+        concat!(
+            "with n as (select gen_random_uuid() as id) \
      insert into work (id, parent_id, root_id, channel_id, thread_root_id, created_by_work_id, source_message_id, \
        assignee_account_id, requester_account_id, cause_account_id, mandate_id, pool, title, body, paths, after_work_id, due_at, delegation_id) \
      select n.id, p.id, coalesce(p.root_id, n.id), coalesce(p.channel_id, $1::uuid), coalesce(p.thread_root_id, $2::uuid), \
-       $3::uuid, $4::uuid, $5::uuid, $6::uuid, \
-       case when p.id is null then $7::uuid else p.cause_account_id end, \
-       case when p.id is null then $8::uuid else p.mandate_id end, \
-       $9, $10, $11, $12::text[], $13::uuid, $14::timestamptz, $16::uuid \
-       from n left join work p on p.id = $15::uuid \
-      where $15::uuid is null or p.id is not null \
+       $3::uuid, $4::uuid, $5::uuid, $6::uuid, ",
+            $cause,
+            ", ",
+            $mandate,
+            ", $9, $10, $11, $12::text[], $13::uuid, $14::timestamptz, $16::uuid from ",
+            $from,
+            " where $15::uuid is null or p.id is not null \
      on conflict do nothing \
-     returning id::text";
+     returning id::text"
+        )
+    };
+}
+
+/// `$15` 가 비면 뿌리 작업(`root_id = id`), 있으면 하위 작업 — 채널·스레드·뿌리·위임장·원인 사람을 부모 행에서 복사한다.
+/// 부모를 적었는데 그 행이 없으면 0줄이다. `$16`(위임 id)이 있고 같은 (위임, 담당) 행이 이미 있으면 역시 0줄이다(182 의 부분 유일 인덱스).
+const INSERT_SQL: &str = insert_sql!(
+    "case when p.id is null then $7::uuid else p.cause_account_id end",
+    "case when p.id is null then $8::uuid else p.mandate_id end",
+    "n left join work p on p.id = $15::uuid"
+);
+
+/// 위임이 낳은 작업(`$16` 있음)의 문장 — 원인 사람·위임장을 부모 작업에서 물려받지 않고 **그 위임 글의 행**
+/// (`message.principal_account_id`·`mandate_id`)에서 같은 문장으로 읽는다. 부르는 쪽이 넘긴 `$7`·`$8` 은 쓰이지 않는다 —
+/// 위임 행이 없는 갈래(`d.id is null`)는 `delegation_id` FK 가 막아 행이 서지 않는다(매개변수 형만 정해 준다).
+/// 위임 글에 원인 사람이 없으면 작업 행도 빈다. `team_delegation`·`message` 읽기 권한이 든다(위임 그림자만 이 문장을 쓴다).
+const INSERT_DELEGATED_SQL: &str = insert_sql!(
+    "case when d.id is null then $7::uuid else dm.principal_account_id end",
+    "case when d.id is null then $8::uuid else dm.mandate_id end",
+    "n left join work p on p.id = $15::uuid \
+       left join team_delegation d on d.id = $16::uuid \
+       left join message dm on dm.id = d.message_id"
+);
 
 const INSERT_EVENT_SQL: &str = "insert into work_event (work_id, kind, actor_account_id, payload) \
      values ($1::uuid, $2, $3::uuid, $4::jsonb) returning id";
@@ -94,7 +122,12 @@ pub async fn create(
     actor: Option<&str>,
 ) -> sqlx::Result<Option<String>> {
     let mut tx = pool.begin().await?;
-    let q = sqlx::query_scalar::<_, String>(INSERT_SQL)
+    let sql = if w.delegation_id.is_some() {
+        INSERT_DELEGATED_SQL
+    } else {
+        INSERT_SQL
+    };
+    let q = sqlx::query_scalar::<_, String>(sql)
         .bind(w.channel_id)
         .bind(w.thread_root_id)
         .bind(w.created_by_work_id)

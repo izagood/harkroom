@@ -16,7 +16,7 @@ use serde_json::json;
 use sqlx::PgPool;
 use std::sync::OnceLock;
 
-/// 그림자 기록이 쓰는 권한 — `work::WORK_PRIVILEGES` + 위임 표 읽기 + 182 의 새 칸. 시퀀스는 `work::WORK_SEQUENCE_PRIVILEGES`.
+/// 그림자 기록이 쓰는 권한 — `work::WORK_PRIVILEGES` + 위임 표 읽기 + 182 의 새 칸 + 위임 글의 원장 칸 읽기. 시퀀스는 `work::WORK_SEQUENCE_PRIVILEGES`.
 /// 없으면 `main.rs` 가 켜지 않는다(나머지는 그대로 돈다). `work.delegation_id` 줄은 마이그레이션 182 가 안 깔린 DB 를 거른다.
 pub const WORK_SHADOW_PRIVILEGES: &[(&str, &str)] = &[
     ("work", "SELECT"),
@@ -27,6 +27,10 @@ pub const WORK_SHADOW_PRIVILEGES: &[(&str, &str)] = &[
     ("work_event", "INSERT"),
     ("team_delegation", "SELECT"),
     ("team_delegation_item", "SELECT"),
+    // 하위 작업의 원인 사람·위임장을 위임 글 행에서 읽는다(`work::INSERT_DELEGATED_SQL`).
+    ("message.id", "SELECT"),
+    ("message.principal_account_id", "SELECT"),
+    ("message.mandate_id", "SELECT"),
 ];
 
 /// 하위 작업이 닫힐 때 남기는 사건 종류.

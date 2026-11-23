@@ -64,6 +64,14 @@ async fn delegation_becomes_child_work_and_closes() {
             .unwrap();
     }
 
+    // 위임 글에 원인 사람이 적혀 있다(서버가 글 tx 에서 찍는 칸).
+    sqlx::query("update message set principal_account_id = $2::uuid where id = $1::uuid")
+        .bind(&deleg_msg)
+        .bind(&human)
+        .execute(&admin)
+        .await
+        .unwrap();
+
     // 위임 → 위임자의 뿌리 작업 하나 + 담당마다 하위 작업(running). 되풀이해도 늘지 않는다.
     assert_eq!(delegation_created_with(&w, &deleg).await.unwrap(), 2);
     assert_eq!(delegation_created_with(&w, &deleg).await.unwrap(), 0);
@@ -86,6 +94,18 @@ async fn delegation_becomes_child_work_and_closes() {
         assert_eq!(k.2, "running");
         assert!(k.3);
         assert_eq!(k.4.as_deref(), Some(deleg_msg.as_str()));
+    }
+    // 하위 작업의 원인 사람은 부모 작업(여기서는 비어 있다)이 아니라 위임 글의 행에서 온다.
+    let causes: Vec<(bool, Option<String>)> = sqlx::query_as(
+        "select parent_id is null, cause_account_id::text from work where thread_root_id = $1::uuid",
+    )
+    .bind(&root_msg)
+    .fetch_all(&admin)
+    .await
+    .unwrap();
+    for (is_root, cause) in &causes {
+        let want = if *is_root { None } else { Some(human.as_str()) };
+        assert_eq!(cause.as_deref(), want, "{causes:?}");
     }
     let child_of = |who: String| {
         let admin = admin.clone();
