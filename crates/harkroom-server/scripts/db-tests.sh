@@ -154,7 +154,7 @@ grants_for() {
 TESTS=(auth perm operator loops wake outbox_listener retention mandate_idle permission_expire bg bg_produce outbox_prune push_loop work_shadow
   turn_lease inbox_list decide_core_db card_state_db relay_live turn_settle turn_cancel health scheduled stale migrate delegation_deadline
   automation_grant claim_seed automation_sweep hook_debounce thread_status thread_plan db_retry deny_accounts invoke_gate deny_channels deny_reset work measure device_allow wake_mirror
-  work_route team_route_gate self_split agent_call_team)
+  work_route team_route_gate self_split agent_call_team agent_call_expect)
 if [ "$#" -gt 0 ]; then TESTS=("$@"); fi
 
 # 1. 틀 DB — Rust 마이그레이션 실행기로 한 번만 만든다.
