@@ -5,6 +5,9 @@ use harkroom_server::core::work_shadow::{
 };
 use sqlx::PgPool;
 
+/// 작업 행에서 시험이 읽는 칸.
+type WorkRow = (Option<String>, Option<String>, String, bool, Option<String>);
+
 async fn id(admin: &PgPool, sql: &'static str, binds: &[&str]) -> String {
     let mut q = sqlx::query_scalar::<_, String>(sql);
     for b in binds {
@@ -64,7 +67,7 @@ async fn delegation_becomes_child_work_and_closes() {
     // 위임 → 위임자의 뿌리 작업 하나 + 담당마다 하위 작업(running). 되풀이해도 늘지 않는다.
     assert_eq!(delegation_created_with(&w, &deleg).await.unwrap(), 2);
     assert_eq!(delegation_created_with(&w, &deleg).await.unwrap(), 0);
-    let rows: Vec<(Option<String>, Option<String>, String, bool, Option<String>)> = sqlx::query_as(
+    let rows: Vec<WorkRow> = sqlx::query_as(
         "select parent_id::text, assignee_account_id::text, state, due_at is not null, source_message_id::text \
            from work where thread_root_id = $1::uuid order by created_at, id",
     )
