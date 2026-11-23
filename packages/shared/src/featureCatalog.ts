@@ -109,12 +109,7 @@ export const FEATURE_CATALOG: readonly FeatureEntry[] = [
     tools: ['channel.doc'],
     lines: ['`channel.doc`: 이 채널에서 처음 일하거나 채널의 약속·자료를 확인해야 할 때 읽는다(사람이 쓰는 문서다).'],
   },
-  // ── 밖의 일·자동화 ──
-  {
-    id: 'workitem',
-    tools: ['workitem.upsert', 'workitem.list', 'workitem.remove'],
-    lines: ['`workitem.upsert`: 밖의 시스템 항목 하나를 이 스레드에 이어 사람의 「내 작업」 보드에 세운다. 무엇을 걸지는 지시문·기억을 따른다.'],
-  },
+  // ── 자동화 ──
   {
     id: 'automation',
     tools: ['automation.list', 'automation.run'],
@@ -174,6 +169,10 @@ export const FEATURE_CATALOG: readonly FeatureEntry[] = [
  */
 export const CATALOG_ELSEWHERE: Readonly<Record<string, string>> = {
   'workspace.guide': '워크스페이스 가이드 자신(러너가 받아 시스템 프롬프트에 싣는다)',
+  // 「내 작업」 보드를 걷어내며(2026-11-23) 권하지 않는다 — 도구는 다음 판에 no-op 으로 둔 뒤 지운다.
+  'workitem.upsert': '권하지 않음(「내 작업」 보드 제거, 다음 판 no-op)',
+  'workitem.list': '권하지 않음(「내 작업」 보드 제거, 다음 판 no-op)',
+  'workitem.remove': '권하지 않음(「내 작업」 보드 제거, 다음 판 no-op)',
   'account.me': '가이드 「이름이 아니라 id 로」 절',
   'account.list': '가이드 「이름이 아니라 id 로」 절',
   'channel.list': '가이드 「이름이 아니라 id 로」 절',

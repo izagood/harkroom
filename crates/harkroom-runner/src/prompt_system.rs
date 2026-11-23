@@ -638,14 +638,6 @@ pub const FEATURE_CATALOG: &[FeatureEntry] = &[
         ],
     },
     FeatureEntry {
-        id: "workitem",
-        tools: &["workitem.upsert", "workitem.list", "workitem.remove"],
-        needs_secret_create: false,
-        lines: &[
-            "`workitem.upsert`: 밖의 시스템 항목 하나를 이 스레드에 이어 사람의 「내 작업」 보드에 세운다. 무엇을 걸지는 지시문·기억을 따른다.",
-        ],
-    },
-    FeatureEntry {
         id: "automation",
         tools: &["automation.list", "automation.run"],
         needs_secret_create: false,
