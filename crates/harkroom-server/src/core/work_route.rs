@@ -9,6 +9,7 @@
 //! - **기존 트랜잭션 안에서 문장을 돌리지 않는다.** 요청 밖(`tokio::spawn`)에서 다른 연결로 돈다 — 실패는 로그 한 줄
 //!   (오류 갈래만)로 삼킨다. 기존 작업의 상태·`updated_at` 은 건드리지 않고, 신호(outbox)도 내지 않는다.
 //! - 새 작업 행에 글 본문을 베끼지 않는다(`title`·`body` 는 빈 채).
+//! - 라우팅은 프로세스 안에서 하나씩 돈다([`GATE`]) — 쓰기 풀 연결을 많아야 2개 쓴다.
 //! - (글, 에이전트)마다 한 번 — 같은 글로 두 번 돌아도 작업·사건이 늘지 않는다. (스레드, 에이전트) 자문 잠금 아래에서
 //!   「이 글의 사건이 이미 있는가」를 먼저 본다.
 //! - 스위치 `HARKROOM_WORK_ROUTE`(`off` | `shadow`(기본)) — [`switch_from_env`].
@@ -58,6 +59,9 @@ const OPEN_WORK_SQL: &str = "select id::text from work \
           order by updated_at desc, created_at desc, id desc limit 1";
 
 static POOL: OnceLock<PgPool> = OnceLock::new();
+/// 한 번에 도는 라우팅 수. 라우팅 하나는 잠금 연결을 쥔 채 `work` 쓰기에 연결을 하나 더 빌린다 — 글이 몰릴 때 저마다 잠금 연결을
+/// 쥐고 두 번째 연결을 기다리면 요청과 나눠 쓰는 쓰기 풀이 마른다. 하나씩 세우면 이 그림자가 쓰는 연결은 많아야 2개다.
+static GATE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
 
 /// 그림자 라우팅을 켠다(프로세스에 한 번). 두 번째 부름은 무시한다.
 pub fn enable(pool: PgPool) {
@@ -152,6 +156,9 @@ pub(crate) fn after_post(out: &Result<Outcome, sqlx::Error>) {
     };
     let notified = notified.clone();
     rt.spawn(async move {
+        let Ok(_one) = GATE.acquire().await else {
+            return;
+        };
         if let Err(e) = route_with(pool, &id, &notified).await {
             eprintln!("work route: message.routed skipped ({})", kind_of(&e));
         }
