@@ -145,11 +145,12 @@ grants_for() {
     hook_debounce) echo HOOK_DEBOUNCE_GRANTS ;;
     thread_status) echo THREAD_STATUS_GRANTS ;;
     work) echo WORK_GRANTS ;;
+    work_shadow) echo WORK_GRANTS ;;
     *) echo '' ;;
   esac
 }
 
-TESTS=(auth perm operator loops wake outbox_listener retention mandate_idle permission_expire bg bg_produce outbox_prune push_loop
+TESTS=(auth perm operator loops wake outbox_listener retention mandate_idle permission_expire bg bg_produce outbox_prune push_loop work_shadow
   turn_lease inbox_list decide_core_db card_state_db relay_live turn_settle turn_cancel health scheduled stale migrate delegation_deadline
   automation_grant claim_seed automation_sweep hook_debounce thread_status thread_plan db_retry deny_accounts invoke_gate deny_channels deny_reset work measure device_allow wake_mirror)
 if [ "$#" -gt 0 ]; then TESTS=("$@"); fi

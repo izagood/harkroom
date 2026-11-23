@@ -564,6 +564,8 @@ async fn close_tx(
         .await?;
     // A1 측정 — 위임 결말(위임자가 닫음). 기록만.
     crate::core::measure::delegation_outcomes(&ids, "closed", Some("delegator_close"));
+    // D1 그림자 — 닫힌 의무의 하위 작업을 접는다. 이 tx 밖(다른 연결)에서 돈다. 기록만.
+    crate::core::work_shadow::delegation_closed(&ids, delegate, "closed", Some("delegator_close"));
     if !ids.is_empty() {
         sqlx::query(NOTIFY_DELEGATIONS_SQL)
             .bind(&ids)

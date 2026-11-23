@@ -1030,6 +1030,13 @@ pub(crate) async fn post_tx(
                 }
                 // A1 측정 — 위임 결말(`message.report`·`message.fail` 이 닫음: `reported`·`done`·`failed`). 기록만.
                 super::measure::delegation_outcomes(std::slice::from_ref(&d), outcome, None);
+                // D1 그림자 — 그 담당의 하위 작업을 닫는다. 이 tx 밖(다른 연결)에서 돈다. 기록만.
+                super::work_shadow::delegation_closed(
+                    std::slice::from_ref(&d),
+                    Some(author),
+                    outcome,
+                    None,
+                );
                 if let Some(lead) = turn_settle::notify_if_settled(&mut tx, &d, &mut deleg).await? {
                     deleg_woke.push(lead);
                 }
@@ -1140,6 +1147,10 @@ pub(crate) async fn post_tx(
         ask_reply_close::close_by_reply(&mut tx, r, channel, seq, author, &id).await?;
     }
     tx.commit().await?;
+    // D1 그림자 — 위임마다 하위 작업 행. 커밋 뒤에만 부른다(작업 행의 FK 가 글·위임 행을 본다). 기록만.
+    if let Some(d) = &delegation_id {
+        super::work_shadow::delegation_created(d);
+    }
     Ok(Outcome::Posted {
         row,
         notified,
