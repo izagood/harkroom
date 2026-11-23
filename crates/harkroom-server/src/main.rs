@@ -5670,6 +5670,7 @@ async fn open_write_pool() -> Option<sqlx::PgPool> {
         Ok(m) if m.is_empty() => {
             eprintln!("front: write pool on");
             enable_measure(&pool).await;
+            enable_work_shadow(&pool).await;
             enable_device_allow(&pool).await;
             Some(pool)
         }
@@ -5703,6 +5704,32 @@ async fn enable_measure(pool: &sqlx::PgPool) {
         }
         Ok(m) => eprintln!("front: measure off — missing privileges {m:?}"),
         Err(e) => eprintln!("front: measure off — privilege check failed: {e}"),
+    }
+}
+
+/// D1 그림자 — 위임마다 하위 작업 행(`work`). 권한이 모자라면 켜지 않는다(기록만 빠지고 나머지는 그대로).
+async fn enable_work_shadow(pool: &sqlx::PgPool) {
+    use harkroom_server::core::work_shadow;
+    if work_shadow::switch_from_env() == work_shadow::Switch::Off {
+        eprintln!("front: work shadow off — switch");
+        return;
+    }
+    match write::missing_in(
+        pool,
+        work_shadow::WORK_SHADOW_PRIVILEGES,
+        harkroom_server::core::work::WORK_SEQUENCE_PRIVILEGES,
+    )
+    .await
+    {
+        Ok(m) if m.is_empty() => {
+            eprintln!("front: work shadow on");
+            work_shadow::enable(pool.clone());
+        }
+        Ok(m) => eprintln!("front: work shadow off — missing privileges {m:?}"),
+        Err(e) => eprintln!(
+            "front: work shadow off — privilege check failed ({})",
+            e.as_database_error().map_or("io", |_| "db")
+        ),
     }
 }
 

@@ -248,6 +248,13 @@ async fn expire_one(pool: &PgPool, v2: bool, skip: &mut Vec<String>) -> Result<O
                 detail: Some(serde_json::json!({ "outcome": "timeout", "reason": null })),
                 ..Default::default()
             });
+            // D1 그림자 — 무응답으로 닫힌 의무의 하위 작업. 이 tx 밖(다른 연결)에서 돈다. 기록만.
+            crate::core::work_shadow::delegation_closed(
+                std::slice::from_ref(&id),
+                None,
+                "timeout",
+                None,
+            );
         }
         if let Some(lead) = notify_if_settled(&mut tx, &id, &mut out).await? {
             out.woke.push(lead);
@@ -284,6 +291,9 @@ pub async fn auto_close(conn: &mut sqlx::PgConnection) -> Result<u64, sqlx::Erro
     // A1 측정 — 위임 결말(자동 닫힘). 기록만. 롤백되면 한 번 더 적힐 수 있다(근삿값).
     crate::core::measure::delegation_outcomes(&idle, "closed", Some("idle"));
     crate::core::measure::delegation_outcomes(&aged, "closed", Some("max_age"));
+    // D1 그림자 — 자동으로 닫힌 의무의 하위 작업(이미 끝난 작업은 그대로). 이 tx 밖(다른 연결)에서 돈다. 기록만.
+    crate::core::work_shadow::delegation_closed(&idle, None, "closed", Some("idle"));
+    crate::core::work_shadow::delegation_closed(&aged, None, "closed", Some("max_age"));
     let n = (idle.len() + aged.len()) as u64;
     let ids: Vec<String> = idle.into_iter().chain(aged).collect();
     if !ids.is_empty() {

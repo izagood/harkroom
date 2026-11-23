@@ -64,26 +64,30 @@ pub struct NewWork<'a> {
     pub paths: &'a [String],
     pub after_work_id: Option<&'a str>,
     pub due_at_iso: Option<&'a str>,
+    /// 이 작업을 낳은 위임(`team_delegation.id`, 마이그레이션 182). 있으면 (위임, 담당)마다 한 줄만 선다 — 겹치면 `Ok(None)`.
+    pub delegation_id: Option<&'a str>,
 }
 
 /// `$15` 가 비면 뿌리 작업(`root_id = id`), 있으면 하위 작업 — 채널·스레드·뿌리·위임장·원인 사람을 부모 행에서 복사한다.
-/// 부모를 적었는데 그 행이 없으면 0줄이다.
+/// 부모를 적었는데 그 행이 없으면 0줄이다. `$16`(위임 id)이 있고 같은 (위임, 담당) 행이 이미 있으면 역시 0줄이다(182 의 부분 유일 인덱스).
 const INSERT_SQL: &str = "with n as (select gen_random_uuid() as id) \
      insert into work (id, parent_id, root_id, channel_id, thread_root_id, created_by_work_id, source_message_id, \
-       assignee_account_id, requester_account_id, cause_account_id, mandate_id, pool, title, body, paths, after_work_id, due_at) \
+       assignee_account_id, requester_account_id, cause_account_id, mandate_id, pool, title, body, paths, after_work_id, due_at, delegation_id) \
      select n.id, p.id, coalesce(p.root_id, n.id), coalesce(p.channel_id, $1::uuid), coalesce(p.thread_root_id, $2::uuid), \
        $3::uuid, $4::uuid, $5::uuid, $6::uuid, \
        case when p.id is null then $7::uuid else p.cause_account_id end, \
        case when p.id is null then $8::uuid else p.mandate_id end, \
-       $9, $10, $11, $12::text[], $13::uuid, $14::timestamptz \
+       $9, $10, $11, $12::text[], $13::uuid, $14::timestamptz, $16::uuid \
        from n left join work p on p.id = $15::uuid \
       where $15::uuid is null or p.id is not null \
+     on conflict do nothing \
      returning id::text";
 
 const INSERT_EVENT_SQL: &str = "insert into work_event (work_id, kind, actor_account_id, payload) \
      values ($1::uuid, $2, $3::uuid, $4::jsonb) returning id";
 
 /// 작업 하나를 만들고 `created` 사건을 같은 트랜잭션에 남긴다. 하위 작업인데 부모 행이 없으면 `Ok(None)`.
+/// 같은 (위임, 담당) 작업이 이미 있어도 `Ok(None)`(아무것도 적지 않는다).
 pub async fn create(
     pool: &PgPool,
     w: &NewWork<'_>,
@@ -105,7 +109,8 @@ pub async fn create(
         .bind(w.paths)
         .bind(w.after_work_id)
         .bind(w.due_at_iso)
-        .bind(w.parent_id);
+        .bind(w.parent_id)
+        .bind(w.delegation_id);
     let Some(id) = q.fetch_optional(&mut *tx).await? else {
         return Ok(None);
     };

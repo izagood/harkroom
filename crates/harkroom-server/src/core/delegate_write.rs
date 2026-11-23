@@ -98,6 +98,8 @@ pub(crate) async fn create(
                 .await?;
             // A1 측정 — 위임 결말(새 위임이 앞 의무를 대체). 기록만.
             super::measure::delegation_outcomes(&closed, "closed", Some("superseded"));
+            // D1 그림자 — 대체된 앞 의무의 하위 작업을 접는다. 이 tx 밖(다른 연결)에서 돈다. 기록만.
+            super::work_shadow::delegation_closed(&closed, Some(d), "closed", Some("superseded"));
             if !closed.is_empty() {
                 sqlx::query(s.settled.as_str())
                     .bind(&closed)
