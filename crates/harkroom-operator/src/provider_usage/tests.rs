@@ -42,6 +42,41 @@ fn claude_parse_full() {
     );
 }
 
+/// 실측 모양(2026-11): 모델별 주간 창은 `limits[]` 의 `weekly_scoped` 로만 오고 `seven_day_<모델>` 칸은 null 이다.
+#[test]
+fn claude_parse_weekly_scoped_model_limit() {
+    let raw = json!({
+        "five_hour": {"utilization": 4.0, "resets_at": "1970-01-01T00:00:01Z"},
+        "seven_day": {"utilization": 28.0, "resets_at": "1970-01-01T00:00:02Z"},
+        "seven_day_opus": null,
+        "seven_day_sonnet": null,
+        "limits": [
+            {"kind": "session", "group": "session", "percent": 4, "resets_at": "1970-01-01T00:00:01Z", "scope": null},
+            {"kind": "weekly_all", "group": "weekly", "percent": 28, "resets_at": "1970-01-01T00:00:02Z", "scope": null},
+            {"kind": "weekly_scoped", "group": "weekly", "percent": 1, "resets_at": "1970-01-01T00:00:03Z",
+             "scope": {"model": {"id": null, "display_name": "Fable"}, "surface": null}},
+            {"kind": "weekly_scoped", "percent": 9, "scope": {"model": null, "surface": "x"}},
+            {"kind": "weekly_scoped", "scope": {"model": {"display_name": "NoPercent"}}},
+        ],
+    });
+    let m = parse_claude_oauth_usage(&raw, NOW);
+    assert_eq!(
+        serde_json::to_value(&m.extra).unwrap(),
+        json!([{"label": "Fable weekly", "window": {"usedPercent": 1.0, "resetsAtMs": 3000}}])
+    );
+}
+
+/// 옛 `seven_day_opus` 와 `limits[]` 가 같은 모델을 둘 다 말하면 하나만 싣는다.
+#[test]
+fn claude_parse_weekly_scoped_does_not_duplicate_legacy_key() {
+    let raw = json!({
+        "seven_day_opus": {"utilization": 10},
+        "limits": [{"kind": "weekly_scoped", "percent": 10, "scope": {"model": {"display_name": "Opus"}}}],
+    });
+    let m = parse_claude_oauth_usage(&raw, NOW);
+    assert_eq!(m.extra.unwrap().len(), 1);
+}
+
 #[test]
 fn claude_parse_unknown_shape_is_empty_not_error() {
     let m = parse_claude_oauth_usage(&json!("x"), NOW);
