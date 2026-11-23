@@ -696,7 +696,7 @@ class InboxEntry {
   final String? threadRootId;
   final String? readAt;
 
-  /// 그 말의 `meta`(물음·실패 등). Inbox 보드 판정이 읽는다(`inbox_board.dart`) — 해석하지 않고 들고만 있는다.
+  /// 그 말의 `meta`(물음·실패 등). 해석하지 않고 들고만 있는다.
   /// 옛 서버나 간추린 판에서 빠질 수 있다 — 그때는 빈 맵이다.
   final Map<String, Object?> meta;
 

@@ -87,7 +87,6 @@ MockClient _server() => MockClient((req) async {
               'channelId': 'c1',
               'authorId': 'a1',
               'body': '@me 이거 봐 줘',
-              // 오늘 온 부름이어야 받은 일 목록에 선다(7일 넘게 조용한 것은 접힌다 — Inbox A안).
               'createdAt': DateTime.now().toUtc().toIso8601String(),
               'readAt': null,
             },
@@ -806,7 +805,7 @@ void main() {
     expect(find.byKey(const Key('mention-picker')), findsNothing);
   });
 
-  testWidgets('받은 것 탭에서 일을 눌러 상세를 보고, [스레드 열기]로 그 채널로 간다 (Inbox A안)', (tester) async {
+  testWidgets('인박스 탭에서 안 읽은 부름을 누르면 읽음이 되고 그 채널로 간다', (tester) async {
     final state = _state();
     await tester.pumpWidget(HarkroomApp(state: state));
     await tester.pumpAndSettle();
@@ -815,19 +814,12 @@ void main() {
     await tester.tap(find.byKey(const Key('tab-inbox')));
     await tester.pumpAndSettle();
 
-    // 이 부름은 물음·실패가 없는 멘션이라 내 차례가 아니다 — 소식 갈래에 선다.
-    await tester.tap(find.byKey(const Key('inbox-tab-news')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('inbox-card-m1')), findsOneWidget);
-    await tester.tap(find.byKey(const Key('inbox-card-m1')));
-    await tester.pumpAndSettle();
-    // 누르면 상세로 간다 — 스레드로 바로 가지 않는다(아직 읽음도 아니다).
-    expect(find.byKey(const Key('inbox-detail')), findsOneWidget);
+    expect(find.byKey(const Key('inbox-entry-1')), findsOneWidget);
     expect(state.inboxUnread, 1);
-    await tester.tap(find.byKey(const Key('inbox-detail-open')));
+    await tester.tap(find.byKey(const Key('inbox-entry-1')));
     await _settle(tester);
 
-    // 눌러서 열면 읽음이 된다 — **훑기만 해도 사라지지는 않는다.**
+    // 눌러서 열면 읽음이 된다.
     expect(state.inboxUnread, 0);
     // 그 채널의 메시지가 선다.
     expect(find.byKey(const Key('message-m1')), findsOneWidget);
@@ -894,18 +886,12 @@ void main() {
     bandUnderHead();
     expect(find.byKey(const Key('card-my-turn')), findsNothing);
 
-    // 받은 것: 탭 칩은 끊김 띠 바로 밑에 고정(designer #1373 s1) — 목록(Scrollable) 밖이다.
+    // 받은 것: 목록은 머리 밑부터, 당기기 회전자도 끊김 띠 밑에서 나온다.
     await tester.tap(find.byKey(const Key('tab-inbox')));
     await tester.pumpAndSettle();
     bandUnderHead();
-    final chips = find.byKey(const Key('inbox-tab-chips'));
-    expect(chips, findsOneWidget);
-    expect(find.ancestor(of: chips, matching: find.byType(Scrollable)), findsNothing, reason: '칩은 굴러가지 않는다');
-    expect(tester.getRect(chips).top, tester.getRect(find.byKey(const Key('connection-band'))).bottom);
-    // 고정 빈 머리가 머리 + 띠 + 칩만큼 비워서, 묶음 머리(pinned)가 칩 밑에 붙는다.
-    expect(tester.getRect(find.byKey(const Key('inbox-top-inset'))).bottom, tester.getRect(chips).bottom);
-    // 당기기 회전자도 칩 밑에서 나온다.
-    expect(tester.widget<RefreshIndicator>(find.byType(RefreshIndicator)).edgeOffset, tester.getRect(chips).bottom);
+    expect(tester.widget<RefreshIndicator>(find.byType(RefreshIndicator)).edgeOffset,
+        tester.getRect(find.byKey(const Key('connection-band'))).bottom);
 
     // 에이전트 탭의 목록 여백은 tab_bar_test(S7)가 잰다 — 이 가짜 서버에는 에이전트 응답이 없다.
     await tester.tap(find.byKey(const Key('tab-agents')));
