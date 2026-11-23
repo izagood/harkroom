@@ -1343,7 +1343,7 @@ class StringsEn implements Strings {
   String get olderLoadFailed => "Couldn't load earlier messages";
 
   @override
-  String get inboxEmptyHint => 'When someone calls you or waits on you, it shows up here.';
+  String get inboxEmptyHint => 'When someone mentions you or sends a DM, it shows up here.';
 
   @override
   String get bootUnreachableTitle => 'Could not reach the server';

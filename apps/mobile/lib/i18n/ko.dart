@@ -1015,7 +1015,7 @@ class StringsKo implements Strings {
   String get inboxEmpty => '인박스가 비어 있다.';
 
   @override
-  String get inboxUnreadCount => '안 읽은 것 {count}';
+  String get inboxUnreadCount => '안 읽음 {count}';
 
   @override
   String get inboxReasonMention => '불렀다';
@@ -1347,7 +1347,7 @@ class StringsKo implements Strings {
   String get olderLoadFailed => '이전 메시지를 불러오지 못했다';
 
   @override
-  String get inboxEmptyHint => '누가 부르거나 답을 기다리면 여기 선다.';
+  String get inboxEmptyHint => '누가 부르거나 DM을 보내면 여기 선다.';
 
   @override
   String get bootUnreachableTitle => '서버에 닿지 못했다';
