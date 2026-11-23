@@ -5672,6 +5672,7 @@ async fn open_write_pool() -> Option<sqlx::PgPool> {
             enable_measure(&pool).await;
             enable_work_shadow(&pool).await;
             enable_device_allow(&pool).await;
+            enable_work_route(&pool).await;
             Some(pool)
         }
         Ok(m) => {
@@ -5746,6 +5747,27 @@ async fn enable_device_allow(pool: &sqlx::PgPool) {
         Ok(m) => eprintln!("front: device allow off — missing privileges {m:?}"),
         Err(e) => eprintln!(
             "front: device allow off — privilege check failed ({})",
+            e.as_database_error().map_or("io", |_| "db")
+        ),
+    }
+}
+
+/// B2 글 → 작업 라우팅(그림자). `HARKROOM_WORK_ROUTE=off` 거나 권한이 모자라면 켜지 않는다 — 기록만 빠지고 글 올리기는 그대로 돈다.
+async fn enable_work_route(pool: &sqlx::PgPool) {
+    use harkroom_server::core::{work, work_route};
+    if work_route::switch_from_env() == work_route::Switch::Off {
+        eprintln!("front: work route off — switch");
+        return;
+    }
+    let seq = work::WORK_SEQUENCE_PRIVILEGES;
+    match write::missing_in(pool, work_route::WORK_ROUTE_PRIVILEGES, seq).await {
+        Ok(m) if m.is_empty() => {
+            eprintln!("front: work route on (shadow)");
+            work_route::enable(pool.clone());
+        }
+        Ok(m) => eprintln!("front: work route off — missing privileges {m:?}"),
+        Err(e) => eprintln!(
+            "front: work route off — privilege check failed ({})",
             e.as_database_error().map_or("io", |_| "db")
         ),
     }

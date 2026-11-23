@@ -187,6 +187,9 @@ pub mod work;
 pub mod work_shadow;
 pub mod ws;
 
+// B2 — 글 → 작업 라우팅(그림자). 위 묶음과 떼어 둔다.
+pub mod work_route;
+
 /// `HARKROOM_CORE` — 모르는 값이면 기동을 멈춘다(조용히 켜지거나 꺼지지 않게).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CoreMode {
