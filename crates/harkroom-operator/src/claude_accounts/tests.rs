@@ -452,3 +452,89 @@ fn remove_and_move_refuse_symlinked_components() {
     assert!(root.join("flat").exists());
     let _ = fs::remove_dir_all(&base);
 }
+
+/// 사용량 조회가 풀 루트에 `.claude.json` 을 남긴 뒤의 디스크 모양 — 풀은 「풀 밖의 계정」이 아니다.
+#[test]
+fn pool_with_stray_marker_is_not_an_account() {
+    let d = tmpdir("pool-marker");
+    for (pool, acct) in [("p1", "a"), ("p2", "b")] {
+        fs::create_dir_all(d.join(pool).join(acct)).unwrap();
+        fs::write(d.join(pool).join(acct).join(".claude.json"), "{}").unwrap();
+    }
+    // p1: 설정에 나오는 풀 · p2: 설정엔 없지만 계정을 품은 디렉터리 · p3: 설정에만 있는 빈 풀.
+    fs::write(d.join("p1/.claude.json"), "{}").unwrap();
+    fs::write(d.join("p2/.claude.json"), "{}").unwrap();
+    fs::create_dir_all(d.join("p3")).unwrap();
+    fs::write(d.join("p3/.claude.json"), "{}").unwrap();
+    fs::create_dir_all(d.join("loose")).unwrap();
+    fs::write(d.join("loose/.claude.json"), "{}").unwrap();
+    fs::write(
+        d.join("pools.json"),
+        r#"{"defaultPool":"p1","order":{"p3":[]},"agents":{}}"#,
+    )
+    .unwrap();
+    let l = read_layout(&d, &d.join("pools.json"));
+    assert_eq!(l.strays, vec!["loose".to_string()]);
+    let names: Vec<&str> = l.pools.iter().map(|(n, _)| n.as_str()).collect();
+    assert_eq!(names, ["p1", "p2", "p3"]);
+    // 평평한 구조로 읽혀도(pools.json 없음) 계정을 품은 디렉터리는 계정으로 세지 않는다.
+    fs::remove_file(d.join("pools.json")).unwrap();
+    let flat = read_layout(&d, &d.join("pools.json"));
+    let accts: Vec<&str> = flat.pools[0].1.iter().map(|a| a.name.as_str()).collect();
+    assert_eq!(accts, ["loose", "p3"]);
+    fs::remove_dir_all(d).ok();
+}
+
+/// 풀 안에 풀이 들어간 모양(`p1/p2/b`)도 `order` 에 계정으로 들어가지 않는다.
+#[test]
+fn reconcile_skips_nested_pool() {
+    let d = tmpdir("nested");
+    fs::create_dir_all(d.join("p1/a")).unwrap();
+    fs::create_dir_all(d.join("p1/p2/b")).unwrap();
+    fs::write(d.join("p1/p2/b/.claude.json"), "{}").unwrap();
+    fs::write(
+        d.join("pools.json"),
+        r#"{"defaultPool":"p1","order":{"p1":[]},"agents":{}}"#,
+    )
+    .unwrap();
+    reconcile_order(&d, &d.join("pools.json")).unwrap();
+    let order = read_pools_config(&d.join("pools.json")).unwrap().order;
+    assert_eq!(order["p1"], vec!["a".to_string()]);
+    fs::remove_dir_all(d).ok();
+}
+
+#[test]
+fn move_refuses_pools() {
+    let d = tmpdir("mv-pool");
+    fs::create_dir_all(d.join("p1/a")).unwrap();
+    fs::write(d.join("p1/a/.claude.json"), "{}").unwrap();
+    fs::write(d.join("p1/.claude.json"), "{}").unwrap();
+    fs::create_dir_all(d.join("p2")).unwrap();
+    fs::create_dir_all(d.join("p3")).unwrap();
+    fs::create_dir_all(d.join("q/b")).unwrap();
+    fs::write(d.join("q/b/.credentials.json"), "{}").unwrap();
+    fs::write(
+        d.join("pools.json"),
+        r#"{"defaultPool":"p1","order":{"p2":[],"p3":[]},"agents":{}}"#,
+    )
+    .unwrap();
+    let (p, _) = port(&d, true);
+    // 설정에 나오는 풀(계정 유무 무관) · 설정엔 없지만 계정을 품은 디렉터리 — 모두 거절.
+    for (from, to) in [("p1", "p2"), ("p3", "p2"), ("q", "p2")] {
+        assert_eq!(
+            p.move_account(from, to).unwrap_err(),
+            format!("풀은 계정으로 옮길 수 없다: {from}")
+        );
+        assert!(d.join(from).is_dir());
+        assert!(!d.join(to).join(from).exists());
+    }
+    let order = read_pools_config(&d.join("pools.json")).unwrap().order;
+    assert_eq!(order["p2"], Vec::<String>::new());
+    assert!(
+        !order
+            .values()
+            .flatten()
+            .any(|n| n == "p1" || n == "p3" || n == "q")
+    );
+    fs::remove_dir_all(d).ok();
+}
