@@ -1894,13 +1894,13 @@ describe('인박스 — 두 언어로 뜬다', () => {
 
   it('빈 목록이 두 언어로 뜬다', async () => {
     render(<Inbox open onClose={() => {}} />);
-    await waitFor(() => expect(screen.getByTestId('inbox-empty').textContent).toBe('No unread mentions'));
+    await waitFor(() => expect(screen.getByTestId('inbox-empty').textContent).toBe('No unread mentions or DMs'));
     // 자리의 이름이자 머리글이다 — 랜드마크로 찾을 수 있어야 한다.
     expect(screen.getByRole('complementary', { name: 'Inbox' })).toBeTruthy();
     cleanup();
     speak('ko');
     render(<Inbox open onClose={() => {}} />);
-    await waitFor(() => expect(screen.getByTestId('inbox-empty').textContent).toBe('안 읽은 멘션이 없다'));
+    await waitFor(() => expect(screen.getByTestId('inbox-empty').textContent).toBe('안 읽은 멘션·DM이 없다'));
     expect(screen.getByRole('complementary', { name: '인박스' })).toBeTruthy();
   });
 

@@ -33,7 +33,10 @@ export function unreadMentionCount(unread: ReadonlyArray<{ reason: string }>): n
   return n;
 }
 
-/** 배지가 세는 줄인가 — 멘션·DM. 인박스 목록도 같은 판정으로 고른다(배지 수 = 목록 줄 수). */
+/**
+ * 배지가 세는 줄인가 — 멘션·DM·팀장으로서 불림(`team_mention`). 인박스 목록도 같은 판정으로
+ * 고른다(배지 수 = 목록 줄 수). 모바일(`inboxMentionCount`)과 같은 판정이다.
+ */
 export function isMentionOrDm(e: { reason: string }): boolean {
-  return e.reason === 'mention' || e.reason === 'dm';
+  return e.reason === 'mention' || e.reason === 'dm' || e.reason === 'team_mention';
 }

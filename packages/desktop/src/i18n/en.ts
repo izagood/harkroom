@@ -3420,7 +3420,7 @@ export const en = {
    */
   /** 자리의 이름(`aria-label`)이자 머리글. 스크린리더가 이 구획을 찾는 이름이다. */
   'inbox.pane.title': 'Inbox',
-  'inbox.list.empty': 'No unread mentions',
+  'inbox.list.empty': 'No unread mentions or DMs',
 
   // ---------------------------------------------------------------------------
   // profile — **화면 이름이다.** `components/Profile.tsx` 가 그리는 겹창이고,
