@@ -749,6 +749,7 @@ async fn write(
             delegate_ids: &delegate_ids,
             deadline_at: &deadline_at,
             team_id,
+            close_on: delegate_write::CloseOn::Report,
         }),
         system: false,
         progress: false,
