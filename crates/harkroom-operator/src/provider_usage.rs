@@ -182,6 +182,44 @@ pub fn parse_claude_oauth_usage(raw: &Value, now: f64) -> Measured {
             });
         }
     }
+    // 모델별 주간 창(Fable 등)은 옛 `seven_day_<모델>` 칸이 아니라 `limits[]` 의
+    // `{kind: "weekly_scoped", percent, resets_at, scope: {model: {display_name}}}` 로만 온다(2026-11 실측).
+    // 이름표는 CLI `/usage` 판(`cli.rs`)과 같은 「<모델> weekly」 — 같은 이름이 이미 있으면 싣지 않는다.
+    for l in o
+        .get("limits")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        if l.get("kind").and_then(Value::as_str) != Some("weekly_scoped") {
+            continue;
+        }
+        let Some(model) = l
+            .pointer("/scope/model/display_name")
+            .and_then(Value::as_str)
+            .filter(|m| !m.trim().is_empty())
+        else {
+            continue;
+        };
+        let Some(pct) = num(l.get("percent")) else {
+            continue;
+        };
+        let label = format!("{} weekly", model.trim());
+        if extra.iter().any(|x| x.label == label) {
+            continue;
+        }
+        extra.push(ExtraWindow {
+            label,
+            window: UsageWindow {
+                used_percent: clamp_percent(pct),
+                resets_at_ms: l
+                    .get("resets_at")
+                    .and_then(Value::as_str)
+                    .and_then(parse_iso_ms),
+                window_minutes: None,
+            },
+        });
+    }
     Measured {
         source: None,
         session: claude_window(o.get("five_hour")),
