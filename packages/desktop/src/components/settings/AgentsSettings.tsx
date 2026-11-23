@@ -5,6 +5,7 @@ import {
   type AgentView, type MentionPermission, type OperatorView, type OperatorCapabilities, type PatView, harnessHasAccountPool,
   MAX_CORE_MEMORY_LENGTH, MAX_JOURNAL_MEMORIES_PER_ACCOUNT, MAX_MEMORY_ITEMS_PER_ACCOUNT } from '@harkroom/shared';
 import { getController } from '../../state/controller';
+import { copyText } from '../../lib/clipboard';
 import { ApiError } from '../../lib/api';
 import { useActiveStore } from '../../state/communities';
 import { staleRunners, type OperatorVersions } from '../../lib/runnerVersions';
@@ -507,6 +508,9 @@ export function AgentsSettings({ targetId, onOpenSection }: { targetId?: string;
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [error, setError] = useState<string | null>(null);
+  // 오류 문장 아래에 따로 보일 명령 한 줄. **그 문장이 떠 있는 동안만** 그린다(`forError === error`) —
+  // `setError` 를 부르는 곳마다 이것까지 지우게 하면 한 곳만 빠뜨려도 남의 오류 밑에 명령이 남는다.
+  const [errorCommand, setErrorCommand] = useState<{ forError: string; command: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const isAdmin = useActiveStore((s) => s.me?.isAdmin === true);
   const myId = useActiveStore((s) => s.me?.id);
@@ -2925,7 +2929,12 @@ export function AgentsSettings({ targetId, onOpenSection }: { targetId?: string;
                           if (!operatorId || operatorId === selected.assignment?.operatorId) return;
                           setError(null);
                           setAssigning(true);
-                          void getController().assignAgent(selected.id, operatorId)
+                          // controller 는 **여기서 한 번** 잡는다 — 응답을 기다리는 사이 커뮤니티를 바꾸면
+                          // 늦게 다시 부른 `getController()` 는 다른 커뮤니티의 주소를 명령에 찍는다.
+                          const controller = getController();
+                          const baseUrl = controller.api?.baseUrl ?? null;
+                          const agentId = selected.id;
+                          void controller.assignAgent(agentId, operatorId)
                             .then((assignment) => {
                               // 응답의 배정을 **그대로** 앉힌다 — 목록을 다시 읽지 않아도 방금 고른
                               // 것이 화면에 선다(`requestStop` 과 같은 규율).
@@ -2933,11 +2942,20 @@ export function AgentsSettings({ targetId, onOpenSection }: { targetId?: string;
                               setSelected(updated);
                               setAgents((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
                             })
-                            .catch((err: unknown) => setError(
-                              err instanceof ApiError && err.code === 'not_capable'
-                                ? t('agents.assignment.notCapable')
-                                : t('agents.assignment.failed', { reason: errorText(err, t) }),
-                            ))
+                            .catch((err: unknown) => {
+                              if (err instanceof ApiError && err.code === 'not_capable') {
+                                // 앱이 없는 기기(리눅스 서버 등)는 로컬 목록을 CLI 로만 채운다 — 그대로 칠 수 있는
+                                // 명령을 문장 아래 칸에 따로 보인다. 주소를 모르면 칸을 뺀다: 자리표시 글자(`<url>`)가
+                                // 든 명령은 붙여 넣는 순간 셸이 리다이렉트로 읽는다.
+                                const text = t('agents.assignment.notCapable');
+                                setError(text);
+                                setErrorCommand(baseUrl
+                                  ? { forError: text, command: t('agents.assignment.notCapableCmd', { id: agentId, baseUrl }) }
+                                  : null);
+                                return;
+                              }
+                              setError(t('agents.assignment.failed', { reason: errorText(err, t) }));
+                            })
                             .finally(() => setAssigning(false));
                         }}
                       >
@@ -3654,7 +3672,13 @@ export function AgentsSettings({ targetId, onOpenSection }: { targetId?: string;
                 그리면 '에이전트가 없다'와 '못 읽었다'가 같아진다. 위 PAT 로더가 실패를
                 `setPats([])` 로 삼키는데, 그것을 따라 하지 않는다. role 을 주는 이유: 색만으로
                 는 스크린리더에 아무 말도 하지 않는다. */}
-            {error && <p role="alert" className="text-meta text-danger">{error}</p>}
+            {error && (
+              // 문장과 명령을 한 덩어리로 묶는다 — 따로 두면 부모의 간격만큼 벌어져 남남으로 보인다.
+              <div>
+                <p role="alert" className="text-meta text-danger">{error}</p>
+                {errorCommand?.forError === error && <CommandLine command={errorCommand.command} />}
+              </div>
+            )}
 
 
           </SettingsWrap>
@@ -3978,6 +4002,55 @@ function StaleRunnerBar({ agents, runnerStates, operators, t }: {
       <p className="mt-1 text-meta text-fg-subtle">
         {emphasize(t('agents.stale.note'), { strong: t('agents.stale.noteStrong') })}
       </p>
+    </div>
+  );
+}
+
+/**
+ * 다른 기기의 터미널에 붙여 넣을 명령 한 줄 — 고정폭 칸 + 복사 버튼(designer, #2491).
+ *
+ * 오류 문장 안에 섞으면 빨간 본문 글씨라 명령이 어디서 시작하는지 안 보이고, 창 너비에 따라
+ * id·플래그 가운데서 줄이 갈린다. 여기서는 빈칸에서만 접고(`whitespace-pre-wrap` + 낱말 nowrap) 긴 낱말은
+ * 자르지 않고 가로로 스크롤한다 — `break-all` 은 id 를 두 줄로 갈라 읽는 눈을 속인다.
+ * 복사는 코드 블록과 같은 길(`lib/clipboard`)이다: 실패하면 칸을 선택해 두고 그 사실을 말한다.
+ */
+function CommandLine({ command }: { command: string }) {
+  const t = useT();
+  const codeRef = useRef<HTMLElement>(null);
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const id = setTimeout(() => setCopied(false), 1500);
+    return () => clearTimeout(id);
+  }, [copied]);
+  const copy = async () => {
+    const outcome = await copyText(command, codeRef.current);
+    if (outcome === 'copied') {
+      setCopied(true);
+      return;
+    }
+    useActiveStore.getState().pushNotice(
+      outcome === 'selected' ? t('message.code.copyFailedSelected') : t('message.code.copyFailedManual'),
+    );
+  };
+  return (
+    <div className="mt-1 flex max-w-full items-start gap-2 rounded-row border border-border bg-surface-sunken px-2 py-1" data-testid="error-command">
+      <code ref={codeRef} className="min-w-0 flex-1 overflow-x-auto whitespace-pre-wrap font-mono text-meta text-fg">
+        {/* 줄은 **빈칸에서만** 접는다 — 낱말마다 nowrap 을 걸지 않으면 브라우저가 id 의 `-` 뒤에서도 접는다.
+            글자는 그대로라 선택·복사한 내용은 명령 한 줄과 같다. */}
+        {command.split(' ').map((word, i) => (
+          <Fragment key={i}>{i > 0 && ' '}<span className="whitespace-nowrap">{word}</span></Fragment>
+        ))}
+      </code>
+      <button
+        type="button"
+        // 이름은 눌린 뒤에도 그대로 둔다 — 글자만 「복사됨」으로 바뀐다(코드 블록과 같은 규율).
+        aria-label={t('message.code.copy')}
+        onClick={() => void copy()}
+        className="shrink-0 rounded-sm px-1 py-0.5 text-meta text-fg-subtle hover:bg-surface-raised hover:text-fg"
+      >
+        {copied ? t('message.code.copied') : t('message.code.copy')}
+      </button>
     </div>
   );
 }

@@ -6015,7 +6015,10 @@ export const en = {
   'agents.assignment.refusedPersonal': 'The operator refused to start it: it holds personal credentials and that operator is not the owner\u2019s.',
   'agents.assignment.refusedMcp': 'The operator refused to start it: no definition for MCP server(s) {names} on that machine (operator/mcp-servers.json or ~/.claude.json).',
   'agents.assignment.refusedOther': 'The operator refused to start it: {reason}',
-  'agents.assignment.notCapable': 'That operator has not listed this agent in its local config, so it refused.',
+  'agents.assignment.notCapable':
+    'That operator has not listed this agent in its local config, so it refused. On a machine without the app, register it there first (agent add), then assign again.',
+  // 명령은 번역하지 않는다 — 그대로 칠 글자다. 문장과 키를 나눈 것은 화면이 따로 코드 칸에 그리기 때문이다.
+  'agents.assignment.notCapableCmd': 'harkroom-operator-rs agent add {id} --base-url {baseUrl}',
   'agents.assignment.note':
     'Assigning tells that operator to start the runner; reassigning lets the old runner finish its turn first. '
     + 'The operator must also list this agent in its own config — both sides have to agree.',
