@@ -36,6 +36,17 @@ pub(crate) struct Plan<'a> {
     pub(crate) close_on: CloseOn,
 }
 
+/// `agent.call` 의 의무 있는 부름(U1) — 담당은 글 tx 안의 멘션 판정이 정한다([`super::msg_post::Origin::call_obligation`]).
+#[derive(Debug)]
+pub(crate) struct CallObligation<'a> {
+    /// `to` 가 가리킨, 접속한 에이전트 (계정 id, handle) — `to` 순서, 겹침 없음.
+    pub(crate) targets: &'a [(String, String)],
+    /// 접속하지 않아 부르지 않은 대상의 handle — 글 `meta.delegation.unreachable` 에만 싣는다.
+    pub(crate) unreachable: &'a [String],
+    pub(crate) deadline_at: &'a str,
+    pub(crate) close_on: CloseOn,
+}
+
 /// 의무를 닫는 조건 — `team_delegation.close_on`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CloseOn {

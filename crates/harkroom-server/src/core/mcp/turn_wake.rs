@@ -398,6 +398,7 @@ pub async fn answer(
         meta,
         server_notice: false,
         closes_delegation: false,
+        call_obligation: None,
         delegation: None,
         system: false,
         progress: false,
