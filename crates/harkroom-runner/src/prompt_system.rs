@@ -259,6 +259,9 @@ pub fn merge_section(merge: &MergeOpts<'_>) -> Vec<String> {
 
 // ── 4b2: 기억·스킬·계획판·스레드 메모 절 ──────────────────────────────────────────
 
+/// 계획판 그룹 수 상한(정본 서버 `plan_graph::limits::GROUPS`). 단계 상한 1,000 은 문장에 쉼표째 적는다.
+pub const PLAN_LIMIT_GROUPS: usize = 200;
+
 /// 기억을 **읽는** 쪽의 규칙(정본 `MEMORY_SNAPSHOT_LINE`). 읽기 전용 턴에도 그대로 맞아 쓰기 사용법과 따로 둔다.
 pub const MEMORY_SNAPSHOT_LINE: &str = "기억은 확정된 답이 아니라 과거의 스냅숏이니 현재 원본(파일·저장소·화면)과 대조한 뒤 쓴다. 적어 둔 경로·함수·플래그가 아직 있는지 본다.";
 
@@ -386,10 +389,9 @@ pub fn thread_plan_section() -> Vec<String> {
             "이미 오래 진행된 스레드에 계획을 처음 세울 때는 지난 일도 함께 넣는다. 스레드의 머지 기록·완료 보고·닫힌 카드를 훑어 끝난 일을 `done` 단계로 넣고, 근거(PR·메시지·카드)를 그 단계의 `links` 로 단다.",
         ],
     );
-    out.push(
-        "단계는 주제별 그룹으로 묶는다. 그룹·단계 수에는 상한이 없다 — 끝난 일을 한 단계로 합쳐 줄이지 말고, 한 일(PR 하나·결정 하나)마다 단계 하나로 남긴다."
-            .into(),
-    );
+    out.push(format!(
+        "단계는 주제별 그룹으로 묶는다. 그룹 {PLAN_LIMIT_GROUPS}·단계 1,000까지 둘 수 있다 — 한 일(PR 하나·결정 하나)마다 단계 하나로 남긴다."
+    ));
     push_all(
         &mut out,
         &[

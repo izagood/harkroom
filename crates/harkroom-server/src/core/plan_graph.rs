@@ -10,9 +10,11 @@ use super::msg_list::DerivedNode;
 use serde_json::{Map, Value};
 use std::collections::{HashMap, HashSet};
 
-/// TS `PLAN_LIMITS`. 그룹·단계 **수**에는 상한이 없다 — 끝난 일을 합쳐 줄이게 만들면 계획이 읽히지 않는다.
-/// 수를 묶는 것은 id 꼴(`s1`~`s9999`·`g1`~`g9999`, 겹치면 `duplicate_id`)과 요청 본문 크기뿐이다.
+/// TS `PLAN_LIMITS`. 그룹·단계 **수**의 상한은 넉넉하다 — 끝난 일을 합쳐 줄이지 않고 한 일마다 단계 하나로 남길 수 있게 하되,
+/// 계획 한 장(통째로 다시 쓰고 통째로 읽는 문서)이 끝없이 커지지는 않게 묶는다.
 pub mod limits {
+    pub const GROUPS: usize = 200;
+    pub const STEPS: usize = 1000;
     pub const DEPENDS_ON: usize = 8;
     pub const LINKS: usize = 10;
     pub const GOAL: usize = 200;
@@ -285,6 +287,28 @@ pub fn validate_plan(doc: &Value) -> Result<(), PlanError> {
     };
     let groups = arr(&doc["groups"]);
     let steps = arr(&doc["steps"]);
+    if groups.len() > L::GROUPS {
+        return lim("groups", L::GROUPS, None);
+    }
+    if steps.len() > L::STEPS {
+        return lim("steps", L::STEPS, None);
+    }
+    validate_plan_uncounted(doc)
+}
+
+/// [`validate_plan`] 에서 그룹·단계 **수** 검사만 뺀 나머지. 수 상한과 따로, 노드가 아무리 많아도 호출 스택을 깊이만큼 쓰지 않고
+/// 노드 수에 선형으로 끝나야 한다 — 시험이 상한을 한참 넘는 계획으로 이것을 직접 본다.
+pub(crate) fn validate_plan_uncounted(doc: &Value) -> Result<(), PlanError> {
+    use limits as L;
+    let lim = |what, limit, id: Option<&str>| {
+        Err(PlanError::LimitExceeded {
+            what,
+            limit,
+            id: id.map(str::to_string),
+        })
+    };
+    let groups = arr(&doc["groups"]);
+    let steps = arr(&doc["steps"]);
     if len(&doc["goal"]) > L::GOAL {
         return lim("goal", L::GOAL, None);
     }
@@ -311,7 +335,7 @@ pub fn validate_plan(doc: &Value) -> Result<(), PlanError> {
         }
     }
 
-    // 아래 검사는 모두 집합·표로 찾는다 — 노드 수에 선형이다(수 상한이 없다).
+    // 아래 검사는 모두 집합·표로 찾는다 — 노드 수에 선형이다.
     let mut seen: HashSet<&str> = HashSet::with_capacity(groups.len() + steps.len());
     for (nodes, prefix) in [(groups, b'g'), (steps, b's')] {
         for n in nodes {

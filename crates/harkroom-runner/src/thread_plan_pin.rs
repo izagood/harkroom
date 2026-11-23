@@ -23,7 +23,7 @@ use crate::prompt::escape_for_prompt;
 use crate::turn_files::write_private;
 
 pub const THREAD_PLAN_PIN_DIR: &str = "thread-plan-pins";
-/// 계획 블록 본문 상한(UTF-16 단위). 계획판 단계 수에 상한이 없어 매 턴 프롬프트에 싣는 양은 여기서 묶는다.
+/// 계획 블록 본문 상한(UTF-16 단위). 계획판은 단계 1,000 개까지 받으므로 매 턴 프롬프트에 싣는 양은 여기서 묶는다.
 /// 넘치면 끝난 단계부터 id 한 줄로 접고, 그래도 넘칠 때만 뒤를 자른다([`render_plan_body`]).
 pub const THREAD_PLAN_MAX_CHARS: usize = 6000;
 
@@ -320,7 +320,7 @@ fn utf16_len(s: &str) -> usize {
     s.encode_utf16().count()
 }
 
-/// 계획 본문 줄(블록 머리·꼬리 없이). 계획판에 단계 수 상한이 없어 길이는 여기서 다룬다:
+/// 계획 본문 줄(블록 머리·꼬리 없이). 계획판 단계 수 상한이 넉넉해(1,000) 길이는 여기서 다룬다:
 /// ① 다 싣는다(끝난 그룹은 한 줄) → ② [`THREAD_PLAN_MAX_CHARS`] 를 넘으면 **끝난 단계만** id 한 줄로 접는다(열린 단계는 그대로)
 /// → ③ 그래도 넘으면 자르고 몇 줄이 빠졌는지 적는다. 열린 일이 끝난 일에 밀려 잘리지 않게 하려는 순서다.
 pub fn render_plan_body(plan: &ThreadPlanSnapshot, me_id: &str) -> Vec<String> {

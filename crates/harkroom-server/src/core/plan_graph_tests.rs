@@ -26,6 +26,13 @@ fn err(doc: &Value) -> String {
         Err(e) => format!("{{{}}}", e.fields_json()),
     }
 }
+/// 수 검사를 뺀 길([`validate_plan_uncounted`])의 같은 글자.
+fn err_uncounted(doc: &Value) -> String {
+    match validate_plan_uncounted(doc) {
+        Ok(()) => "ok".into(),
+        Err(e) => format!("{{{}}}", e.fields_json()),
+    }
+}
 fn n() -> Value {
     json!({})
 }
@@ -146,7 +153,7 @@ fn validate_cycles() {
     assert!(err(&d).starts_with(r#"{"code":"dependency_cycle""#));
 }
 
-/// 노드가 많은 계획 — 그룹·단계 수에는 상한이 없으므로 검증은 깊이에 호출 스택을 쓰지 않아야 한다.
+/// 노드가 많은 계획 — 수 상한(그룹 200·단계 1,000)과 따로, 검증은 깊이에 호출 스택을 쓰지 않아야 한다(수 검사를 뺀 길을 직접 본다).
 /// 서버 작업 스레드와 같은 2MiB 스택에서 돌려, 넘치지 않고 **돌아오는지**를 본다.
 fn on_small_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
     std::thread::Builder::new()
@@ -178,10 +185,10 @@ fn validate_long_step_chain_returns_on_small_stack() {
         plan(vec![], steps)
     };
     let open = chain(false);
-    assert_eq!(on_small_stack(move || err(&open)), "ok");
+    assert_eq!(on_small_stack(move || err_uncounted(&open)), "ok");
     // 사슬의 끝을 처음에 이으면 노드 전부를 도는 순환 — 거절로 돌아온다.
     let closed = chain(true);
-    let out = on_small_stack(move || validate_plan(&closed));
+    let out = on_small_stack(move || validate_plan_uncounted(&closed));
     match out {
         Err(PlanError::DependencyCycle { path }) => {
             assert_eq!(path.len(), MANY + 1);
@@ -213,9 +220,9 @@ fn validate_long_group_chain_returns_on_small_stack() {
         plan(groups, steps)
     };
     let open = chain(false);
-    assert_eq!(on_small_stack(move || err(&open)), "ok");
+    assert_eq!(on_small_stack(move || err_uncounted(&open)), "ok");
     let closed = chain(true);
-    let out = on_small_stack(move || err(&closed));
+    let out = on_small_stack(move || err_uncounted(&closed));
     assert!(out.starts_with(r#"{"code":"dependency_cycle""#), "{out}");
 }
 
@@ -252,10 +259,21 @@ fn validate_limits() {
             .map(|i| group(&format!("g{i}"), n()))
             .collect::<Vec<_>>()
     };
-    // 그룹·단계 수에는 상한이 없다(옛 상한 8·40 을 한참 넘겨도 된다).
-    assert_eq!(err(&plan(vec![], steps(400))), "ok");
-    assert_eq!(err(&plan(groups(80), vec![])), "ok");
-    assert_eq!(err(&plan(groups(80), steps(400))), "ok");
+    // 그룹 200·단계 1,000 까지 — 201 번째 그룹·1,001 번째 단계는 거절이다.
+    assert_eq!(err(&plan(groups(200), steps(1000))), "ok");
+    assert_eq!(
+        err(&plan(vec![], steps(1001))),
+        r#"{"code":"limit_exceeded","what":"steps","limit":1000}"#
+    );
+    assert_eq!(
+        err(&plan(groups(201), vec![])),
+        r#"{"code":"limit_exceeded","what":"groups","limit":200}"#
+    );
+    // 그룹 수가 단계 수보다 먼저다.
+    assert_eq!(
+        err(&plan(groups(201), steps(1001))),
+        r#"{"code":"limit_exceeded","what":"groups","limit":200}"#
+    );
     let deps =
         |k: usize| json!({ "dependsOn": (2..2 + k).map(|i| format!("s{i}")).collect::<Vec<_>>() });
     let mut ok = steps(10);

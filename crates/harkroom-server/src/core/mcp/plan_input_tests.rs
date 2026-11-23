@@ -58,15 +58,27 @@ fn doc_rejects_or_defers_what_zod_would_not_take_the_same_way() {
     ] {
         assert_eq!(parse_doc(&bad), None, "{bad}");
     }
-    // 그룹·단계 수에는 상한이 없다(옛 바깥 울타리 16·80 을 넘겨도 받는다).
-    let many_groups: Vec<Value> = (1..=40)
-        .map(|i| json!({ "id": format!("g{i}"), "title": "t" }))
-        .collect();
-    let many_steps: Vec<Value> = (1..=200)
-        .map(|i| json!({ "id": format!("s{i}"), "title": "t", "state": "done" }))
-        .collect();
+    // 그룹 200·단계 1,000 까지 받고, 201 번째 그룹·1,001 번째 단계가 든 문서는 읽어 들이지 않는다.
+    let groups = |k: usize| -> Vec<Value> {
+        (1..=k)
+            .map(|i| json!({ "id": format!("g{i}"), "title": "t" }))
+            .collect()
+    };
+    let steps = |k: usize| -> Vec<Value> {
+        (1..=k)
+            .map(|i| json!({ "id": format!("s{i}"), "title": "t", "state": "done" }))
+            .collect()
+    };
     assert!(
-        parse_doc(&json!({ "goal": "g", "groups": many_groups, "steps": many_steps })).is_some()
+        parse_doc(&json!({ "goal": "g", "groups": groups(200), "steps": steps(1000) })).is_some()
+    );
+    assert_eq!(
+        parse_doc(&json!({ "goal": "g", "groups": groups(201) })),
+        None
+    );
+    assert_eq!(
+        parse_doc(&json!({ "goal": "g", "steps": steps(1001) })),
+        None
     );
 }
 
