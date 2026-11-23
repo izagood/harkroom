@@ -64,9 +64,13 @@ export interface PlanDoc {
   seq?: { s: number; g: number };
 }
 
+/**
+ * 그룹·단계 **수**의 상한은 넉넉하다 — 끝난 일을 합쳐 줄이지 않고 한 일마다 단계 하나로 남길 수 있게 하되,
+ * 계획 한 장이 끝없이 커지지는 않게 묶는다(정본은 서버 `plan_graph::limits`).
+ */
 export const PLAN_LIMITS = {
-  groups: 8,
-  steps: 40,
+  groups: 200,
+  steps: 1000,
   dependsOn: 8,
   links: 10,
   goal: 200,

@@ -88,14 +88,14 @@ describe('validatePlan — 거절 코드', () => {
     const steps = (n: number) => Array.from({ length: n }, (_, i) => step(`s${i + 1}`));
     const groups = (n: number) => Array.from({ length: n }, (_, i) => group(`g${i + 1}`));
 
-    it('단계 40 은 되고 41 은 안 된다', () => {
+    it('단계 1,000 은 되고 1,001 은 안 된다', () => {
       expect(validatePlan(plan([], steps(PLAN_LIMITS.steps)))).toEqual({ ok: true });
-      expect(errorOf(plan([], steps(PLAN_LIMITS.steps + 1)))).toEqual({ code: 'limit_exceeded', what: 'steps', limit: 40 });
+      expect(errorOf(plan([], steps(PLAN_LIMITS.steps + 1)))).toEqual({ code: 'limit_exceeded', what: 'steps', limit: 1000 });
     });
 
-    it('그룹 8 은 되고 9 는 안 된다', () => {
+    it('그룹 200 은 되고 201 은 안 된다', () => {
       expect(validatePlan(plan(groups(PLAN_LIMITS.groups), []))).toEqual({ ok: true });
-      expect(errorOf(plan(groups(PLAN_LIMITS.groups + 1), []))).toEqual({ code: 'limit_exceeded', what: 'groups', limit: 8 });
+      expect(errorOf(plan(groups(PLAN_LIMITS.groups + 1), []))).toEqual({ code: 'limit_exceeded', what: 'groups', limit: 200 });
     });
 
     it('dependsOn 8 은 되고 9 는 안 된다', () => {

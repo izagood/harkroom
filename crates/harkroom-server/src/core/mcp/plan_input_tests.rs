@@ -55,15 +55,31 @@ fn doc_rejects_or_defers_what_zod_would_not_take_the_same_way() {
                 "links": [{ "kind": "url", "id": U }] }] }),
         json!({ "goal": "g", "managerId": "x" }),
         json!({ "goal": "g", "next": 1 }),
-        json!({ "goal": "g", "groups": (0..17).map(|i| json!({ "id": format!("g{}", i + 1), "title": "t" })).collect::<Vec<_>>() }),
     ] {
         assert_eq!(parse_doc(&bad), None, "{bad}");
     }
-    // 바깥 울타리(×2)는 넉넉하다 — 상한 판정은 validate_plan 몫.
-    let nine: Vec<Value> = (1..=9)
-        .map(|i| json!({ "id": format!("g{i}"), "title": "t" }))
-        .collect();
-    assert!(parse_doc(&json!({ "goal": "g", "groups": nine })).is_some());
+    // 그룹 200·단계 1,000 까지 받고, 201 번째 그룹·1,001 번째 단계가 든 문서는 읽어 들이지 않는다.
+    let groups = |k: usize| -> Vec<Value> {
+        (1..=k)
+            .map(|i| json!({ "id": format!("g{i}"), "title": "t" }))
+            .collect()
+    };
+    let steps = |k: usize| -> Vec<Value> {
+        (1..=k)
+            .map(|i| json!({ "id": format!("s{i}"), "title": "t", "state": "done" }))
+            .collect()
+    };
+    assert!(
+        parse_doc(&json!({ "goal": "g", "groups": groups(200), "steps": steps(1000) })).is_some()
+    );
+    assert_eq!(
+        parse_doc(&json!({ "goal": "g", "groups": groups(201) })),
+        None
+    );
+    assert_eq!(
+        parse_doc(&json!({ "goal": "g", "steps": steps(1001) })),
+        None
+    );
 }
 
 #[test]

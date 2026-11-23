@@ -104,7 +104,7 @@ fn my_ready_steps_go_on_top() {
 
 #[test]
 fn clips_at_cap_and_points_to_thread_plan() {
-    let steps: Vec<Value> = (1..=40)
+    let steps: Vec<Value> = (1..=120)
         .map(|i| json!({ "id": format!("s{i}"), "title": "x".repeat(110), "state": "pending", "links": [], "dependsOn": [] }))
         .collect();
     let lines = render_plan_body(
@@ -112,7 +112,49 @@ fn clips_at_cap_and_points_to_thread_plan() {
         ME,
     );
     assert!(lines.join("\n").chars().count() <= THREAD_PLAN_MAX_CHARS + 60);
-    assert!(lines.last().unwrap().contains("thread.plan 으로 읽어라"));
+    let last = lines.last().unwrap();
+    assert!(last.contains("thread.plan 으로 읽어라"));
+    // 몇 줄이 빠졌는지 적는다.
+    assert!(last.starts_with("… (길어서 잘랐다 — 남은 "), "{last}");
+    assert!(!last.contains("남은 0줄"), "{last}");
+}
+
+/// 옛 상한(단계 40)이면 통째로 실린다 — 접지도 자르지도 않는다.
+#[test]
+fn forty_steps_fit_whole() {
+    let steps: Vec<Value> = (201..=240)
+        .map(|i| json!({ "id": format!("s{i}"), "title": "x".repeat(110), "state": if i <= 220 { "done" } else { "pending" }, "links": [], "dependsOn": [] }))
+        .collect();
+    let lines = render_plan_body(
+        &snap(json!({ "goal": "g", "groups": [], "steps": steps })),
+        ME,
+    );
+    assert_eq!(lines.len(), 41);
+    assert!(!lines.join("\n").contains("끝난 단계"));
+}
+
+/// 넘치면 끝난 단계만 id 한 줄로 접는다 — 열린 단계는 제목까지 그대로 남는다.
+#[test]
+fn over_cap_folds_done_steps_before_cutting() {
+    let mut steps: Vec<Value> = (201..=300)
+        .map(|i| json!({ "id": format!("s{i}"), "title": "d".repeat(110), "state": "done", "groupId": "g1", "links": [], "dependsOn": [] }))
+        .collect();
+    steps.extend((301..=310).map(|i| json!({ "id": format!("s{i}"), "title": format!("열린 일 {i}"), "state": "pending", "groupId": "g1", "links": [], "dependsOn": [] })));
+    steps.extend((311..=313).map(|i| json!({ "id": format!("s{i}"), "title": "d".repeat(110), "state": "done", "links": [], "dependsOn": [] })));
+    let lines = render_plan_body(
+        &snap(
+            json!({ "goal": "g", "groups": [{ "id": "g1", "title": "묶음", "dependsOn": [] }], "steps": steps }),
+        ),
+        ME,
+    );
+    let text = lines.join("\n");
+    assert!(!text.contains("길어서 잘랐다"), "{text}");
+    assert!(text.contains("  ✓ 끝난 단계 100개: s201 s202 "), "{text}");
+    assert!(text.contains("✓ 끝난 단계 3개: s311 s312 s313"), "{text}");
+    for i in 301..=310 {
+        assert!(text.contains(&format!("s{i} 열린 일 {i}")), "{text}");
+    }
+    assert!(!text.contains("dddd"));
 }
 
 #[test]
