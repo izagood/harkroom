@@ -106,6 +106,7 @@ pub const TOOLS: &[ToolSpec] = &[
     t("delegation.close", W, false),
     t("message.fail", W, false),
     t("message.delegate", W, false),
+    t("agent.call", W, false),
     t("message.report", W, false),
     t("message.react", W, false),
     t("message.unreact", W, false),

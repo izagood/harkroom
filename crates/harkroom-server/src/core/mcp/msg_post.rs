@@ -99,6 +99,48 @@ fn parse(args: &Value) -> Option<Args> {
 
 /// TS `postedResult` — 못 부른 이름(호출 범위 밖)을 앞세운다. 사슬 상한에 막힌 부름은 없다(O1).
 fn posted_result(row: &str, notified: &[String], extra: &str) -> Option<String> {
+    posted_result_with(row, notified, extra, &[])
+}
+
+/// C1 — 경고 코드. 본문에 적었으나 아무도 깨우지 못한 에이전트 멘션.
+const MENTION_NOT_CALLED: &str = "mention_not_called";
+/// C1 — 그 경고의 안내 글.
+const MENTION_NOT_CALLED_HINT: &str =
+    "본문의 @ 는 이 에이전트를 깨우지 못했다. 실제로 부르려면 agent.call 의 `to` 인자에 적어라.";
+
+/// C1 — 깨우지 못한 멘션(`mention_calls::Resolved::missed_handles`)을 이유별 경고 객체로. 이유 순서는 처음 나온 순서, 없으면 빈 목록.
+fn mention_warnings(missed: &[(String, &'static str)]) -> Vec<Value> {
+    let mut by_reason: Vec<(&'static str, Vec<&str>)> = Vec::new();
+    for (handle, reason) in missed {
+        match by_reason.iter_mut().find(|(r, _)| r == reason) {
+            Some((_, hs)) => {
+                if !hs.contains(&handle.as_str()) {
+                    hs.push(handle);
+                }
+            }
+            None => by_reason.push((reason, vec![handle])),
+        }
+    }
+    by_reason
+        .into_iter()
+        .map(|(reason, handles)| {
+            let mut o = Map::new();
+            o.insert("code".into(), Value::from(MENTION_NOT_CALLED));
+            o.insert("handles".into(), Value::from(handles));
+            o.insert("reason".into(), Value::from(reason));
+            o.insert("hint".into(), Value::from(MENTION_NOT_CALLED_HINT));
+            Value::Object(o)
+        })
+        .collect()
+}
+
+/// [`posted_result`] 에 C1 경고(`missed`)를 더한 것 — `missed` 가 비면 글자가 그대로다.
+fn posted_result_with(
+    row: &str,
+    notified: &[String],
+    extra: &str,
+    missed: &[(String, &'static str)],
+) -> Option<String> {
     let v: Value = serde_json::from_str(row).ok()?;
     let handles = |key: &str| -> Vec<String> {
         v.pointer(key)
@@ -111,16 +153,18 @@ fn posted_result(row: &str, notified: &[String], extra: &str) -> Option<String> 
             })
             .unwrap_or_default()
     };
-    let mut warnings: Vec<String> = Vec::new();
+    let mut warnings: Vec<Value> = Vec::new();
     let denied = handles("/meta/mentionDenied");
     // 행 글자는 그대로 싣는다 — 키 순서가 TS `JSON.stringify(row)` 와 같다(REST 응답과 같은 글자).
     let notified = Value::from(notified.to_vec()).to_string();
     if !denied.is_empty() {
-        warnings.push(format!(
+        warnings.push(Value::from(format!(
             "{} 를 부르지 못했다: 너는 그 에이전트의 호출 범위(invokeScope) 밖이다. 사람에게 message.ask 로 넘기거나 소유자에게 호출 범위를 물어라.",
             denied.join(", ")
-        ));
+        )));
     }
+    // C1 — 옛 글자 경고 뒤에 객체 경고를 잇는다(옛 칸은 그대로).
+    warnings.extend(mention_warnings(missed));
     let inner = if warnings.is_empty() {
         format!("{{\"message\":{row},\"notified\":{notified}{extra}}}")
     } else {
@@ -1144,6 +1188,48 @@ async fn post_with(
     st: &PostState,
     me: &Account,
     a: Args,
+    meta: Map<String, Value>,
+    kind: Kind,
+    closes_delegation: bool,
+    fold: bool,
+    cause: Option<&str>,
+    turn: Option<&str>,
+    operator: bool,
+    artifact: Option<&super::artifact_write::NewArtifact>,
+    supersedes: &[&str],
+    plan_hook: Option<PlanHook<'_>>,
+    picks: Option<&crate::core::agent_model_picks::AgentPicks>,
+    push_to: Option<&str>,
+    gate: Option<&GateNotify>,
+) -> Option<String> {
+    post_full(
+        st,
+        me,
+        a,
+        meta,
+        kind,
+        closes_delegation,
+        fold,
+        cause,
+        turn,
+        operator,
+        artifact,
+        supersedes,
+        plan_hook,
+        picks,
+        push_to,
+        gate,
+        None,
+    )
+    .await
+}
+
+/// [`post_with`] 에 C1 `agent.call` 의 대상(`call`)을 더한 것 — 있으면 결과에 `called`·`notCalled` 를 싣는다.
+#[allow(clippy::too_many_arguments)]
+async fn post_full(
+    st: &PostState,
+    me: &Account,
+    a: Args,
     mut meta: Map<String, Value>,
     kind: Kind,
     closes_delegation: bool,
@@ -1157,6 +1243,7 @@ async fn post_with(
     picks: Option<&crate::core::agent_model_picks::AgentPicks>,
     push_to: Option<&str>,
     gate: Option<&GateNotify>,
+    call: Option<&CallTargets>,
 ) -> Option<String> {
     // TS `if (mirrorOf) await syncAskMirrors(pool, mirrorOf)` — 검사와 발행 사이에 원본이 정해졌으면 새 거울을 곧바로 닫는다.
     let mirror_root = meta
@@ -1230,7 +1317,12 @@ async fn post_with(
             "attachments must be your own, unused uploads",
         )),
         // 에이전트 글은 새 위임을 만들지 않는다(`mandate` 는 사람 글만) — 감사 줄이 없다.
-        Outcome::Posted { row, notified, .. } => {
+        Outcome::Posted {
+            row,
+            notified,
+            missed_handles,
+            ..
+        } => {
             // TS: 지정이 바뀌었으면 커밋 뒤 시스템 줄(`byKind: 'agent'`)·`thread.agent_model.changed`. 행은 이미 커밋됐다.
             if let Some((root, changes)) = picks.and_then(|h| h.changes()) {
                 for (agent, axes) in &changes {
@@ -1331,9 +1423,244 @@ async fn post_with(
                     Err(e) => eprintln!("mcp: plan hook failed: {e}"),
                 }
             }
-            posted_result(&row, &notified, &format!("{plan_extra}{extra}"))
+            // C1 `agent.call` — 부른 대상·못 부른 대상. 게이트가 막은 대상은 글의 `meta.mentionDenied` 에서 읽는다(판정을 다시 하지 않는다).
+            let call_extra = call.map(|c| c.result_extra(&row)).unwrap_or_default();
+            posted_result_with(
+                &row,
+                &notified,
+                &format!("{plan_extra}{extra}{call_extra}"),
+                &missed_handles,
+            )
         }
     }
+}
+
+/// zod `to.max(8)`.
+const MAX_CALL_TARGETS: usize = 8;
+
+/// C1 `agent.call` 의 대상 — `to` 인자에서 풀어낸 에이전트와, 풀지 못한 이름.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct CallTargets {
+    /// (계정 id, handle) — `to` 순서, 겹침 없음.
+    agents: Vec<(String, String)>,
+    /// (적힌 글자, 이유) — `unknown`·`not_agent`·`self`.
+    not_called: Vec<(String, &'static str)>,
+}
+
+impl CallTargets {
+    /// `to` 를 계정 행(`(id, handle, kind)`)으로 가른다. `@` 머리는 떼고 handle 은 소문자로 본다.
+    fn split(to: &[String], rows: &[(String, String, String)], me: &str) -> Self {
+        let mut out = Self::default();
+        for raw in to {
+            let key = call_key(raw);
+            let hit = rows
+                .iter()
+                .find(|(id, handle, _)| *id == key || handle.eq_ignore_ascii_case(&key));
+            match hit {
+                None => out.not_called.push((raw.clone(), "unknown")),
+                Some((_, _, kind)) if kind != "agent" => {
+                    out.not_called.push((raw.clone(), "not_agent"))
+                }
+                Some((id, _, _)) if id == me => out.not_called.push((raw.clone(), "self")),
+                Some((id, handle, _)) => {
+                    if !out.agents.iter().any(|(i, _)| i == id) {
+                        out.agents.push((id.clone(), handle.clone()));
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// 본문 머리 런에 이미 적힌 대상은 빼고 나머지를 머리 멘션으로 앞세운다 — 옛 경로가 그대로 판정·저장한다.
+    fn head_body(&self, body: &str) -> String {
+        use crate::core::mention_parse::{head_mention_run_end, mentioned_handles, mentioned_ids};
+        let head = &body[..head_mention_run_end(body)];
+        let (handles, ids) = (mentioned_handles(head), mentioned_ids(head));
+        let mut out = String::new();
+        for (id, handle) in &self.agents {
+            if handles.iter().any(|h| h.eq_ignore_ascii_case(handle)) || ids.contains(id) {
+                continue;
+            }
+            out.push('@');
+            out.push_str(handle);
+            out.push(' ');
+        }
+        out.push_str(body);
+        out
+    }
+
+    /// 결과에 잇는 `,"called":[…],"notCalled":[…]` — `row` 는 선 글(JSON).
+    fn result_extra(&self, row: &str) -> String {
+        let denied: Vec<String> = serde_json::from_str::<Value>(row)
+            .ok()
+            .and_then(|v| v.pointer("/meta/mentionDenied").cloned())
+            .and_then(|v| v.as_array().cloned())
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|h| h.as_str().map(str::to_ascii_lowercase))
+            .collect();
+        let mut called: Vec<&str> = Vec::new();
+        let mut not_called: Vec<Value> = Vec::new();
+        let entry = |handle: &str, reason: &str| {
+            let mut o = Map::new();
+            o.insert("handle".into(), Value::from(handle));
+            o.insert("reason".into(), Value::from(reason));
+            Value::Object(o)
+        };
+        for (id, handle) in &self.agents {
+            if denied.contains(&handle.to_ascii_lowercase()) {
+                not_called.push(entry(handle, "gate_denied"));
+            } else {
+                called.push(id);
+            }
+        }
+        for (raw, reason) in &self.not_called {
+            not_called.push(entry(raw, reason));
+        }
+        format!(
+            ",\"called\":{},\"notCalled\":{}",
+            Value::from(called),
+            Value::from(not_called)
+        )
+    }
+}
+
+/// `to` 한 칸의 비교 글자 — `@` 머리를 떼고 소문자로.
+fn call_key(raw: &str) -> String {
+    raw.trim().trim_start_matches('@').to_ascii_lowercase()
+}
+
+/// zod 가 받는 `agent.call` 인자 — `(글 인자, to)`. 틀린 꼴은 `None`.
+fn parse_call(args: &Value) -> Option<(Args, Vec<String>)> {
+    let Value::Object(o) = args else { return None };
+    let Value::Array(list) = o.get("to")? else {
+        return None;
+    };
+    if list.is_empty() || list.len() > MAX_CALL_TARGETS {
+        return None;
+    }
+    let mut to = Vec::with_capacity(list.len());
+    for x in list {
+        let s = x.as_str()?;
+        let n = s.encode_utf16().count();
+        if n == 0 || n > 64 || call_key(s).is_empty() {
+            return None;
+        }
+        to.push(s.to_owned());
+    }
+    // 글 칸은 `message.post` 와 같은 규칙으로 읽되, 이 도구에 없는 키(첨부·채널 올리기·모델 고르기)는 버린다.
+    let mut post = Map::new();
+    for k in ["channelId", "threadRootId", "body", "model"] {
+        if let Some(v) = o.get(k) {
+            post.insert(k.into(), v.clone());
+        }
+    }
+    Some((parse(&Value::Object(post))?, to))
+}
+
+/// C1 `agent.call` — 대상을 본문이 아니라 `to` 인자로 받아 부른다. 대상을 머리 멘션으로 앞세운 글을 `message.post` 와 **같은 경로**
+/// ([`post_full`])로 세운다 — 호출 게이트·principal·감사·측정·inbox 가 머리 멘션과 한 줄도 다르지 않다. 의무는 만들지 않는다.
+pub async fn answer_call(
+    st: &PostState,
+    me: &Account,
+    args: &Value,
+    cause: Option<&str>,
+    turn: Option<&str>,
+    operator: bool,
+) -> Option<String> {
+    use crate::core::invoke_gate::{self, Ctx, Via};
+    let (mut a, to) = parse_call(args)?;
+    if me.kind != "agent" {
+        return Some(err("agent_only", "agent.call is for agents"));
+    }
+    let keys: Vec<String> = to.iter().map(|t| call_key(t)).collect();
+    let (ids, handles): (Vec<String>, Vec<String>) = keys.into_iter().partition(|k| is_uuid(k));
+    let mut conn = st.read.acquire().await.ok()?;
+    let rows = crate::core::mention_calls::accounts_for_call(&mut conn, &handles, &ids)
+        .await
+        .ok()?;
+    let targets = CallTargets::split(&to, &rows, &me.id);
+    let refuse = |code: &str, msg: String, handles: Vec<String>| {
+        // `message.delegate` 의 `not_invokable` 과 같은 꼴 — `{ error: { code, message, handles } }`.
+        super::respond::text_result(&format!(
+            "{{\"error\":{{\"code\":{},\"message\":{},\"handles\":{}}}}}",
+            Value::from(code),
+            Value::from(msg),
+            Value::from(handles)
+        ))
+    };
+    if targets.agents.is_empty() {
+        let names: Vec<String> = targets.not_called.iter().map(|(h, _)| h.clone()).collect();
+        return Some(refuse(
+            "not_callable",
+            format!(
+                "cannot call: {} — not an agent you can call",
+                names.join(", ")
+            ),
+            names,
+        ));
+    }
+    // 모두 막힐 부름은 글을 세우기 전에 거절한다 — 멘션과 같은 게이트를 읽기로 한 번 본다. 글을 세울 때 옛 경로가 다시 판정하므로
+    // 이 앞 판정은 거절을 앞당길 뿐 누구도 더 열어 주지 않는다.
+    let agent_ids: Vec<String> = targets.agents.iter().map(|(id, _)| id.clone()).collect();
+    let facts = invoke_gate::invoke_facts_ordered(&mut conn, &agent_ids)
+        .await
+        .ok()?;
+    let ctx = Ctx {
+        caller_id: &me.id,
+        channel_id: &a.channel,
+        via: Via::Mention,
+        reply_grant_thread_id: a.post.thread_root.as_deref(),
+    };
+    let mut any_open = false;
+    for f in &facts {
+        if invoke_gate::may_invoke(&mut conn, f, &ctx).await.ok()? {
+            any_open = true;
+            break;
+        }
+    }
+    drop(conn);
+    // 원인(principal)이 있는 턴은 옛 경로가 principal 로 열어 줄 수 있어 앞당겨 거절하지 않는다.
+    if !any_open && cause.filter(|_| operator).is_none() {
+        let names: Vec<String> = targets.agents.iter().map(|(_, h)| h.clone()).collect();
+        return Some(refuse(
+            "not_invokable",
+            format!(
+                "cannot call: {} — not an agent you may invoke",
+                names.join(", ")
+            ),
+            names,
+        ));
+    }
+    let body = targets.head_body(&a.post.body);
+    if body.encode_utf16().count() > MAX_MESSAGE_BODY_CHARS {
+        return Some(err(
+            "body_too_long",
+            "body with the called handles exceeds the message limit",
+        ));
+    }
+    a.post.body = body;
+    post_full(
+        st,
+        me,
+        a,
+        Map::new(),
+        Kind::User,
+        false,
+        false,
+        cause,
+        turn,
+        operator,
+        None,
+        &[],
+        None,
+        None,
+        None,
+        None,
+        Some(&targets),
+    )
+    .await
 }
 
 /// 골든 문장 — TS `FOLD_WAKES_ON_REPORT_SQL`·`STAMP_WAKE_CLOSED_SQL`.
@@ -1722,6 +2049,107 @@ mod tests {
             t.contains(r#"{\"message\":{\"id\":\"m\",\"meta\":{}},\"notified\":[]}"#),
             "{t}"
         );
+    }
+
+    #[test]
+    fn mention_warning_shape_and_absence() {
+        // 경고가 없으면 글자가 옛 결과와 같다.
+        let row = r#"{"id":"m","meta":{}}"#;
+        assert_eq!(
+            posted_result_with(row, &[], "", &[]),
+            posted_result(row, &[], "")
+        );
+        assert!(mention_warnings(&[]).is_empty());
+        let missed = vec![
+            ("alpha".to_string(), "not_head_mention"),
+            ("beta".to_string(), "gate_denied"),
+            ("gamma".to_string(), "not_head_mention"),
+            ("alpha".to_string(), "not_head_mention"),
+        ];
+        let w = mention_warnings(&missed);
+        assert_eq!(w.len(), 2);
+        assert_eq!(
+            w[0],
+            json!({"code":"mention_not_called","handles":["alpha","gamma"],"reason":"not_head_mention","hint":MENTION_NOT_CALLED_HINT})
+        );
+        assert_eq!(w[1]["reason"], "gate_denied");
+        assert_eq!(w[1]["handles"], json!(["beta"]));
+        let t = posted_result_with(row, &[], "", &missed).unwrap();
+        let v: Value = serde_json::from_str(&t).unwrap();
+        let inner: Value = serde_json::from_str(
+            v.pointer("/content/0/text")
+                .and_then(Value::as_str)
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(inner["warnings"].as_array().unwrap().len(), 2);
+        assert_eq!(inner["message"]["id"], "m");
+    }
+
+    #[test]
+    fn call_args_like_schema() {
+        let ch = "11111111-1111-4111-8111-111111111111";
+        let ok =
+            json!({"channelId": ch, "to": ["@alpha", "beta"], "body": "x", "alsoInChannel": true});
+        let (a, to) = parse_call(&ok).unwrap();
+        assert_eq!(to, vec!["@alpha", "beta"]);
+        assert!(!a.post.also_in_channel && a.post.attachment_ids.is_empty());
+        for bad in [
+            json!({"channelId": ch, "body": "x"}),
+            json!({"channelId": ch, "to": [], "body": "x"}),
+            json!({"channelId": ch, "to": vec!["a"; 9], "body": "x"}),
+            json!({"channelId": ch, "to": [1], "body": "x"}),
+            json!({"channelId": ch, "to": ["@"], "body": "x"}),
+            json!({"channelId": ch, "to": ["a"], "body": ""}),
+            json!({"channelId": "x", "to": ["a"], "body": "x"}),
+            json!({"channelId": ch, "to": "a", "body": "x"}),
+        ] {
+            assert!(parse_call(&bad).is_none(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn call_targets_split_head_and_result() {
+        let rows = vec![
+            ("id-a".to_string(), "alpha".to_string(), "agent".to_string()),
+            ("id-b".to_string(), "beta".to_string(), "agent".to_string()),
+            ("id-h".to_string(), "human".to_string(), "human".to_string()),
+            ("id-me".to_string(), "me".to_string(), "agent".to_string()),
+        ];
+        let to: Vec<String> = ["@Alpha", "beta", "id-a", "human", "ghost", "me"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let t = CallTargets::split(&to, &rows, "id-me");
+        assert_eq!(
+            t.agents,
+            vec![
+                ("id-a".into(), "alpha".into()),
+                ("id-b".into(), "beta".into())
+            ]
+        );
+        assert_eq!(
+            t.not_called,
+            vec![
+                ("human".to_string(), "not_agent"),
+                ("ghost".to_string(), "unknown"),
+                ("me".to_string(), "self")
+            ]
+        );
+        // 머리에 이미 있는 대상은 겹쳐 적지 않는다.
+        assert_eq!(t.head_body("hello"), "@alpha @beta hello");
+        assert_eq!(t.head_body("@beta hello"), "@alpha @beta hello");
+        assert_eq!(t.head_body("@alpha @beta hello"), "@alpha @beta hello");
+        // 머리 밖의 멘션은 부름이 아니다 — 앞세운다.
+        assert_eq!(t.head_body("hi @alpha"), "@alpha @beta hi @alpha");
+        let extra = t.result_extra(r#"{"id":"m","meta":{"mentionDenied":["beta"]}}"#);
+        let v: Value = serde_json::from_str(&format!("{{\"x\":1{extra}}}")).unwrap();
+        assert_eq!(v["called"], json!(["id-a"]));
+        assert_eq!(
+            v["notCalled"][0],
+            json!({"handle":"beta","reason":"gate_denied"})
+        );
+        assert_eq!(v["notCalled"].as_array().unwrap().len(), 4);
     }
 
     #[test]

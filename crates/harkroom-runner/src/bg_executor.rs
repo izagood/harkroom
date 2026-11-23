@@ -70,6 +70,7 @@ pub const BG_DISALLOWED_TOOLS: &[&str] = &[
     "mcp__harkroom__message_askBundle",
     "mcp__harkroom__message_askBundleResolve",
     "mcp__harkroom__message_delegate",
+    "mcp__harkroom__agent_call",
     "mcp__harkroom__message_react",
     "mcp__harkroom__message_unreact",
     "mcp__harkroom__inbox_poll",
