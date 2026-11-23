@@ -21,3 +21,22 @@
 export function hasUnreadMessages(reads: Record<string, { unread: number }>): boolean {
   return Object.values(reads).some((r) => r.unread > 0);
 }
+
+/**
+ * **안 읽은 멘션·DM 수** — 레일·사이드바·독·커뮤니티 타일의 숫자 배지가 모두 이것 하나를 읽는다.
+ * 재료는 스토어의 `unread`(`GET /inbox?unread=1`, 안 읽은 것만 담긴다)다 — 따로 조회하지 않는다.
+ * 그 밖의 사유(답글·위임 소식 등)는 "새 대화가 있다"에 가깝고 숫자로 세지 않는다.
+ */
+export function unreadMentionCount(unread: ReadonlyArray<{ reason: string }>): number {
+  let n = 0;
+  for (const e of unread) if (isMentionOrDm(e)) n += 1;
+  return n;
+}
+
+/**
+ * 배지가 세는 줄인가 — 멘션·DM·팀장으로서 불림(`team_mention`). 인박스 목록도 같은 판정으로
+ * 고른다(배지 수 = 목록 줄 수). 모바일(`inboxMentionCount`)과 같은 판정이다.
+ */
+export function isMentionOrDm(e: { reason: string }): boolean {
+  return e.reason === 'mention' || e.reason === 'dm' || e.reason === 'team_mention';
+}

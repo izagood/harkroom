@@ -1686,16 +1686,11 @@ describe('daemon 사실 — 판정이 두 언어로 말한다', () => {
 const AGENT = 'a-mine';
 
 /** 이 넷은 컨트롤러를 만진다 — 문자열만 재므로 부르는 것만 있으면 된다. */
-/** 인박스 보드가 받을 재료 — 기본은 비었다. 열 이름을 재는 시험만 카드 하나를 넣는다. */
-let inboxBoardRows: { entries: InboxEntry[]; threads: null; threadStates: [] } = { entries: [], threads: null, threadStates: [] };
 
 function stubController() {
   setController({
     // `Composer` 는 채널이 있으면 예약 목록을 곧바로 조회한다 — 없으면 그 화면이 뜨다 만다.
-    api: { inbox: async () => [], inboxBoard: async () => inboxBoardRows, scheduledMessages: async () => [] },
-    setInboxBoardOpen: vi.fn(),
-    loadInboxBoard: async () => inboxBoardRows,
-    inboxBoardSnapshot: () => null,
+    api: { inbox: async () => [], scheduledMessages: async () => [] },
     listAgents: async () => [],
     openMessage: async () => undefined,
     openChannel: async () => undefined,
@@ -1890,53 +1885,38 @@ describe('작성창 — 두 언어로 뜬다', () => {
 
 describe('인박스 — 두 언어로 뜬다', () => {
   beforeEach(() => {
-    inboxBoardRows = { entries: [], threads: null, threadStates: [] };
     stubController();
     useActiveStore.getState().set({
       me: acc(ME, 'me'), accounts: { [ME]: acc(ME, 'me') },
-      channels: [chan('c1', 'general')], messages: { c1: [] }, connected: true,
+      channels: [chan('c1', 'general')], messages: { c1: [] }, connected: true, unread: [],
     });
   });
 
-  it('빈 보드가 두 언어로 뜬다', async () => {
+  it('빈 목록이 두 언어로 뜬다', async () => {
     render(<Inbox open onClose={() => {}} />);
-    await waitFor(() => expect(screen.getByTestId('inbox-empty').textContent).toBe('No work here yet'));
+    await waitFor(() => expect(screen.getByTestId('inbox-empty').textContent).toBe('No unread mentions or DMs'));
     // 자리의 이름이자 머리글이다 — 랜드마크로 찾을 수 있어야 한다.
-    expect(screen.getByRole('complementary', { name: 'My work' })).toBeTruthy();
+    expect(screen.getByRole('complementary', { name: 'Inbox' })).toBeTruthy();
     cleanup();
     speak('ko');
     render(<Inbox open onClose={() => {}} />);
-    await waitFor(() => expect(screen.getByTestId('inbox-empty').textContent).toBe('아직 올라온 일이 없다'));
-    expect(screen.getByRole('complementary', { name: '내 작업' })).toBeTruthy();
+    await waitFor(() => expect(screen.getByTestId('inbox-empty').textContent).toBe('안 읽은 멘션·DM이 없다'));
+    expect(screen.getByRole('complementary', { name: '인박스' })).toBeTruthy();
   });
 
-  /**
-   * **열 이름은 구획 이름(랜드마크)이다** — 개수가 섞이지 않는다. 수는 머리글의 "내 차례"
-   * 하나뿐이다(그 수만 0 이 될 수 있다).
-   */
-  it('열 넷과 내 차례 수가 두 언어로 뜬다', async () => {
-    inboxBoardRows = {
-      entries: [{
+  it('안 읽은 멘션 줄의 꼬리표가 두 언어로 뜬다', async () => {
+    useActiveStore.getState().set({
+      unread: [{
         id: 1, messageId: 'm1', reason: 'mention', readAt: null, channelId: 'c1', authorId: ME,
         body: '봐 줘', meta: {}, createdAt: new Date().toISOString(), threadRootId: null,
       }],
-      threads: null,
-      threadStates: [],
-    };
+    });
     render(<Inbox open onClose={() => {}} />);
-    fireEvent.click(await screen.findByTestId('inbox-view-board'));
-    for (const name of ['Your turn', 'Waiting', 'In progress', 'Done']) {
-      expect(await screen.findByRole('region', { name })).toBeTruthy();
-    }
-    expect(screen.getByTestId('inbox-mine-count').textContent).toBe('0 waiting on you');
+    expect((await screen.findByTestId('inbox-row-label-1')).textContent).toBe('Called you');
     cleanup();
     speak('ko');
     render(<Inbox open onClose={() => {}} />);
-    fireEvent.click(await screen.findByTestId('inbox-view-board'));
-    for (const name of ['내 차례', '기다림', '진행', '끝']) {
-      expect(await screen.findByRole('region', { name })).toBeTruthy();
-    }
-    expect(screen.getByTestId('inbox-mine-count').textContent).toBe('나를 기다리는 일 0');
+    expect((await screen.findByTestId('inbox-row-label-1')).textContent).toBe('불렀다');
   });
 });
 
@@ -2859,7 +2839,6 @@ describe('레일 — 두 언어로 뜨고 칸 이름도 언어를 따른다', ()
         me: acc(ME, 'me'),
         accounts: { [ME]: acc(ME, 'me') },
         unread: [inboxEntry(1, 'm1', 'mention'), inboxEntry(2, 'm2', 'dm')],
-        inboxMine: 2,
       });
     };
 

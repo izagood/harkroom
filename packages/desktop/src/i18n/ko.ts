@@ -1350,7 +1350,6 @@ export const ko = {
   // `waitChain.link` 가 세운 규율이다. 한국어 쪽 결과 글자는 그대로다.
   // ---------------------------------------------------------------------------
 
-
   // ---------------------------------------------------------------------------
   // sidebar — **키 순서는 `en.ts` 와 같다**(덩어리 알파벳 → 그 안 키 알파벳).
   // 두 파일이 같은 순서여야 나란히 놓고 읽을 수 있고, 리베이스 충돌도 사람이 합칠 수
@@ -1377,8 +1376,8 @@ export const ko = {
   'sidebar.channel.privateOption': '비공개 (멤버만 볼 수 있다)',
   'sidebar.channel.unread': '{name} 에 안 읽은 것 {count}개',
 
-  'sidebar.inbox.blocking': '내 작업에 내 답을 기다리는 것 {count}개',
-  'sidebar.inbox.unread': '내 작업에 안 읽은 것 {count}개',
+  'sidebar.inbox.blocking': '안 읽은 멘션·DM {count}개',
+  'sidebar.inbox.unread': '인박스에 안 읽은 것 {count}개',
 
   'sidebar.delete.cancel': '취소',
   'sidebar.delete.confirm': '정말 삭제',
@@ -1530,7 +1529,6 @@ export const ko = {
   'waitChain.deadlockDeadRunner': '{waiter} 가 {blockedBy} 를 기다리는데 응답이 없다',
 
   'waitChain.unblocks': { other: '답하면 {count}개가 풀린다' },
-
 
   // ---------------------------------------------------------------------------
   // composer — 원래 화면의 말투(`~한다`)를 그대로 뒀다. 단정을 바꾼 곳은 없다.
@@ -1871,71 +1869,11 @@ export const ko = {
   // inbox — 사슬 구획은 여기 없다(`waitChain.*` 이 진다, `en.ts` 머리말).
   // ---------------------------------------------------------------------------
 
-  'inbox.board.col.mine': '내 차례',
-  'inbox.board.col.blocked': '기다림',
-  'inbox.board.col.active': '진행',
-  'inbox.board.col.done': '끝',
-  'inbox.board.band.order': '최근 것부터',
-  'inbox.board.mineCount': '나를 기다리는 일 {count}',
-  'inbox.board.empty.mine': '나를 기다리는 일이 없다',
-  'inbox.board.empty.other': '없음',
-  'inbox.board.empty.all': '아직 올라온 일이 없다',
-  'inbox.board.scope.label': '보는 범위',
-  'inbox.board.scope.all': '모든 채널',
-  'inbox.board.scope.opened': '내가 연 것',
-  'inbox.board.scope.participated': '참여한 것',
-  'inbox.board.scope.empty': '이 범위에는 일이 없다',
-  'inbox.board.days': '{count}일째',
-  'inbox.board.more': '+{count}개 더',
-  'inbox.board.unread': '새 말',
-  'inbox.board.replies': '답글 {count}',
-  'inbox.board.similar': '×{count}',
-  'inbox.board.kind.decision': '결정',
-  'inbox.board.kind.blocker': '막힘',
-  'inbox.board.kind.news': '소식',
-  'inbox.board.done': '치우기',
-  'inbox.board.later': '나중에',
-  'inbox.board.undo': '되돌리기',
-  'inbox.board.laterUntil': '{when}에 다시',
-  'inbox.board.tomorrowAt': '내일 {time}',
-  'inbox.board.fold.quiet': '조용한 것 {count}',
-  'inbox.board.fold.old': '지난 것 {count}',
-  'inbox.board.fold.stale': '일주일 넘게 기다린 것 {count}',
-  'inbox.view.label': '보기',
-  'inbox.view.list': '받은 일',
-  'inbox.view.board': '진행 보드',
-  'inbox.list.tabs': '받은 일 갈래',
-  'inbox.list.tab.todo': '할 일',
-  'inbox.list.tab.news': '소식',
-  'inbox.list.tab.later': '미룬 것',
-  'inbox.list.tab.cleared': '치운 것',
-  'inbox.list.section.decision': '결정이 필요한 것',
-  'inbox.list.section.blocker': '막혀서 나를 기다림',
-  'inbox.list.section.news': '그 밖에 나를 기다림',
-  'inbox.list.staleDecisions': '결정 {count}',
-  'inbox.list.expand': '펼치기',
-  'inbox.list.collapse': '접기',
-  'inbox.list.clearAll': '전부 치우기',
-  'inbox.list.openThread': '스레드 열기',
-  'inbox.list.back': '목록',
-  'inbox.list.latest': '마지막 말',
-  'inbox.list.pick': '왼쪽에서 하나를 고르세요',
-  'inbox.list.keys': 'J/K 이동',
-  'inbox.list.toast.dismissed': '{count}건 치웠다',
-  'inbox.list.toast.later': '{count}건을 내일 아침으로 미뤘다',
-  'inbox.list.toast.undo': '되돌리기',
-  'inbox.board.fold.cleared': '치운 것 {count}',
-  'inbox.board.fold.later': '나중에 {count}',
   'inbox.board.drafts': '쓰다 만 초안 ({count})',
 
-
-
-  'inbox.pane.close': '내 작업 닫기',
-  'inbox.pane.loadFailed': '내 작업을 불러오지 못했다 — {reason}',
-  'inbox.pane.loading': '불러오는 중…',
-  'inbox.pane.retry': '다시 시도',
-  // 「내 작업」(2026-10-06 소유자 승인 D1) — 채널을 넘는 내 작업 보드의 이름.
-  'inbox.pane.title': '내 작업',
+  'inbox.pane.close': '인박스 닫기',
+  'inbox.pane.title': '인박스',
+  'inbox.list.empty': '안 읽은 멘션·DM이 없다',
 
   // ---------------------------------------------------------------------------
   // profile — 사람과 에이전트가 같은 틀을 쓴다(그 화면 주석: 행 이름만 다르다).

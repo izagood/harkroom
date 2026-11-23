@@ -2,6 +2,7 @@ import { useMemo, useState, useEffect, useRef, useCallback, type ReactNode } fro
 import { useShallow } from 'zustand/react/shallow';
 import { useActiveStore, useCommunityRegistry } from '../state/communities';
 import type { AppState } from '../state/appStore';
+import { unreadMentionCount } from '../state/unread';
 import { getController, type Controller } from '../state/controller';
 import { openChannelFrom, popOutChannel } from '../lib/windowActions';
 import { useAppWindows } from '../lib/appWindows';
@@ -184,7 +185,7 @@ function UnreadBadge({ channelId, notifyLevel }: { channelId: string; notifyLeve
  * 화면에서 인박스 줄은 조용했고, 신고자가 본 것이 그것이다(#murmur 1 옆의 무표정한 Inbox).
  *
  * "같은 사실이 두 곳"은 **갈릴 때만** 문제다. 그래서 세는 함수를 새로 적지 않고 레일·독이
- * 읽는 `inboxMine`(보드의 `mineCount`, 배지 A 2026-10-02)을 그대로 쓴다 — 넷이 한 값을 읽으면 숫자가 갈릴 자리가 없다.
+ * 읽는 `unreadMentionCount`(안 읽은 멘션·DM 수)를 그대로 쓴다 — 넷이 한 값을 읽으면 숫자가 갈릴 자리가 없다.
  *
  * ## 두 신호를 그대로 물려받는다
  *
@@ -201,8 +202,8 @@ function UnreadBadge({ channelId, notifyLevel }: { channelId: string; notifyLeve
  * 그것으로 점을 켜면 인박스를 열었을 때 아무 새 줄도 없는 일이 생긴다.
  */
 function InboxRowBadge() {
-  // 내 차례 수(배지 A) — 보드의 "나를 기다리는 일 N" 과 같은 숫자다.
-  const blocking = useActiveStore((s) => s.inboxMine);
+  // 안 읽은 멘션·DM 수 — 레일·독과 같은 숫자다.
+  const blocking = useActiveStore((s) => unreadMentionCount(s.unread));
   const unreadCount = useActiveStore((s) => s.unread.filter((e) => !e.readAt).length);
   const t = useT();
   if (blocking > 0) {
