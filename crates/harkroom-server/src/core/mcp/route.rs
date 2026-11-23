@@ -221,7 +221,20 @@ pub async fn handle(
                     }
                     // C1 — 대상을 `to` 인자로 받는 부름. 글 쓰기 풀(`message.post` 와 같은 권한)로 답한다.
                     "agent.call" => {
-                        super::msg_post::answer_call(st, &me, &args, c, t, has_operator).await
+                        // U1 — 의무 있는 부름(`expect`)은 의무 쓰기 권한이 있을 때만, 모델 고르기는 하네스 목록·고르기 권한이 있을 때만.
+                        let obligations = writes.delegate.is_some();
+                        let picks_ok = writes.relay_moved && writes.agent_picks.is_some();
+                        super::msg_post::answer_call(
+                            st,
+                            &me,
+                            &args,
+                            c,
+                            t,
+                            has_operator,
+                            obligations,
+                            picks_ok,
+                        )
+                        .await
                     }
                     "message.progress" => {
                         super::msg_post::answer_progress(st, &me, &args, c, t, has_operator).await

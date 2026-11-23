@@ -162,6 +162,7 @@ struct Sql {
     deleg_touch: String,
     deleg_pending: String,
     close_open: String,
+    close_open_on_reply: String,
     close_item_v0: String,
     close_item_v2: String,
     reply_open: String,
@@ -273,6 +274,7 @@ fn sql() -> &'static Sql {
             deleg_touch: frag("delegation_touch_deadline"),
             deleg_pending: frag("delegation_v2_update_pending"),
             close_open: frag("close_reply_open"),
+            close_open_on_reply: frag("close_reply_open_on_reply"),
             close_item_v0: frag("close_reply_item_v0"),
             close_item_v2: frag("close_reply_item_v2"),
             reply_open: frag("reply_grant_open"),
@@ -347,6 +349,10 @@ pub(crate) struct Origin<'a> {
     /// MCP `message.delegate`(C3b-2c-4b) — 게이트를 지난 위임. 있으면 같은 tx 에서
     /// 의무를 만든다(TS `createDelegation`, [`delegate_write`]). 위임 스위치 값이 없으면 v0 이다.
     pub(crate) delegation: Option<delegate_write::Plan<'a>>,
+    /// MCP `agent.call` 의 의무 있는 부름(`expect: report|reply`, U1). 담당은 미리 정하지 않는다 — 이 글의 멘션 판정(담당별 호출 게이트 →
+    /// 막힌 담당은 이번 턴을 깨운 사람 권한으로 다시 잼·하루 상한)을 지난 대상에게만 같은 tx 에서 의무를 만든다. 지난 대상이 없으면
+    /// 아무것도 쓰지 않고 [`Outcome::Rejected`](`not_invokable`).
+    pub(crate) call_obligation: Option<delegate_write::CallObligation<'a>>,
     /// TS `kind: 'system'`(S5.4 CH4b-2) — 서버가 사실을 남기는 줄(멤버 넣기·빼기). 라우트 입력에서는 켜지 않는다. TS `postMessage` 와 같이
     /// `kind` 칸이 `system` 이고 `meta`(`i18n` 포함)를 그대로 싣는다. 결과로는 센다(`countsAsReply`). 위임 키(`stampHumanMandate` 는
     /// `kind === 'user'` 만)와 암묵 위임(`kind !== 'system'`)은 하지 않는다. 스레드 안(머리 아래)에도 쓴다(S5.4 TM2) — 머리·DM 갈래
@@ -740,6 +746,24 @@ pub(crate) async fn post_tx(
         )
         .await?
     };
+    // U1 `agent.call` 의 의무 — 위 판정(게이트·principal)을 지난 `to` 대상만 담당이 된다. 판정을 다시 하지 않는다.
+    let call_open: Option<Vec<(String, String)>> = origin.call_obligation.as_ref().map(|o| {
+        o.targets
+            .iter()
+            .filter(|(id, _)| {
+                id != author && calls.called_ids.contains(id) && !calls.denied_ids.contains(id)
+            })
+            .cloned()
+            .collect()
+    });
+    if call_open.as_ref().is_some_and(Vec::is_empty) {
+        tx.rollback().await?;
+        return Ok(Outcome::Rejected(Rejection {
+            status: 403,
+            code: "not_invokable".into(),
+            message: "none of the called agents may be invoked — nothing was posted".into(),
+        }));
+    }
     // 암묵 위임(C1c-4d) 모드 — 값이 없으면 TS 기본값(v2 꺼짐이면 off, 켜짐이면 shadow)이다. 쓰기 칸이 있을 때만 여기서 적는다
     // (꺼짐이면 적을 것이 없다).
     let implicit = implicit_delegation::mode_or_default(
@@ -809,6 +833,20 @@ pub(crate) async fn post_tx(
     }
     if let (true, Some(t)) = (author_is_agent, origin.turn_id) {
         meta.insert("turnId".into(), Value::String(t.to_owned()));
+    }
+    // 의무 있는 부름은 `message.delegate` 와 같은 꼴의 위임 글이다(`meta.kind = 'delegation'`) — 읽는 쪽이 한 가지로 본다.
+    if let (Some(o), Some(open)) = (&origin.call_obligation, &call_open) {
+        meta.insert("kind".into(), Value::from("delegation"));
+        meta.insert(
+            "delegation".into(),
+            json!({
+                "to": open.iter().map(|(_, h)| h.as_str()).collect::<Vec<_>>(),
+                "open": open.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(),
+                "unreachable": o.unreachable,
+                "deadlineAt": o.deadline_at,
+                "closeOn": o.close_on.as_str(),
+            }),
+        );
     }
     // TS `verifiedCauseLink` — 사슬 고리(118)는 오퍼레이터를 거친 원인이 나를 최근에 깨웠을 때만 적는다.
     let cause_link_id = match (author_is_agent, origin.chain_cause) {
@@ -920,7 +958,8 @@ pub(crate) async fn post_tx(
     // TS 암묵 위임(P4) — 회신권을 연 뒤, `thread_reply` 앞. 결과로 세는 에이전트 글(이 앞단이 맡는 글은 모두 `user` 다)이 부른,
     // inbox 가 실제로 간 계정 중 에이전트만 판정한다.
     // TS 는 `meta.kind` 가 `delegation` 인 글(`message.delegate`)을 암묵 위임으로 보지 않는다 — 그 도구가 진짜 위임을 만든다.
-    let delegation_meta = origin.meta.get("kind").and_then(Value::as_str) == Some("delegation");
+    let delegation_meta = call_open.is_some()
+        || origin.meta.get("kind").and_then(Value::as_str) == Some("delegation");
     // TS `input.kind !== 'system'` — 시스템 줄은 부름이 있어도 암묵 위임으로 보지 않는다.
     if let (true, true, false, false, mode) = (
         author_is_agent,
@@ -1075,6 +1114,43 @@ pub(crate) async fn post_tx(
                 }
             }
         }
+        // U1 — 닫는 조건이 `reply` 인 의무(`agent.call` 의 `expect: "reply"`)는 담당의 **첫 보통 답글**로 닫힌다. 진행·예약·알림 줄은
+        // 답이 아니고(`is_result`), 결과 글은 위에서 조건을 가리지 않고 닫았다. 결말은 보고로 닫힌 것과 같은 낱말이다.
+        if author_is_agent && is_result && !closing && !origin.system {
+            let open: Vec<String> = sqlx::query_scalar(s.close_open_on_reply.as_str())
+                .bind(author)
+                .bind(r)
+                .fetch_all(&mut *tx)
+                .await?;
+            let (item, outcome) = if on {
+                (&s.close_item_v2, "reported")
+            } else {
+                (&s.close_item_v0, "done")
+            };
+            for d in open {
+                let closed = sqlx::query(item.as_str())
+                    .bind(&d)
+                    .bind(author)
+                    .bind(outcome)
+                    .bind(&id)
+                    .execute(&mut *tx)
+                    .await?;
+                if closed.rows_affected() == 0 {
+                    continue;
+                }
+                had_open = true;
+                super::measure::delegation_outcomes(std::slice::from_ref(&d), outcome, None);
+                super::work_shadow::delegation_closed(
+                    std::slice::from_ref(&d),
+                    Some(author),
+                    outcome,
+                    None,
+                );
+                if let Some(lead) = turn_settle::notify_if_settled(&mut tx, &d, &mut deleg).await? {
+                    deleg_woke.push(lead);
+                }
+            }
+        }
         if on && !had_open {
             sqlx::query(s.deleg_pending.as_str())
                 .bind(author)
@@ -1091,7 +1167,20 @@ pub(crate) async fn post_tx(
             delegate_write::create(&mut tx, on, &id, channel, root.unwrap_or(&id), author, plan)
                 .await?,
         ),
-        _ => None,
+        (None, on) => match (&origin.call_obligation, &call_open) {
+            (Some(o), Some(open)) => {
+                let ids: Vec<String> = open.iter().map(|(id, _)| id.clone()).collect();
+                let plan = delegate_write::Plan {
+                    delegate_ids: &ids,
+                    deadline_at: o.deadline_at,
+                    team_id: None,
+                    close_on: o.close_on,
+                };
+                let root = root.unwrap_or(&id);
+                Some(delegate_write::create(&mut tx, on, &id, channel, root, author, &plan).await?)
+            }
+            _ => None,
+        },
     };
     // TS `planAutoStamp` — 시스템 글에만, 커밋 앞 같은 tx 에서.
     if let (true, Some((mandate, principal))) = (origin.system, origin.plan_auto_stamp) {

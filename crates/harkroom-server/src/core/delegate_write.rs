@@ -32,10 +32,42 @@ pub(crate) struct Plan<'a> {
     pub(crate) deadline_at: &'a str,
     /// 팀장이 자기 팀에 넘기면 그 팀 id(TS `team?.teamId ?? null`).
     pub(crate) team_id: Option<&'a str>,
+    /// 무엇으로 닫히나(마이그레이션 183) — `message.delegate` 는 언제나 [`CloseOn::Report`].
+    pub(crate) close_on: CloseOn,
+}
+
+/// `agent.call` 의 의무 있는 부름(U1) — 담당은 글 tx 안의 멘션 판정이 정한다([`super::msg_post::Origin::call_obligation`]).
+#[derive(Debug)]
+pub(crate) struct CallObligation<'a> {
+    /// `to` 가 가리킨, 접속한 에이전트 (계정 id, handle) — `to` 순서, 겹침 없음.
+    pub(crate) targets: &'a [(String, String)],
+    /// 접속하지 않아 부르지 않은 대상의 handle — 글 `meta.delegation.unreachable` 에만 싣는다.
+    pub(crate) unreachable: &'a [String],
+    pub(crate) deadline_at: &'a str,
+    pub(crate) close_on: CloseOn,
+}
+
+/// 의무를 닫는 조건 — `team_delegation.close_on`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CloseOn {
+    /// 담당의 `message.report`·`message.fail`·기한·중단.
+    Report,
+    /// 담당이 그 스레드에 쓴 첫 답글(`agent.call` 의 `expect: "reply"`).
+    Reply,
+}
+
+impl CloseOn {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            CloseOn::Report => "report",
+            CloseOn::Reply => "reply",
+        }
+    }
 }
 
 struct Sql {
     insert: String,
+    insert_close_on: String,
     item: String,
     supersede: String,
     settled: String,
@@ -55,6 +87,7 @@ fn sql() -> &'static Sql {
         };
         Sql {
             insert: frag("delegation_insert"),
+            insert_close_on: frag("delegation_insert_close_on"),
             item: frag("delegation_item_insert"),
             supersede: frag("delegate_supersede"),
             settled: frag("delegate_mark_settled_quietly"),
@@ -76,7 +109,12 @@ pub(crate) async fn create(
     plan: &Plan<'_>,
 ) -> Result<String, sqlx::Error> {
     let s = sql();
-    let id: String = sqlx::query_scalar(s.insert.as_str())
+    // 닫는 조건이 기본(`report`)이면 옛 문장 그대로다 — 새 칸(183)이 아직 없는 DB 에서도 `message.delegate` 는 돈다.
+    let q = match plan.close_on {
+        CloseOn::Report => sqlx::query_scalar(s.insert.as_str()),
+        CloseOn::Reply => sqlx::query_scalar(s.insert_close_on.as_str()),
+    };
+    let q = q
         .bind(message_id)
         .bind(plan.team_id)
         .bind(lead_id)
@@ -84,17 +122,23 @@ pub(crate) async fn create(
         .bind(thread_root_id)
         .bind(plan.deadline_at)
         .bind("delegate")
-        .bind(None::<String>)
-        .fetch_one(&mut *conn)
-        .await?;
+        .bind(None::<String>);
+    let id: String = match plan.close_on {
+        CloseOn::Report => q,
+        CloseOn::Reply => q.bind(plan.close_on.as_str()),
+    }
+    .fetch_one(&mut *conn)
+    .await?;
     for d in plan.delegate_ids {
         // TS `supersedePrevious` — v1 에서 같은 스레드·같은 담당의 앞 의무(열린·보고된)는 대체된다. 깨우지 않는다.
+        // U1: **같은 넘긴 쪽**이 세운 앞 의무만 대체한다 — 남이 그 담당에게 넘긴 의무는 내 새 부름으로 닫히지 않는다.
         // F1a 자기 조각(담당 = 위임자)은 대체하지 않는다 — 내가 위에서 받은 의무와 앞서 세운 자기 조각이 열린 채 남는다.
         if v2 && d != lead_id {
             let closed: Vec<String> = sqlx::query_scalar(s.supersede.as_str())
                 .bind(thread_root_id)
                 .bind(d)
                 .bind(&id)
+                .bind(lead_id)
                 .fetch_all(&mut *conn)
                 .await?;
             // A1 측정 — 위임 결말(새 위임이 앞 의무를 대체). 기록만.
@@ -141,6 +185,10 @@ mod tests {
         let s = sql();
         assert!(s.insert.starts_with("insert into team_delegation"));
         assert!(s.supersede.contains("closed_reason = 'superseded'"));
+        assert!(s.supersede.contains("d.lead_account_id = $4::uuid"));
+        assert!(s.insert_close_on.contains("close_on)"));
+        assert!(s.insert_close_on.contains("$9)"));
+        assert!(!s.insert.contains("close_on"));
         assert!(s.settled.contains("notified_at = now()"));
         assert!(s.convert.contains("reason = 'team_delegated'"));
         assert!(s.inbox.contains("'team_delegated'"));

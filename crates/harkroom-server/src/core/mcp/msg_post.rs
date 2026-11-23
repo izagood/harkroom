@@ -13,6 +13,7 @@ use super::tools::err;
 use crate::auth::Account;
 use crate::core::audience::audience_for;
 use crate::core::cause_link;
+use crate::core::delegate_write;
 use crate::core::msg_edit::MAX_MESSAGE_BODY_CHARS;
 use crate::core::msg_post::{self, Origin, Outcome, PostBody, PostState};
 use crate::core::msg_read::{channel_visible, is_uuid};
@@ -964,6 +965,7 @@ async fn post_service(
         meta,
         server_notice: false,
         closes_delegation: false,
+        call_obligation: None,
         delegation: None,
         system: false,
         progress: false,
@@ -1220,6 +1222,7 @@ async fn post_with(
         push_to,
         gate,
         None,
+        None,
     )
     .await
 }
@@ -1244,6 +1247,7 @@ async fn post_full(
     push_to: Option<&str>,
     gate: Option<&GateNotify>,
     call: Option<&CallTargets>,
+    oblige: Option<&CallOblige<'_>>,
 ) -> Option<String> {
     // TS `if (mirrorOf) await syncAskMirrors(pool, mirrorOf)` — 검사와 발행 사이에 원본이 정해졌으면 새 거울을 곧바로 닫는다.
     let mirror_root = meta
@@ -1283,6 +1287,12 @@ async fn post_full(
         meta,
         server_notice: kind == Kind::Notice,
         closes_delegation,
+        call_obligation: oblige.map(|o| delegate_write::CallObligation {
+            targets: o.targets,
+            unreachable: o.unreachable,
+            deadline_at: o.deadline_at,
+            close_on: o.close_on,
+        }),
         delegation: None,
         system: kind == Kind::Notice,
         progress: kind == Kind::Progress,
@@ -1321,6 +1331,7 @@ async fn post_full(
             row,
             notified,
             missed_handles,
+            delegation_id,
             ..
         } => {
             // TS: 지정이 바뀌었으면 커밋 뒤 시스템 줄(`byKind: 'agent'`)·`thread.agent_model.changed`. 행은 이미 커밋됐다.
@@ -1424,7 +1435,27 @@ async fn post_full(
                 }
             }
             // C1 `agent.call` — 부른 대상·못 부른 대상. 게이트가 막은 대상은 글의 `meta.mentionDenied` 에서 읽는다(판정을 다시 하지 않는다).
-            let call_extra = call.map(|c| c.result_extra(&row)).unwrap_or_default();
+            let mut call_extra = call.map(|c| c.result_extra(&row)).unwrap_or_default();
+            // U1 — 의무 있는 부름: 의무 id·기한을 싣고, 계획판 칸이 있으면 부모 계획의 그룹을 잇는다(위임은 이미 섰다 — 막혀도 되돌리지 않는다).
+            if let (Some(o), Some(d)) = (oblige, &delegation_id) {
+                call_extra.push_str(&format!(
+                    ",\"delegationId\":{},\"deadlineAt\":{},\"expect\":{}",
+                    Value::from(d.as_str()),
+                    Value::from(o.deadline_at),
+                    Value::from(o.close_on.as_str())
+                ));
+                if let (Some((parent, group)), Some(root)) = (o.plan, a.post.thread_root.as_deref())
+                {
+                    match super::plan_write::link_plan_group(
+                        &st.read, &st.write, &me.id, parent, group, root,
+                    )
+                    .await
+                    {
+                        Ok(plan) => plan_extra = format!(",\"plan\":{plan}"),
+                        Err(e) => eprintln!("agent.call: plan link {group} failed: {e}"),
+                    }
+                }
+            }
             posted_result_with(
                 &row,
                 &notified,
@@ -1531,8 +1562,40 @@ fn call_key(raw: &str) -> String {
     raw.trim().trim_start_matches('@').to_ascii_lowercase()
 }
 
-/// zod 가 받는 `agent.call` 인자 — `(글 인자, to)`. 틀린 꼴은 `None`.
-fn parse_call(args: &Value) -> Option<(Args, Vec<String>)> {
+/// `agent.call` 의 `expect` — 이 부름이 무엇으로 끝나는가.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Expect {
+    /// 알리기 — 의무 없음(예전 그대로).
+    None,
+    /// 담당의 `message.report`·`message.fail`·기한으로 닫히는 의무(`message.delegate` 와 같다).
+    Report,
+    /// 담당의 첫 답글로 닫히는 의무(묻기).
+    Reply,
+}
+
+/// 의무 있는 부름을 글 쓰기에 넘기는 묶음.
+struct CallOblige<'a> {
+    targets: &'a [(String, String)],
+    unreachable: &'a [String],
+    deadline_at: &'a str,
+    close_on: delegate_write::CloseOn,
+    /// (부모 계획 스레드, 그룹 id).
+    plan: Option<(&'a str, &'a str)>,
+}
+
+/// zod 가 받는 `agent.call` 인자.
+struct CallArgs {
+    post: Args,
+    to: Vec<String>,
+    expect: Expect,
+    deadline_sec: Option<i64>,
+    picks: Vec<Pick>,
+    plan_root: Option<String>,
+    plan_group: Option<String>,
+}
+
+/// zod 가 받는 `agent.call` 인자. 틀린 꼴은 `None`.
+fn parse_call(args: &Value) -> Option<CallArgs> {
     let Value::Object(o) = args else { return None };
     let Value::Array(list) = o.get("to")? else {
         return None;
@@ -1549,18 +1612,69 @@ fn parse_call(args: &Value) -> Option<(Args, Vec<String>)> {
         }
         to.push(s.to_owned());
     }
-    // 글 칸은 `message.post` 와 같은 규칙으로 읽되, 이 도구에 없는 키(첨부·채널 올리기·모델 고르기)는 버린다.
+    let expect = match o.get("expect") {
+        None => Expect::None,
+        Some(v) => match v.as_str()? {
+            "none" => Expect::None,
+            "report" => Expect::Report,
+            "reply" => Expect::Reply,
+            _ => return None,
+        },
+    };
+    let deadline_sec = match o.get("deadlineSec") {
+        None => None,
+        Some(d @ Value::Number(_)) => Some(super::tools::js_int(d).filter(|d| {
+            (super::delegate_gate::DEADLINE_MIN..=super::delegate_gate::DEADLINE_MAX).contains(d)
+        })?),
+        Some(_) => return None,
+    };
+    let plan_root = match o.get("planRootId") {
+        None => None,
+        Some(v) => Some(v.as_str().filter(|s| is_uuid(s))?.to_owned()),
+    };
+    let plan_group = match o.get("planGroupId") {
+        None => None,
+        Some(v) => Some(
+            v.as_str()
+                .filter(|s| super::delegate_gate::plan_group_ok(s))?
+                .to_owned(),
+        ),
+    };
+    let picks = match o.get("agentModels") {
+        None => Vec::new(),
+        Some(v) => parse_picks(v)?,
+    };
+    // 글 칸은 `message.post` 와 같은 규칙으로 읽되, 이 도구에 없는 키(첨부·채널 올리기)는 버린다.
     let mut post = Map::new();
     for k in ["channelId", "threadRootId", "body", "model"] {
         if let Some(v) = o.get(k) {
             post.insert(k.into(), v.clone());
         }
     }
-    Some((parse(&Value::Object(post))?, to))
+    Some(CallArgs {
+        post: parse(&Value::Object(post))?,
+        to,
+        expect,
+        deadline_sec,
+        picks,
+        plan_root,
+        plan_group,
+    })
 }
 
+/// 의무 없는 부름(`expect: "none"`)에 실을 수 없는 칸.
+const CALL_NEEDS_EXPECT_MSG: &str =
+    "deadlineSec·planRootId·planGroupId 는 expect 가 report 나 reply 일 때만 준다";
+/// 의무 있는 부름은 스레드 안에서만 선다 — 결말이 돌아올 자리가 그 스레드다.
+const CALL_NEEDS_THREAD_MSG: &str = "expect 가 report 나 reply 면 threadRootId 를 준다";
+
 /// C1 `agent.call` — 대상을 본문이 아니라 `to` 인자로 받아 부른다. 대상을 머리 멘션으로 앞세운 글을 `message.post` 와 **같은 경로**
-/// ([`post_full`])로 세운다 — 호출 게이트·principal·감사·측정·inbox 가 머리 멘션과 한 줄도 다르지 않다. 의무는 만들지 않는다.
+/// ([`post_full`])로 세운다 — 호출 게이트·principal·감사·측정·inbox 가 머리 멘션과 한 줄도 다르지 않다.
+///
+/// U1: `expect` 가 `report`·`reply` 면 그 글이 위임 글(`meta.kind = 'delegation'`)이 되고, **같은 판정을 지난 대상에게만** 같은 tx 에서
+/// 의무가 선다([`msg_post::Origin::call_obligation`]). 게이트를 따로 재지 않으므로 건너뛰는 길이 없다. `obligations` 는 의무 쓰기
+/// 권한([`delegate_write::DELEGATE_WRITE_PRIVILEGES`])이 있는가, `picks_ok` 는 모델 고르기를 Rust 가 맡을 수 있는가.
+#[allow(clippy::too_many_arguments)]
 pub async fn answer_call(
     st: &PostState,
     me: &Account,
@@ -1568,11 +1682,44 @@ pub async fn answer_call(
     cause: Option<&str>,
     turn: Option<&str>,
     operator: bool,
+    obligations: bool,
+    picks_ok: bool,
 ) -> Option<String> {
     use crate::core::invoke_gate::{self, Ctx, Via};
-    let (mut a, to) = parse_call(args)?;
+    let CallArgs {
+        post: mut a,
+        to,
+        expect,
+        deadline_sec,
+        picks,
+        plan_root,
+        plan_group,
+    } = parse_call(args)?;
     if me.kind != "agent" {
         return Some(err("agent_only", "agent.call is for agents"));
+    }
+    let plan = match (expect, &plan_root, &plan_group) {
+        (Expect::None, None, None) if deadline_sec.is_none() => None,
+        (Expect::None, _, _) => return Some(err("bad_request", CALL_NEEDS_EXPECT_MSG)),
+        (_, None, None) => None,
+        (_, Some(r), Some(g)) => Some((r.as_str(), g.as_str())),
+        _ => return Some(err("bad_request", super::delegate_gate::PLAN_PAIR_MSG)),
+    };
+    let root = a.post.thread_root.clone();
+    if expect != Expect::None {
+        let Some(root) = root.as_deref() else {
+            return Some(err("bad_request", CALL_NEEDS_THREAD_MSG));
+        };
+        if plan.is_some_and(|(r, _)| r.eq_ignore_ascii_case(root)) {
+            return Some(err("self_link", super::delegate_gate::SELF_LINK_MSG));
+        }
+        // 의무 쓰기 권한이 없는 서버 — 의무 없는 글로 낮춰 세우지 않는다.
+        if !obligations {
+            return None;
+        }
+    }
+    if !picks.is_empty() && !picks_ok {
+        return None;
     }
     let keys: Vec<String> = to.iter().map(|t| call_key(t)).collect();
     let (ids, handles): (Vec<String>, Vec<String>) = keys.into_iter().partition(|k| is_uuid(k));
@@ -1580,7 +1727,42 @@ pub async fn answer_call(
     let rows = crate::core::mention_calls::accounts_for_call(&mut conn, &handles, &ids)
         .await
         .ok()?;
-    let targets = CallTargets::split(&to, &rows, &me.id);
+    let mut targets = CallTargets::split(&to, &rows, &me.id);
+    // F1a 자기 쪼개기 — `to` 가 나 하나뿐인 `expect: "report"` 는 `message.delegate` 의 자기 조각 길 그대로 간다(스위치·게이트·쓰기가 한 벌).
+    if expect == Expect::Report
+        && targets.agents.is_empty()
+        && !targets.not_called.is_empty()
+        && targets.not_called.iter().all(|(_, why)| *why == "self")
+    {
+        drop(conn);
+        let mut d = Map::new();
+        for k in [
+            "channelId",
+            "threadRootId",
+            "body",
+            "model",
+            "deadlineSec",
+            "agentModels",
+            "planRootId",
+            "planGroupId",
+        ] {
+            if let Some(v) = args.get(k) {
+                d.insert(k.into(), v.clone());
+            }
+        }
+        d.insert("to".into(), Value::from(vec![me.handle.clone()]));
+        return super::delegate_gate::answer(
+            &st.read,
+            Some(st),
+            picks_ok,
+            me,
+            &Value::Object(d),
+            cause,
+            turn,
+            operator,
+        )
+        .await;
+    }
     let refuse = |code: &str, msg: String, handles: Vec<String>| {
         // `message.delegate` 의 `not_invokable` 과 같은 꼴 — `{ error: { code, message, handles } }`.
         super::respond::text_result(&format!(
@@ -1600,6 +1782,34 @@ pub async fn answer_call(
             ),
             names,
         ));
+    }
+    // 의무는 접속한 담당에게만 선다(`message.delegate` 와 같다) — 접속하지 않은 대상은 부르지 않고 `notCalled` 에 싣는다.
+    let mut unreachable: Vec<String> = Vec::new();
+    if expect != Expect::None {
+        let all: Vec<String> = targets.agents.iter().map(|(id, _)| id.clone()).collect();
+        let online: Vec<String> = sqlx::query_scalar(super::delegate_gate::ONLINE_SQL)
+            .bind(&all)
+            .fetch_all(&mut *conn)
+            .await
+            .ok()?;
+        let (on, off): (Vec<_>, Vec<_>) = std::mem::take(&mut targets.agents)
+            .into_iter()
+            .partition(|(id, _)| online.contains(id));
+        targets.agents = on;
+        for (_, handle) in off {
+            unreachable.push(handle.clone());
+            targets.not_called.push((handle, "unreachable"));
+        }
+        if targets.agents.is_empty() {
+            return Some(refuse(
+                "unreachable",
+                format!(
+                    "cannot call: {} — not connected, nothing was posted",
+                    unreachable.join(", ")
+                ),
+                unreachable,
+            ));
+        }
     }
     // 모두 막힐 부름은 글을 세우기 전에 거절한다 — 멘션과 같은 게이트를 읽기로 한 번 본다. 글을 세울 때 옛 경로가 다시 판정하므로
     // 이 앞 판정은 거절을 앞당길 뿐 누구도 더 열어 주지 않는다.
@@ -1641,6 +1851,60 @@ pub async fn answer_call(
         ));
     }
     a.post.body = body;
+    // 계획 잇기는 글 **뒤**라 되돌릴 수 없다 — 계획 쓰기 권한이 없으면 글을 쓰기 전에 물러난다(`message.delegate` 와 같다).
+    if plan.is_some() {
+        use super::plan_write::{PLAN_WRITE_PRIVILEGES, PLAN_WRITE_SEQUENCE_PRIVILEGES};
+        let missing = crate::write::missing_in(
+            &st.write,
+            PLAN_WRITE_PRIVILEGES,
+            PLAN_WRITE_SEQUENCE_PRIVILEGES,
+        )
+        .await
+        .ok()?;
+        if !missing.is_empty() {
+            return None;
+        }
+    }
+    // TS `preparePicks` — 글 앞에서 고를 수 있는 조합인지 본다.
+    if let Some(refused) = check_picks(st, &picks).await? {
+        return Some(refused);
+    }
+    let hook = (!picks.is_empty()).then(|| {
+        use crate::core::thread_model_set::clean_axis;
+        let picks = picks
+            .iter()
+            .map(
+                |(agent_id, model, effort)| crate::core::agent_model_picks::Pick {
+                    agent_id: agent_id.clone(),
+                    model: clean_axis(model.as_deref(), cause_link::MODEL_ID_MAX),
+                    effort: clean_axis(effort.as_deref(), 64),
+                },
+            )
+            .collect();
+        crate::core::agent_model_picks::AgentPicks::new(
+            &a.channel,
+            a.post.thread_root.as_deref(),
+            &me.id,
+            picks,
+        )
+    });
+    let deadline_at = msg_post::iso_ms(
+        msg_post::now_ms() + deadline_sec.unwrap_or(super::delegate_gate::DEADLINE_DEFAULT) * 1000,
+    );
+    let oblige = match expect {
+        Expect::None => None,
+        Expect::Report | Expect::Reply => Some(CallOblige {
+            targets: &targets.agents,
+            unreachable: &unreachable,
+            deadline_at: &deadline_at,
+            close_on: if expect == Expect::Reply {
+                delegate_write::CloseOn::Reply
+            } else {
+                delegate_write::CloseOn::Report
+            },
+            plan,
+        }),
+    };
     post_full(
         st,
         me,
@@ -1655,10 +1919,11 @@ pub async fn answer_call(
         None,
         &[],
         None,
-        None,
+        hook.as_ref(),
         None,
         None,
         Some(&targets),
+        oblige.as_ref(),
     )
     .await
 }
@@ -2091,9 +2356,37 @@ mod tests {
         let ch = "11111111-1111-4111-8111-111111111111";
         let ok =
             json!({"channelId": ch, "to": ["@alpha", "beta"], "body": "x", "alsoInChannel": true});
-        let (a, to) = parse_call(&ok).unwrap();
-        assert_eq!(to, vec!["@alpha", "beta"]);
-        assert!(!a.post.also_in_channel && a.post.attachment_ids.is_empty());
+        let c = parse_call(&ok).unwrap();
+        assert_eq!(c.to, vec!["@alpha", "beta"]);
+        assert!(!c.post.post.also_in_channel && c.post.post.attachment_ids.is_empty());
+        assert_eq!(c.expect, Expect::None);
+        assert!(c.deadline_sec.is_none() && c.picks.is_empty());
+        // U1 — 의무 칸.
+        let full = json!({"channelId": ch, "threadRootId": ch, "to": ["a"], "body": "x", "expect": "reply",
+            "deadlineSec": 60, "planRootId": ch, "planGroupId": "g1",
+            "agentModels": [{"agentId": ch, "model": "m"}]});
+        let c = parse_call(&full).unwrap();
+        assert_eq!(c.expect, Expect::Reply);
+        assert_eq!(c.deadline_sec, Some(60));
+        assert_eq!(c.plan_root.as_deref(), Some(ch));
+        assert_eq!(c.plan_group.as_deref(), Some("g1"));
+        assert_eq!(c.picks.len(), 1);
+        let report = json!({"channelId": ch, "to": ["a"], "body": "x", "expect": "report"});
+        assert_eq!(parse_call(&report).unwrap().expect, Expect::Report);
+        let none = json!({"channelId": ch, "to": ["a"], "body": "x", "expect": "none"});
+        assert_eq!(parse_call(&none).unwrap().expect, Expect::None);
+        for bad in [
+            json!({"channelId": ch, "to": ["a"], "body": "x", "expect": "wait"}),
+            json!({"channelId": ch, "to": ["a"], "body": "x", "expect": null}),
+            json!({"channelId": ch, "to": ["a"], "body": "x", "deadlineSec": 59}),
+            json!({"channelId": ch, "to": ["a"], "body": "x", "deadlineSec": 21601}),
+            json!({"channelId": ch, "to": ["a"], "body": "x", "deadlineSec": "60"}),
+            json!({"channelId": ch, "to": ["a"], "body": "x", "planRootId": "x"}),
+            json!({"channelId": ch, "to": ["a"], "body": "x", "planGroupId": "g0"}),
+            json!({"channelId": ch, "to": ["a"], "body": "x", "agentModels": [{"agentId": "x"}]}),
+        ] {
+            assert!(parse_call(&bad).is_none(), "{bad}");
+        }
         for bad in [
             json!({"channelId": ch, "body": "x"}),
             json!({"channelId": ch, "to": [], "body": "x"}),

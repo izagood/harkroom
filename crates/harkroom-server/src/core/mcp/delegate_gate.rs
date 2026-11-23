@@ -38,13 +38,13 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 /// TS `DELEGATION_DEADLINE_MIN_SEC`·`MAX_SEC`.
-const DEADLINE_MIN: i64 = 60;
-const DEADLINE_MAX: i64 = 6 * 60 * 60;
+pub(super) const DEADLINE_MIN: i64 = 60;
+pub(super) const DEADLINE_MAX: i64 = 6 * 60 * 60;
 /// TS `DELEGATION_DEADLINE_DEFAULT_SEC`.
-const DEADLINE_DEFAULT: i64 = 10 * 60;
+pub(super) const DEADLINE_DEFAULT: i64 = 10 * 60;
 
 /// TS `presence.online()` 의 DB 판 — 이 계정들 중 지금 접속한 것.
-const ONLINE_SQL: &str = "select account_id::text from agent_presence where account_id = any($1::uuid[]) and expires_at > now()";
+pub(super) const ONLINE_SQL: &str = "select account_id::text from agent_presence where account_id = any($1::uuid[]) and expires_at > now()";
 
 /// 문장(팀장 명단·대상·라운드)은 TS 상수를 골든으로 받는다(`golden/sql_fragments.json`).
 struct Sql {
@@ -95,12 +95,13 @@ enum PlanArg {
 }
 
 /// TS `bad_request`(계획판 칸 하나만) 문구.
-const PLAN_PAIR_MSG: &str = "planRootId 와 planGroupId 는 함께 준다(부모 계획의 스레드와 그 그룹)";
+pub(super) const PLAN_PAIR_MSG: &str =
+    "planRootId 와 planGroupId 는 함께 준다(부모 계획의 스레드와 그 그룹)";
 /// TS `PLAN_ERROR_MESSAGES.self_link`.
-const SELF_LINK_MSG: &str = "자기 스레드는 연결할 수 없다";
+pub(super) const SELF_LINK_MSG: &str = "자기 스레드는 연결할 수 없다";
 
 /// zod `planGroupId` — `/^g[1-9][0-9]{0,3}$/`.
-fn plan_group_ok(g: &str) -> bool {
+pub(super) fn plan_group_ok(g: &str) -> bool {
     let b = g.as_bytes();
     (2..=5).contains(&b.len())
         && b[0] == b'g'
@@ -745,10 +746,12 @@ async fn write(
         meta,
         server_notice: false,
         closes_delegation: false,
+        call_obligation: None,
         delegation: Some(delegate_write::Plan {
             delegate_ids: &delegate_ids,
             deadline_at: &deadline_at,
             team_id,
+            close_on: delegate_write::CloseOn::Report,
         }),
         system: false,
         progress: false,
