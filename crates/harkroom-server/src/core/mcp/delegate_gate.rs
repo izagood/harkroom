@@ -7,6 +7,8 @@
 //! - S5.4-11c: 팀장 **에이전트**가 `to` 전원을 담는 자기 팀 **하나**에 넘기는 요청(팀 명단 갈래)도 맡는다 — TS 처럼 호출 게이트를
 //!   건너뛰고 팀 명단의 (계정, 꺼짐)으로 접속을 본 뒤 위임 행·부름에 `team_id` 를 적는다. `to` 를 담는 팀이 둘 이상이면
 //!   TS 처럼 같은 문장의 행 순서 첫 팀(S5.4-14c). 팀장이 사람이어도 같은 팀 갈래를 탄다(`route_for`).
+//!   팀 명단 갈래에도 호출 범위를 적용한다: 팀장과 **소유자가 다른** 팀원은 호출 게이트를 거치고(`not_invokable`), 같은 소유자의
+//!   팀원만 명단으로 지나간다. `team_id` 는 그대로 적는다.
 //! - S5.4-14c: 비지 않은 `agentModels` 도 맡는다 — 접속 확인 뒤 TS `preparePicks`([`super::msg_post::check_picks`]), 글 tx 의
 //!   `applyAgentPicks`(`notified` 에 넘겨받는 팀원을 더한다), 커밋 뒤 시스템 줄·이벤트. 하네스 목록(`relay_moved`)·고르기 쓰기 권한
 //!   (`AGENT_MODEL_PICKS_PRIVILEGES`)이 없으면 TS.
@@ -231,6 +233,67 @@ fn route_for(pick: &LeadPick, is_agent: bool) -> Route {
     }
 }
 
+/// 팀 명단 갈래에서 소유자를 읽는다 — (계정, 소유자). `agent_config` 행이 없으면 소유자는 비어 있다.
+const OWNERS_SQL: &str = "select a.id::text, c.owner_account_id::text from account a \
+     left join agent_config c on c.account_id = a.id where a.id = any($1::uuid[])";
+
+/// 팀 명단 갈래에서 **호출 게이트를 거칠** 받는 쪽(`wanted` 의 자리) — 팀장과 소유자가 다른 팀원이다.
+/// 소유자를 모르는 쪽(어느 한쪽이라도 비어 있음·명단에 없음)은 다른 것으로 본다(닫힌 쪽).
+fn other_owner_idx(
+    lead_owner: Option<&str>,
+    wanted: &[String],
+    members: &Members,
+    owners: &HashMap<String, Option<String>>,
+) -> Vec<usize> {
+    wanted
+        .iter()
+        .enumerate()
+        .filter(|(_, w)| {
+            let owner = members
+                .get(w.as_str())
+                .and_then(|(id, _)| owners.get(id))
+                .and_then(|o| o.as_deref());
+            match (lead_owner, owner) {
+                (Some(l), Some(o)) => l != o,
+                _ => true,
+            }
+        })
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// [`other_owner_idx`] 를 DB 로 — 팀장이 사람이면 그 사람이 소유자다. DB 오류는 `None`(아무것도 쓰지 않는다).
+async fn team_gate_idx(
+    pool: &PgPool,
+    me: &Account,
+    wanted: &[String],
+    members: &Members,
+) -> Option<Vec<usize>> {
+    let mut ids: Vec<String> = wanted
+        .iter()
+        .filter_map(|w| members.get(w.as_str()).map(|m| m.0.clone()))
+        .collect();
+    ids.push(me.id.clone());
+    let rows: Vec<(String, Option<String>)> = sqlx::query_as(OWNERS_SQL)
+        .bind(&ids)
+        .fetch_all(pool)
+        .await
+        .map_err(ts_err("team_owners"))
+        .ok()?;
+    let owners: HashMap<String, Option<String>> = rows.into_iter().collect();
+    let lead_owner = if me.kind == "agent" {
+        owners.get(&me.id).cloned().flatten()
+    } else {
+        Some(me.id.clone())
+    };
+    Some(other_owner_idx(
+        lead_owner.as_deref(),
+        wanted,
+        members,
+        &owners,
+    ))
+}
+
 /// TS 도구는 서비스 `postMessage` 를 바로 부른다 — 라우트 몫(카드 고르기·`closeAsksByReply`)이 없다. 사람 작성자에게만 뜻이 있다
 /// (에이전트 글은 그 갈래를 이미 타지 않는다) — 에이전트는 예전 그대로 끈다.
 fn service_call_for(is_agent: bool) -> bool {
@@ -305,12 +368,25 @@ pub async fn answer(
         .collect();
     let pick = lead_team_pick(&rows, &wanted);
     let (team_id, members) = match (route_for(&pick, me.kind == "agent"), pick) {
-        (Route::Team, LeadPick::One(t, m)) => (Some(t), m),
+        (Route::Team, LeadPick::One(t, m)) => {
+            // 팀 명단 갈래에도 호출 범위를 적용한다 — 팀장과 소유자가 다른 팀원은 호출 게이트를 거친다.
+            // 같은 소유자의 팀원은 예전 그대로 명단으로 지나간다.
+            let idx = team_gate_idx(pool, me, &wanted, &m).await?;
+            if !idx.is_empty()
+                && let Err(refused) = gate(pool, me, &a, &wanted, &idx).await?
+            {
+                return Some(refused);
+            }
+            (Some(t), m)
+        }
         (Route::NotAgent, _) => return Some(err("not_agent", "only agents delegate")),
-        _ => match gate(pool, me, &a, &wanted).await? {
-            Ok(m) => (None, m),
-            Err(refused) => return Some(refused),
-        },
+        _ => {
+            let all: Vec<usize> = (0..wanted.len()).collect();
+            match gate(pool, me, &a, &wanted, &all).await? {
+                Ok(m) => (None, m),
+                Err(refused) => return Some(refused),
+            }
+        }
     };
     write_or_ts(
         st,
@@ -327,11 +403,13 @@ pub async fn answer(
 }
 
 /// TS `openDelegationTargets` — 받는 쪽마다 멘션과 같은 호출 게이트. `Ok` 는 명단, `Err` 는 거절 글자.
+/// `only` 는 게이트로 잴 `wanted` 의 자리다(호출 게이트 갈래는 전부, 팀 명단 갈래는 소유자가 다른 팀원만).
 async fn gate(
     pool: &PgPool,
     me: &Account,
     a: &Args,
     wanted: &[String],
+    only: &[usize],
 ) -> Option<Result<Members, String>> {
     let mut conn = pool.acquire().await.map_err(ts_err("gate_acquire")).ok()?;
     let rows: Vec<(String, String, bool)> = sqlx::query_as(&*sql().targets)
@@ -362,6 +440,9 @@ async fn gate(
     };
     let mut refused: Vec<String> = Vec::new();
     for (i, h) in wanted.iter().enumerate() {
+        if !only.contains(&i) {
+            continue;
+        }
         let fact = by_handle.get(h.as_str()).and_then(|id| facts.get(*id));
         let ok = match fact {
             Some(f) => invoke_gate::may_invoke(&mut conn, f, &ctx)
@@ -668,6 +749,31 @@ mod tests {
         assert!(!has_dup(&v(&[])));
         assert!(!has_dup(&v(&["a", "b"])));
         assert!(has_dup(&v(&["a", "b", "a"])));
+    }
+
+    #[test]
+    fn team_route_gates_other_owners_only() {
+        let members: Members = [("a", "ia"), ("b", "ib"), ("c", "ic"), ("d", "id")]
+            .into_iter()
+            .map(|(h, id)| (h.to_owned(), (id.to_owned(), false)))
+            .collect();
+        let owners: HashMap<String, Option<String>> =
+            [("ia", Some("o1")), ("ib", Some("o2")), ("ic", None)]
+                .into_iter()
+                .map(|(id, o)| (id.to_owned(), o.map(str::to_owned)))
+                .collect();
+        let wanted: Vec<String> = ["a", "b", "c", "d", "x"].map(String::from).to_vec();
+        // 같은 소유자(a)만 명단으로 지나간다 — 다른 소유자·소유자 없음·설정 행 없음·명단 밖은 게이트.
+        assert_eq!(
+            other_owner_idx(Some("o1"), &wanted, &members, &owners),
+            vec![1, 2, 3, 4]
+        );
+        // 팀장의 소유자를 모르면 전원 게이트.
+        assert_eq!(
+            other_owner_idx(None, &wanted[..2], &members, &owners),
+            vec![0, 1]
+        );
+        assert!(other_owner_idx(Some("o1"), &wanted[..1], &members, &owners).is_empty());
     }
 
     #[test]

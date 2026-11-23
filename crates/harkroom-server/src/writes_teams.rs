@@ -507,7 +507,20 @@ pub async fn set_lead(
     json_ok(row)
 }
 
-/// `PUT /teams/{id}/members/{accountId}` — 에이전트만(400 `not_an_agent`). `{ members }`.
+/// 팀원으로 넣어도 되나 — 넣는 사람이 그 에이전트를 소유하거나 그 에이전트에 `agent.manage` 가 있을 때만.
+pub async fn may_add_member(
+    pool: &sqlx::PgPool,
+    me: &Account,
+    agent_id: &str,
+) -> Result<bool, sqlx::Error> {
+    let target = Target {
+        kind: TargetKind::Agent,
+        id: agent_id,
+    };
+    crate::perm::can(pool, me, "agent.manage", Some(&target)).await
+}
+
+/// `PUT /teams/{id}/members/{accountId}` — 에이전트만(400 `not_an_agent`), 내가 소유하거나 관리하는 에이전트만(403 `forbidden`). `{ members }`.
 pub async fn put_member(
     State(st): State<AppState>,
     Path((id, account)): Path<(String, String)>,
@@ -529,6 +542,13 @@ pub async fn put_member(
             StatusCode::BAD_REQUEST,
             "not_an_agent",
             "only agents can join a team",
+        );
+    }
+    if !db!(may_add_member(pool, &me, &account).await) {
+        return json_err(
+            StatusCode::FORBIDDEN,
+            "forbidden",
+            "you can only add agents you own or manage",
         );
     }
     let mut tx = db!(pool.begin().await);
