@@ -428,3 +428,25 @@ fn sign_in_key_matches_ts_and_hides_ids() {
     );
     assert_eq!(read_sign_in_key(&root.join("work/cy")), None);
 }
+
+/// 평평한 구조로 읽혀도(pools.json 없음) 계정을 품은 디렉터리(풀)를 `CLAUDE_CONFIG_DIR` 로 재지 않는다.
+#[test]
+fn never_measures_a_pool_dir() {
+    let root = tmp_root("pool-dir", &[]);
+    fs::remove_file(root.join("pools.json")).unwrap();
+    fs::create_dir_all(root.join("work/aria")).unwrap();
+    fs::write(root.join("work/aria/.claude.json"), "{}").unwrap();
+    fs::create_dir_all(root.join("solo")).unwrap();
+    let (p, f) = setup(&root, false);
+    p.tick();
+    assert_eq!(f.take_calls(), ["solo"]);
+    let file = read_file(&root);
+    assert!(
+        !file["accounts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|a| a["account"] == "work")
+    );
+    fs::remove_dir_all(&root).ok();
+}

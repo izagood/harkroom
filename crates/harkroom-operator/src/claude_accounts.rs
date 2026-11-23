@@ -250,6 +250,15 @@ pub fn looks_like_account(dir: &Path) -> bool {
         .any(|f| fs::metadata(dir.join(f)).is_ok())
 }
 
+/// 계정을 품은 디렉터리인가(풀 모양) — 바로 아래에 계정 표식을 가진 하위 디렉터리가 하나라도 있으면 참.
+/// 이런 디렉터리는 자기 안에 `.claude.json` 이 생겨 있어도 계정이 아니다: 계정으로 세면 사용량 조회가
+/// 그 디렉터리를 `CLAUDE_CONFIG_DIR` 로 띄워 표식을 더 남기고, 「풀 밖의 계정」으로 보여 풀째 옮겨진다.
+pub fn holds_accounts(dir: &Path) -> bool {
+    subdirs(dir)
+        .iter()
+        .any(|n| looks_like_account(&dir.join(n)))
+}
+
 /// `pools.json` 읽기. 없음 = `None`(평평한 구조 스위치), 깨짐 = 빈 설정.
 pub fn read_pools_config(path: &Path) -> Option<PoolsConfig> {
     let text = fs::read_to_string(path).ok()?;
@@ -331,9 +340,11 @@ pub struct Layout {
     pub pools: Vec<(String, Vec<AccountDir>)>,
 }
 
+/// 계정 디렉터리 목록 — 계정을 품은 디렉터리(풀 모양)는 뺀다. 사용량 조회·`order` 맞추기가 이 목록을 쓴다.
 fn dirs_of(parent: &Path) -> Vec<AccountDir> {
     subdirs(parent)
         .into_iter()
+        .filter(|name| !holds_accounts(&parent.join(name)))
         .map(|name| AccountDir {
             dir: parent.join(&name),
             name,
@@ -360,11 +371,13 @@ pub fn read_layout(root: &Path, pools_path: &Path) -> Layout {
             },
         };
     };
+    let configured: BTreeSet<String> = pools_to_create(&cfg).into_iter().collect();
     let mut pools = Vec::new();
     let mut strays = Vec::new();
     for name in subdirs(root) {
         let dir = root.join(&name);
-        if looks_like_account(&dir) {
+        // 설정에 나오는 풀 이름이거나 계정을 품은 디렉터리는 표식 파일이 있어도 풀이다.
+        if looks_like_account(&dir) && !configured.contains(&name) && !holds_accounts(&dir) {
             strays.push(name);
             continue;
         }
@@ -755,6 +768,13 @@ impl ClaudeAccounts {
         let to = under(&self.root, &[to_pool, account])?;
         if !is_dir(&from) {
             return Err(format!("옮길 계정이 없다: {account}"));
+        }
+        // 풀(설정에 나오는 이름이거나 계정을 품은 디렉터리)은 계정이 아니다 — 풀째 다른 풀 안으로 옮기지 않는다.
+        let configured = read_pools_config(&self.pools_path)
+            .map(|c| pools_to_create(&c))
+            .unwrap_or_default();
+        if configured.iter().any(|n| n == account) || holds_accounts(&from) {
+            return Err(format!("풀은 계정으로 옮길 수 없다: {account}"));
         }
         if !is_dir(&pool_dir) {
             return Err(format!("대상 풀이 없다: {to_pool}"));
