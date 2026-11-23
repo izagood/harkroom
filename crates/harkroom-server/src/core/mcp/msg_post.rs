@@ -1474,13 +1474,27 @@ const MAX_CALL_TARGETS: usize = 8;
 struct CallTargets {
     /// (계정 id, handle) — `to` 순서, 겹침 없음.
     agents: Vec<(String, String)>,
-    /// (적힌 글자, 이유) — `unknown`·`not_agent`·`self`.
+    /// (적힌 글자, 이유) — `unknown`·`not_agent`·`self`·`gate_denied`(팀의 호출 범위)·`empty_team`.
     not_called: Vec<(String, &'static str)>,
+    /// T2 — `to` 에 적힌 팀을 펼친 것 `(팀 id, 팀 이름, 펼친 팀원 handle)`. 팀원은 `agents` 에 들어가 **각자** 호출 게이트를 지난다.
+    teams: Vec<(String, String, Vec<String>)>,
 }
+
+/// T2 — `to` 의 비교 글자([`call_key`]) → 팀으로 푼 결과.
+type CallTeams = std::collections::HashMap<String, crate::core::mention_calls::TeamCall>;
 
 impl CallTargets {
     /// `to` 를 계정 행(`(id, handle, kind)`)으로 가른다. `@` 머리는 떼고 handle 은 소문자로 본다.
-    fn split(to: &[String], rows: &[(String, String, String)], me: &str) -> Self {
+    ///
+    /// T2: 계정으로 풀리지 않은 칸이 `teams` 에 있으면 팀이다 — 팀의 호출 범위가 막으면 `gate_denied`, 아니면 팀원(나는 뺀다)을 `agents` 에
+    /// 더한다. 팀원은 `to` 에 handle 로 적은 것과 **같은 자리**에 서므로 뒤의 판정(접속·호출 게이트·principal)이 한 줄도 다르지 않다.
+    fn split(
+        to: &[String],
+        rows: &[(String, String, String)],
+        me: &str,
+        teams: &CallTeams,
+    ) -> Self {
+        use crate::core::mention_calls::TeamCall;
         let mut out = Self::default();
         for raw in to {
             let key = call_key(raw);
@@ -1488,7 +1502,34 @@ impl CallTargets {
                 .iter()
                 .find(|(id, handle, _)| *id == key || handle.eq_ignore_ascii_case(&key));
             match hit {
-                None => out.not_called.push((raw.clone(), "unknown")),
+                None => match teams.get(&key) {
+                    None => out.not_called.push((raw.clone(), "unknown")),
+                    Some(TeamCall::Denied(_)) => out.not_called.push((raw.clone(), "gate_denied")),
+                    Some(TeamCall::Members {
+                        team_id,
+                        name,
+                        members,
+                    }) => {
+                        let others: Vec<&(String, String)> =
+                            members.iter().filter(|(id, _)| id != me).collect();
+                        if others.is_empty() {
+                            out.not_called.push((raw.clone(), "empty_team"));
+                            continue;
+                        }
+                        if !out.teams.iter().any(|(t, _, _)| t == team_id) {
+                            out.teams.push((
+                                team_id.clone(),
+                                name.clone(),
+                                others.iter().map(|(_, h)| h.clone()).collect(),
+                            ));
+                        }
+                        for (id, handle) in others {
+                            if !out.agents.iter().any(|(i, _)| i == id) {
+                                out.agents.push((id.clone(), handle.clone()));
+                            }
+                        }
+                    }
+                },
                 Some((_, _, kind)) if kind != "agent" => {
                     out.not_called.push((raw.clone(), "not_agent"))
                 }
@@ -1549,8 +1590,25 @@ impl CallTargets {
         for (raw, reason) in &self.not_called {
             not_called.push(entry(raw, reason));
         }
+        // T2 — 팀을 펼쳤을 때만 싣는다(팀 없는 부름의 결과 꼴은 그대로다). 누가 깨었는지는 `called`·`notCalled` 가 정본이다.
+        let teams = if self.teams.is_empty() {
+            String::new()
+        } else {
+            let list: Vec<Value> = self
+                .teams
+                .iter()
+                .map(|(id, name, members)| {
+                    let mut o = Map::new();
+                    o.insert("teamId".into(), Value::from(id.as_str()));
+                    o.insert("team".into(), Value::from(name.as_str()));
+                    o.insert("members".into(), Value::from(members.clone()));
+                    Value::Object(o)
+                })
+                .collect();
+            format!(",\"teams\":{}", Value::from(list))
+        };
         format!(
-            ",\"called\":{},\"notCalled\":{}",
+            ",\"called\":{},\"notCalled\":{}{teams}",
             Value::from(called),
             Value::from(not_called)
         )
@@ -1727,7 +1785,26 @@ pub async fn answer_call(
     let rows = crate::core::mention_calls::accounts_for_call(&mut conn, &handles, &ids)
         .await
         .ok()?;
-    let mut targets = CallTargets::split(&to, &rows, &me.id);
+    // T2 — 계정으로 풀리지 않은 칸은 팀으로 본다. 팀의 호출 범위만 여기서 재고, 팀원은 아래에서 `to` 에 handle 로 적은 것과 같은 길을 탄다.
+    let mut teams = CallTeams::new();
+    for raw in &to {
+        let key = call_key(raw);
+        if teams.contains_key(&key)
+            || rows
+                .iter()
+                .any(|(id, handle, _)| *id == key || handle.eq_ignore_ascii_case(&key))
+        {
+            continue;
+        }
+        if let Some(t) =
+            crate::core::mention_calls::team_for_call(&mut conn, &key, &me.id, &a.channel)
+                .await
+                .ok()?
+        {
+            teams.insert(key, t);
+        }
+    }
+    let mut targets = CallTargets::split(&to, &rows, &me.id, &teams);
     // F1a 자기 쪼개기 — `to` 가 나 하나뿐인 `expect: "report"` 는 `message.delegate` 의 자기 조각 길 그대로 간다(스위치·게이트·쓰기가 한 벌).
     if expect == Expect::Report
         && targets.agents.is_empty()
@@ -1772,6 +1849,18 @@ pub async fn answer_call(
             Value::from(handles)
         ))
     };
+    // 팀을 펼친 뒤에도 한 부름의 대상은 `to` 상한과 같다 — 넘으면 아무것도 쓰지 않고 거절한다(잘라서 일부만 부르지 않는다).
+    if targets.agents.len() > MAX_CALL_TARGETS {
+        let names: Vec<String> = targets.agents.iter().map(|(_, h)| h.clone()).collect();
+        return Some(refuse(
+            "too_many_targets",
+            format!(
+                "a call reaches at most {MAX_CALL_TARGETS} agents after teams are expanded ({} here) — name the members you need",
+                names.len()
+            ),
+            names,
+        ));
+    }
     if targets.agents.is_empty() {
         let names: Vec<String> = targets.not_called.iter().map(|(h, _)| h.clone()).collect();
         return Some(refuse(
@@ -2413,7 +2502,8 @@ mod tests {
             .iter()
             .map(|s| s.to_string())
             .collect();
-        let t = CallTargets::split(&to, &rows, "id-me");
+        let t = CallTargets::split(&to, &rows, "id-me", &CallTeams::new());
+        assert!(t.teams.is_empty());
         assert_eq!(
             t.agents,
             vec![
@@ -2443,6 +2533,81 @@ mod tests {
             json!({"handle":"beta","reason":"gate_denied"})
         );
         assert_eq!(v["notCalled"].as_array().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn call_targets_expand_teams_into_members() {
+        use crate::core::mention_calls::TeamCall;
+        let rows = vec![
+            ("id-a".to_string(), "alpha".to_string(), "agent".to_string()),
+            ("id-me".to_string(), "me".to_string(), "agent".to_string()),
+        ];
+        let mut teams = CallTeams::new();
+        teams.insert(
+            "crew".into(),
+            TeamCall::Members {
+                team_id: "t-1".into(),
+                name: "Crew".into(),
+                // 나(팀장이어도)·이미 적힌 대상은 겹치지 않는다.
+                members: vec![
+                    ("id-a".into(), "alpha".into()),
+                    ("id-c".into(), "gamma".into()),
+                    ("id-me".into(), "me".into()),
+                ],
+            },
+        );
+        teams.insert("closed".into(), TeamCall::Denied("Closed".into()));
+        teams.insert(
+            "solo".into(),
+            TeamCall::Members {
+                team_id: "t-2".into(),
+                name: "solo".into(),
+                members: vec![("id-me".into(), "me".into())],
+            },
+        );
+        let to: Vec<String> = ["alpha", "@Crew", "closed", "solo", "ghost", "crew"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let t = CallTargets::split(&to, &rows, "id-me", &teams);
+        // 팀원은 `to` 에 handle 로 적은 것과 같은 자리(`agents`)에 선다 — 팀 칸으로 따로 깨우지 않는다.
+        assert_eq!(
+            t.agents,
+            vec![
+                ("id-a".into(), "alpha".into()),
+                ("id-c".into(), "gamma".into())
+            ]
+        );
+        assert_eq!(
+            t.not_called,
+            vec![
+                ("closed".to_string(), "gate_denied"),
+                ("solo".to_string(), "empty_team"),
+                ("ghost".to_string(), "unknown"),
+            ]
+        );
+        assert_eq!(
+            t.teams,
+            vec![(
+                "t-1".to_string(),
+                "Crew".to_string(),
+                vec!["alpha".to_string(), "gamma".to_string()]
+            )]
+        );
+        // 본문에는 팀 이름이 아니라 팀원 handle 이 머리 멘션으로 선다 — 옛 경로가 팀원마다 호출 게이트를 잰다.
+        assert_eq!(t.head_body("go"), "@alpha @gamma go");
+        // 게이트가 막은 팀원은 `notCalled` 로 — 팀을 통해 불렀어도 건너뛰지 않는다.
+        let extra = t.result_extra(r#"{"id":"m","meta":{"mentionDenied":["gamma"]}}"#);
+        let v: Value = serde_json::from_str(&format!("{{\"x\":1{extra}}}")).unwrap();
+        assert_eq!(v["called"], json!(["id-a"]));
+        assert_eq!(
+            v["notCalled"][0],
+            json!({"handle":"gamma","reason":"gate_denied"})
+        );
+        assert_eq!(
+            v["teams"],
+            json!([{"teamId":"t-1","team":"Crew","members":["alpha","gamma"]}])
+        );
     }
 
     #[test]

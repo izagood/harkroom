@@ -177,6 +177,68 @@ pub(crate) async fn accounts_for_call(
     Ok(out.into_iter().map(|a| (a.id, a.handle, a.kind)).collect())
 }
 
+/// T2 `agent.call` — `to` 의 팀 한 칸을 푼 결과.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum TeamCall {
+    /// 팀의 호출 범위가 부른 쪽을 막는다 — 명단을 펼치지 않는다. 값은 팀 이름.
+    Denied(String),
+    /// 팀원으로 펼친다 — 꺼지지 않은 에이전트 팀원 `(계정 id, handle)`, handle 순. 팀원마다 호출 게이트는 부른 쪽이 따로 잰다.
+    Members {
+        team_id: String,
+        name: String,
+        members: Vec<(String, String)>,
+    },
+}
+
+/// T2 `agent.call` — 계정으로 풀리지 않은 `to` 한 칸(팀 이름 또는 팀 id)을 팀으로 푼다. 이름 순서는 본문 멘션과 같다(계정 → 집합 → 팀):
+/// 집합 이름이면 팀으로 보지 않는다. 팀의 호출 범위(`may_invoke_team`)를 **부른 계정 본인**으로 잰다 — 사람이 쓰는 `@팀` 과 같은 판정이고,
+/// 이번 턴을 깨운 사람으로 다시 재지 않는다. 여기서는 팀원을 **깨울 수 있다고 판정하지 않는다** — 팀장·명단은 권한이 아니다.
+pub(crate) async fn team_for_call(
+    conn: &mut PgConnection,
+    key: &str,
+    caller_id: &str,
+    channel_id: &str,
+) -> Result<Option<TeamCall>, sqlx::Error> {
+    let team = if crate::core::msg_read::is_uuid(key) {
+        team_where(conn, sql().team_by_id.as_str(), key).await?
+    } else if key == CHANNEL_MENTION_HANDLE || group_id_by_handle(conn, key).await?.is_some() {
+        None
+    } else {
+        team_where(conn, sql().team_by_name.as_str(), key).await?
+    };
+    let Some(team) = team else { return Ok(None) };
+    let tf = TeamFacts {
+        team_id: team.id.clone(),
+        invoke_scope: team.scope.clone(),
+        owner_account_id: team.owner.clone(),
+    };
+    if !invoke_gate::may_invoke_team(conn, &tf, caller_id, channel_id).await? {
+        return Ok(Some(TeamCall::Denied(team.name)));
+    }
+    let awake: Vec<(String, String)> = team_members(conn, &team.id)
+        .await?
+        .into_iter()
+        .filter(|(_, _, disabled)| !disabled)
+        .map(|(id, handle, _)| (id, handle))
+        .collect();
+    // 팀원은 에이전트만 넣을 수 있지만(라우트 판정) 표에는 그 제약이 없다 — 지금 에이전트인 계정만 남긴다.
+    let ids: Vec<String> = awake.iter().map(|(id, _)| id.clone()).collect();
+    let agents: HashSet<String> = accounts_by_ids(conn, &ids)
+        .await?
+        .into_iter()
+        .filter(|a| a.kind == "agent")
+        .map(|a| a.id)
+        .collect();
+    Ok(Some(TeamCall::Members {
+        team_id: team.id,
+        name: team.name,
+        members: awake
+            .into_iter()
+            .filter(|(id, _)| agents.contains(id))
+            .collect(),
+    }))
+}
+
 /// TS `principalInvokesToday`.
 async fn principal_invokes_today(
     conn: &mut PgConnection,
