@@ -23,8 +23,9 @@ use crate::prompt::escape_for_prompt;
 use crate::turn_files::write_private;
 
 pub const THREAD_PLAN_PIN_DIR: &str = "thread-plan-pins";
-/// 계획 블록 본문 상한(UTF-16 단위, 정본 `length` 와 같다). 넘치면 뒤를 자르고 「thread.plan 으로 읽어라」 한 줄을 단다.
-pub const THREAD_PLAN_MAX_CHARS: usize = 2000;
+/// 계획 블록 본문 상한(UTF-16 단위). 계획판 단계 수에 상한이 없어 매 턴 프롬프트에 싣는 양은 여기서 묶는다.
+/// 넘치면 끝난 단계부터 id 한 줄로 접고, 그래도 넘칠 때만 뒤를 자른다([`render_plan_body`]).
+pub const THREAD_PLAN_MAX_CHARS: usize = 6000;
 
 /// 정본 `PlanLink`.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -319,8 +320,81 @@ fn utf16_len(s: &str) -> usize {
     s.encode_utf16().count()
 }
 
-/// 정본 `renderPlanBody` — 계획 본문 줄(블록 머리·꼬리 없이). 상한을 넘으면 자른다.
+/// 계획 본문 줄(블록 머리·꼬리 없이). 계획판에 단계 수 상한이 없어 길이는 여기서 다룬다:
+/// ① 다 싣는다(끝난 그룹은 한 줄) → ② [`THREAD_PLAN_MAX_CHARS`] 를 넘으면 **끝난 단계만** id 한 줄로 접는다(열린 단계는 그대로)
+/// → ③ 그래도 넘으면 자르고 몇 줄이 빠졌는지 적는다. 열린 일이 끝난 일에 밀려 잘리지 않게 하려는 순서다.
 pub fn render_plan_body(plan: &ThreadPlanSnapshot, me_id: &str) -> Vec<String> {
+    let full = plan_body_lines(plan, me_id, false);
+    if fits(&full) {
+        return full;
+    }
+    let lines = plan_body_lines(plan, me_id, true);
+    let mut out = Vec::new();
+    let mut size = 0;
+    for (i, line) in lines.iter().enumerate() {
+        let n = utf16_len(line);
+        if size + n + 1 > THREAD_PLAN_MAX_CHARS {
+            out.push(format!(
+                "… (길어서 잘랐다 — 남은 {}줄은 thread.plan 으로 읽어라)",
+                lines.len() - i
+            ));
+            break;
+        }
+        out.push(line.clone());
+        size += n + 1;
+    }
+    out
+}
+
+fn fits(lines: &[String]) -> bool {
+    lines.iter().map(|l| utf16_len(l) + 1).sum::<usize>() <= THREAD_PLAN_MAX_CHARS
+}
+
+/// 끝난 단계 여럿을 한 줄로 — id 만 남긴다(제목·연결은 `thread.plan` 으로 읽는다).
+fn done_fold_line(ids: &[&str], indent: &str) -> String {
+    format!(
+        "{indent}{} 끝난 단계 {}개: {}",
+        mark("done"),
+        ids.len(),
+        ids.join(" ")
+    )
+}
+
+/// 단계 줄들. `fold_done` 이면 끝난 단계를 한 줄로 모아 맨 앞에 둔다.
+fn push_steps(
+    lines: &mut Vec<String>,
+    steps: &[&PlanStep],
+    derived: &BTreeMap<String, PlanDerivedNode>,
+    group: Option<&PlanGroup>,
+    me_id: &str,
+    indent: &str,
+    fold_done: bool,
+) {
+    let is_done = |s: &PlanStep| {
+        derived
+            .get(&s.id)
+            .map_or(s.state.as_str(), |n| n.derived.as_str())
+            == "done"
+    };
+    if fold_done {
+        let done: Vec<&str> = steps
+            .iter()
+            .filter(|s| is_done(s))
+            .map(|s| s.id.as_str())
+            .collect();
+        if !done.is_empty() {
+            lines.push(done_fold_line(&done, indent));
+        }
+    }
+    for s in steps {
+        if fold_done && is_done(s) {
+            continue;
+        }
+        lines.push(step_line(s, derived, group, me_id, indent));
+    }
+}
+
+fn plan_body_lines(plan: &ThreadPlanSnapshot, me_id: &str, fold_done: bool) -> Vec<String> {
     let doc = &plan.doc;
     let derived = &plan.derived;
     let mut lines = vec![format!(
@@ -399,31 +473,16 @@ pub fn render_plan_body(plan: &ThreadPlanSnapshot, me_id: &str) -> Vec<String> {
         }
         lines.push(head.join(" — "));
         if state != "done" {
-            for s in steps {
-                lines.push(step_line(s, derived, Some(g), me_id, "  "));
-            }
+            push_steps(&mut lines, &steps, derived, Some(g), me_id, "  ", fold_done);
         }
     }
-    for s in doc
+    let loose: Vec<&PlanStep> = doc
         .steps
         .iter()
         .filter(|s| s.group_id.as_deref().is_none_or(str::is_empty))
-    {
-        lines.push(step_line(s, derived, None, me_id, ""));
-    }
-
-    let mut out = Vec::new();
-    let mut size = 0;
-    for line in lines {
-        let n = utf16_len(&line);
-        if size + n + 1 > THREAD_PLAN_MAX_CHARS {
-            out.push("… (길어서 잘랐다 — 나머지는 thread.plan 으로 읽어라)".into());
-            break;
-        }
-        out.push(line);
-        size += n + 1;
-    }
-    out
+        .collect();
+    push_steps(&mut lines, &loose, derived, None, me_id, "", fold_done);
+    lines
 }
 
 /// 정본 `threadPlanLines`. 걸린 판은 본문 없이 한 줄만 — 왜 안 실렸는지는 알아야 고친다.

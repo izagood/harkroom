@@ -55,15 +55,19 @@ fn doc_rejects_or_defers_what_zod_would_not_take_the_same_way() {
                 "links": [{ "kind": "url", "id": U }] }] }),
         json!({ "goal": "g", "managerId": "x" }),
         json!({ "goal": "g", "next": 1 }),
-        json!({ "goal": "g", "groups": (0..17).map(|i| json!({ "id": format!("g{}", i + 1), "title": "t" })).collect::<Vec<_>>() }),
     ] {
         assert_eq!(parse_doc(&bad), None, "{bad}");
     }
-    // 바깥 울타리(×2)는 넉넉하다 — 상한 판정은 validate_plan 몫.
-    let nine: Vec<Value> = (1..=9)
+    // 그룹·단계 수에는 상한이 없다(옛 바깥 울타리 16·80 을 넘겨도 받는다).
+    let many_groups: Vec<Value> = (1..=40)
         .map(|i| json!({ "id": format!("g{i}"), "title": "t" }))
         .collect();
-    assert!(parse_doc(&json!({ "goal": "g", "groups": nine })).is_some());
+    let many_steps: Vec<Value> = (1..=200)
+        .map(|i| json!({ "id": format!("s{i}"), "title": "t", "state": "done" }))
+        .collect();
+    assert!(
+        parse_doc(&json!({ "goal": "g", "groups": many_groups, "steps": many_steps })).is_some()
+    );
 }
 
 #[test]

@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import {
-  PLAN_LIMITS,
   derivePlan,
   diffDerived,
   planProgress,
@@ -88,14 +87,12 @@ describe('validatePlan — 거절 코드', () => {
     const steps = (n: number) => Array.from({ length: n }, (_, i) => step(`s${i + 1}`));
     const groups = (n: number) => Array.from({ length: n }, (_, i) => group(`g${i + 1}`));
 
-    it('단계 40 은 되고 41 은 안 된다', () => {
-      expect(validatePlan(plan([], steps(PLAN_LIMITS.steps)))).toEqual({ ok: true });
-      expect(errorOf(plan([], steps(PLAN_LIMITS.steps + 1)))).toEqual({ code: 'limit_exceeded', what: 'steps', limit: 40 });
+    it('단계 수에는 상한이 없다', () => {
+      expect(validatePlan(plan([], steps(400)))).toEqual({ ok: true });
     });
 
-    it('그룹 8 은 되고 9 는 안 된다', () => {
-      expect(validatePlan(plan(groups(PLAN_LIMITS.groups), []))).toEqual({ ok: true });
-      expect(errorOf(plan(groups(PLAN_LIMITS.groups + 1), []))).toEqual({ code: 'limit_exceeded', what: 'groups', limit: 8 });
+    it('그룹 수에는 상한이 없다', () => {
+      expect(validatePlan(plan(groups(80), []))).toEqual({ ok: true });
     });
 
     it('dependsOn 8 은 되고 9 는 안 된다', () => {

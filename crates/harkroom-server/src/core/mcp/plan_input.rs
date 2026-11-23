@@ -11,15 +11,16 @@ use crate::core::plan_graph::ItemPatch;
 use crate::lists::is_zod_uuid;
 use serde_json::{Map, Value};
 
-/// TS `PLAN_LIMITS` × 2 — zod 의 바깥 울타리(글자 수는 UTF-16 단위).
+/// TS `PLAN_LIMITS` × 2 — zod 의 바깥 울타리(글자 수는 UTF-16 단위). 그룹·단계 수는 예외다(아래).
 mod outer {
     pub const GOAL: usize = 400;
     pub const TITLE: usize = 240;
     pub const NEXT: usize = 600;
     pub const BLOCKED: usize = 600;
     pub const BLOCKED_REASON: usize = 600;
-    pub const GROUPS: usize = 16;
-    pub const STEPS: usize = 80;
+    /// 그룹·단계 수 — 상한이 아니라 id 공간이다(`g1`~`g9999`·`s1`~`s9999`). 이보다 많으면 어차피 id 가 겹친다.
+    pub const GROUPS: usize = 9999;
+    pub const STEPS: usize = 9999;
     pub const DEPENDS_ON: usize = 16;
     pub const LINKS: usize = 20;
 }

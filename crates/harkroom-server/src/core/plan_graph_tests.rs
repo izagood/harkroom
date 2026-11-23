@@ -158,16 +158,10 @@ fn validate_limits() {
             .map(|i| group(&format!("g{i}"), n()))
             .collect::<Vec<_>>()
     };
-    assert_eq!(err(&plan(vec![], steps(40))), "ok");
-    assert_eq!(
-        err(&plan(vec![], steps(41))),
-        r#"{"code":"limit_exceeded","what":"steps","limit":40}"#
-    );
-    assert_eq!(err(&plan(groups(8), vec![])), "ok");
-    assert_eq!(
-        err(&plan(groups(9), vec![])),
-        r#"{"code":"limit_exceeded","what":"groups","limit":8}"#
-    );
+    // 그룹·단계 수에는 상한이 없다(옛 상한 8·40 을 한참 넘겨도 된다).
+    assert_eq!(err(&plan(vec![], steps(400))), "ok");
+    assert_eq!(err(&plan(groups(80), vec![])), "ok");
+    assert_eq!(err(&plan(groups(80), steps(400))), "ok");
     let deps =
         |k: usize| json!({ "dependsOn": (2..2 + k).map(|i| format!("s{i}")).collect::<Vec<_>>() });
     let mut ok = steps(10);

@@ -64,9 +64,11 @@ export interface PlanDoc {
   seq?: { s: number; g: number };
 }
 
+/**
+ * 그룹·단계 **수**에는 상한이 없다 — 상한에 맞추려고 끝난 일을 합치면 계획이 읽히지 않는다.
+ * 수를 묶는 것은 id 꼴(`s1`~`s9999`·`g1`~`g9999`)과 요청 본문 크기뿐이다.
+ */
 export const PLAN_LIMITS = {
-  groups: 8,
-  steps: 40,
   dependsOn: 8,
   links: 10,
   goal: 200,
@@ -123,8 +125,6 @@ export function validatePlan(doc: PlanDoc): PlanValidation {
   const L = PLAN_LIMITS;
 
   // 상한
-  if (doc.groups.length > L.groups) return fail({ code: 'limit_exceeded', what: 'groups', limit: L.groups });
-  if (doc.steps.length > L.steps) return fail({ code: 'limit_exceeded', what: 'steps', limit: L.steps });
   if (len(doc.goal) > L.goal) return fail({ code: 'limit_exceeded', what: 'goal', limit: L.goal });
   if (len(doc.next) > L.next) return fail({ code: 'limit_exceeded', what: 'next', limit: L.next });
   if (len(doc.blocked) > L.blocked) return fail({ code: 'limit_exceeded', what: 'blocked', limit: L.blocked });

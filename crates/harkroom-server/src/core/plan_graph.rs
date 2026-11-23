@@ -9,10 +9,9 @@
 use super::msg_list::DerivedNode;
 use serde_json::{Map, Value};
 
-/// TS `PLAN_LIMITS`.
+/// TS `PLAN_LIMITS`. 그룹·단계 **수**에는 상한이 없다 — 끝난 일을 합쳐 줄이게 만들면 계획이 읽히지 않는다.
+/// 수를 묶는 것은 id 꼴(`s1`~`s9999`·`g1`~`g9999`, 겹치면 `duplicate_id`)과 요청 본문 크기뿐이다.
 pub mod limits {
-    pub const GROUPS: usize = 8;
-    pub const STEPS: usize = 40;
     pub const DEPENDS_ON: usize = 8;
     pub const LINKS: usize = 10;
     pub const GOAL: usize = 200;
@@ -257,12 +256,6 @@ pub fn validate_plan(doc: &Value) -> Result<(), PlanError> {
     };
     let groups = arr(&doc["groups"]);
     let steps = arr(&doc["steps"]);
-    if groups.len() > L::GROUPS {
-        return lim("groups", L::GROUPS, None);
-    }
-    if steps.len() > L::STEPS {
-        return lim("steps", L::STEPS, None);
-    }
     if len(&doc["goal"]) > L::GOAL {
         return lim("goal", L::GOAL, None);
     }
