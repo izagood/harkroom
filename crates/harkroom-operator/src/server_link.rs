@@ -380,6 +380,7 @@ mod tests {
             arch: None,
             install_kind: None,
             update_channel: None,
+            wake_frames: None,
         }
     }
 

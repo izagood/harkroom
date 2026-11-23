@@ -316,6 +316,13 @@ pub mod p2 {
                 skip_serializing_if = "Option::is_none"
             )]
             update_channel: Option<String>,
+            /// `wake` 프레임을 받을 줄 안다(E2a). 싣지 않으면 서버는 그 프레임을 보내지 않는다 — 옛 오퍼레이터는 싣지 않는다.
+            #[serde(
+                default,
+                rename = "wakeFrames",
+                skip_serializing_if = "Option::is_none"
+            )]
+            wake_frames: Option<bool>,
         },
         #[serde(rename = "runner.started", rename_all = "camelCase")]
         RunnerStarted { agent_id: String, runner_id: String },
@@ -381,6 +388,9 @@ pub mod p2 {
             )]
             previous: Option<Option<Value>>,
         },
+        /// `wake` 를 받았다는 답(E2a, 그림자) — 서버는 그 깨움 행을 `delivered` 로만 적는다.
+        #[serde(rename = "wake.ack", rename_all = "camelCase")]
+        WakeAck { wake_id: String },
         #[serde(rename = "runner.announce", rename_all = "camelCase")]
         RunnerAnnounce {
             runner_id: String,
@@ -449,7 +459,7 @@ pub mod p2 {
     }
 
     /// 정본의 `OPERATOR_TYPES`.
-    pub const OPERATOR_TO_SERVER_TYPES: [&str; 18] = [
+    pub const OPERATOR_TO_SERVER_TYPES: [&str; 19] = [
         "hello",
         "capabilities",
         "runner.started",
@@ -468,6 +478,7 @@ pub mod p2 {
         "local.input",
         "gh.report",
         "gh.lines.result",
+        "wake.ack",
     ];
 
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -549,10 +560,23 @@ pub mod p2 {
             scope: String,
             gh_user: Option<String>,
         },
+        /// 깨움 한 건(E2a, 그림자) — `wake` 표(181)의 행 하나. hello 에 `wakeFrames: true` 를 실은 오퍼레이터에게만 간다.
+        /// 받은 쪽은 턴을 열지 않는다: 적어 두고 `wake.ack` 만 답한다. 글 내용은 싣지 않는다(id 뿐).
+        #[serde(rename = "wake", rename_all = "camelCase")]
+        Wake {
+            wake_id: String,
+            agent_id: String,
+            message_id: String,
+            channel_id: String,
+            thread_root_id: String,
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            work_id: Option<String>,
+            reason: String,
+        },
     }
 
     /// 정본의 `SERVER_TYPES`.
-    pub const SERVER_TO_OPERATOR_TYPES: [&str; 14] = [
+    pub const SERVER_TO_OPERATOR_TYPES: [&str; 15] = [
         "assign",
         "unassign",
         "assign.synced",
@@ -567,6 +591,7 @@ pub mod p2 {
         "local.writer",
         "local.view",
         "gh.lines.set",
+        "wake",
     ];
 }
 

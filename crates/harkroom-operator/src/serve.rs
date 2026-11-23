@@ -825,7 +825,18 @@ pub fn spawn_server_link(
     let open_frames = std::sync::Arc::clone(&frames);
     let close_frames = std::sync::Arc::clone(&frames);
     let reap_runners = std::sync::Arc::clone(&state.runners);
+    let wake_link = link.clone();
     let on_frame = Box::new(move |frame: harkroom_proto::p2::ServerToOperatorFrame| {
+        // E2a(그림자) — 깨움 프레임은 적어 두고 받았다고만 답한다. 턴을 열지 않고 다른 동작도 바꾸지 않는다(글 내용은 오지 않는다).
+        if let harkroom_proto::p2::ServerToOperatorFrame::Wake { wake_id, .. } = &frame {
+            static SEEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let n = SEEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+            eprintln!("깨움 프레임 받음(그림자 — 턴을 열지 않는다): {wake_id} (누적 {n})");
+            let _ = wake_link.send(&OperatorToServerFrame::WakeAck {
+                wake_id: wake_id.clone(),
+            });
+            return;
+        }
         // 배정 프레임은 조정기로(작업 스레드에서 차례로 처리한다).
         if frames.on_frame(&frame, &*local_of) {
             // 주인이 같은 에이전트가 붙으면 로그인 목록을 다음 박동까지 기다리지 않고 낸다(TS `beatGh`).

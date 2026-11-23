@@ -378,6 +378,10 @@
     "previous": null
    },
    {
+    "type": "wake.ack",
+    "wakeId": "w-00000000-0000-4000-8000-000000000001"
+   },
+   {
     "type": "runner.announce",
     "runnerId": "r-00000000-0000-4000-8000-000000000002",
     "sessions": [
@@ -570,6 +574,25 @@
     "requestId": "g1",
     "scope": "example/*",
     "ghUser": null
+   },
+   {
+    "type": "wake",
+    "wakeId": "w-00000000-0000-4000-8000-000000000001",
+    "agentId": "a1",
+    "messageId": "m1",
+    "channelId": "c1",
+    "threadRootId": "m1",
+    "reason": "mention"
+   },
+   {
+    "type": "wake",
+    "wakeId": "w-00000000-0000-4000-8000-000000000002",
+    "agentId": "a1",
+    "messageId": "m2",
+    "channelId": "c1",
+    "threadRootId": "m1",
+    "workId": "k1",
+    "reason": "reply"
    }
   ]
  },
