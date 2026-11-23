@@ -427,6 +427,7 @@ pub async fn answer(
             {
                 return Some(refused);
             }
+            team_route_shadow(pool, me, &a, &wanted, &idx);
             (Some(t), m)
         }
         (Route::NotAgent, _) => return Some(err("not_agent", "only agents delegate")),
@@ -461,6 +462,32 @@ async fn gate(
     wanted: &[String],
     only: &[usize],
 ) -> Option<Result<Members, String>> {
+    let (members, blocked) = gate_blocked(pool, &me.id, &a.channel, wanted, only).await?;
+    if !blocked.is_empty() {
+        let refused: Vec<String> = blocked.iter().map(|&i| a.to[i].clone()).collect();
+        let msg = format!(
+            "cannot delegate to: {} — not an agent you may invoke",
+            refused.join(", ")
+        );
+        // TS `jsonResult({ error: { code, message, handles } })` — 키 순서 그대로.
+        let body = format!(
+            "{{\"error\":{{\"code\":\"not_invokable\",\"message\":{},\"handles\":{}}}}}",
+            Value::from(msg),
+            Value::from(refused)
+        );
+        return Some(Err(super::respond::text_result(&body)));
+    }
+    Some(Ok(members))
+}
+
+/// [`gate`] 의 판정만 — (명단, 게이트가 막는 `wanted` 의 자리). 아무것도 쓰지 않는다. DB 오류는 `None`.
+async fn gate_blocked(
+    pool: &PgPool,
+    me_id: &str,
+    channel: &str,
+    wanted: &[String],
+    only: &[usize],
+) -> Option<(Members, Vec<usize>)> {
     let mut conn = pool.acquire().await.map_err(ts_err("gate_acquire")).ok()?;
     let rows: Vec<(String, String, bool)> = sqlx::query_as(&*sql().targets)
         .bind(wanted)
@@ -483,12 +510,12 @@ async fn gate(
         .map_err(ts_err("invoke_facts"))
         .ok()?;
     let ctx = Ctx {
-        caller_id: &me.id,
-        channel_id: &a.channel,
+        caller_id: me_id,
+        channel_id: channel,
         via: Via::Mention,
         reply_grant_thread_id: None,
     };
-    let mut refused: Vec<String> = Vec::new();
+    let mut blocked: Vec<usize> = Vec::new();
     for (i, h) in wanted.iter().enumerate() {
         if !only.contains(&i) {
             continue;
@@ -498,7 +525,7 @@ async fn gate(
             // 자기 조각(F1a) — 받는 쪽이 부른 에이전트 자신이면 호출 범위를 재지 않는다(범위는 「남이 나를 부를 수 있는가」다:
             // 범위가 owner 면 본인도 걸린다). 권한이 넓어지지 않는다 — 같은 계정이고, 조각 턴의 원인 사람·위임장은 위임 글 행에서 온다.
             // 꺼진 계정만 막는다. 이 갈래에는 [`SelfSplit::Piece`] 만 온다(`to` 에 내가 있으면 다른 길은 앞에서 거절).
-            Some(f) if f.agent_id == me.id => !f.off,
+            Some(f) if f.agent_id == me_id => !f.off,
             Some(f) => invoke_gate::may_invoke(&mut conn, f, &ctx)
                 .await
                 .map_err(ts_err("may_invoke"))
@@ -506,24 +533,55 @@ async fn gate(
             None => false,
         };
         if !ok {
-            refused.push(a.to[i].clone());
+            blocked.push(i);
         }
     }
-    drop(conn);
-    if !refused.is_empty() {
-        let msg = format!(
-            "cannot delegate to: {} — not an agent you may invoke",
-            refused.join(", ")
-        );
-        // TS `jsonResult({ error: { code, message, handles } })` — 키 순서 그대로.
-        let body = format!(
-            "{{\"error\":{{\"code\":\"not_invokable\",\"message\":{},\"handles\":{}}}}}",
-            Value::from(msg),
-            Value::from(refused)
-        );
-        return Some(Err(super::respond::text_result(&body)));
+    Some((members, blocked))
+}
+
+/// 팀 명단 갈래에서 게이트를 **거치지 않은** `wanted` 의 자리 — `gated`([`team_gate_idx`])의 나머지.
+fn team_skipped_idx(n: usize, gated: &[usize]) -> Vec<usize> {
+    (0..n).filter(|i| !gated.contains(i)).collect()
+}
+
+/// T1 측정 — 팀 명단 갈래를 탄 위임에서, 명단으로 지나간 팀원 중 호출 게이트였다면 막혔을 수. 판정만 하고 아무것도 쓰지 않는다.
+/// `gated` 는 이미 게이트를 거쳐 통과한 자리다. DB 오류는 `None`.
+pub async fn team_route_would_block(
+    pool: &PgPool,
+    me_id: &str,
+    channel: &str,
+    wanted: &[String],
+    gated: &[usize],
+) -> Option<usize> {
+    let skipped = team_skipped_idx(wanted.len(), gated);
+    if skipped.is_empty() {
+        return Some(0);
     }
-    Some(Ok(members))
+    gate_blocked(pool, me_id, channel, wanted, &skipped)
+        .await
+        .map(|(_, blocked)| blocked.len())
+}
+
+/// T1 측정 — 팀 명단 갈래를 지난 위임 한 건을 그림자로 적는다(`measure_event`). 요청 밖에서 돌고 위임의 판정·응답에 닿지 않는다.
+/// 기록이 꺼져 있으면 판정도 하지 않는다.
+fn team_route_shadow(pool: &PgPool, me: &Account, a: &Args, wanted: &[String], gated: &[usize]) {
+    if crate::core::measure::pool().is_none() {
+        return;
+    }
+    let Ok(rt) = tokio::runtime::Handle::try_current() else {
+        return;
+    };
+    let (pool, me_id, channel, root) = (
+        pool.clone(),
+        me.id.clone(),
+        a.channel.clone(),
+        a.root.clone(),
+    );
+    let (wanted, gated) = (wanted.to_vec(), gated.to_vec());
+    rt.spawn(async move {
+        let would = team_route_would_block(&pool, &me_id, &channel, &wanted, &gated).await;
+        crate::core::measure::team_route(&me_id, &channel, &root, wanted.len(), gated.len(), would);
+    });
 }
 
 /// (쓰기 칸이 있으면) 위임 쓰기.
@@ -828,6 +886,13 @@ mod tests {
             vec![0, 1]
         );
         assert!(other_owner_idx(Some("o1"), &wanted[..1], &members, &owners).is_empty());
+    }
+
+    #[test]
+    fn team_skipped_is_the_rest_of_gated() {
+        assert_eq!(team_skipped_idx(3, &[1]), vec![0, 2]);
+        assert_eq!(team_skipped_idx(2, &[0, 1]), Vec::<usize>::new());
+        assert_eq!(team_skipped_idx(2, &[]), vec![0, 1]);
     }
 
     #[test]
