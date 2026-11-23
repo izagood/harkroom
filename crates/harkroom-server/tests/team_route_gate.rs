@@ -1,7 +1,7 @@
 //! 팀 명단 갈래 위임에도 호출 범위가 적용되는지, 팀원 넣기가 소유·관리하는 에이전트만 받는지를 실제 스키마에서 본다.
 //! `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `db-tests` 잡이 넘긴다).
 use harkroom_server::auth::Account;
-use harkroom_server::core::mcp::delegate_gate::answer;
+use harkroom_server::core::mcp::delegate_gate::{answer, team_route_would_block};
 use harkroom_server::writes_teams::may_add_member;
 use serde_json::json;
 use sqlx::PgPool;
@@ -85,7 +85,14 @@ async fn team_route_respects_invoke_scope() {
     let closed = agent(&pool, "tg-closed", "owner", &bob).await;
     let open = agent(&pool, "tg-open", "community", &bob).await;
     // 같은 소유자 팀 / 소유자가 섞인 팀(팀장이 다른 에이전트).
-    team(&pool, "tg-team-same", &alice, &lead, &[&same]).await;
+    // 같은 소유자지만 형제 에이전트의 부름을 받지 않는 팀원 — 명단으로는 지나가고 호출 게이트는 막는다.
+    let strict = agent(&pool, "tg-strict", "owner", &alice).await;
+    sqlx::query("update agent_config set trust_siblings = false where account_id = $1::uuid")
+        .bind(&strict.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    team(&pool, "tg-team-same", &alice, &lead, &[&same, &strict]).await;
     let lead2 = agent(&pool, "tg-lead2", "owner", &alice).await;
     team(
         &pool,
@@ -122,6 +129,31 @@ async fn team_route_respects_invoke_scope() {
     assert!(!refused.contains("tg-same"), "{refused}");
     // 섞인 팀이어도 범위가 받는 팀원(community)·같은 소유자 팀원은 지나간다.
     assert_eq!(ask(&lead2, &["tg-same", "tg-open"]).await, None);
+
+    // 측정(T1): 명단으로 지나간 팀원 중 호출 게이트였다면 막혔을 수 — 판정만 한다.
+    let w = |hs: &[&str]| hs.iter().map(|h| h.to_string()).collect::<Vec<_>>();
+    let would = |me: &Account, hs: &[&str], gated: &[usize]| {
+        let (pool, id, ch, hs, gated) = (
+            pool.clone(),
+            me.id.clone(),
+            channel.clone(),
+            w(hs),
+            gated.to_vec(),
+        );
+        async move { team_route_would_block(&pool, &id, &ch, &hs, &gated).await }
+    };
+    // 같은 소유자의 팀원은 (형제 부름을 받는 기본값이면) 게이트도 지난다 — 막혔을 수 0.
+    assert_eq!(would(&lead, &["tg-same"], &[]).await, Some(0));
+    // 형제 부름을 받지 않는 팀원은 명단으로만 지나간다 — 막혔을 수 1.
+    assert_eq!(would(&lead, &["tg-strict"], &[]).await, Some(1));
+    assert_eq!(would(&lead, &["tg-same", "tg-strict"], &[]).await, Some(1));
+    // 이미 게이트를 거친 자리는 다시 세지 않는다.
+    assert_eq!(would(&lead, &["tg-same", "tg-strict"], &[1]).await, Some(0));
+    assert_eq!(would(&lead2, &["tg-same", "tg-open"], &[1]).await, Some(0));
+    assert_eq!(
+        would(&lead2, &["tg-same", "tg-open"], &[0, 1]).await,
+        Some(0)
+    );
 
     // 팀원 넣기: 소유자는 되고, 남의 에이전트는 안 된다. 그 에이전트의 관리 권한을 받으면 된다.
     assert!(may_add_member(&pool, &alice, &same.id).await.unwrap());
