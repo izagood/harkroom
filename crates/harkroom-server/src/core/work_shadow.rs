@@ -16,7 +16,7 @@ use serde_json::json;
 use sqlx::PgPool;
 use std::sync::OnceLock;
 
-/// 그림자 기록이 쓰는 권한 — `work::WORK_PRIVILEGES` + 위임 표 읽기 + 182 의 새 칸. 시퀀스는 `work::WORK_SEQUENCE_PRIVILEGES`.
+/// 그림자 기록이 쓰는 권한 — `work::WORK_PRIVILEGES` + 위임 표 읽기 + 182 의 새 칸 + 위임 글의 원장 칸 읽기. 시퀀스는 `work::WORK_SEQUENCE_PRIVILEGES`.
 /// 없으면 `main.rs` 가 켜지 않는다(나머지는 그대로 돈다). `work.delegation_id` 줄은 마이그레이션 182 가 안 깔린 DB 를 거른다.
 pub const WORK_SHADOW_PRIVILEGES: &[(&str, &str)] = &[
     ("work", "SELECT"),
@@ -27,6 +27,10 @@ pub const WORK_SHADOW_PRIVILEGES: &[(&str, &str)] = &[
     ("work_event", "INSERT"),
     ("team_delegation", "SELECT"),
     ("team_delegation_item", "SELECT"),
+    // 하위 작업의 원인 사람·위임장을 위임 글 행에서 읽는다(`work::INSERT_DELEGATED_SQL`).
+    ("message.id", "SELECT"),
+    ("message.principal_account_id", "SELECT"),
+    ("message.mandate_id", "SELECT"),
 ];
 
 /// 하위 작업이 닫힐 때 남기는 사건 종류.
@@ -132,13 +136,19 @@ pub async fn delegation_created_with(pool: &PgPool, delegation_id: &str) -> sqlx
         return Ok(0);
     }
     // 위임자의 부모 작업 — 그 스레드에서 위임자가 맡은 열린 작업 가운데 가장 새것(위임자 자신이 받은 위임의 하위 작업일 수 있다).
+    // F1a 자기 조각(담당 = 위임자)이면 앞서 세운 자기 조각의 작업은 부모로 잡지 않는다 — 조각끼리는 사슬이 아니라 형제다.
+    let self_piece = delegates.iter().any(|d| d == &lead);
     let found: Option<String> = sqlx::query_scalar(
-        "select id::text from work \
-          where thread_root_id = $1::uuid and assignee_account_id = $2::uuid and closed_at is null \
-          order by created_at desc, id desc limit 1",
+        "select w.id::text from work w \
+          where w.thread_root_id = $1::uuid and w.assignee_account_id = $2::uuid and w.closed_at is null \
+            and not ($3::bool and exists ( \
+                  select 1 from team_delegation sd \
+                   where sd.id = w.delegation_id and sd.lead_account_id = w.assignee_account_id)) \
+          order by w.created_at desc, w.id desc limit 1",
     )
     .bind(&thread)
     .bind(&lead)
+    .bind(self_piece)
     .fetch_optional(pool)
     .await?;
     let parent = match found {

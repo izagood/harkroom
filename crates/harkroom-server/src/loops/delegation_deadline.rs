@@ -316,6 +316,7 @@ pub async fn flush_updates(
            from team_delegation_item i \
            join team_delegation d on d.id = i.delegation_id \
           where i.update_pending_message_id is not null \
+            and d.lead_account_id <> i.delegate_account_id \
             and (i.update_pending_at <= now() - make_interval(secs => $1) \
                  or exists ( \
                    select 1 from secret_turn_lease l \

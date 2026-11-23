@@ -180,6 +180,19 @@ const TS_THREAD_SQL: &str = "select not $2::bool and exists(select 1 from messag
                 and deleted_at is null and meta->>'kind' = 'ask' \
                 and meta->'ask'->>'answeredWith' is null and meta->'ask'->>'closedAt' is null)";
 
+/// F1a 자기 쪼개기 — 열린 의무(`$1`) 가운데 작성자(`$2`)가 자기에게 넘긴 조각이고 그 위임 글이 이 턴을 깨운 글(`$3`)인 것.
+/// 칸은 결말 닫기 줄이 이미 읽는 `team_delegation` 뿐이다.
+const SELF_PIECE_SQL: &str = "select id::text from team_delegation \
+          where id = any($1::uuid[]) and lead_account_id = $2::uuid and message_id = $3::uuid";
+
+/// 조각 턴의 결과 글이면 그 조각만, 아니면 전부(예전 그대로) — 순서는 `open` 의 것.
+fn narrow_to_self_piece(open: Vec<String>, piece: Vec<String>) -> Vec<String> {
+    if piece.is_empty() {
+        return open;
+    }
+    open.into_iter().filter(|d| piece.contains(d)).collect()
+}
+
 /// 이 글이 TS `parseAskPick` 에서 **반드시 null** 인가(카드 답이 될 수 없는가) — 넓게 TS 로 보내는 쪽으로만 틀린다.
 /// TS 는 코드·인용 줄·링크·멘션을 걷어 낸 나머지에 `?`·`？` 가 있으면 null(`QUESTION`)이다. 여기서는 걷어 낼 거리(백틱·`>` 인용 줄)가
 /// 하나라도 있으면 거짓으로 두고, 없을 때 본문에 물음표가 있으면 참이다. URL·메시지 링크 글은 이미 [`ts_body`] 로 TS 에 간다.
@@ -1020,6 +1033,23 @@ pub(crate) async fn post_tx(
                 .fetch_all(&mut *tx)
                 .await?;
             had_open = !open.is_empty();
+            // F1a — 이 턴을 깨운 글이 내 자기 조각의 위임 글이면 그 조각 의무만 닫는다(위에서 받은 의무·다른 조각은 그대로).
+            // 원인 값이 글 id 꼴이 아니면(백그라운드 표지 등) 묻지 않는다 — `::uuid` 캐스트 오류가 tx 를 깨지 않게.
+            let woke_by = origin
+                .chain_cause
+                .filter(|c| author_is_agent && crate::core::msg_read::is_uuid(c));
+            let open = match woke_by {
+                Some(c) if open.len() > 1 => {
+                    let piece: Vec<String> = sqlx::query_scalar(SELF_PIECE_SQL)
+                        .bind(&open)
+                        .bind(author)
+                        .bind(c)
+                        .fetch_all(&mut *tx)
+                        .await?;
+                    narrow_to_self_piece(open, piece)
+                }
+                _ => open,
+            };
             for d in open {
                 let closed = sqlx::query(item.as_str())
                     .bind(&d)
@@ -1648,6 +1678,21 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn self_piece_report_closes_only_that_piece() {
+        let v = |xs: &[&str]| xs.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
+        // 조각 턴이 아니면(조각 없음) 예전 그대로 전부.
+        assert_eq!(
+            narrow_to_self_piece(v(&["up", "p1", "p2"]), v(&[])),
+            v(&["up", "p1", "p2"])
+        );
+        // 조각 턴의 결과 글 — 그 조각만. 위에서 받은 의무·다른 조각은 남는다.
+        assert_eq!(
+            narrow_to_self_piece(v(&["up", "p1", "p2"]), v(&["p2"])),
+            v(&["p2"])
+        );
+    }
 
     #[test]
     fn golden_loads() {
