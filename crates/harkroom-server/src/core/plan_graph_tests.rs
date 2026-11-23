@@ -199,6 +199,24 @@ fn validate_long_step_chain_returns_on_small_stack() {
 }
 
 #[test]
+fn validate_long_forward_step_chain_returns_on_small_stack() {
+    // s1 → s2 → … → s9999: 단계마다 **다음** 단계를 앞 단계로 둔다. 순환은 없지만 적힌 순서대로
+    // 첫 노드에서 들어가면 사슬 끝까지 한 번에 내려가므로, 방문 깊이가 노드 수와 같아진다.
+    let steps: Vec<Value> = (1..=MANY)
+        .map(|i| {
+            let dep = if i < MANY {
+                json!([format!("s{}", i + 1)])
+            } else {
+                json!([])
+            };
+            step(&format!("s{i}"), json!({ "dependsOn": dep }))
+        })
+        .collect();
+    let doc = plan(vec![], steps);
+    assert_eq!(on_small_stack(move || err_uncounted(&doc)), "ok");
+}
+
+#[test]
 fn validate_long_group_chain_returns_on_small_stack() {
     // g1 ← g2 ← … ← g9999, 그룹마다 단계 하나(그룹 → 단계 변과 단계 → 그룹의 앞 노드 변도 함께 선다).
     let chain = |close: bool| {
