@@ -126,6 +126,12 @@ impl OperatorCore {
             core.timing.cap_touch,
         );
         super::operator_assign::spawn_resync(core.clone());
+        // E2a — 깨움 전달(그림자). 권한이 없으면 조용히 꺼진다.
+        super::wake_deliver::spawn(
+            core.write.clone(),
+            core.hub.clone(),
+            super::wake_deliver::WAKE_DELIVER_INTERVAL,
+        );
         super::operator_frames::spawn(
             core.clone(),
             super::operator_frames::machine_id_key_from_env(

@@ -41,6 +41,7 @@ const OPERATOR_TYPES: &[&str] = &[
     "local.input",
     "gh.report",
     "gh.lines.result",
+    "wake.ack",
 ];
 const SERVER_TYPES: &[&str] = &[
     "assign",
@@ -57,6 +58,7 @@ const SERVER_TYPES: &[&str] = &[
     "local.writer",
     "local.view",
     "gh.lines.set",
+    "wake",
 ];
 const NO_RUNNER_ID: &[&str] = &[
     "hello",
@@ -66,6 +68,8 @@ const NO_RUNNER_ID: &[&str] = &[
     "gh.report",
     "gh.lines.result",
     "gh.lines.set",
+    "wake",
+    "wake.ack",
     "assign",
     "unassign",
     "assign.synced",
@@ -103,6 +107,11 @@ fn parse(raw: &str, known: &[&str]) -> Option<Map<String, Value>> {
         return None;
     }
     if ty == "agent.restart" && !frame.get("agentId").is_some_and(Value::is_string) {
+        return None;
+    }
+    if matches!(ty.as_str(), "wake" | "wake.ack")
+        && !frame.get("wakeId").is_some_and(Value::is_string)
+    {
         return None;
     }
     // 버전이 틀린 모양이면 hello 를 버리지 않고 버전만 뗀다(TS 와 같음).
@@ -483,6 +492,8 @@ struct LiveOperator {
     conn: u64,
     tx: mpsc::UnboundedSender<OpOut>,
     capabilities: Option<Value>,
+    /// hello 에 `wakeFrames: true` 가 있었는가(E2a) — 없으면 `wake` 프레임을 보내지 않는다. 새 연결은 hello 전까지 false.
+    wake_frames: bool,
     /// runnerId → agentId.
     runners: HashMap<String, String>,
     /// 마지막 박동(허용한 칸만 + `receivedAt`).
@@ -641,6 +652,7 @@ impl OperatorHub {
                     conn,
                     tx,
                     capabilities: None,
+                    wake_frames: false,
                     runners: HashMap::new(),
                     status: None,
                 },
@@ -701,6 +713,8 @@ impl OperatorHub {
                 "hello" => {
                     entry.capabilities = frame.get("capabilities").cloned();
                     self.cap_event(id, entry.capabilities.as_ref());
+                    // 정확히 `true` 일 때만 — 다른 값·없음은 「못 받는다」.
+                    entry.wake_frames = frame.get("wakeFrames") == Some(&Value::Bool(true));
                     entry.runners.clear();
                     for r in frame
                         .get("runners")
@@ -776,6 +790,25 @@ impl OperatorHub {
     /// 지금 붙어 있는 오퍼레이터 id 전부 — hello 를 놓쳤을 때(구독 `Lagged`) 배정 재전송을 다시 거는 데 쓴다.
     pub fn online_ids(&self) -> Vec<String> {
         self.lock().live.keys().cloned().collect()
+    }
+
+    /// `wake` 프레임을 받겠다고 hello 에 밝힌(`wakeFrames: true`) 붙어 있는 오퍼레이터(E2a).
+    pub fn wake_capable_ids(&self) -> Vec<String> {
+        self.lock()
+            .live
+            .iter()
+            .filter(|(_, e)| e.wake_frames)
+            .map(|(id, _)| id.clone())
+            .collect()
+    }
+
+    /// 깨움 프레임 하나를 보낸다(E2a) — hello 에 `wakeFrames: true` 를 밝힌 연결에만. 아니면 보내지 않고 false.
+    pub fn send_wake(&self, operator_id: &str, frame: &Value) -> bool {
+        debug_assert_eq!(frame.get("type").and_then(Value::as_str), Some("wake"));
+        match self.lock().live.get(operator_id) {
+            Some(e) if e.wake_frames => e.tx.send(OpOut::Text(frame.to_string())).is_ok(),
+            _ => false,
+        }
     }
 
     pub fn is_online(&self, operator_id: &str) -> bool {
@@ -865,6 +898,38 @@ mod tests {
         drop(feed);
         hub.cap_event("a", Some(&json!({"v": 1})));
         assert!(hub.caps.lock().unwrap().upgrade().is_none());
+    }
+
+    #[test]
+    fn wake_frame_goes_only_to_operators_that_announced_it() {
+        let wake = json!({"type": "wake", "wakeId": "w1", "agentId": "a1", "messageId": "m1",
+            "channelId": "c1", "threadRootId": "m1", "reason": "mention"});
+        assert!(parse_server_frame(&wake.to_string()).is_some());
+        assert!(parse_operator_frame(r#"{"type":"wake.ack","wakeId":"w1"}"#).is_some());
+        assert!(parse_operator_frame(r#"{"type":"wake.ack"}"#).is_none());
+        let hello = |extra: &str| {
+            format!(
+                r#"{{"type":"hello","protocol":1,"capabilities":{{}},"runners":[],"sessions":[]{extra}}}"#
+            )
+        };
+        // 옛 오퍼레이터(칸 없음)·틀린 값 — 보내지 않는다.
+        for extra in ["", r#","wakeFrames":"true""#, r#","wakeFrames":false"#] {
+            let (hub, reg, mut rx) = hub_with("op");
+            assert!(!hub.send_wake("op", &wake), "hello 전");
+            hub.on_operator_message(&reg, &hello(extra));
+            assert!(!hub.send_wake("op", &wake));
+            assert!(hub.wake_capable_ids().is_empty());
+            assert!(rx.try_recv().is_err());
+        }
+        let (hub, reg, mut rx) = hub_with("op");
+        hub.on_operator_message(&reg, &hello(r#","wakeFrames":true"#));
+        assert_eq!(hub.wake_capable_ids(), ["op"]);
+        assert!(hub.send_wake("op", &wake));
+        assert_eq!(rx.try_recv().unwrap(), OpOut::Text(wake.to_string()));
+        // 다시 붙으면(새 연결) hello 전까지 다시 꺼진다.
+        let (tx, _rx2) = mpsc::unbounded_channel();
+        let _reg2 = hub.add_operator("op", tx);
+        assert!(!hub.send_wake("op", &wake));
     }
 
     fn hub_with(id: &str) -> (OperatorHub, Registration, mpsc::UnboundedReceiver<OpOut>) {

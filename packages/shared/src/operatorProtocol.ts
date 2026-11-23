@@ -87,6 +87,8 @@ export type OperatorToServerFrame =
    * `gh.report` 를 다시 낸다. `previous` 는 원격 설정이 덮어쓴 로컬의 이전 값(있을 때만). 검증은 `parseGhLinesResult` 하나다.
    */
   | { type: 'gh.lines.result'; requestId: unknown; ok: unknown; code?: unknown; previous?: unknown }
+  /** `wake` 를 받았다는 답(E2a, 그림자). 서버는 그 깨움 행을 `delivered` 로만 적는다. */
+  | { type: 'wake.ack'; wakeId: string }
   /**
    * 러너가 링크에 붙을 때마다(재접속 포함) 자기 세션·능력을 다시 선언한다 — 옛 릴레이의
    * `announce` 그대로다(`runnerLink.ts`). 서버는 이 목록으로 그 러너의 세션을 **교체**한다.
@@ -137,20 +139,22 @@ export type ServerToOperatorFrame =
    * 같은 길(`localMerge.set`)로 적고 — 범위 모양·그 순간 로그인된 이름인지 다시 잰다 — `gh.lines.result` 로 답한다.
    * 모르는 옛 오퍼레이터는 버린다(파서가 null) — 서버는 답을 못 받아 시간 초과로 본다.
    */
-  | { type: 'gh.lines.set'; requestId: string; scope: string; ghUser: string | null };
+  | { type: 'gh.lines.set'; requestId: string; scope: string; ghUser: string | null }
+  /** 깨움 한 건(E2a, 그림자) — hello 에 `wakeFrames: true` 를 실은 오퍼레이터에게만 보낸다. 받은 쪽은 적어 두고 `wake.ack` 만 답한다. */
+  | { type: 'wake'; wakeId: string; agentId: string; messageId: string; channelId: string; threadRootId: string; workId?: string; reason: string };
 
 const OPERATOR_TYPES = new Set<OperatorToServerFrame['type']>([
   'hello', 'capabilities', 'runner.started', 'runner.exited', 'runner.announce', 'session.started', 'session.updated', 'session.ended',
   'pty.output', 'pty.replay', 'interactive.opened', 'interactive.error', 'attention.required', 'status', 'upgrade.progress',
-  'local.input', 'gh.report', 'gh.lines.result',
+  'local.input', 'gh.report', 'gh.lines.result', 'wake.ack',
 ]);
 const SERVER_TYPES = new Set<ServerToOperatorFrame['type']>([
   'assign', 'unassign', 'assign.synced', 'agent.restart', 'runner.kill', 'pty.replay.request', 'pty.input', 'pty.resize', 'viewer.count', 'session.cancel', 'interactive.open',
-  'local.writer', 'local.view', 'gh.lines.set',
+  'local.writer', 'local.view', 'gh.lines.set', 'wake',
 ]);
 
 /** `hello` 와 배정 넷(`assign`·`unassign`·`assign.synced`·`agent.restart`)만 러너 밖의 말이다 — 나머지는 전부 `runnerId` 가 있어야 한다. */
-const NO_RUNNER_ID = new Set<string>(['hello', 'capabilities', 'status', 'upgrade.progress', 'gh.report', 'gh.lines.result', 'gh.lines.set', 'assign', 'unassign', 'assign.synced', 'agent.restart']);
+const NO_RUNNER_ID = new Set<string>(['hello', 'capabilities', 'status', 'upgrade.progress', 'gh.report', 'gh.lines.result', 'gh.lines.set', 'wake', 'wake.ack', 'assign', 'unassign', 'assign.synced', 'agent.restart']);
 
 function parse(raw: string, known: Set<string>): Record<string, unknown> | null {
   let value: unknown;

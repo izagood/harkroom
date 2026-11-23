@@ -133,6 +133,8 @@ pub fn build_hello_labeled(
         arch: labels.arch.clone(),
         install_kind: labels.install_kind.clone(),
         update_channel: labels.update_channel.clone(),
+        // E2a — `wake` 프레임을 받을 줄 안다(받아 적고 `wake.ack` 만 답한다).
+        wake_frames: Some(true),
     }
 }
 
@@ -285,7 +287,9 @@ mod tests {
                 "type": "hello", "protocol": 1,
                 "capabilities": {"agentIds": ["a1"], "harnesses": {"claude": {"installed": true, "loggedIn": false}}},
                 "runners": [{"agentId": "a1", "runnerId": "r1", "pid": 42}],
-                "sessions": [], "version": "0.4.473"
+                "sessions": [], "version": "0.4.473",
+                // E2a — `wake` 프레임을 받을 줄 안다고 밝힌다.
+                "wakeFrames": true
             })
         );
         let no_ver =

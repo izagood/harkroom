@@ -87,6 +87,7 @@ const p2OperatorToServer = [
   { type: 'gh.report', report: { reach: true } },
   { type: 'gh.lines.result', requestId: 'g1', ok: true },
   { type: 'gh.lines.result', requestId: 'g2', ok: false, code: 'unknown_login', previous: null },
+  { type: 'wake.ack', wakeId: 'w-00000000-0000-4000-8000-000000000001' },
   { type: 'runner.announce', runnerId: RUNNER, sessions: [session] },
   { type: 'runner.announce', runnerId: RUNNER, sessions: [], caps: ['interactive'] as unknown as Extract<OperatorToServerFrame, { type: 'runner.announce' }>['caps'] },
   { type: 'session.started', runnerId: RUNNER, session },
@@ -122,6 +123,8 @@ const p2ServerToOperator = [
   { type: 'local.writer', runnerId: RUNNER, sessionId: 'ses-1', writerKey: null, gen: 1 },
   { type: 'local.view', runnerId: RUNNER, sessionId: 'ses-1', viewKey: 'k', granted: true },
   { type: 'gh.lines.set', requestId: 'g1', scope: 'example/*', ghUser: null },
+  { type: 'wake', wakeId: 'w-00000000-0000-4000-8000-000000000001', agentId: 'a1', messageId: 'm1', channelId: 'c1', threadRootId: 'm1', reason: 'mention' },
+  { type: 'wake', wakeId: 'w-00000000-0000-4000-8000-000000000002', agentId: 'a1', messageId: 'm2', channelId: 'c1', threadRootId: 'm1', workId: 'k1', reason: 'reply' },
 ] satisfies ServerToOperatorFrame[];
 
 // ── P3 앱(Tauri) ↔ 오퍼레이터 소켓 — 봉투. 요청별 payload 타입은 S2 앞 PR 에서 Rust 로 옮긴다. ─────────────
