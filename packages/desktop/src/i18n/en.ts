@@ -6015,7 +6015,9 @@ export const en = {
   'agents.assignment.refusedPersonal': 'The operator refused to start it: it holds personal credentials and that operator is not the owner\u2019s.',
   'agents.assignment.refusedMcp': 'The operator refused to start it: no definition for MCP server(s) {names} on that machine (operator/mcp-servers.json or ~/.claude.json).',
   'agents.assignment.refusedOther': 'The operator refused to start it: {reason}',
-  'agents.assignment.notCapable': 'That operator has not listed this agent in its local config, so it refused.',
+  'agents.assignment.notCapable':
+    'That operator has not listed this agent in its local config, so it refused. On a machine without the app, register it there first, then assign again: '
+    + 'harkroom-operator-rs agent add {id} --base-url {baseUrl}',
   'agents.assignment.note':
     'Assigning tells that operator to start the runner; reassigning lets the old runner finish its turn first. '
     + 'The operator must also list this agent in its own config — both sides have to agree.',

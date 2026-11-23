@@ -3874,7 +3874,9 @@ export const ko = {
   'agents.assignment.refusedPersonal': '오퍼레이터가 띄우기를 거절했다: 개인 자격증명을 쥔 에이전트인데 그 오퍼레이터가 소유자의 것이 아니다.',
   'agents.assignment.refusedMcp': '오퍼레이터가 띄우기를 거절했다: 그 머신에 MCP 서버 {names} 의 정의가 없다(operator/mcp-servers.json 또는 ~/.claude.json).',
   'agents.assignment.refusedOther': '오퍼레이터가 띄우기를 거절했다: {reason}',
-  'agents.assignment.notCapable': '그 오퍼레이터의 로컬 설정에 이 에이전트가 없어 거절했다.',
+  'agents.assignment.notCapable':
+    '그 오퍼레이터의 로컬 설정에 이 에이전트가 없어 거절했다. 앱이 없는 기기라면 그 기기에서 먼저 등록한 뒤 다시 배정한다: '
+    + 'harkroom-operator-rs agent add {id} --base-url {baseUrl}',
   'agents.assignment.note':
     '배정하면 그 오퍼레이터가 러너를 띄운다. 다른 곳으로 옮기면 옛 러너는 진행 중인 턴을 마치고 물러난다. '
     + '오퍼레이터 쪽 설정에도 이 에이전트가 있어야 한다 — 양쪽이 동의해야 돈다.',

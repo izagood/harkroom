@@ -2935,7 +2935,8 @@ export function AgentsSettings({ targetId, onOpenSection }: { targetId?: string;
                             })
                             .catch((err: unknown) => setError(
                               err instanceof ApiError && err.code === 'not_capable'
-                                ? t('agents.assignment.notCapable')
+                                // 앱이 없는 기기(리눅스 서버 등)는 로컬 목록을 CLI 로만 채운다 — 그대로 칠 수 있는 명령을 같이 보인다.
+                                ? t('agents.assignment.notCapable', { id: selected.id, baseUrl: getController().api?.baseUrl ?? '<url>' })
                                 : t('agents.assignment.failed', { reason: errorText(err, t) }),
                             ))
                             .finally(() => setAssigning(false));

@@ -14,6 +14,7 @@ import { setController, type Controller } from '../src/state/controller';
 import { resetCommunityRegistry, useActiveStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { acc } from './helpers/fakeApi';
+import { ApiError } from '../src/lib/api';
 
 beforeEach(() => usePrefsStore.getState().setLocale('ko'));
 afterEach(() => usePrefsStore.getState().setLocale('system'));
@@ -83,6 +84,18 @@ describe('에이전트 배정', () => {
     (await screen.findByRole('button', { name: /alpha/ })).click();
     await screen.findByText(/등록된 오퍼레이터가 없다/);
     expect(screen.queryByLabelText('오퍼레이터 배정')).toBeNull();
+  });
+
+  it('서버가 not_capable 로 거절하면 그 기기에서 칠 등록 명령(agent add)을 같이 보인다', async () => {
+    const c = setup(agent(), [op('op-1', 'linux-box')]);
+    c.assignAgent.mockRejectedValue(new ApiError(409, 'not_capable', 'nope'));
+    (c as unknown as { api: { baseUrl: string } }).api = { baseUrl: 'https://chat.example.com' };
+    render(<AgentsSettings />);
+    (await screen.findByRole('button', { name: /alpha/ })).click();
+    fireEvent.change(await screen.findByLabelText('오퍼레이터 배정'), { target: { value: 'op-1' } });
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('로컬 설정에 이 에이전트가 없어 거절했다');
+    expect(alert.textContent).toContain(`harkroom-operator-rs agent add ${AGENT_ID} --base-url https://chat.example.com`);
   });
 });
 
