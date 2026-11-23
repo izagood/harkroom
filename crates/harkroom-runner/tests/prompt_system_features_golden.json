@@ -25,7 +25,6 @@
     "  claude.ai 아티팩트 링크로 주지 않는다(그 계정으로 로그인한 사람만 연다). 한 파일에 다 담는다(외부 fetch 불가, 스크립트·스타일·폰트는 cdnjs·jsdelivr·Google Fonts 만).",
     "  같은 안을 고칠 때는 앞서 받은 `artifactId` 를 줘서 다음 버전으로 올린다.",
     "- `channel.doc`: 이 채널에서 처음 일하거나 채널의 약속·자료를 확인해야 할 때 읽는다(사람이 쓰는 문서다).",
-    "- `workitem.upsert`: 밖의 시스템 항목 하나를 이 스레드에 이어 사람의 「내 작업」 보드에 세운다. 무엇을 걸지는 지시문·기억을 따른다.",
     "- `automation.list`·`automation.run`: 사람이 이미 승인해 둔 자동화를 지금 한 번 돌려 달라고 할 때. 새로 만드는 것은 제안(`automation.propose`)뿐이다.",
     "- `pr.status`(repo·number): 셸 없이 PR 의 상태·CI 를 볼 때 — state·draft·head·base·mergeState·체크별 이름/결론만 준다(읽기 전용).",
     "  머지 권한을 받은 저장소만 읽힌다. `not_granted` 면 짐작하지 말고 사람에게 말한다.",
@@ -64,7 +63,6 @@
     "  claude.ai 아티팩트 링크로 주지 않는다(그 계정으로 로그인한 사람만 연다). 한 파일에 다 담는다(외부 fetch 불가, 스크립트·스타일·폰트는 cdnjs·jsdelivr·Google Fonts 만).",
     "  같은 안을 고칠 때는 앞서 받은 `artifactId` 를 줘서 다음 버전으로 올린다.",
     "- `channel.doc`: 이 채널에서 처음 일하거나 채널의 약속·자료를 확인해야 할 때 읽는다(사람이 쓰는 문서다).",
-    "- `workitem.upsert`: 밖의 시스템 항목 하나를 이 스레드에 이어 사람의 「내 작업」 보드에 세운다. 무엇을 걸지는 지시문·기억을 따른다.",
     "- `automation.list`·`automation.run`: 사람이 이미 승인해 둔 자동화를 지금 한 번 돌려 달라고 할 때. 새로 만드는 것은 제안(`automation.propose`)뿐이다.",
     "- `pr.status`(repo·number): 셸 없이 PR 의 상태·CI 를 볼 때 — state·draft·head·base·mergeState·체크별 이름/결론만 준다(읽기 전용).",
     "  머지 권한을 받은 저장소만 읽힌다. `not_granted` 면 짐작하지 말고 사람에게 말한다.",
@@ -254,18 +252,6 @@
    "needs": null,
    "lines": [
     "`channel.doc`: 이 채널에서 처음 일하거나 채널의 약속·자료를 확인해야 할 때 읽는다(사람이 쓰는 문서다)."
-   ]
-  },
-  {
-   "id": "workitem",
-   "tools": [
-    "workitem.upsert",
-    "workitem.list",
-    "workitem.remove"
-   ],
-   "needs": null,
-   "lines": [
-    "`workitem.upsert`: 밖의 시스템 항목 하나를 이 스레드에 이어 사람의 「내 작업」 보드에 세운다. 무엇을 걸지는 지시문·기억을 따른다."
    ]
   },
   {
