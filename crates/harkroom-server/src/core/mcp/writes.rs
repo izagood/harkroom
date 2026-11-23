@@ -37,6 +37,8 @@ pub const SERVED: &[&str] = &[
     // S5.4 A1 — 진행 한 줄·러너 알림 줄. 같은 글 쓰기 풀이다(`message.post` 와 같은 칸).
     "message.progress",
     "message.notice",
+    // C1 — 대상을 `to` 인자로 받는 부름. 같은 글 쓰기 풀이다(`message.post` 와 같은 칸).
+    "agent.call",
     // S5.4 A3 — 다시 부르기 예약. 글 쓰기 풀에 더해 agent_wake 칸이 있을 때만([`McpWrites::wake`]).
     "turn.wake",
     // S5.4 A2a — 보드 항목 떼기. 작업 항목 쓰기 풀(`workitem::WORK_ITEM_REMOVE_PRIVILEGES`)이 있을 때만.

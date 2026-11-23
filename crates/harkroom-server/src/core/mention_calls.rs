@@ -120,6 +120,9 @@ pub struct Resolved {
     pub call_meta: Map<String, Value>,
     /// A1 측정 — 깨우지 못한 호출 (대상, 이유). 대상마다 한 줄. 판정에는 쓰지 않는다.
     pub missed: Vec<(String, &'static str)>,
+    /// C1 — `missed` 가운데 에이전트 계정만 handle 로(팀·집합 토큰은 뺀다). principal 이 열어 준 부름은 깨웠으므로 뺀다.
+    /// 도구 결과의 경고(`mention_not_called`)에만 쓴다 — 판정·기록에는 쓰지 않는다.
+    pub missed_handles: Vec<(String, &'static str)>,
 }
 
 #[derive(Clone)]
@@ -161,6 +164,17 @@ async fn accounts_by_ids(
         .into_iter()
         .map(|(id, handle, kind)| Acct { id, handle, kind })
         .collect())
+}
+
+/// C1 `agent.call` — `to` 인자(handle·계정 id)를 계정으로. 본문 멘션과 같은 문장을 쓴다. `(id, handle, kind)`.
+pub(crate) async fn accounts_for_call(
+    conn: &mut PgConnection,
+    handles: &[String],
+    ids: &[String],
+) -> Result<Vec<(String, String, String)>, sqlx::Error> {
+    let mut out = accounts_by_handles(conn, handles).await?;
+    out.extend(accounts_by_ids(conn, ids).await?);
+    Ok(out.into_iter().map(|a| (a.id, a.handle, a.kind)).collect())
 }
 
 /// TS `principalInvokesToday`.
@@ -485,6 +499,16 @@ pub async fn resolve(conn: &mut PgConnection, input: &Input<'_>) -> Result<Resol
         meta.insert("mentionRefs".into(), json!(ref_ids_for_meta));
     }
     let target_call: Vec<Target> = split.target_call.clone();
+    let missed_handles: Vec<(String, &'static str)> = missed
+        .iter()
+        .filter(|(r, why)| *why != "gate_denied" || denied.contains(r))
+        .filter_map(|(r, why)| {
+            called_accounts
+                .iter()
+                .find(|a| a.kind == "agent" && &a.id == r)
+                .map(|a| (a.handle.clone(), *why))
+        })
+        .collect();
     Ok(Resolved {
         normalized_body: normalized,
         account_handles,
@@ -495,6 +519,7 @@ pub async fn resolve(conn: &mut PgConnection, input: &Input<'_>) -> Result<Resol
         channel_called,
         call_meta: meta,
         missed,
+        missed_handles,
     })
 }
 

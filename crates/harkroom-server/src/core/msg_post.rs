@@ -532,6 +532,8 @@ pub(crate) enum Outcome {
         mandate: Option<mandate_stamp::Created>,
         /// [`Origin::delegation`] 으로 만든 위임 id.
         delegation_id: Option<String>,
+        /// C1 — 본문에 적었으나 깨우지 못한 에이전트 (handle, 이유). MCP 결과의 경고에만 쓴다.
+        missed_handles: Vec<(String, &'static str)>,
     },
 }
 
@@ -582,6 +584,7 @@ fn no_mention_calls(body: &str) -> mention_calls::Resolved {
         channel_called: false,
         call_meta: serde_json::Map::new(),
         missed: Vec::new(),
+        missed_handles: Vec::new(),
     }
 }
 
@@ -1142,6 +1145,7 @@ pub(crate) async fn post_tx(
         notified,
         mandate,
         delegation_id,
+        missed_handles: calls.missed_handles.clone(),
     })
 }
 

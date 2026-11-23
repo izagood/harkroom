@@ -188,6 +188,7 @@ pub async fn handle(
                     | "message.report"
                     | "message.progress"
                     | "message.notice"
+                    | "agent.call"
             ) {
                 let st = writes.post.as_ref()?;
                 let (c, t) = (cause.as_deref(), turn.as_deref());
@@ -217,6 +218,10 @@ pub async fn handle(
                             return super::msg_post::picks_refusal(st, &me, &args).await;
                         }
                         super::msg_post::answer(st, &me, &args, c, t, has_operator).await
+                    }
+                    // C1 — 대상을 `to` 인자로 받는 부름. 글 쓰기 풀(`message.post` 와 같은 권한)로 답한다.
+                    "agent.call" => {
+                        super::msg_post::answer_call(st, &me, &args, c, t, has_operator).await
                     }
                     "message.progress" => {
                         super::msg_post::answer_progress(st, &me, &args, c, t, has_operator).await

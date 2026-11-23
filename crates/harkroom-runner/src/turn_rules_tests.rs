@@ -18,6 +18,7 @@ fn readonly_rules_are_single_tokens() {
         "permission_request",
         "secret_mount",
         "message_delegate",
+        "agent_call",
         "skill_propose",
     ] {
         assert!(!READONLY_ALLOW.iter().any(|a| a.ends_with(t)), "{t}");
