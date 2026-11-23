@@ -39,11 +39,11 @@ afterEach(() => {
 });
 
 describe('이름·아바타 클릭', () => {
-  let onOpenDirectory: ReturnType<typeof vi.fn>;
+  let onOpenProfile: ReturnType<typeof vi.fn>;
   let onOpenSettings: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
-    onOpenDirectory = vi.fn();
+    onOpenProfile = vi.fn();
     onOpenSettings = vi.fn();
   });
 
@@ -51,7 +51,7 @@ describe('이름·아바타 클릭', () => {
     render(
       <MessageItem
         message={msg('m1', 'c1', 1, '안녕', authorId)}
-        onOpenDirectory={onOpenDirectory}
+        onOpenProfile={onOpenProfile}
         onOpenSettings={onOpenSettings}
       />,
     );
@@ -63,7 +63,7 @@ describe('이름·아바타 클릭', () => {
     expect(name.tagName).toBe('BUTTON');
     fireEvent.click(name);
 
-    expect(onOpenDirectory).toHaveBeenCalledWith('u2');
+    expect(onOpenProfile).toHaveBeenCalledWith('u2');
     expect(onOpenSettings).not.toHaveBeenCalled();
   });
 
@@ -72,7 +72,7 @@ describe('이름·아바타 클릭', () => {
 
     fireEvent.click(screen.getByTestId('author-gutter'));
 
-    expect(onOpenDirectory).toHaveBeenCalledWith('u2');
+    expect(onOpenProfile).toHaveBeenCalledWith('u2');
   });
 
   /** 멘션 칩과 **같은 규칙**을 지난다(#299): admin·소유자는 설정으로 간다. */
@@ -81,7 +81,7 @@ describe('이름·아바타 클릭', () => {
 
     fireEvent.click(screen.getByTestId('author-name'));
     expect(onOpenSettings).toHaveBeenCalledWith('agents', 'a1');
-    expect(onOpenDirectory).not.toHaveBeenCalled();
+    expect(onOpenProfile).not.toHaveBeenCalled();
 
     onOpenSettings.mockClear();
     fireEvent.click(screen.getByTestId('author-gutter'));
@@ -99,7 +99,7 @@ describe('이름·아바타 클릭', () => {
     show('a1');
 
     fireEvent.click(screen.getByTestId('author-name'));
-    expect(onOpenDirectory).toHaveBeenCalledWith('a1');
+    expect(onOpenProfile).toHaveBeenCalledWith('a1');
     expect(onOpenSettings).not.toHaveBeenCalled();
   });
 

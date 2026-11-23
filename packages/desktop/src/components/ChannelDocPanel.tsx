@@ -14,7 +14,7 @@ interface ChannelDocPanelProps {
   /** 탭이 된 뒤로 패널 안에는 닫는 버튼이 없다(채널 머리의 [메시지] 탭). 부르는 쪽 호환으로만 남는다. */
   onClose?: () => void;
   /** 문서 본문의 멘션을 눌렀을 때 갈 곳(#279). `MessageBody` 로 그대로 넘긴다. */
-  onOpenDirectory?: (accountId: string | null) => void;
+  onOpenProfile?: (accountId: string) => void;
   onOpenSettings?: (section?: SectionId, targetId?: string) => void;
 }
 
@@ -38,7 +38,7 @@ function expectationOf(doc: ChannelDoc | undefined | null): number | null {
  *    스토어에서 뜬다. 스토어를 `useEffect` 의존성으로 걸어 매번 맞추면 문서가 갱신되는
  *    순간 타이핑 중인 내용이 날아간다.
  */
-export function ChannelDocPanel({ channelId, onOpenDirectory, onOpenSettings }: ChannelDocPanelProps) {
+export function ChannelDocPanel({ channelId, onOpenProfile, onOpenSettings }: ChannelDocPanelProps) {
   const t = useT();
   const locale = useLocale();
   const accounts = useActiveStore((s) => s.accounts);
@@ -181,7 +181,7 @@ export function ChannelDocPanel({ channelId, onOpenDirectory, onOpenSettings }: 
                 <MessageBody
                   body={doc.body}
                   messageId={`channel-doc:${channelId}`}
-                  onOpenDirectory={onOpenDirectory}
+                  onOpenProfile={onOpenProfile}
                   onOpenSettings={onOpenSettings}
                 />
               </div>

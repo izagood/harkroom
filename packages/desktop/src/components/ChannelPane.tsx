@@ -64,7 +64,7 @@ interface ChannelPaneProps {
    * 넘기지 않으면 멘션이 버튼이 아니게 되고 화면에서는 조용하다. `test/mentionClick.test.tsx`
    * 가 `Workspace` 를 통째로 띄워 그 배선을 지킨다.
    */
-  onOpenDirectory?: (accountId: string | null) => void;
+  onOpenProfile?: (accountId: string) => void;
   onOpenSettings?: (section?: SectionId, targetId?: string) => void;
 }
 
@@ -81,7 +81,7 @@ const BACKFILL_HOLD_ROOTS = 20;
 /** 붙잡는 동안 넘기는 빈 자리 — 매 렌더 새 배열이면 목록이 다시 잰다. */
 const NO_SLOTS: ReturnType<typeof groupAgentExchanges> = [];
 
-export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: ChannelPaneProps) {
+export function ChannelPane({ onOpenSearch, onOpenProfile, onOpenSettings }: ChannelPaneProps) {
   // 날짜 구분선은 **앱 언어**를 따른다(`lib/day.ts` 의 근거).
   const locale = useLocale();
   const t = useT();
@@ -967,7 +967,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
           hasMore={!!channelHasMore}
           skeleton={olderSkeleton ? OLDER_SKELETON_ROWS : 0}
           onJump={onJump}
-          onOpenDirectory={onOpenDirectory}
+          onOpenProfile={onOpenProfile}
           onOpenSettings={onOpenSettings}
         />
         </div>
@@ -1064,7 +1064,7 @@ export function ChannelPane({ onOpenSearch, onOpenDirectory, onOpenSettings }: C
             onClose={() => setView('messages')}
             // 채널 문서의 본문도 멘션을 담는다(#279) — 여기서 신호를 끊으면 같은 `@handle` 이
             // 대화에서는 눌리고 문서에서는 안 눌린다.
-            onOpenDirectory={onOpenDirectory}
+            onOpenProfile={onOpenProfile}
             onOpenSettings={onOpenSettings}
           />
         </div>

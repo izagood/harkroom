@@ -142,11 +142,10 @@ export function Workspace({ onLogout, onOpenSettings, onRelogin = reloginNotWire
   /**
    * 이름을 누르면 **프로필**이 열린다(identity 문서 · Task 14). 아무도 지목하지 않은 부름은
    * 디렉터리(검색 목록) 겹창을 열었는데, 그 겹창은 지웠다(소유자 결정 2026-11-23) — 사람·에이전트
-   * 찾기는 사이드바 맨 위 찾기(`SidebarFind`)가 한다. 이름(`handleOpenDirectory`)은 메시지 줄
-   * prop 이름과 함께 후속 PR 에서 바꾼다.
+   * 찾기는 사이드바 맨 위 찾기(`SidebarFind`)가 한다. 그래서 이 함수는 id 를 반드시 받는다.
    */
-  const handleOpenDirectory = useCallback((accountId: string | null = null) => {
-    if (accountId) setProfileAccountId(accountId);
+  const handleOpenProfile = useCallback((accountId: string) => {
+    setProfileAccountId(accountId);
   }, []);
 
   useEffect(() => {
@@ -351,8 +350,8 @@ export function Workspace({ onLogout, onOpenSettings, onRelogin = reloginNotWire
         onOpenClaudeReauth={() => onOpenSettings('claude-accounts')}
         onOpenProjectionSettings={() => onOpenSettings(PROJECTION_SECTION)}
         /* 설정을 볼 수 없는 사람이 카드를 눌렀을 때. 프로필을 여는 함수는 이미 하나다
-           (`handleOpenDirectory` — id 를 주면 프로필). */
-        onOpenProfile={(accountId) => handleOpenDirectory(accountId)}
+           (`handleOpenProfile` — id 를 주면 프로필). */
+        onOpenProfile={(accountId) => handleOpenProfile(accountId)}
         collapsed={sidebarCollapsed}
         onToggleCollapse={handleToggleSidebar}
         footer={<UpdateToast placement="footer" />}
@@ -496,13 +495,13 @@ export function Workspace({ onLogout, onOpenSettings, onRelogin = reloginNotWire
           ) : (
             <ChannelPane
               onOpenSearch={handleOpenSearch}
-              onOpenDirectory={handleOpenDirectory}
+              onOpenProfile={handleOpenProfile}
               onOpenSettings={onOpenSettings}
             />
           )}
           {threadRootId && !hideThread && (
             <ThreadPanel
-              onOpenDirectory={handleOpenDirectory}
+              onOpenProfile={handleOpenProfile}
               onOpenSettings={onOpenSettings}
               // 인박스가 본문일 때는 스레드가 더 넓어지지 못하게 인박스 몫을 남긴다(UX ① H2).
               reserveLeft={railPanel !== 'agents' && inboxOpen ? MIN_INBOX_WIDTH : MIN_CHANNEL_WIDTH}

@@ -42,7 +42,7 @@ import { stampLabel } from '../lib/day';
  */
 const NO_TEAMS_FALLBACK: never[] = [];
 
-export function AgentExchange({ messages, items, onOpenDirectory, onOpenSettings, inThread = false }: {
+export function AgentExchange({ messages, items, onOpenProfile, onOpenSettings, inThread = false }: {
   /** 구간의 말(예약 줄 포함). 횟수·참여자·마지막 말은 이 가운데 **말**만 센다(`isSpeech`). */
   messages: MessageRow[];
   /**
@@ -50,7 +50,7 @@ export function AgentExchange({ messages, items, onOpenDirectory, onOpenSettings
    * `messages` 만으로 그린다(견본 화면처럼 진행이 없는 자리).
    */
   items?: Slot[];
-  onOpenDirectory?: (accountId: string | null) => void;
+  onOpenProfile?: (accountId: string) => void;
   onOpenSettings?: (section?: SectionId, targetId?: string) => void;
   inThread?: boolean;
 }) {
@@ -124,7 +124,7 @@ export function AgentExchange({ messages, items, onOpenDirectory, onOpenSettings
                 key={it.message.id}
                 message={it.message}
                 inThread={inThread}
-                onOpenDirectory={onOpenDirectory}
+                onOpenProfile={onOpenProfile}
                 onOpenSettings={onOpenSettings}
               />
             )))}

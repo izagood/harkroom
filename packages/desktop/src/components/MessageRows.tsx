@@ -85,7 +85,7 @@ interface RowsProps {
    * 안 끄면 정착 루프가 방금 옮긴 자리를 바닥으로 되끌어 간다.
    */
   onJump: () => void;
-  onOpenDirectory?: (accountId: string | null) => void;
+  onOpenProfile?: (accountId: string) => void;
   onOpenSettings?: (section?: SectionId, targetId?: string) => void;
 }
 
@@ -97,7 +97,7 @@ export function MessageRows(props: RowsProps) {
   return canVirtualize() ? <VirtualRows {...props} /> : <AllRows {...props} />;
 }
 
-function AllRows({ slots, skeleton = 0, dividerBeforeId, locale, onOpenDirectory, onOpenSettings }: RowsProps) {
+function AllRows({ slots, skeleton = 0, dividerBeforeId, locale, onOpenProfile, onOpenSettings }: RowsProps) {
   return (
     <>
       {skeleton > 0 && <OlderSkeleton rows={skeleton} />}
@@ -108,7 +108,7 @@ function AllRows({ slots, skeleton = 0, dividerBeforeId, locale, onOpenDirectory
           newDay={isNewDay(slots, i)}
           divider={slotHead(slot).id === dividerBeforeId}
           locale={locale}
-          onOpenDirectory={onOpenDirectory}
+          onOpenProfile={onOpenProfile}
           onOpenSettings={onOpenSettings}
         />
       ))}
@@ -126,7 +126,7 @@ function isNewDay(slots: ExchangeSlot[], i: number): boolean {
   return !prev || localDayKey(slotHead(prev).createdAt) !== localDayKey(slotHead(slots[i]!).createdAt);
 }
 
-function VirtualRows({ slots, scrollRef, dividerBeforeId, locale, hasMore, skeleton = 0, onJump, onOpenDirectory, onOpenSettings }: RowsProps) {
+function VirtualRows({ slots, scrollRef, dividerBeforeId, locale, hasMore, skeleton = 0, onJump, onOpenProfile, onOpenSettings }: RowsProps) {
   const boxRef = useRef<HTMLDivElement>(null);
   /**
    * 줄 상자가 스크롤 내용에서 시작하는 위치(px). 상자 위에 여백·`Load older` 버튼이 있어
@@ -283,7 +283,7 @@ function VirtualRows({ slots, scrollRef, dividerBeforeId, locale, hasMore, skele
             newDay={isNewDay(slots, item.index - skeleton)}
             divider={slotHead(slot).id === dividerBeforeId}
             locale={locale}
-            onOpenDirectory={onOpenDirectory}
+            onOpenProfile={onOpenProfile}
             onOpenSettings={onOpenSettings}
           />
         );
@@ -301,7 +301,7 @@ interface SlotRowProps {
   /** 창 안에서만 준다 — 창이 줄의 실제 높이를 재는 손잡이다. */
   index?: number;
   measureRef?: (el: HTMLElement | null) => void;
-  onOpenDirectory?: (accountId: string | null) => void;
+  onOpenProfile?: (accountId: string) => void;
   onOpenSettings?: (section?: SectionId, targetId?: string) => void;
 }
 
@@ -309,7 +309,7 @@ interface SlotRowProps {
  * 한 자리. `memo` 인 이유: 창은 스크롤할 때마다 목록을 다시 그리는데, 이미 마운트된 줄은
  * 그때 바뀐 것이 없다 — 새로 들어온 줄만 그려야 굴림이 가볍다.
  */
-const SlotRow = memo(function SlotRow({ slot, newDay, divider, locale, index, measureRef, onOpenDirectory, onOpenSettings }: SlotRowProps) {
+const SlotRow = memo(function SlotRow({ slot, newDay, divider, locale, index, measureRef, onOpenProfile, onOpenSettings }: SlotRowProps) {
   const t = useT();
   const m = slotHead(slot);
   return (
@@ -338,8 +338,8 @@ const SlotRow = memo(function SlotRow({ slot, newDay, divider, locale, index, me
       )}
       {slot.kind === 'progress' ? <ProgressRow messages={slot.messages} endedAt={slot.endedAt} />
         : slot.kind === 'exchange'
-          ? <AgentExchange messages={slot.messages} items={slot.items} onOpenDirectory={onOpenDirectory} onOpenSettings={onOpenSettings} />
-          : <MessageItem message={m} onOpenDirectory={onOpenDirectory} onOpenSettings={onOpenSettings} />}
+          ? <AgentExchange messages={slot.messages} items={slot.items} onOpenProfile={onOpenProfile} onOpenSettings={onOpenSettings} />
+          : <MessageItem message={m} onOpenProfile={onOpenProfile} onOpenSettings={onOpenSettings} />}
     </div>
   );
 });
