@@ -136,6 +136,7 @@ grants_for() {
     bg_produce) echo BG_PRODUCE_GRANTS ;;
     outbox_prune) echo OUTBOX_PRUNE_GRANTS ;;
     measure) echo MEASURE_GRANTS ;;
+    work_route) echo WORK_GRANTS ;;
     wake_mirror) echo WAKE_MIRROR_GRANTS ;;
     device_allow) echo DEVICE_ALLOW_GRANTS ;;
     push_loop) echo PUSH_GRANTS ;;
@@ -152,7 +153,8 @@ grants_for() {
 
 TESTS=(auth perm operator loops wake outbox_listener retention mandate_idle permission_expire bg bg_produce outbox_prune push_loop work_shadow
   turn_lease inbox_list decide_core_db card_state_db relay_live turn_settle turn_cancel health scheduled stale migrate delegation_deadline
-  automation_grant claim_seed automation_sweep hook_debounce thread_status thread_plan db_retry deny_accounts invoke_gate deny_channels deny_reset work measure device_allow wake_mirror)
+  automation_grant claim_seed automation_sweep hook_debounce thread_status thread_plan db_retry deny_accounts invoke_gate deny_channels deny_reset work measure device_allow wake_mirror
+  work_route)
 if [ "$#" -gt 0 ]; then TESTS=("$@"); fi
 
 # 1. 틀 DB — Rust 마이그레이션 실행기로 한 번만 만든다.

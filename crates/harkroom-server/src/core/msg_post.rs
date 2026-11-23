@@ -630,7 +630,7 @@ pub(crate) async fn post_in_tx(
     is_dm: bool,
     origin: &Origin<'_>,
 ) -> Result<Outcome, sqlx::Error> {
-    post_tx(
+    let out = post_tx(
         st,
         channel,
         author,
@@ -641,7 +641,10 @@ pub(crate) async fn post_in_tx(
         is_dm,
         origin,
     )
-    .await
+    .await;
+    // B2 그림자 — 글이 깨운 에이전트마다 작업 라우팅을 옆에 적는다. `post_tx` 가 커밋하고 돌아온 뒤에만, 요청 밖에서. 기록만.
+    super::work_route::after_post(&out);
+    out
 }
 
 #[allow(clippy::too_many_arguments)]
