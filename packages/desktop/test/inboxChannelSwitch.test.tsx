@@ -19,7 +19,7 @@ import { Workspace } from '../src/components/Workspace';
 import { acc, chan, fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';
 
 const entry = (id: number, channelId: string, threadRootId: string | null = null): InboxEntry => ({
-  id, messageId: `m${id}`, reason: threadRootId ? 'thread_reply' : 'mention', readAt: null, channelId,
+  id, messageId: `m${id}`, reason: 'mention', readAt: null, channelId,
   authorId: 'u2', body: '이거 봐줘', meta: {}, createdAt: '2024-01-01T00:00:00.000Z', threadRootId,
 });
 
@@ -29,10 +29,11 @@ const entry = (id: number, channelId: string, threadRootId: string | null = null
  * 스토어는 `inboxPane.test.tsx` 와 같은 모양으로 손으로 세운다.
  */
 const mount = (rows: InboxEntry[], apiOverrides: Record<string, unknown> = {}) => {
-  const api = fakeApi({ inbox: vi.fn(async () => rows), inboxBoard: vi.fn(async () => ({ entries: rows, threads: null, threadStates: [] })), ...apiOverrides });
+  const api = fakeApi({ inbox: vi.fn(async () => rows), ...apiOverrides });
   const { makeWs } = fakeWsFactory();
   setController(new Controller(api, makeWs) as unknown as ControllerType);
   useAppStore.getState().set({
+    unread: rows,
     me: acc('u1', 'me'),
     accounts: { u1: acc('u1', 'me'), u2: acc('u2', 'someone') },
     channels: [chan('c1', 'general'), chan('c2', 'dev')],
@@ -45,7 +46,7 @@ const mount = (rows: InboxEntry[], apiOverrides: Record<string, unknown> = {}) =
 };
 
 const openInbox = async (): Promise<void> => {
-  fireEvent.click(screen.getByText('내 작업'));
+  fireEvent.click(screen.getByText('인박스'));
   await screen.findByTestId('inbox-pane');
 };
 

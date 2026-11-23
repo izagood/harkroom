@@ -2120,7 +2120,6 @@ export const en = {
   // - **`errText(err)` 의 내용** — 러너·daemon·OS 가 한 말이다. 앱이 다시 쓰지 않는다(`#368`)
   // ---------------------------------------------------------------------------
 
-
   // ---------------------------------------------------------------------------
   // sidebar — **화면 이름이다.** 이 말들을 내는 판정이 `lib/` 에 없다: 사이드바가
   // 스스로 쓰는 라벨·오류·안내이고, 그리는 화면이 `Sidebar.tsx` 하나다.
@@ -2185,8 +2184,8 @@ export const en = {
    * 무엇이 다른지 이름만 듣는 사람에게 사라진다: 하나는 내 답을 기다리는 것이고 하나는
    * 새 대화가 있다는 것이다.
    */
-  'sidebar.inbox.blocking': '{count} waiting on you in My work',
-  'sidebar.inbox.unread': '{count} unread in My work',
+  'sidebar.inbox.blocking': '{count} unread mentions and DMs',
+  'sidebar.inbox.unread': '{count} unread in Inbox',
 
   'sidebar.delete.cancel': 'Cancel',
   'sidebar.delete.confirm': 'Delete for good',
@@ -2481,7 +2480,6 @@ export const en = {
     one: 'answering unblocks {count} thread',
     other: 'answering unblocks {count} threads',
   },
-
 
   // ---------------------------------------------------------------------------
   // message — **메시지 행 하나에 매달린 말**(`components/MessageItem.tsx` 와 그 행이
@@ -3397,92 +3395,32 @@ export const en = {
   //   자기 말로 적을 수 있어야 하고, 지금 영어인 것은 우연이지 계약이 아니다
   // ---------------------------------------------------------------------------
 
-  // 상태 보드(C안, 2026-10-01). 열 이름은 designer 사양 그대로다.
-  'inbox.board.col.mine': 'Your turn',
   /** 남을 기다리는 열. "막힘" 이 아니다 — 스레드 상태 리액션(088)에서 막힘은 실패를 뜻한다(designer). */
-  'inbox.board.col.blocked': 'Waiting',
-  'inbox.board.col.active': 'In progress',
-  'inbox.board.col.done': 'Done',
   /** 내 차례 띠의 덧말 — 띠 안의 순서(designer W2). */
-  'inbox.board.band.order': 'newest first',
   /** 열 머리의 수. **내 차례만 센다** — 다른 열은 줄지 않는 숫자라 아무 말도 하지 않는다. */
-  'inbox.board.mineCount': '{count} waiting on you',
   /** 열이 비었을 때. 내 차례가 0 이 되는 것이 이 화면의 목적이다. */
-  'inbox.board.empty.mine': 'Nothing is waiting on you',
-  'inbox.board.empty.other': 'Nothing here',
   /** 처음부터 아무것도 없을 때(걸러 낸 것과 다르다). */
-  'inbox.board.empty.all': 'No work here yet',
-  'inbox.board.scope.label': 'Show',
-  'inbox.board.scope.all': 'All channels',
-  'inbox.board.scope.opened': 'Started by me',
-  'inbox.board.scope.participated': 'Involved',
-  'inbox.board.scope.empty': 'Nothing in this view',
   /** "N일째" — 이 열에 들어오게 한 말부터 센다. */
-  'inbox.board.days': '{count}d waiting',
   /** 카드에 쌓인 말의 수 — 같은 일에서 온 것이 여럿이면 한 장에 모인다는 표시. */
-  'inbox.board.more': '+{count} more',
-  'inbox.board.unread': 'New',
-  'inbox.board.replies': '{count} replies',
-  'inbox.board.similar': '×{count}',
-  'inbox.board.kind.decision': 'Decide',
-  'inbox.board.kind.blocker': 'Blocked',
-  'inbox.board.kind.news': 'Updates',
   /** 치우기 — 서버의 내 상태(2/2). 보드에서 내려 끝남 맨 아래 "치운 것" 으로 접는다. 내 차례에도 있다(R3). */
-  'inbox.board.done': 'Dismiss',
   /** 나중에 — 내일 아침까지 그 열 맨 아래로 접고, 내 차례 수에서 뺀다. */
-  'inbox.board.later': 'Later',
   /** 치운 것·미룬 것을 되돌린다. */
-  'inbox.board.undo': 'Put back',
   /** 미룬 카드가 다시 서는 시각. `{when}` 은 `오늘 시각 · tomorrowAt · 날짜 시각` 중 하나다. */
-  'inbox.board.laterUntil': 'back {when}',
-  'inbox.board.tomorrowAt': 'tomorrow {time}',
   /** 열 맨 아래 접힘 줄. 접힌 카드도 수로 남는다. */
-  'inbox.board.fold.quiet': 'Quiet for a week ({count})',
-  'inbox.board.fold.old': 'Older ({count})',
-  'inbox.board.fold.stale': 'Waiting over a week ({count})',
   /** A안 받은 일(목록+상세). 보기 둘: 받은 일 / 진행 보드. */
-  'inbox.view.label': 'View',
-  'inbox.view.list': 'Inbox',
-  'inbox.view.board': 'Board',
-  'inbox.list.tabs': 'Inbox sections',
-  'inbox.list.tab.todo': 'To do',
-  'inbox.list.tab.news': 'Updates',
-  'inbox.list.tab.later': 'Later',
-  'inbox.list.tab.cleared': 'Cleared',
-  'inbox.list.section.decision': 'Needs your decision',
-  'inbox.list.section.blocker': 'Blocked, waiting on you',
-  'inbox.list.section.news': 'Also waiting on you',
   /** 7일 넘은 접힘 줄에 섞인 결정 수(designer n2). */
-  'inbox.list.staleDecisions': '{count} decisions',
-  'inbox.list.expand': 'Show',
-  'inbox.list.collapse': 'Hide',
-  'inbox.list.clearAll': 'Dismiss all',
-  'inbox.list.openThread': 'Open thread',
-  'inbox.list.back': 'List',
-  'inbox.list.latest': 'Latest',
-  'inbox.list.pick': 'Pick an item on the left',
-  'inbox.list.keys': 'J/K move',
   /** 치운 뒤·미룬 뒤 되돌리기 알림(designer n4). */
-  'inbox.list.toast.dismissed': 'Dismissed {count}',
-  'inbox.list.toast.later': 'Snoozed {count} until tomorrow',
-  'inbox.list.toast.undo': 'Undo',
-  'inbox.board.fold.cleared': 'Cleared ({count})',
-  'inbox.board.fold.later': 'Later ({count})',
   /** 쓰다 만 초안 — 보드 밖 한 줄. */
   'inbox.board.drafts': 'Unfinished drafts ({count})',
 
-
-
-  'inbox.pane.close': 'Close My work',
+  'inbox.pane.close': 'Close Inbox',
   /**
    * 조회 실패. **빈 목록으로 삼키지 않는다** — 실패했는데 빈 목록만 보이면 사람은
    * "아무도 나를 부르지 않았다"로 읽는다(원래 주석). `{reason}` 은 서버 것이다.
    */
-  'inbox.pane.loadFailed': 'My work did not arrive — {reason}',
-  'inbox.pane.loading': 'Loading…',
-  'inbox.pane.retry': 'Try again',
   /** 자리의 이름(`aria-label`)이자 머리글. 스크린리더가 이 구획을 찾는 이름이다. */
-  'inbox.pane.title': 'My work',
+  'inbox.pane.title': 'Inbox',
+  'inbox.list.empty': 'No unread mentions',
 
   // ---------------------------------------------------------------------------
   // profile — **화면 이름이다.** `components/Profile.tsx` 가 그리는 겹창이고,

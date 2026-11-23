@@ -2,7 +2,6 @@ import { describe, it, expect, afterEach, beforeEach } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import type { InboxDelegationSummary, InboxEntry } from '@harkroom/shared';
 import { cardDelegation, chipRow, threadDelegations, MAX_VISIBLE_CHIPS, MAX_VISIBLE_CHIPS_NARROW, STALLED_MS } from '../src/lib/delegationDisplay';
-import { buildBoard } from '../src/lib/inboxBoard';
 import { DelegationChips } from '../src/components/DelegationChips';
 import { DelegationLabel } from '../src/components/DelegationLabel';
 import { usePrefsStore } from '../src/state/prefsStore';
@@ -65,18 +64,6 @@ describe('cardDelegation — 인박스 라벨 넷', () => {
     expect(got).toBeNull();
   });
 
-  it('실패·멈춤 카드는 보드에서 「막힘」 묶음으로 간다', () => {
-    const cards = buildBoard({
-      entries: [
-        entry({ threadRootId: 'f', delegations: [summary([item('a', 'failed')])] }),
-        entry({ threadRootId: 'u' }),
-      ],
-      threads: null, me: { id: 'me', kind: 'human' }, threadStates: [], isAgent: () => true, nowMs: NOW,
-    });
-    expect(cards.find((c) => c.rootId === 'f')?.kind).toBe('blocker');
-    expect(cards.find((c) => c.rootId === 'u')?.kind).toBe('news');
-    expect(cards.find((c) => c.rootId === 'u')?.delegation?.label).toBe('update');
-  });
 });
 
 describe('chipRow — 칩 줄', () => {

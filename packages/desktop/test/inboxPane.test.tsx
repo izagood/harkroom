@@ -47,10 +47,7 @@ const entry = (
 const mount = (rows: InboxEntry[], extra: Record<string, unknown> = {}) => {
   const api = fakeApi();
   const c = {
-    api: { ...api, inbox: vi.fn(async () => rows), inboxBoard: vi.fn(async () => ({ entries: rows, threads: null, threadStates: [] })) },
-    setInboxBoardOpen: vi.fn(),
-    loadInboxBoard: vi.fn(async () => ({ entries: rows, threads: null, threadStates: [] })),
-    inboxBoardSnapshot: vi.fn(() => null),
+    api: { ...api, inbox: vi.fn(async () => rows) },
     openMessage: vi.fn(async () => undefined),
     openChannel: vi.fn().mockResolvedValue(undefined),
     openThread: vi.fn(),
@@ -67,6 +64,7 @@ const mount = (rows: InboxEntry[], extra: Record<string, unknown> = {}) => {
   };
   setController(c as unknown as Controller);
   useAppStore.getState().set({
+    unread: rows,
     me: acc('u1', 'me'),
     accounts: { u1: acc('u1', 'me'), u2: acc('u2', 'someone') },
     channels: [chan('c1', 'general')],
@@ -80,9 +78,7 @@ const mount = (rows: InboxEntry[], extra: Record<string, unknown> = {}) => {
 };
 
 /** 여는 입구는 이번 작업에서 바뀌지 않는다 — 사이드바 홈 맨 위 한 줄(`desktop-rail.html`). */
-const openInbox = (): void => { fireEvent.click(screen.getByText('내 작업')); };
-/** 보드 보기로 바꾼다 — 이 파일은 자리의 동작을 재고, 그 동작은 보기와 무관하다(받은 일 보기는 `inbox.test.tsx`). */
-const toBoard = async (): Promise<void> => { fireEvent.click(await screen.findByTestId('inbox-view-board')); };
+const openInbox = (): void => { fireEvent.click(screen.getByText('인박스')); };
 
 // **언어를 한국어로 고정한다.** 이 파일의 축들은 이 화면의 한국어 문구로 쓰여 있고,
 // 그 문구가 지키는 것은 언어가 아니라 **그 언어로 표현된 규율**이다(`#619`·사이드바 PR 이
@@ -108,8 +104,7 @@ describe('인박스는 자리다 — 모달이 아니다 (#488 C2)', () => {
     expect(screen.getByTestId('thread-pane')).toBeTruthy();
 
     openInbox();
-    await toBoard();
-    await waitFor(() => expect(screen.getByTestId('inbox-card-m1')).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId('inbox-row-1')).toBeTruthy());
 
     // **둘 다** 있다. 하나가 다른 하나를 밀어내지 않는다.
     expect(screen.getByTestId('thread-pane')).toBeTruthy();
@@ -126,7 +121,6 @@ describe('인박스는 자리다 — 모달이 아니다 (#488 C2)', () => {
     mount([entry(1, 'mention', 'c1')]);
 
     openInbox();
-    await toBoard();
     await screen.findByTestId('inbox-pane');
     expect(screen.queryByTestId('channel-pane')).toBeNull();
 
@@ -142,13 +136,11 @@ describe('인박스는 자리다 — 모달이 아니다 (#488 C2)', () => {
    * 떴을 때를 만든다. 재는 것은 **인박스가 그때까지 살아 있는가**다.
    */
   it('인박스에서 답글을 눌러 스레드로 들어가도 인박스가 닫히지 않는다', async () => {
-    const c = mount([entry(7, 'thread_reply', 'c1', 'm1')]);
+    const c = mount([entry(7, 'mention', 'c1', 'm1')]);
 
     openInbox();
-    await toBoard();
-    // 카드는 **스레드 하나**다 — 열쇠가 답글이 아니라 그 머리(m1)다.
-    await waitFor(() => expect(screen.getByTestId('inbox-card-m1')).toBeTruthy());
-    fireEvent.click(screen.getByTestId('inbox-card-m1'));
+    await waitFor(() => expect(screen.getByTestId('inbox-row-7')).toBeTruthy());
+    fireEvent.click(screen.getByTestId('inbox-row-7'));
 
     // 스레드 카드는 그 스레드를 오른쪽 패널로 연다.
     expect(c.openThread).toHaveBeenCalledWith('m1', { channelId: 'c1' });
@@ -168,13 +160,23 @@ describe('인박스는 자리다 — 모달이 아니다 (#488 C2)', () => {
    * 이것이 모달로의 회귀가 아닌 이유: 모달은 목적지와 무관하게 늘 닫혔다. 여기서 닫히는
    * 것은 **그 자리가 목적지일 때**뿐이고, 답글(위 테스트)에서는 그대로 남는다.
    */
+  it('안 읽은 멘션·DM 만 줄로 선다 — 안 읽은 스레드 답글은 목록에 없다', async () => {
+    mount([entry(1, 'mention', 'c1'), entry(2, 'dm', 'c1'), entry(3, 'thread_reply', 'c1', 'm1')]);
+
+    openInbox();
+    await waitFor(() => expect(screen.getByTestId('inbox-row-1')).toBeTruthy());
+    expect(screen.getByTestId('inbox-row-2')).toBeTruthy();
+    expect(screen.queryByTestId('inbox-row-3')).toBeNull();
+    // 머리글의 수도 배지와 같은 판정이다.
+    expect(screen.getByTestId('inbox-unread-count').textContent).toBe('2');
+  });
+
   it('채널 본문의 말을 누르면 인박스가 자리를 내준다', async () => {
     const c = mount([entry(9, 'mention', 'c1')]);
 
     openInbox();
-    await toBoard();
-    await waitFor(() => expect(screen.getByTestId('inbox-card-m9')).toBeTruthy());
-    fireEvent.click(screen.getByTestId('inbox-card-m9'));
+    await waitFor(() => expect(screen.getByTestId('inbox-row-9')).toBeTruthy());
+    fireEvent.click(screen.getByTestId('inbox-row-9'));
 
     expect(c.openMessage).toHaveBeenCalledWith('m9');
     // 인박스가 접히고 채널이 그 자리에 선다 — 누른 것이 보인다.
@@ -191,12 +193,11 @@ describe('인박스는 자리다 — 모달이 아니다 (#488 C2)', () => {
     mount([entry(1, 'mention', 'c1')]);
 
     openInbox();
-    await toBoard();
     const pane = await screen.findByTestId('inbox-pane');
 
     // 모달이었다면 `Overlay` 가 `role="dialog"` 를 줬다.
     expect(pane.getAttribute('role')).not.toBe('dialog');
-    expect(screen.queryByRole('dialog', { name: '내 작업' })).toBeNull();
+    expect(screen.queryByRole('dialog', { name: '인박스' })).toBeNull();
     // 스크림은 `fixed inset-0` 이었다. 그 값을 가진 조상이 있으면 아직 화면을 덮고 있다.
     expect(pane.closest('.fixed')).toBeNull();
   });
@@ -214,7 +215,6 @@ describe('인박스는 자리다 — 모달이 아니다 (#488 C2)', () => {
     mount([entry(1, 'mention', 'c1')], { threadRootId: 'm1' });
 
     openInbox();
-    await toBoard();
     const pane = await screen.findByTestId('inbox-pane');
     const kids = Array.from(pane.parentElement!.children);
 
@@ -240,7 +240,6 @@ describe('인박스는 자리다 — 모달이 아니다 (#488 C2)', () => {
       .toBe(paneMaxWidth(MIN_THREAD_WIDTH, MIN_CHANNEL_WIDTH));
 
     openInbox();
-    await toBoard();
     await screen.findByTestId('inbox-pane');
     expect(screen.getByTestId('thread-pane').style.maxWidth)
       .toBe(paneMaxWidth(MIN_THREAD_WIDTH, MIN_INBOX_WIDTH));
@@ -264,7 +263,6 @@ describe('인박스 자리 — 닫는 길과 키보드 (#488 C2)', () => {
     mount([entry(1, 'mention', 'c1')]);
 
     openInbox();
-    await toBoard();
     await screen.findByTestId('inbox-pane');
 
     // **패널 밖(document.body)에서 누른다.** 패널 `onKeyDown` 으로 받으면 여기서 죽는다 —
@@ -285,7 +283,6 @@ describe('인박스 자리 — 닫는 길과 키보드 (#488 C2)', () => {
     mount([entry(1, 'mention', 'c1')]);
 
     openInbox();
-    await toBoard();
     await screen.findByTestId('inbox-pane');
 
     // 디렉터리를 위에 띄운다 — `Overlay` 를 계속 쓰는 화면이다(건드리지 않았다).
@@ -307,10 +304,9 @@ describe('인박스 자리 — 닫는 길과 키보드 (#488 C2)', () => {
     mount([entry(1, 'mention', 'c1')]);
 
     openInbox();
-    await toBoard();
     await screen.findByTestId('inbox-pane');
 
-    const close = screen.getByRole('button', { name: '내 작업 닫기' });
+    const close = screen.getByRole('button', { name: '인박스 닫기' });
     close.focus();
     expect(document.activeElement).toBe(close);
     fireEvent.click(close);
@@ -326,9 +322,8 @@ describe('인박스 자리 — 닫는 길과 키보드 (#488 C2)', () => {
     mount([entry(1, 'mention', 'c1')]);
 
     openInbox();
-    await toBoard();
     await screen.findByTestId('inbox-pane');
-    expect(screen.getByRole('complementary', { name: '내 작업' })).toBeTruthy();
+    expect(screen.getByRole('complementary', { name: '인박스' })).toBeTruthy();
   });
 
   /**
@@ -343,7 +338,6 @@ describe('인박스 자리 — 닫는 길과 키보드 (#488 C2)', () => {
     mount([entry(1, 'mention', 'c1')], { threadRootId: 'm1' });
 
     openInbox();
-    await toBoard();
     const pane = await screen.findByTestId('inbox-pane');
     await waitFor(() => expect(pane.contains(document.activeElement)).toBe(true));
 
@@ -368,7 +362,6 @@ describe('인박스 자리 — 좁은 창 (#488 C2)', () => {
     mount([entry(1, 'mention', 'c1')], { threadRootId: 'm1' });
 
     openInbox();
-    await toBoard();
     await screen.findByTestId('inbox-pane');
     expect(screen.getByText('디렉터리')).toBeTruthy();
 
@@ -396,7 +389,6 @@ describe('인박스 자리 — 좁은 창 (#488 C2)', () => {
     mount([entry(1, 'mention', 'c1')]);
 
     openInbox();
-    await toBoard();
     const pane = await screen.findByTestId('inbox-pane');
     // jsdom 에는 레이아웃이 없다 — 선언을 본다.
     expect(pane.style.width).toBe('');

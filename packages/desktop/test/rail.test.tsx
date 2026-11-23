@@ -210,8 +210,8 @@ describe('홈 칸이 배지를 대신 받는다', () => {
       것 2개'가 계속 보인다."*
     */
     fakeController();
-    // 숫자는 보드의 내 차례 수(`inboxMine`, 배지 A)다.
-    useAppStore.getState().set({ inboxMine: 2, unread: [blocking(1, 'c1'), blocking(2, 'c2')] });
+    // 숫자는 안 읽은 멘션·DM 수(`unreadMentionCount`)다.
+    useAppStore.getState().set({ unread: [blocking(1, 'c1'), blocking(2, 'c2')] });
     mountRail({ panel: 'agents' });
 
     expect(screen.getByTestId('rail-home-badge').textContent).toBe('2');
@@ -560,7 +560,7 @@ describe('Inbox 는 홈 맨 위, 북마크는 레일에만', () => {
     useAppStore.getState().set({ channels: [chan('c1', 'general')] });
     mountSidebar('home');
 
-    const inbox = screen.getByText('내 작업');
+    const inbox = screen.getByText('인박스');
     const channel = screen.getByRole('button', { name: /# general/ });
     expect(inbox.compareDocumentPosition(channel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });

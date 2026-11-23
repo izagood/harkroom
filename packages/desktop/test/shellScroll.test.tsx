@@ -46,10 +46,7 @@ const entry = (id: number, channelId: string): InboxEntry => ({
 const mount = (rows: InboxEntry[], extra: Record<string, unknown> = {}) => {
   const api = fakeApi();
   setController({
-    api: { ...api, inbox: vi.fn(async () => rows), inboxBoard: vi.fn(async () => ({ entries: rows, threads: null, threadStates: [] })) },
-    setInboxBoardOpen: vi.fn(),
-    loadInboxBoard: vi.fn(async () => ({ entries: rows, threads: null, threadStates: [] })),
-    inboxBoardSnapshot: vi.fn(() => null),
+    api: { ...api, inbox: vi.fn(async () => rows) },
     openMessage: vi.fn(async () => undefined),
     openChannel: vi.fn().mockResolvedValue(undefined),
     openThread: vi.fn(),
@@ -65,6 +62,7 @@ const mount = (rows: InboxEntry[], extra: Record<string, unknown> = {}) => {
     goForward: vi.fn().mockResolvedValue(false),
   } as unknown as Controller);
   useAppStore.getState().set({
+    unread: rows,
     me: acc('u1', 'me'),
     accounts: { u1: acc('u1', 'me'), u2: acc('u2', 'someone') },
     channels: [chan('c1', 'general')],
@@ -76,7 +74,7 @@ const mount = (rows: InboxEntry[], extra: Record<string, unknown> = {}) => {
   render(<Workspace onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
 };
 
-const openInbox = (): void => { fireEvent.click(screen.getByText('My work')); };
+const openInbox = (): void => { fireEvent.click(screen.getByText('Inbox')); };
 
 /**
  * jsdom 에는 `scrollIntoView` 가 없다 — 제품 코드가 `?.()` 로 부르는 이유다(그 옵셔널을
@@ -121,9 +119,7 @@ describe('sr-only 는 자기 상자를 벗어나지 않는다', () => {
     mount([{ ...entry(1, 'c1'), createdAt: now }, { ...entry(2, 'c1'), createdAt: now }]);
     openInbox();
     const pane = await screen.findByTestId('inbox-pane');
-    // 멘션 둘은 내 차례가 아니라 받은 일의 「소식」 갈래에 선다.
-    fireEvent.click(await screen.findByTestId('inbox-tab-news'));
-    await waitFor(() => expect(screen.getByTestId('inbox-card-m1')).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId('inbox-row-1')).toBeTruthy());
 
     const srOnly = pane.querySelectorAll('.sr-only');
     expect(srOnly.length).toBeGreaterThan(0);
