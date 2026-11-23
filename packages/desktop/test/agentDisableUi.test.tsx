@@ -6,7 +6,7 @@ import { usePrefsStore } from '../src/state/prefsStore';
 import { Controller, setController } from '../src/state/controller';
 import { AgentsSettings } from '../src/components/settings/AgentsSettings';
 import { Composer } from '../src/components/Composer';
-import { Directory } from '../src/components/Directory';
+import { AccountRow } from '../src/components/AccountRow';
 import type { ApiClient } from '../src/lib/api';
 import { acc, fakeApi } from './helpers/fakeApi';
 
@@ -204,6 +204,12 @@ describe('#251 다시 켠 직후 PAT 0개는 할 일이 아니다', () => {
   });
 });
 
+/** 스토어의 rusalka 를 계정 줄로 그린다 — 끈 결과가 스토어를 거쳐 이 줄에 닿는지 본다. */
+function RusalkaRow() {
+  const a = useAppStore((s) => s.accounts['id-rusalka']);
+  return a ? <ul><AccountRow account={a} /></ul> : null;
+}
+
 describe('#251 끈 결과가 스토어를 거쳐 다른 화면에 닿는다', () => {
   /**
    * 회귀선 5. 이것이 이 기능의 **배선** 테스트다. 설정 화면의 지역 상태(`selected`,
@@ -212,9 +218,10 @@ describe('#251 끈 결과가 스토어를 거쳐 다른 화면에 닿는다', ()
    * 것이라 믿는다. 그 사실을 읽는 곳은 스토어의 `accounts` 다.
    *
    * 그래서 여기서는 컨트롤러를 흉내 내지 않고 **진짜 `Controller`** 를 쓰고, 설정 화면과
-   * 소비자 화면(`Composer`·`Directory`)을 한 트리에 함께 띄운다.
+   * 소비자 화면(`Composer`·계정 줄)을 한 트리에 함께 띄운다. 계정 줄은 디렉터리 겹창의 것이었고
+   * 겹창을 지운 뒤(2026-11-23) 설정 › 멤버와 초대가 쓴다 — 스토어를 읽어 그리는 자리는 같다.
    */
-  it('설정에서 끄면 멘션 후보에서 빠지고 디렉터리에 비활성 배지가 붙는다', async () => {
+  it('설정에서 끄면 멘션 후보에서 빠지고 계정 줄에 비활성 배지가 붙는다', async () => {
     const rusalka = agent('rusalka');
     const admin = acc('u1', 'admin', 'human', true);
     useAppStore.getState().set({
@@ -228,9 +235,8 @@ describe('#251 끈 결과가 스토어를 거쳐 다른 화면에 닿는다', ()
       async (id: string, disabled: boolean) => agent('rusalka', { id, disabled }),
     );
     const real = new Controller(fakeApi({
-      // `Directory` 는 뜰 때 `refreshAccounts({ force: true })` 로 계정 표를 서버에서
-      // 다시 받는다 — fakeApi 의 기본 목록을 그대로 두면 그 응답이 위에서 심은 스토어를
-      // 덮어써 rusalka 가 사라진다. 서버가 아는 것과 스토어가 아는 것을 같게 맞춘다.
+      // 계정 표를 서버에서 다시 받는 화면이 있으면 fakeApi 의 기본 목록이 위에서 심은
+      // 스토어를 덮어써 rusalka 가 사라진다. 서버가 아는 것과 스토어가 아는 것을 같게 맞춘다.
       accounts: vi.fn(async () => [admin, rusalka]),
       listAgents: vi.fn(async () => [rusalka]),
       listPats: vi.fn(async () => []),
@@ -244,7 +250,7 @@ describe('#251 끈 결과가 스토어를 거쳐 다른 화면에 닿는다', ()
       <>
         <div data-testid="settings-host"><AgentsSettings /></div>
         <div data-testid="composer-host"><Composer onSend={vi.fn()} /></div>
-        <Directory open onClose={vi.fn()} />
+        <RusalkaRow />
       </>,
     );
 
@@ -268,7 +274,7 @@ describe('#251 끈 결과가 스토어를 거쳐 다른 화면에 닿는다', ()
     await waitFor(() =>
       expect(useAppStore.getState().accounts['id-rusalka']!.disabled).toBe(true));
 
-    // 끈 뒤: 후보에서 빠지고 배지가 붙는다. 디렉터리에서 **사라지지는 않는다** —
+    // 끈 뒤: 후보에서 빠지고 배지가 붙는다. 계정 줄에서 **사라지지는 않는다** —
     // 같은 표가 과거 메시지의 작성자 이름을 푼다(shared 의 AccountView.disabled 주석).
     fireEvent.change(box, { target: { value: '@rus', selectionStart: 4 } });
     expect(composer.queryAllByRole('option').map((o) => o.getAttribute('data-handle')))

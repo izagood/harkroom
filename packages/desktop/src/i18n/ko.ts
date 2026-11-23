@@ -268,6 +268,10 @@ export const ko = {
   'providerAccounts.cursor.note': '여기 있는 것은 러너에 영향을 주지 않습니다. 플랜 사용량은 Cursor 대시보드에서 확인하세요.',
   'providerAccounts.cursor.dashboard': 'Cursor 대시보드 열기',
   'common.someone': '사람',
+  'common.loading': '불러오는 중…',
+  'common.retry': '다시 시도',
+  'common.disabled': '비활성',
+  'common.accountListFailed': '계정 목록을 불러오지 못했다 — {reason}',
 
   'appearance.colorMode': '색 모드',
   'appearance.description': '색, 언어, 글자 크기를 고른다. 이 기기에만 적용된다.',
@@ -2416,22 +2420,6 @@ export const ko = {
   'search.palette.unnamedChannel': '이름 없는 채널',
 
   // ---------------------------------------------------------------------------
-  // directory — **원래 문구 그대로다.** `{label}` 은 `People`·`Agents` 라 안 옮긴다 —
-  // 그 값이 `section()` 의 `aria-label` 이기도 해서, 옮기면 구획 이름이 함께 갈린다.
-  // ---------------------------------------------------------------------------
-
-  'directory.close': '디렉터리 닫기',
-  'directory.disabled': '비활성',
-  'directory.empty': '이 커뮤니티에 아직 계정이 없다',
-  'directory.label': '디렉터리',
-  'directory.listFailed': '계정 목록을 불러오지 못했다 — {reason}',
-  'directory.loading': '불러오는 중…',
-  'directory.sectionNoMatch': '{label} 중 맞는 것이 없다',
-  'directory.retry': '다시 시도',
-  'directory.search': '디렉터리 검색',
-  'directory.searchPlaceholder': 'handle 또는 이름으로 검색',
-
-  // ---------------------------------------------------------------------------
   // saved — **원래 문구 그대로다.** 접근 이름 하나만 갈렸다: `할 것으로 되돌리기` 는
   // 그대로 두되 영어가 `Put back on the list` 인 이유가 `en.ts` 표에 있다.
   // ---------------------------------------------------------------------------
@@ -2592,7 +2580,6 @@ export const ko = {
   'chat.pickChannel': '채널을 골라 시작한다',
   'chat.loadOlder': '이전 메시지 불러오기',
   'chat.loadingOlder': '이전 메시지 불러오는 중',
-  'chat.directory': '디렉터리',
   'chat.adminBadge': 'admin',
   'chat.lease.title': '진행 중인 작업',
   'chat.lease.empty': '진행 중인 작업 없음',

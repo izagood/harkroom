@@ -22,7 +22,7 @@ const pref = (channelId: string, o: Partial<ChannelPrefRow> = {}): ChannelPrefRo
 const HIDDEN_AT = '2026-09-04T00:00:00.000Z';
 
 const sidebar = () => render(
-  <Sidebar panel="home" onOpenDirectory={vi.fn()}
+  <Sidebar panel="home"
     onOpenChannelDirectory={vi.fn()} onOpenInbox={vi.fn()} onOpenAgentConfig={() => {}} onOpenProfile={() => {}}
     collapsed={false} onToggleCollapse={vi.fn()} />,
 );

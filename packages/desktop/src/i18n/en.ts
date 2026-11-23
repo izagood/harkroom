@@ -431,6 +431,14 @@ export const en = {
    * 아니라 **한 낱말**로 두는 이유다.
    */
   'common.someone': 'someone',
+  /**
+   * 아래 넷은 디렉터리 겹창(`directory.*`)의 문구였다. 겹창을 지울 때(2026-11-23) 설정 ›
+   * 멤버와 초대·역할 칸이 빌려 쓰던 것만 `common` 으로 옮겼다 — 두 화면 이상이 쓴다.
+   */
+  'common.loading': 'Loading…',
+  'common.retry': 'Try again',
+  'common.disabled': 'Disabled',
+  'common.accountListFailed': 'The account list did not arrive — {reason}',
 
   // ---------------------------------------------------------------------------
   // appearance — 화면 이름. `settings/AppearanceSettings.tsx`.
@@ -4356,43 +4364,6 @@ export const en = {
   'search.palette.unnamedChannel': 'unnamed channel',
 
   // ---------------------------------------------------------------------------
-  // directory — **화면 이름이다.** `components/Directory.tsx` 의 겹창(사람·에이전트).
-  //
-  // 위 `channelDirectory` 와 갈린 이유는 그 머리말의 거울상이다 — 하나는 채널을 고르고
-  // 이것은 계정을 본다. 한 영역으로 묶으면 셋째 칸을 두 화면의 구획이 나눠 먹는다.
-  //
-  // ## 영어를 새로 설계한 자리
-  //
-  // | 한국어 | 영어 | 왜 |
-  // |---|---|---|
-  // | 이 워크스페이스에 아직 계정이 없다 | `No accounts in this workspace yet` | `yet` 이 진다. 못 받은 것은 위의 오류가 따로 말한다(그 화면이 세 상태를 가르는 이유) |
-  // | 계정 목록을 불러오지 못했다 | `The account list did not arrive` | 머리말의 그 문장이다 |
-  // | {label} 중 맞는 것이 없다 | `Nothing in {label} matches` | `{label}` 은 `People`·`Agents` 로 **이미 영어**다. 문장이 그것을 받는 자리라 어순이 갈린다 — 한국어는 뒤에, 영어는 앞에 |
-  // | 비활성 | `Disabled` | `sidebar.members.agentDisabled` 와 같은 낱말·같은 뜻(계정이 꺼졌다)이다. **키는 나눈다** — 부르는 화면이 다르고, 승격은 세 번째 화면이 올 때다 |
-  //
-  // ## 사전에 **안** 넣은 것
-  //
-  // - **`People` · `Agents` · `Directory` · `admin`** — 이미 영어다. 구획 제목 둘은
-  //   `section()` 이 `aria-label` 로도 쓰므로 옮기면 그 이름도 함께 갈린다
-  // - **`a.kind`(`human`/`agent`)** — 서버가 주는 **값**이다(`sidebar.notify` 와 같은 규율)
-  // - **`PRESENCE_LABEL`** — `lib/presenceView.ts` 다. **이 파일 밖이라 안 건드렸다** —
-  //   사이드바 PR 이 지킨 그 경계이고, 세 화면이 그것을 부르므로 `common` 후보이기도 하다
-  //   (`en.ts` 머리말의 '남은 것' 표가 그 자리를 이미 지목했다)
-  // ---------------------------------------------------------------------------
-
-  'directory.close': 'Close the directory',
-  'directory.disabled': 'Disabled',
-  'directory.empty': 'No accounts in this community yet',
-  'directory.label': 'Directory',
-  'directory.listFailed': 'The account list did not arrive — {reason}',
-  'directory.loading': 'Loading…',
-  /** `{label}` 은 `People`·`Agents` 라 안 옮긴다 — 어순만 언어를 따른다. */
-  'directory.sectionNoMatch': 'Nothing in {label} matches',
-  'directory.retry': 'Try again',
-  'directory.search': 'Search the directory',
-  'directory.searchPlaceholder': 'Search by handle or name',
-
-  // ---------------------------------------------------------------------------
   // saved — **화면 이름이다.** `components/SavedMessages.tsx` 의 오버레이(#219).
   //
   // ## 영어를 새로 설계한 자리
@@ -4635,7 +4606,6 @@ export const en = {
   'chat.pickChannel': 'Pick a channel to start',
   'chat.loadOlder': 'Load older messages',
   'chat.loadingOlder': 'Loading earlier messages',
-  'chat.directory': 'Directory',
   'chat.adminBadge': 'admin',
   'chat.lease.title': 'Active work',
   'chat.lease.empty': 'No active work',

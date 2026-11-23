@@ -22,7 +22,7 @@ const entry = (id: number, reason: InboxEntry['reason'], readAt: string | null):
 
 const renderSidebar = () => render(
   <Sidebar
-    panel="home" onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}}
+    panel="home" onOpenChannelDirectory={() => {}}
     onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}}
     collapsed={false} onToggleCollapse={vi.fn()}
   />,

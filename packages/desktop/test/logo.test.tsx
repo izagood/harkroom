@@ -44,7 +44,7 @@ afterEach(() => {
 });
 
 const sidebar = () =>
-  render(<Sidebar panel="home" onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}} collapsed={false} onToggleCollapse={vi.fn()} />);
+  render(<Sidebar panel="home" onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}} collapsed={false} onToggleCollapse={vi.fn()} />);
 
 describe('harkroom 로고 (#191)', () => {
   /**

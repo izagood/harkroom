@@ -5,7 +5,7 @@ import { usePrefsStore } from '../src/state/prefsStore';
 import { setController, type Controller } from '../src/state/controller';
 import { Identity } from '../src/components/Identity';
 import { MessageItem } from '../src/components/MessageItem';
-import { Directory } from '../src/components/Directory';
+import { AccountRow } from '../src/components/AccountRow';
 import { Composer } from '../src/components/Composer';
 import { Profile } from '../src/components/Profile';
 import { acc, msg } from './helpers/fakeApi';
@@ -54,14 +54,15 @@ describe('#181 에이전트 소유자 표시', () => {
    * 가 그 자리를 잰다. 여기서는 **옮겼다**를 못 박는다: 목록에는 없고, 프로필에는 있다.
    * 한쪽만 재면 "옮겼다"가 "지웠다"와 구분되지 않는다.
    */
-  it('소유자는 디렉터리에도 자동완성 후보에도 나오지 않는다', async () => {
+  it('소유자는 계정 줄에도 자동완성 후보에도 나오지 않는다', async () => {
     useAppStore.getState().set({
       accounts: { u1: acc('u1', 'owner'), a1: agent('a1', 'bot', 'u1') },
     });
     fakeController();
 
-    render(<Directory open onClose={vi.fn()} />);
-    const agents = await screen.findByRole('region', { name: 'Agents' });
+    // 계정 줄(설정 › 멤버와 초대가 쓴다). 디렉터리 겹창은 지웠고(2026-11-23) 줄만 남았다.
+    render(<ul><AccountRow account={useAppStore.getState().accounts.a1!} /></ul>);
+    const agents = screen.getByTestId('directory-row-a1');
     expect(agents.textContent).not.toContain('@owner');
     // 🤖 도 같이 나간다 — 소유자만 지우고 글리프를 남기면 "이건 에이전트다"를 계속 말한다.
     expect(agents.textContent).not.toContain('🤖');

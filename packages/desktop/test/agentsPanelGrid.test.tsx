@@ -56,7 +56,7 @@ const renderAgentsPanel = (
   doors: { onOpenAgentConfig?: (id: string) => void; onOpenProfile?: (id: string) => void } = {},
 ) =>
   render(
-    <Sidebar panel="agents" onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}}
+    <Sidebar panel="agents" onOpenChannelDirectory={() => {}}
       onOpenInbox={() => {}}
       onOpenAgentConfig={doors.onOpenAgentConfig ?? (() => {})}
       onOpenProfile={doors.onOpenProfile ?? (() => {})}

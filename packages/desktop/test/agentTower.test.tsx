@@ -220,7 +220,7 @@ describe('칸은 요약이다', () => {
     } as unknown as Controller);
     useAppStore.getState().set(판());
     render(
-      <Sidebar panel="agents" onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}}
+      <Sidebar panel="agents" onOpenChannelDirectory={() => {}}
         onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}}
         collapsed={false} onToggleCollapse={vi.fn()} />,
     );

@@ -55,7 +55,6 @@ const mount = (props: Partial<{ onOpenSettings: (section?: SectionId) => void; o
         onLogout={props.onLogout ?? (() => {})}
       />
       <Sidebar panel="home"
-        onOpenDirectory={() => {}}
         onOpenChannelDirectory={() => {}}
         onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}}
         collapsed={false}
@@ -76,11 +75,11 @@ const mountBothPanels = () =>
   render(
     <>
       <Sidebar panel="home"
-        onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}}
+        onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}}
         collapsed={false} onToggleCollapse={vi.fn()}
       />
       <Sidebar panel="dm"
-        onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}}
+        onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}}
         collapsed={false} onToggleCollapse={vi.fn()}
       />
     </>,
@@ -324,7 +323,8 @@ describe('A2 · `+` 는 그 목록의 첫 칸에 산다', () => {
     const nav = screen.getByRole('navigation', { name: '주 목록' });
     const sidebarNav = document.querySelector('aside nav')!;
     expect(within(sidebarNav as HTMLElement).getByText('인박스')).toBeTruthy();
-    expect(within(sidebarNav as HTMLElement).getByText('디렉터리')).toBeTruthy();
+    // `디렉터리` 한 줄도 여기 있었다 — 지웠다(2026-11-23). 사람·에이전트 찾기는 맨 위 찾기가 한다.
+    expect(within(sidebarNav as HTMLElement).queryByText('디렉터리')).toBeNull();
     expect(within(sidebarNav as HTMLElement).queryByText('저장한 메시지')).toBeNull();
     expect(within(nav).getByTestId('rail-saved')).toBeTruthy();
   });

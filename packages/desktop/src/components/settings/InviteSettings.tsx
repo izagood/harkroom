@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useState } from 'react';
 import { getController } from '../../state/controller';
 import { useActiveStore } from '../../state/communities';
 import { useT } from '../../i18n/useT';
-import { DirectoryRow } from '../Directory';
+import { AccountRow } from '../AccountRow';
 import { hasCapability } from '../../lib/capabilities';
 import { SettingsColumns, SettingsGrid, SettingsGroup, SettingsPage } from './primitives';
 import { MemberAccessPanel } from './MemberAccessPanel';
@@ -17,7 +17,7 @@ import { InviteMailPanel, inviteMailSupported, TokenInvite } from './InviteMail'
  * 보였다 — 사람을 부르기 전에 볼 것과 부르는 버튼이 다른 화면에 있었다.
  *
  * - 멤버 목록은 **모두가 본다.** `GET /accounts` 는 `requireAccount` 이고 Directory 도 모두에게 열려
- *   있으므로 새로 드러나는 것이 없다. 줄은 `DirectoryRow` 를 그대로 쓴다(비활성·낡은 presence 규칙이
+ *   있으므로 새로 드러나는 것이 없다. 줄은 `AccountRow` 를 그대로 쓴다(비활성·낡은 presence 규칙이
  *   한 곳에 산다).
  * - 초대 토큰 발급은 **admin 만** 한다. 전에는 admin 이 아니면 페이지 전체가 닫혔는데, 이제는
  *   초대 묶음만 그 사실을 말하고 목록은 그대로 보인다(워크스페이스 묶음의 "읽기 전용", ⑥b-1).
@@ -97,18 +97,18 @@ export function InviteSettings() {
                 {/* 실패는 목록 위에 남긴다 — 실패를 빈 목록으로 삼키면 "아무도 없다" 로 읽힌다. */}
                 {load.kind === 'error' && (
                   <div role="alert" className="mb-2 rounded-row border border-danger-border bg-danger-surface p-2 text-danger">
-                    {t('directory.listFailed', { reason: load.message })}
+                    {t('common.accountListFailed', { reason: load.message })}
                     <button
                       onClick={() => setAttempt((n) => n + 1)}
                       className="ml-2 rounded-row bg-danger px-2 py-0.5 text-fg-on-strong hover:bg-danger-hover"
                     >
-                      {t('directory.retry')}
+                      {t('common.retry')}
                     </button>
                   </div>
                 )}
                 {people.length === 0
-                  ? <p className="px-2 py-1 text-fg-subtle">{load.kind === 'loading' ? t('directory.loading') : t('members.list.empty')}</p>
-                  : <SettingsGrid as="ul" className="gap-y-0">{people.map((a) => <Fragment key={a.id}><DirectoryRow account={a} showKind={false}
+                  ? <p className="px-2 py-1 text-fg-subtle">{load.kind === 'loading' ? t('common.loading') : t('members.list.empty')}</p>
+                  : <SettingsGrid as="ul" className="gap-y-0">{people.map((a) => <Fragment key={a.id}><AccountRow account={a} showKind={false}
                     roleChip
                     selected={a.id === selectedId}
                     onSelect={() => setSelectedId((cur) => (cur === a.id ? null : a.id))}

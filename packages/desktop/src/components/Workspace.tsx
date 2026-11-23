@@ -31,7 +31,6 @@ import { TerminalPanel } from './TerminalPanel';
 import { ArtifactPanel } from './ArtifactPreview';
 import { previewLayout } from '../lib/previewLayout';
 import { SearchPalette, type SearchScope } from './SearchPalette';
-import { Directory } from './Directory';
 import { ChannelSettingsSheet } from './ChannelSettingsSheet';
 import { Profile } from './Profile';
 import { ChannelDirectory } from './ChannelDirectory';
@@ -66,9 +65,7 @@ export function Workspace({ onLogout, onOpenSettings, onRelogin = reloginNotWire
   const [searchOpen, setSearchOpen] = useState(false);
   const [fdaDialogOpen, setFdaDialogOpen] = useState(false);
   const [searchInitialScope, setSearchInitialScope] = useState<SearchScope>('all');
-  const [directoryOpen, setDirectoryOpen] = useState(false);
   const [channelDirectoryOpen, setChannelDirectoryOpen] = useState(false);
-  const [directoryAccountId, setDirectoryAccountId] = useState<string | null>(null);
   const [profileAccountId, setProfileAccountId] = useState<string | null>(null);
   const [inboxOpen, setInboxOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => sidebarStorage.loadCollapsed());
@@ -143,17 +140,13 @@ export function Workspace({ onLogout, onOpenSettings, onRelogin = reloginNotWire
   }, []);
 
   /**
-   * 이름을 누르면 **프로필**이 열리고, 아무도 지목하지 않으면 디렉터리(검색 목록)가 열린다
-   * (identity 문서 · Task 14).
-   *
-   * 지금까지는 둘 다 디렉터리였다 — `MessageBody` 는 접근성 이름을 이미 "프로필 열기"로
-   * 부르고 있었으므로 **그 이름이 거짓이었다.** 디렉터리는 "누가 있나"에 답하는 검색이고,
-   * 프로필은 "이 사람이 무엇인가"에 답한다: 물음이 다르므로 화면도 다르다.
+   * 이름을 누르면 **프로필**이 열린다(identity 문서 · Task 14). 아무도 지목하지 않은 부름은
+   * 디렉터리(검색 목록) 겹창을 열었는데, 그 겹창은 지웠다(소유자 결정 2026-11-23) — 사람·에이전트
+   * 찾기는 사이드바 맨 위 찾기(`SidebarFind`)가 한다. 이름(`handleOpenDirectory`)은 메시지 줄
+   * prop 이름과 함께 후속 PR 에서 바꾼다.
    */
   const handleOpenDirectory = useCallback((accountId: string | null = null) => {
-    if (accountId) { setProfileAccountId(accountId); return; }
-    setDirectoryAccountId(null);
-    setDirectoryOpen(true);
+    if (accountId) setProfileAccountId(accountId);
   }, []);
 
   useEffect(() => {
@@ -349,7 +342,6 @@ export function Workspace({ onLogout, onOpenSettings, onRelogin = reloginNotWire
       )}
       <Sidebar
         panel={railPanel}
-        onOpenDirectory={() => handleOpenDirectory(null)}
         onOpenChannelDirectory={() => setChannelDirectoryOpen(true)}
         onOpenInbox={() => setInboxOpen(true)}
         /* 에이전트 격자의 카드가 여는 곳. 신호는 `#279` 의 `onOpenSettings(section, targetId)`
@@ -359,7 +351,7 @@ export function Workspace({ onLogout, onOpenSettings, onRelogin = reloginNotWire
         onOpenClaudeReauth={() => onOpenSettings('claude-accounts')}
         onOpenProjectionSettings={() => onOpenSettings(PROJECTION_SECTION)}
         /* 설정을 볼 수 없는 사람이 카드를 눌렀을 때. 프로필을 여는 함수는 이미 하나다
-           (`handleOpenDirectory` — id 를 주면 프로필, 안 주면 디렉터리). */
+           (`handleOpenDirectory` — id 를 주면 프로필). */
         onOpenProfile={(accountId) => handleOpenDirectory(accountId)}
         collapsed={sidebarCollapsed}
         onToggleCollapse={handleToggleSidebar}
@@ -526,7 +518,6 @@ export function Workspace({ onLogout, onOpenSettings, onRelogin = reloginNotWire
       </div>
       <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} initialScope={searchInitialScope} />
       <ChannelSettingsSheet />
-      <Directory open={directoryOpen} onClose={() => { setDirectoryOpen(false); setDirectoryAccountId(null); }} accountId={directoryAccountId} />
       {profileAccountId && (
         <Profile
           accountId={profileAccountId}

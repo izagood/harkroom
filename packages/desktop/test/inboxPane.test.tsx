@@ -17,6 +17,7 @@
 // 인박스를 단독으로 렌더하면 "모달이 아니다"를 증명할 수 없다 — 모달이 막는 것은 자기
 // 자신이 아니라 **옆에 선 것**이고, 그 옆이 있는 곳이 이 화면이다.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { useState } from 'react';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
 import { paneMaxWidth, MIN_THREAD_WIDTH, MIN_CHANNEL_WIDTH, MIN_INBOX_WIDTH } from '../src/lib/prefs';
 import type { InboxEntry } from '@harkroom/shared';
@@ -24,6 +25,7 @@ import { useActiveStore as useAppStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
 import { setController, type Controller } from '../src/state/controller';
 import { Workspace } from '../src/components/Workspace';
+import { Overlay } from '../src/components/Overlay';
 import { acc, chan, fakeApi, msg } from './helpers/fakeApi';
 
 /**
@@ -285,13 +287,19 @@ describe('인박스 자리 — 닫는 길과 키보드 (#488 C2)', () => {
     openInbox();
     await screen.findByTestId('inbox-pane');
 
-    // 디렉터리를 위에 띄운다 — `Overlay` 를 계속 쓰는 화면이다(건드리지 않았다).
-    fireEvent.click(screen.getByText('디렉터리'));
-    expect(await screen.findByRole('dialog', { name: '디렉터리' })).toBeTruthy();
+    // `Overlay` 하나를 위에 띄운다. 전에는 사이드바의 디렉터리 겹창을 열었는데 그 겹창을
+    // 지웠다(2026-11-23) — 재는 것은 특정 화면이 아니라 `Overlay` 스택과의 양보라서
+    // 겹창을 직접 띄운다(프로필·확인창이 같은 `Overlay` 를 쓴다).
+    function TopOverlay() {
+      const [open, setOpen] = useState(true);
+      return open ? <Overlay label="위 겹창" onClose={() => setOpen(false)}><p>위</p></Overlay> : null;
+    }
+    render(<TopOverlay />);
+    expect(await screen.findByRole('dialog', { name: '위 겹창' })).toBeTruthy();
 
     fireEvent.keyDown(document.body, { key: 'Escape' });
-    // 디렉터리가 닫히고 인박스는 남는다.
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: '디렉터리' })).toBeNull());
+    // 겹창이 닫히고 인박스는 남는다.
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '위 겹창' })).toBeNull());
     expect(screen.getByTestId('inbox-pane')).toBeTruthy();
 
     // 한 번 더 누르면 이제 인박스가 접힌다.
@@ -363,12 +371,13 @@ describe('인박스 자리 — 좁은 창 (#488 C2)', () => {
 
     openInbox();
     await screen.findByTestId('inbox-pane');
-    expect(screen.getByText('디렉터리')).toBeTruthy();
+    const homeList = () => document.querySelector('aside nav');
+    expect(homeList()).toBeTruthy();
 
     fireEvent.keyDown(document, { key: '\\', metaKey: true });
 
     // 사이드바가 접혔다: 홈 목록이 사라지고 헤더에 펼치기 버튼이 선다.
-    await waitFor(() => expect(screen.queryByText('디렉터리')).toBeNull());
+    await waitFor(() => expect(homeList()).toBeNull());
     expect(screen.getByRole('button', { name: '사이드바 펼치기' })).toBeTruthy();
     // 접은 것은 사이드바뿐이다 — 인박스와 스레드는 그 자리에 있다.
     expect(screen.getByTestId('inbox-pane')).toBeTruthy();
