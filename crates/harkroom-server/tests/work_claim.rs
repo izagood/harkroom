@@ -7,13 +7,15 @@ use harkroom_server::core::work_claim::{
     renew_with,
 };
 use sqlx::PgPool;
+use sqlx::postgres::PgPoolOptions;
 
 struct Db {
     admin: PgPool,
     w: PgPool,
 }
 
-async fn db() -> Option<Db> {
+/// 쓰기 역할의 연결은 `scripts/db-tests.sh` 가 8개로 묶는다. 시험 셋이 함께 돌므로 상한의 합(2 + 2 + 3)이 그 안이어야 한다.
+async fn db(write_connections: u32) -> Option<Db> {
     let Ok(url) = std::env::var("HARKROOM_TEST_DATABASE_URL") else {
         eprintln!("skip: HARKROOM_TEST_DATABASE_URL unset");
         return None;
@@ -21,7 +23,11 @@ async fn db() -> Option<Db> {
     let write_url =
         std::env::var("HARKROOM_TEST_WRITE_DATABASE_URL").unwrap_or_else(|_| url.clone());
     let admin = PgPool::connect(&url).await.unwrap();
-    let w = PgPool::connect(&write_url).await.unwrap();
+    let w = PgPoolOptions::new()
+        .max_connections(write_connections)
+        .connect(&write_url)
+        .await
+        .unwrap();
     let missing = harkroom_server::write::missing_in(&w, WORK_CLAIM_PRIVILEGES, &[])
         .await
         .unwrap();
@@ -171,7 +177,7 @@ async fn expire(admin: &PgPool, work_id: &str) {
 
 #[tokio::test]
 async fn eligibility_and_order() {
-    let Some(db) = db().await else { return };
+    let Some(db) = db(2).await else { return };
     let a = &db.admin;
     let owner = account(a, "human", "wc1-owner").await;
     let stranger = account(a, "human", "wc1-stranger").await;
@@ -269,7 +275,7 @@ async fn eligibility_and_order() {
 
 #[tokio::test]
 async fn lease_renew_release_and_takeover() {
-    let Some(db) = db().await else { return };
+    let Some(db) = db(2).await else { return };
     let a = &db.admin;
     let owner = account(a, "human", "wc2-owner").await;
     let agent = account(a, "agent", "wc2-agent").await;
@@ -377,7 +383,7 @@ async fn lease_renew_release_and_takeover() {
 
 #[tokio::test]
 async fn predecessor_path_overlap_and_concurrent_claims() {
-    let Some(db) = db().await else { return };
+    let Some(db) = db(3).await else { return };
     let a = &db.admin;
     let owner = account(a, "human", "wc3-owner").await;
     let agent = account(a, "agent", "wc3-agent").await;

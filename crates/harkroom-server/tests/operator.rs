@@ -118,6 +118,15 @@ async fn req(
     (s, serde_json::from_str(&b).unwrap_or(Value::Null))
 }
 
+/// 쓰기 역할의 연결은 `scripts/db-tests.sh` 가 8개로 묶는다. 이 파일의 두 시험이 함께 돌므로 하나가 3개까지만 쓴다.
+async fn write_pool(url: &str) -> PgPool {
+    sqlx::postgres::PgPoolOptions::new()
+        .max_connections(3)
+        .connect(url)
+        .await
+        .unwrap()
+}
+
 #[tokio::test]
 async fn fake_operator_against_real_schema() {
     let Ok(url) = std::env::var("HARKROOM_TEST_DATABASE_URL") else {
@@ -163,7 +172,7 @@ async fn fake_operator_against_real_schema() {
     // 쓰기 풀 — 있으면 `OPERATOR_PRIVILEGES` 만 가진 역할(rustFrontDb.test.ts 가 만든다). 표가 모자라면 아래 쓰기가 실패한다.
     let write = match std::env::var("HARKROOM_TEST_WRITE_DATABASE_URL") {
         Ok(w) => {
-            let w = PgPool::connect(&w).await.unwrap();
+            let w = write_pool(&w).await;
             let missing = harkroom_server::write::missing_operator_privileges(&w)
                 .await
                 .unwrap();
@@ -1016,7 +1025,7 @@ async fn revoke_event_disconnects_without_waiting() {
         ..OpTiming::default()
     };
     let write = match std::env::var("HARKROOM_TEST_WRITE_DATABASE_URL") {
-        Ok(w) => PgPool::connect(&w).await.unwrap(),
+        Ok(w) => write_pool(&w).await,
         Err(_) => pool.clone(),
     };
     let core = OperatorCore::new(
