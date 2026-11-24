@@ -172,6 +172,7 @@ pub mod secrets_read;
 pub mod sections_write;
 pub mod self_serve;
 pub mod settings_rest;
+pub mod split_collect;
 pub mod step_up_end;
 pub mod step_up_open;
 pub mod text_mention_wake;

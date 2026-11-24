@@ -35,6 +35,8 @@ env_once! {
     ASK_SELF_SERVE = "HARKROOM_ASK_SELF_SERVE";
     /// 조각 판정 스위치(`piece_verdict::switch_on`).
     PIECE_VERDICT = "HARKROOM_PIECE_VERDICT";
+    /// 하위 결과 모으기 스위치(`split_collect::enabled`).
+    SPLIT_COLLECT = "HARKROOM_SPLIT_COLLECT";
     /// 위임장 강제(`lease_read::mandate_switch`).
     MANDATE_ENFORCE = "HARKROOM_MANDATE_ENFORCE";
     /// avcs 서버 env 값(빈 값 거르기는 쓰는 쪽이 한다).

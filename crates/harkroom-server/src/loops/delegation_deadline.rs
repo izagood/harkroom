@@ -267,6 +267,11 @@ async fn expire_one(pool: &PgPool, v2: bool, skip: &mut Vec<String>) -> Result<O
 
 /// TS `autoCloseDelegations` — 보고 뒤 idle, 만든 지 max_age 면 `closed`. 깨우지 않는다. 닫은 의무 수.
 pub async fn auto_close(conn: &mut sqlx::PgConnection) -> Result<u64, sqlx::Error> {
+    Ok(auto_close_ids(conn).await?.0)
+}
+
+/// [`auto_close`] 의 몸통 — 닫은 의무 수와 그 위임 id 들(F1b 가 마지막 자기 조각인지 본다).
+async fn auto_close_ids(conn: &mut sqlx::PgConnection) -> Result<(u64, Vec<String>), sqlx::Error> {
     let idle: Vec<String> = sqlx::query_scalar(
         "update team_delegation_item \
             set outcome = 'closed', closed_reason = 'idle', update_pending_message_id = null, update_pending_at = null \
@@ -302,7 +307,7 @@ pub async fn auto_close(conn: &mut sqlx::PgConnection) -> Result<u64, sqlx::Erro
             .execute(&mut *conn)
             .await?;
     }
-    Ok(n)
+    Ok((n, ids))
 }
 
 /// TS `flushDelegationUpdates` — 턴이 끝난 담당의 대기 중 update 를 위임자 inbox 로. 깨운 위임자는 `out.woke` 에.
@@ -396,8 +401,11 @@ pub async fn flush_updates(
 /// TS `sweepV2` — 자동 닫힘과 턴 끝 update 를 한 트랜잭션으로.
 async fn sweep_v2(pool: &PgPool) -> Result<(), sqlx::Error> {
     let mut tx = pool.begin().await?;
-    auto_close(&mut tx).await?;
+    let (_, closed) = auto_close_ids(&mut tx).await?;
     let mut out = Preempted::default();
+    // F1b — 자동 닫힘이 마지막 자기 조각을 닫았으면 보류해 둔 형제와 함께 한 번 깨운다. 스위치가 꺼져 있으면 아무것도 하지 않는다.
+    out.woke
+        .extend(crate::core::split_collect::after_quiet_close(&mut tx, &closed).await?);
     flush_updates(&mut tx, &mut out).await?;
     // TS 는 깨운 위임자를 `new Set` 으로 한 번씩만 친다.
     let mut seen = std::collections::HashSet::new();

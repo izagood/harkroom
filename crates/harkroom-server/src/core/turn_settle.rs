@@ -141,6 +141,12 @@ pub(crate) async fn notify_if_settled(
         return Ok(None);
     };
     fold_wakes_for_delegation(conn, delegation, &lead, &root, &message, out).await?;
+    // F1b — 자기 조각이고 열린 형제가 남았으면 깨우지 않는다(마지막 조각이 닫힐 때 표를 실어 한 번). 스위치가 꺼져 있으면 `None`.
+    if let Some(g) = super::split_collect::gate(conn, delegation).await?
+        && g.verdict == super::split_collect::Verdict::Hold
+    {
+        return Ok(None);
+    }
     sqlx::query(s.inbox.as_str())
         .bind(&lead)
         .bind(&message)
