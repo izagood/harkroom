@@ -50,9 +50,7 @@ export function ThreadPanel({ onOpenProfile, onOpenSettings, reserveLeft = MIN_C
   onOpenProfile?: (accountId: string) => void;
   onOpenSettings?: (section?: SectionId, targetId?: string) => void;
   /**
-   * 이 패널 왼쪽에 **남겨 둘 폭**. 기본은 대화의 하한이다. 왼쪽에 인박스가 서면 더 크게
-   * 받는다(`MIN_INBOX_WIDTH`, UX ① H2) — 222px 는 작성창에는 버틸 만한 폭이지만 인박스
-   * 줄(라벨·본문·채널·시각)에는 모자라 "불렀다" 가 한 글자씩 세로로 꺾였다.
+   * 이 패널 왼쪽에 **남겨 둘 폭**. 기본은 대화의 하한이다.
    */
   reserveLeft?: number;
 } = {}) {

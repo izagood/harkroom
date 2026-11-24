@@ -163,8 +163,6 @@ export function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
     scheduleMessage: vi.fn(),
     cancelScheduledMessage: vi.fn(async () => undefined),
     inboxUnread: vi.fn(async () => []),
-    // #185: 읽은 것까지 포함한 inbox 전체. 베이스가 덮어야 목록 화면 테스트가 fake 를 갈아끼울 수 있다.
-    inbox: vi.fn(async () => []),
     markRead: vi.fn(async () => undefined),
     wsTicket: vi.fn(async () => 'murt_fake'),
     editMessage: vi.fn(async () => ({ message: msg('m-edit', 'c1', 1, 'edited'), mentionSkipped: null })),

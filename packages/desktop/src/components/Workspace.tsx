@@ -3,7 +3,7 @@ import { useActiveStore, useCommunityRegistry } from '../state/communities';
 import { dumpEnterTrace, enterTraceSnapshot, isEnterTraceDumpShortcut } from '../lib/enterTrace';
 import { copyText } from '../lib/clipboard';
 import { getController } from '../state/controller';
-import { sidebarStorage, MIN_CHANNEL_WIDTH, MIN_INBOX_WIDTH } from '../lib/prefs';
+import { sidebarStorage, MIN_CHANNEL_WIDTH } from '../lib/prefs';
 import { usePrefsStore } from '../state/prefsStore';
 import { DEFAULT_ZOOM, stepZoom } from '../lib/zoom';
 // `isMacOS`·`MAC_TRAFFIC_LIGHT_PL` 이 여기 있었다 — 좌상단은 이제 늘 레일이다(아래 주석).
@@ -34,7 +34,6 @@ import { SearchPalette, type SearchScope } from './SearchPalette';
 import { ChannelSettingsSheet } from './ChannelSettingsSheet';
 import { Profile } from './Profile';
 import { ChannelDirectory } from './ChannelDirectory';
-import { Inbox } from './Inbox';
 import type { SectionId } from './settings/sections';
 import { useT } from '../i18n/useT';
 import { historyShortcut } from '../lib/historyShortcut';
@@ -67,7 +66,6 @@ export function Workspace({ onLogout, onOpenSettings, onRelogin = reloginNotWire
   const [searchInitialScope, setSearchInitialScope] = useState<SearchScope>('all');
   const [channelDirectoryOpen, setChannelDirectoryOpen] = useState(false);
   const [profileAccountId, setProfileAccountId] = useState<string | null>(null);
-  const [inboxOpen, setInboxOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => sidebarStorage.loadCollapsed());
   /**
    * 레일이 고른 칸(정본 문서 `docs/desktop-rail.html` 1단계). **레일 안이 아니라 여기서
@@ -75,7 +73,7 @@ export function Workspace({ onLogout, onOpenSettings, onRelogin = reloginNotWire
    * 되받는 배선이 생긴다. 형제 둘의 공통 부모가 이 화면이다.
    *
    * **영속하지 않는다.** 다시 열었을 때 DM 칸에서 시작하면 "채널이 사라졌다"로 읽히고,
-   * 홈은 Inbox·즐겨찾기·채널이 모두 있는 칸이라 어디로 갈지 고르기에 가장 나은 출발점이다.
+   * 홈은 즐겨찾기·채널이 모두 있는 칸이라 어디로 갈지 고르기에 가장 나은 출발점이다.
    * 기억해 둘 값이라는 근거가 실제로 생기면 `prefs` 에 넣는다(지금 넣으면 추측이다).
    */
   const [railPanel, setRailPanel] = useState<RailPanel>('home');
@@ -83,22 +81,20 @@ export function Workspace({ onLogout, onOpenSettings, onRelogin = reloginNotWire
   /**
    * **누른 것은 반드시 보인다** — 본문 자리에 대한 그 규칙의 정본이다(2026-09-16).
    *
-   * 신고: *"채널이랑 Inbox 를 누르면 ... 기존에 있던 창을 닫아야만 보인다."* 인박스를 열어
-   * 둔 채 사이드바에서 채널을 누르면 채널이 인박스 **뒤로** 열렸다 — 화면에는 아무 일도
-   * 일어나지 않아, 사람은 클릭이 먹지 않았다고 읽는다. 관제탑도 같다.
+   * 관제탑을 열어 둔 채 사이드바에서 채널을 누르면 채널이 관제탑 **뒤로** 열렸다 — 화면에는
+   * 아무 일도 일어나지 않아, 사람은 클릭이 먹지 않았다고 읽는다.
    *
    * 여기서 듣는 이유: 채널로 가는 길은 이 앱에 스무 곳이 넘고(사이드바·검색·링크·대기
    * 줄·뒤로/앞으로 …), 그 전부가 `controller.openChannel` 하나로 모인다. 그 자리에서 난
    * 신호 하나를 **본문을 쥐고 있는 이 화면**이 받는다(`channelRevealSeq` 주석).
    *
    * 답글로 가는 이동은 이 수를 올리지 않는다 — 스레드 패널은 오른쪽에 **형제로** 서므로
-   * 인박스가 접힐 이유가 없다(#783 이 세운 기본 동작).
+   * 본문을 바꿀 이유가 없다(#783 이 세운 기본 동작).
    *
-   * 마운트에도 한 번 돈다. 두 `set` 이 그때의 값과 같아(닫힘·홈) 아무 일도 일어나지 않으므로
+   * 마운트에도 한 번 돈다. `set` 이 그때의 값과 같아(홈) 아무 일도 일어나지 않으므로
    * 첫 실행을 따로 건너뛰지 않는다 — 건너뛰는 장치(ref)가 하나 더 있는 편이 더 틀리기 쉽다.
    */
   useEffect(() => {
-    setInboxOpen(false);
     setRailPanel((p) => (p === 'agents' ? 'home' : p));
   }, [channelRevealSeq]);
 
@@ -342,7 +338,6 @@ export function Workspace({ onLogout, onOpenSettings, onRelogin = reloginNotWire
       <Sidebar
         panel={railPanel}
         onOpenChannelDirectory={() => setChannelDirectoryOpen(true)}
-        onOpenInbox={() => setInboxOpen(true)}
         /* 에이전트 격자의 카드가 여는 곳. 신호는 `#279` 의 `onOpenSettings(section, targetId)`
            를 **재사용**한다 — 프로필의 `에이전트 설정` 버튼과 본문 멘션이 이미 그것으로 같은
            자리를 열고 있으므로, 새 신호를 만들면 같은 문에 손잡이가 셋이 된다. */
@@ -450,36 +445,6 @@ export function Workspace({ onLogout, onOpenSettings, onRelogin = reloginNotWire
             `ThreadPanel`·`TerminalPanel` 은 **형제로 그대로** 남는다 — 관제탑에서 문을
             열면 그 오른쪽에 서므로, 목록에서 방금 누른 줄이 밀려나지 않는다.
           */}
-          {/*
-            **본문 자리를 누가 갖는가.** 셋이 같은 칸을 쓰고, 순서가 곧 규칙이다.
-
-            ## 인박스는 열이 아니라 **본문**이다 (2026-09-11)
-
-            인박스는 오래 채널의 **왼쪽 열**이었다(#488 C2). 그 자리를 고른 이유는 지금도
-            옳다 — 문서가 *"막는 말을 확인하면서 그 스레드를 여는 것이 기본 동작"* 이라
-            했으므로 인박스와 스레드가 **동시에** 보여야 한다. 틀린 것은 자리가 아니라
-            **열을 하나 더 만든 것**이다: 레일·사이드바·인박스·채널·스레드 다섯이 서면
-            1440px 에서 맨 오른쪽이 잘리고, 하필 잘리는 것이 함께 보여야 할 그 스레드였다
-            (2026-09-11 신고, 스크린샷의 `Thr…`).
-
-            그래서 인박스가 **채널 열을 대신** 차지한다. 열이 하나 줄어 스레드가 온전히
-            서고, 인박스는 400px 에서 본문 폭으로 넓어진다. "동시에 보인다"는 잃지 않는다 —
-            잃는 것은 **그 뒤의 채널 타임라인**이고, 인박스를 훑는 동안 사람이 보는 것은
-            인박스와 그 줄이 여는 스레드지 뒤의 타임라인이 아니다.
-
-            선례가 이 파일에 이미 있다: Agents 칸이 똑같이 본문을 갈아 끼우고 스레드·
-            터미널은 형제로 남긴다. 새 규칙이 아니라 **있는 규칙을 인박스에도 적용**한 것이다.
-
-            ## Agents 칸이 인박스보다 앞이다
-
-            인박스를 여는 줄은 **홈 칸**에만 있다. 인박스를 열어 둔 채 Agents 칸을 누르면
-            관제탑이 서야 한다 — 인박스가 이 판정을 이기면 그 클릭이 **아무 일도 하지
-            않는다**. 인박스 상태는 그대로 남으므로 홈으로 돌아오면 보던 목록이 그대로 있다
-            (인박스는 홈 칸의 자리다).
-
-            목적지가 본문인 줄을 누르면 인박스가 스스로 접힌다 — 그 판정은 `Inbox.tsx` 의
-            `openEntry` 에 있다(누른 것이 반드시 보여야 하기 때문이다).
-          */}
           {hideMain ? null : railPanel === 'agents' ? (
             <AgentTower
               onOpenThread={(rootId) => {
@@ -490,8 +455,6 @@ export function Workspace({ onLogout, onOpenSettings, onRelogin = reloginNotWire
                 void getController().openMessage(rootId);
               }}
             />
-          ) : inboxOpen ? (
-            <Inbox open onClose={() => setInboxOpen(false)} />
           ) : (
             <ChannelPane
               onOpenSearch={handleOpenSearch}
@@ -503,8 +466,7 @@ export function Workspace({ onLogout, onOpenSettings, onRelogin = reloginNotWire
             <ThreadPanel
               onOpenProfile={handleOpenProfile}
               onOpenSettings={onOpenSettings}
-              // 인박스가 본문일 때는 스레드가 더 넓어지지 못하게 인박스 몫을 남긴다(UX ① H2).
-              reserveLeft={railPanel !== 'agents' && inboxOpen ? MIN_INBOX_WIDTH : MIN_CHANNEL_WIDTH}
+              reserveLeft={MIN_CHANNEL_WIDTH}
             />
           )}
           {/* #141: 터미널은 스레드 패널과 **같은 자리**를 쓰고 둘이 나란히 열린다.
@@ -525,8 +487,6 @@ export function Workspace({ onLogout, onOpenSettings, onRelogin = reloginNotWire
         />
       )}
       <ChannelDirectory open={channelDirectoryOpen} onClose={() => setChannelDirectoryOpen(false)} />
-      {/* `<Inbox>` 가 여기 있었다 — 이 묶음은 **화면을 덮는 것들**이고, 인박스는 이제
-          덮지 않는다(위 패널 줄의 주석). 나머지는 그대로 `Overlay` 를 쓴다. */}
     </div>
   );
 }

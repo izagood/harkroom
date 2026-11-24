@@ -1,13 +1,12 @@
 import { describe, it, expect, afterEach, beforeEach } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import type { InboxDelegationSummary, InboxEntry } from '@harkroom/shared';
-import { cardDelegation, chipRow, threadDelegations, MAX_VISIBLE_CHIPS, MAX_VISIBLE_CHIPS_NARROW, STALLED_MS } from '../src/lib/delegationDisplay';
+import { chipRow, threadDelegations, MAX_VISIBLE_CHIPS, MAX_VISIBLE_CHIPS_NARROW } from '../src/lib/delegationDisplay';
 import { DelegationChips } from '../src/components/DelegationChips';
-import { DelegationLabel } from '../src/components/DelegationLabel';
 import { usePrefsStore } from '../src/state/prefsStore';
 
 /**
- * 위임 표시(위임 재설계 v1 P6) — 인박스 카드 라벨 넷과 스레드 머리 아래 「맡긴 일」 칩 줄.
+ * 위임 표시(위임 재설계 v1 P6) — 스레드 머리 아래 「맡긴 일」 칩 줄.
  * 재료는 서버가 싣는 `InboxEntry.delegations` 하나다. 요약이 없으면(스위치 꺼짐·옛 서버) 화면은 지금과 같아야 한다.
  */
 const NOW = Date.parse('2026-11-09T12:00:00.000Z');
@@ -29,41 +28,6 @@ const item = (handle: string, state: Item['state'], extra: Partial<Item> = {}): 
 const summary = (items: Item[], extra: Partial<InboxDelegationSummary> = {}): InboxDelegationSummary => ({
   id: `d${++seq}`, role: 'delegator', kind: 'delegate', delegatorHandle: 'lead', messageId: 'open-msg',
   planStepId: null, items, prWatches: [], ...extra,
-});
-
-describe('cardDelegation — 인박스 라벨 넷', () => {
-  it('위임 사유도 요약도 없으면 라벨이 없다 — 지금 화면 그대로', () => {
-    expect(cardDelegation([entry({ reason: 'mention' })], NOW)).toBeNull();
-  });
-
-  it('담당의 글이 오면 진행 소식, 여럿이면 그 수를 센다', () => {
-    const got = cardDelegation([entry(), entry(), entry()], NOW);
-    expect(got).toEqual({ label: 'update', quietHours: null, updates: 3 });
-  });
-
-  it('결과(report)가 오면 「결과가 왔다」', () => {
-    const got = cardDelegation([entry({ delegations: [summary([item('a', 'reported')])] })], NOW);
-    expect(got?.label).toBe('reported');
-    expect(cardDelegation([entry({ reason: 'delegation_done' })], NOW)?.label).toBe('reported');
-  });
-
-  it('담당 하나라도 실패면 다른 담당의 결과보다 먼저 「막혔다」', () => {
-    const got = cardDelegation([entry({ delegations: [summary([item('a', 'reported'), item('b', 'failed')])] })], NOW);
-    expect(got?.label).toBe('failed');
-  });
-
-  it('결과 없는 담당이 오래 조용하면 「멈췄다 · n시간」 — 기준 아래면 아니다', () => {
-    const stalled = cardDelegation([entry({ delegations: [summary([item('a', 'open', { lastActivityAt: ago(STALLED_MS + H) })])] })], NOW);
-    expect(stalled).toMatchObject({ label: 'stalled', quietHours: 5 });
-    const fresh = cardDelegation([entry({ delegations: [summary([item('a', 'open', { lastActivityAt: ago(STALLED_MS - H) })])] })], NOW);
-    expect(fresh?.label).toBe('update');
-  });
-
-  it('담당 쪽 요약(내가 맡은 일)은 라벨을 만들지 않는다', () => {
-    const got = cardDelegation([entry({ reason: 'mention', delegations: [summary([item('me', 'failed')], { role: 'delegate' })] })], NOW);
-    expect(got).toBeNull();
-  });
-
 });
 
 describe('chipRow — 칩 줄', () => {
@@ -176,21 +140,5 @@ describe('화면 — ko/en', () => {
     expect(screen.getByTestId('delegation-chip-a').parentElement!.className).not.toContain('hidden');
     fireEvent.click(narrowMore);
     expect(screen.getByTestId('delegation-chip-b').parentElement!.className).not.toContain('hidden');
-  });
-
-  it('라벨 넷 — ko 와 en', () => {
-    const labels = [
-      { label: 'update', quietHours: null, updates: 1 },
-      { label: 'reported', quietHours: null, updates: 0 },
-      { label: 'failed', quietHours: null, updates: 0 },
-      { label: 'stalled', quietHours: 4, updates: 0 },
-    ] as const;
-    const { container, rerender } = render(<>{labels.map((d) => <DelegationLabel key={d.label} delegation={d} />)}</>);
-    expect([...container.querySelectorAll('[data-label]')].map((e) => e.textContent))
-      .toEqual(['진행 소식', '결과가 왔다', '맡긴 일이 막혔다', '멈췄다 · 4시간 조용']);
-    usePrefsStore.getState().setLocale('en');
-    rerender(<>{labels.map((d) => <DelegationLabel key={d.label} delegation={d} />)}</>);
-    expect([...container.querySelectorAll('[data-label]')].map((e) => e.textContent))
-      .toEqual(['Progress', 'Results are in', 'Handoff stuck', 'Stalled · quiet 4h']);
   });
 });

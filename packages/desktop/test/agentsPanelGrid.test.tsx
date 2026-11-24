@@ -57,7 +57,6 @@ const renderAgentsPanel = (
 ) =>
   render(
     <Sidebar panel="agents" onOpenChannelDirectory={() => {}}
-      onOpenInbox={() => {}}
       onOpenAgentConfig={doors.onOpenAgentConfig ?? (() => {})}
       onOpenProfile={doors.onOpenProfile ?? (() => {})}
       collapsed={false} onToggleCollapse={vi.fn()} />,

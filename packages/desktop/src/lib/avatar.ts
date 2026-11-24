@@ -46,7 +46,7 @@ const CODE_KEY: Record<string, MessageKey> = {
 
 /**
  * 번역기를 **필수 인자로 맨 뒤에** 받는다. 기본값을 주면 부르는 화면이 그것을 안 넘겨도
- * 컴파일이 통과하고 **그 화면만 한 언어로 굳는다** — `lastTurnAgo`·`inboxRow` 와 같은 규약.
+ * 컴파일이 통과하고 **그 화면만 한 언어로 굳는다** — `lastTurnAgo` 와 같은 규약.
  */
 export function avatarErrorMessage(err: unknown, t: Translate): string {
   if (err instanceof ApiError) {

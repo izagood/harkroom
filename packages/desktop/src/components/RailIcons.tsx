@@ -46,7 +46,7 @@ function Icon({ children, size = 20 }: { children: ReactElement | ReactElement[]
   );
 }
 
-/** 홈 — 집. Inbox·디렉터리까지 받는 칸이라 그 자리를 가장 넓게 말하는 그림이다. */
+/** 홈 — 집. 디렉터리까지 받는 칸이라 그 자리를 가장 넓게 말하는 그림이다. */
 export function HomeIcon(): ReactElement {
   return (
     <Icon>

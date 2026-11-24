@@ -68,7 +68,7 @@ function seed(entry: CommunityEntry, handle: string, connected: boolean) {
 
 const renderSidebar = () => render(
   <Sidebar panel="home"
-    onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}}
+    onOpenChannelDirectory={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}}
     collapsed={false} onToggleCollapse={() => {}}
   />,
 );

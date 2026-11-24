@@ -221,7 +221,7 @@ describe('칸은 요약이다', () => {
     useAppStore.getState().set(판());
     render(
       <Sidebar panel="agents" onOpenChannelDirectory={() => {}}
-        onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}}
+        onOpenAgentConfig={() => {}} onOpenProfile={() => {}}
         collapsed={false} onToggleCollapse={vi.fn()} />,
     );
     // 턴 요약은 관제탑과 같은 목록이라 뺐다 — 칸은 세션을 묻지도 않는다(폴러는 관제탑 하나).

@@ -2,7 +2,7 @@ import type {
   AutomationIngressIssued, AutomationRunView, AutomationTrigger, AutomationView,
   McpServerRow, AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentSessionView,
   AgentModelOptions, AgentPickableModel, AgentPickableSaved, AgentModelPick, ThreadAgentModelView, ThreadPlanView,
-  AgentWakeView, AgentTeamMemberRow, AgentTeamRow, AgentView, AgentAssignmentView, AccountView, MeView, OperatorView, OperatorCapabilities, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, ChannelSectionRow, CollabProposalsView, DmView, HandleGroupRow, InboxEntry, InviteCreated, InviteView, InboxThreadState, InvokeScope, LeaseRow, MentionEditSkipReason, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionConfigView, ProjectionStatus, ServerHealth, ServerVersion, SavedMessageRow, ScheduledMessageView, WorkspaceSkillView } from '@harkroom/shared';
+  AgentWakeView, AgentTeamMemberRow, AgentTeamRow, AgentView, AgentAssignmentView, AccountView, MeView, OperatorView, OperatorCapabilities, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, ChannelSectionRow, CollabProposalsView, DmView, HandleGroupRow, InboxEntry, InviteCreated, InviteView, InvokeScope, LeaseRow, MentionEditSkipReason, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionConfigView, ProjectionStatus, ServerHealth, ServerVersion, SavedMessageRow, ScheduledMessageView, WorkspaceSkillView } from '@harkroom/shared';
 import { AVATAR_SOURCE_HEADER, MENTION_EDIT_SKIPPED_HEADER, type AvatarCrop, type AvatarSourceMeta, type GrantRow, type Capability, type Role, type ApiAuthKind, type ApiConnectorView, type ApiGrantLimits, type ApiTokenForm, type ApiMethod, type ApiErrorDetail } from '@harkroom/shared';
 import type { MemoryAudit, MemoryBatchResult, MemoryEdit, MemoryEntry, MemoryRevision } from './memoryList';
 import { readNotifiedHeaders, type NotifiedResult } from './notified';
@@ -487,24 +487,6 @@ export class ApiClient {
   }
   async inboxUnread(): Promise<InboxEntry[]> {
     return (await this.req<{ entries: InboxEntry[] }>('GET', '/inbox?unread=1')).entries;
-  }
-  /**
-   * inbox 전체 — 읽은 것까지(#185). `inboxUnread` 와 갈라 두는 이유는 **쓰는 곳이 다른 것을
-   * 물어보기 때문**이다: 배지·알림은 "아직 안 본 것"만 알면 되고(그래서 `?unread=1`),
-   * 목록 화면은 읽은 것도 있어야 "안 읽음만" 필터가 고를 것이 생긴다. 안 읽은 것만 받아
-   * 놓고 안 읽음 필터를 붙이면 그 스위치는 항상 참이라 아무것도 거르지 않는다.
-   *
-   * 서버 파라미터를 새로 만들지 않았다 — `GET /inbox` 는 `unread` 가 없으면 이미 전체를
-   * 준다(`listInbox` 의 `unreadOnly` 기본값이 false).
-   */
-  async inbox(): Promise<InboxEntry[]> {
-    return (await this.req<{ entries: InboxEntry[] }>('GET', '/inbox')).entries;
-  }
-  /** 스레드 하나의 **내** 완료·나중에(2/2, 089). `state: null` 이면 되돌린다. */
-  setInboxThreadState(
-    rootId: string, body: { state: 'done' } | { state: 'later'; until: string } | { state: null },
-  ): Promise<{ state: InboxThreadState | null }> {
-    return this.req('PUT', `/inbox/threads/${rootId}`, body);
   }
   /**
    * 메시지를 고친다. 수정으로 넣은 멘션도 서버가 부르지만(076) 몇 명을 불렀는지는 화면에

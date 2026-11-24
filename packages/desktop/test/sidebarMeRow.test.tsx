@@ -56,7 +56,7 @@ const mount = (props: Partial<{ onOpenSettings: (section?: SectionId) => void; o
       />
       <Sidebar panel="home"
         onOpenChannelDirectory={() => {}}
-        onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}}
+        onOpenAgentConfig={() => {}} onOpenProfile={() => {}}
         collapsed={false}
         onToggleCollapse={vi.fn()}
       />
@@ -75,11 +75,11 @@ const mountBothPanels = () =>
   render(
     <>
       <Sidebar panel="home"
-        onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}}
+        onOpenChannelDirectory={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}}
         collapsed={false} onToggleCollapse={vi.fn()}
       />
       <Sidebar panel="dm"
-        onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}}
+        onOpenChannelDirectory={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}}
         collapsed={false} onToggleCollapse={vi.fn()}
       />
     </>,
@@ -313,8 +313,6 @@ describe('A2 · `+` 는 그 목록의 첫 칸에 산다', () => {
 
     expect(screen.queryByText(/Add or edit agents/)).toBeNull();
     /*
-      이동 묶음은 그대로 있다 — 설정 한 줄을 뺀 것이지 묶음을 지운 것이 아니다.
-
       **`Saved` 는 이제 여기 없다**(레일 문서): *"북마크는 레일에만 둔다 — 자기 칸이 있는데
       홈에도 한 줄을 세우면 같은 것으로 가는 길이 둘이 되고, 그때부터 사람은 어느 쪽이
       맞는지 매번 고른다."* 그래서 `nav` 안에서 찾아 없음을 확인하고, 레일에 그 칸이
@@ -322,8 +320,8 @@ describe('A2 · `+` 는 그 목록의 첫 칸에 산다', () => {
     */
     const nav = screen.getByRole('navigation', { name: '주 목록' });
     const sidebarNav = document.querySelector('aside nav')!;
-    expect(within(sidebarNav as HTMLElement).getByText('인박스')).toBeTruthy();
-    // `디렉터리` 한 줄도 여기 있었다 — 지웠다(2026-11-23). 사람·에이전트 찾기는 맨 위 찾기가 한다.
+    // `인박스`·`디렉터리` 한 줄도 여기 있었다 — 지웠다.
+    expect(within(sidebarNav as HTMLElement).queryByText('인박스')).toBeNull();
     expect(within(sidebarNav as HTMLElement).queryByText('디렉터리')).toBeNull();
     expect(within(sidebarNav as HTMLElement).queryByText('저장한 메시지')).toBeNull();
     expect(within(nav).getByTestId('rail-saved')).toBeTruthy();

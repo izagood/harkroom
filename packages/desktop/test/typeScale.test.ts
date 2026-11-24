@@ -160,11 +160,6 @@ const ALLOWED: { file: string; contains: string; why: string }[] = [
     why: '아바타 원(h-5) 안의 머리글자 — 사람·에이전트 두 분기가 같은 줄을 쓴다',
   },
   {
-    file: 'components/Inbox.tsx',
-    contains: '<Identity account={who} className="h-5 w-5 shrink-0 text-[10px]"',
-    why: '아바타 상자(h-5)와 글리프를 한 쌍으로 넘기는 호출부',
-  },
-  {
     file: 'components/settings/SecretsSettings.tsx',
     contains: '<Identity account={accounts[g.agentId]} className="h-5 w-5 text-[10px]"',
     why: '같은 쌍 — 비밀 받는 에이전트 줄의 h-5 얼굴',

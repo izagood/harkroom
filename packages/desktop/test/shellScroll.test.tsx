@@ -29,24 +29,18 @@
 // 1 만 고쳐도 오늘의 증상은 사라지지만 둘 다 고친다: 1 은 이 한 자리의 사실이고 2 는
 // **다음에 또 abspos 가 새면 같은 증상이 그대로 돌아온다**는 구조다.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
-import type { InboxEntry } from '@harkroom/shared';
+import { render, cleanup, waitFor } from '@testing-library/react';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { Workspace } from '../src/components/Workspace';
 import { Identity } from '../src/components/Identity';
 import { acc, chan, fakeApi, msg } from './helpers/fakeApi';
 
-const entry = (id: number, channelId: string): InboxEntry => ({
-  id, messageId: `m${id}`, reason: 'mention', readAt: null, channelId, authorId: 'u2',
-  body: '이거 봐줘', meta: {}, createdAt: '2024-01-01T00:00:00.000Z', threadRootId: null,
-});
-
-/** `inboxPane.test.tsx` 와 같은 이유로 `Workspace` 를 통째로 띄운다 — 재는 것이 **껍데기**다. */
-const mount = (rows: InboxEntry[], extra: Record<string, unknown> = {}) => {
+/** `Workspace` 를 통째로 띄운다 — 재는 것이 **껍데기**다. */
+const mount = (extra: Record<string, unknown> = {}) => {
   const api = fakeApi();
   setController({
-    api: { ...api, inbox: vi.fn(async () => rows) },
+    api,
     openMessage: vi.fn(async () => undefined),
     openChannel: vi.fn().mockResolvedValue(undefined),
     openThread: vi.fn(),
@@ -62,7 +56,7 @@ const mount = (rows: InboxEntry[], extra: Record<string, unknown> = {}) => {
     goForward: vi.fn().mockResolvedValue(false),
   } as unknown as Controller);
   useAppStore.getState().set({
-    unread: rows,
+    unread: [],
     me: acc('u1', 'me'),
     accounts: { u1: acc('u1', 'me'), u2: acc('u2', 'someone') },
     channels: [chan('c1', 'general')],
@@ -74,7 +68,6 @@ const mount = (rows: InboxEntry[], extra: Record<string, unknown> = {}) => {
   render(<Workspace onLogout={vi.fn()} onOpenSettings={vi.fn()} />);
 };
 
-const openInbox = (): void => { fireEvent.click(screen.getByText('Inbox')); };
 
 /**
  * jsdom 에는 `scrollIntoView` 가 없다 — 제품 코드가 `?.()` 로 부르는 이유다(그 옵셔널을
@@ -108,26 +101,6 @@ describe('sr-only 는 자기 상자를 벗어나지 않는다', () => {
       expect(s.parentElement!.className).toMatch(/(^|\s)relative(\s|$)/);
     }
   });
-
-  /**
-   * 위 규칙이 **실제 화면에서** 지켜지는지 본다. 단위로만 재면 인박스 줄이 나중에
-   * 자기 마크업으로 아바타를 그리기 시작해도 초록이 남는다.
-   */
-  it('인박스 줄의 모든 sr-only 가 positioned 부모를 갖는다', async () => {
-    // 오늘 온 말이어야 받은 일 목록에 선다(7일 넘게 조용한 것은 목록 밖이다).
-    const now = new Date().toISOString();
-    mount([{ ...entry(1, 'c1'), createdAt: now }, { ...entry(2, 'c1'), createdAt: now }]);
-    openInbox();
-    const pane = await screen.findByTestId('inbox-pane');
-    await waitFor(() => expect(screen.getByTestId('inbox-row-1')).toBeTruthy());
-
-    const srOnly = pane.querySelectorAll('.sr-only');
-    expect(srOnly.length).toBeGreaterThan(0);
-    for (const s of srOnly) {
-      // `relative`·`absolute`·`fixed`·`sticky` 중 무엇이든 상자를 세우면 된다.
-      expect(s.parentElement!.className).toMatch(/(^|\s)(relative|absolute|fixed|sticky)(\s|$)/);
-    }
-  });
 });
 
 describe('scrollIntoView 는 바깥 상자를 끌지 않는다', () => {
@@ -136,7 +109,7 @@ describe('scrollIntoView 는 바깥 상자를 끌지 않는다', () => {
    * `block:'start'` 라 **문서까지** 밀린다 — 앱 전체가 창 위로 올라가는 그 움직임이다.
    */
   it('채널 바닥으로 내려갈 때 nearest 로 부른다', () => {
-    mount([]);
+    mount();
     expect(scrollIntoView).toHaveBeenCalled();
     for (const call of scrollIntoView.mock.calls) {
       expect(call[0]).toEqual({ block: 'nearest' });
@@ -145,32 +118,10 @@ describe('scrollIntoView 는 바깥 상자를 끌지 않는다', () => {
 
   /** 강조로 이동할 때도 같다(`MessageItem`). 인박스에서 줄을 눌렀을 때 지나는 길이다. */
   it('강조된 메시지로 이동할 때 nearest 로 부른다', async () => {
-    mount([], { highlightedMessageId: 'm1' });
+    mount({ highlightedMessageId: 'm1' });
     await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
     for (const call of scrollIntoView.mock.calls) {
       expect(call[0]).toEqual({ block: 'nearest' });
     }
-  });
-});
-
-describe('인박스를 여는 포커스가 껍데기를 밀지 않는다', () => {
-  /**
-   * 자리를 열면 포커스가 그 자리로 들어간다(`Inbox` 의 주석: 트랩 대신 이것을 둔다).
-   * 포커스는 기본으로 **대상을 보이게 스크롤한다** — 그 길도 닫아 둔다.
-   */
-  it('preventScroll 로 포커스를 준다', async () => {
-    const focus = vi.spyOn(HTMLElement.prototype, 'focus');
-    mount([entry(1, 'c1')]);
-    openInbox();
-    const pane = await screen.findByTestId('inbox-pane');
-
-    // `contexts` 가 각 호출의 `this` 다 — 프로토타입 스파이라 "누구에게 준 포커스인가"를
-    // 이것으로만 가른다(`instances` 는 생성자 호출용이라 여기서는 비어 있다).
-    const paneFocus = focus.mock.calls.filter((_c, i) => focus.mock.contexts[i] === pane);
-    expect(paneFocus.length).toBeGreaterThan(0);
-    for (const call of paneFocus) {
-      expect(call[0]).toEqual({ preventScroll: true });
-    }
-    focus.mockRestore();
   });
 });

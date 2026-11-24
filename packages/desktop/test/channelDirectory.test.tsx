@@ -37,7 +37,6 @@ const sidebarProps = {
   onOpenAgentConfig: () => {},
   onOpenProfile: () => {},
   onOpenChannelDirectory: () => {},
-  onOpenInbox: () => {},
   onLogout: () => {},
   onOpenSettings: () => {},
   collapsed: false,

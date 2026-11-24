@@ -54,7 +54,7 @@ export function isLocale(value: string): value is Locale {
  * 키가 나오나"가 아니라 "사람이 무엇을 읽나"를 지킨다. (a) 는 그 의도를 잃는다.
  *
  * 그리고 `t` 는 React 를 모른다. 판정 함수는 **여전히 컨텍스트에 안 묶인다** — 그것이
- * 이 저장소가 `threadState`·`faceState`·`inboxRow` 를 `lib/` 에 둔 이유이기 때문이다.
+ * 이 저장소가 `threadState`·`faceState` 를 `lib/` 에 둔 이유이기 때문이다.
  */
 export interface Translate {
   (key: MessageKey, args?: TransArgs): string;

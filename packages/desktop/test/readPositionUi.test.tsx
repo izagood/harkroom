@@ -76,7 +76,7 @@ describe('채널 미읽음 배지', () => {
   it('shows the unread count on a channel that has one', () => {
     useAppStore.getState().set({ reads: { c2: { lastReadSeq: 0, unread: 3 } } });
 
-    render(<Sidebar panel="home" onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}} collapsed={false} onToggleCollapse={() => {}} />);
+    render(<Sidebar panel="home" onOpenChannelDirectory={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}} collapsed={false} onToggleCollapse={() => {}} />);
 
     expect(screen.getByLabelText('3 unread in other')).toBeTruthy();
   });
@@ -94,7 +94,7 @@ describe('채널 미읽음 배지', () => {
         authorId: 'u2', body: 'hi', meta: {}, createdAt: '2024-01-01T00:00:00.000Z', threadRootId: null }],
     });
 
-    render(<Sidebar panel="home" onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}} collapsed={false} onToggleCollapse={() => {}} />);
+    render(<Sidebar panel="home" onOpenChannelDirectory={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}} collapsed={false} onToggleCollapse={() => {}} />);
 
     const dot = screen.getByLabelText('3 unread in other');
     const badge = screen.getByTestId('unread-c2');
@@ -108,7 +108,7 @@ describe('채널 미읽음 배지', () => {
   it('shows no badge at zero', () => {
     useAppStore.getState().set({ reads: { c2: { lastReadSeq: 5, unread: 0 } } });
 
-    render(<Sidebar panel="home" onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}} collapsed={false} onToggleCollapse={() => {}} />);
+    render(<Sidebar panel="home" onOpenChannelDirectory={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}} collapsed={false} onToggleCollapse={() => {}} />);
 
     expect(screen.queryByLabelText(/unread in other/)).toBeNull();
   });

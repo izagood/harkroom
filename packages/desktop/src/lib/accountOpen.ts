@@ -48,7 +48,7 @@ export function accountOpen(
   viewer: Viewer,
   { onOpenProfile, onOpenSettings }: AccountOpeners,
   // 번역기를 **맨 뒤에 필수로** 받는다 — 기본값을 주면 부르는 화면이 안 넘겨도 컴파일이
-  // 통과하고 그 화면의 접근 이름만 한 언어로 굳는다(`lastTurnAgo`·`inboxRow` 와 같은 규약).
+  // 통과하고 그 화면의 접근 이름만 한 언어로 굳는다(`lastTurnAgo` 와 같은 규약).
   t: Translate,
 ): AccountOpen | null {
   if (!account) return null;

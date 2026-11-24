@@ -46,7 +46,7 @@ const seed = () => {
 };
 
 const sidebar = () => render(
-  <SidebarWithSheet panel="home" onOpenChannelDirectory={vi.fn()} onOpenInbox={vi.fn()} onOpenAgentConfig={() => {}} onOpenProfile={() => {}} collapsed={false} onToggleCollapse={vi.fn()} />,
+  <SidebarWithSheet panel="home" onOpenChannelDirectory={vi.fn()} onOpenAgentConfig={() => {}} onOpenProfile={() => {}} collapsed={false} onToggleCollapse={vi.fn()} />,
 );
 
 const openEdit = (): void => {

@@ -59,7 +59,7 @@ const fakeController = () => {
 
 const renderSidebar = () => render(
   <Sidebar panel="dm"
-    onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}}
+    onOpenChannelDirectory={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}}
     collapsed={false} onToggleCollapse={vi.fn()}
   />,
 );
