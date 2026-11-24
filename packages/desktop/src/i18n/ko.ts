@@ -599,6 +599,7 @@ export const ko = {
   'automations.err.forbidden': '보낼 채널에 쓸 권한이 없다',
   'automations.err.rejected': '서버가 글을 받지 않았다',
   'automations.err.badThread': '답글을 달 스레드를 찾지 못했다',
+  'automations.err.replacedByBuiltin': '기본 기능으로 대체됨 — 기억 정리는 이제 매일 자동으로 돈다.',
   'automations.err.rateLimited': '1시간에 20번을 넘어 이 자동화를 껐다. 다시 켜면 다음 회차부터 돈다.',
   'automations.err.attachment': '첨부를 붙이지 못했다',
   'automations.err.unknown': '알 수 없는 이유',

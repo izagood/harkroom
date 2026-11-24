@@ -268,7 +268,16 @@ pub async fn answer(
             .duration_since(std::time::UNIX_EPOCH)
             .ok()?
             .as_millis() as i64;
-        return Some(super::bg_claim::claim(read, write, &me.id, now_ms).await);
+        return Some(
+            super::bg_claim::claim(
+                read,
+                write,
+                &me.id,
+                now_ms,
+                writes.switches.background == Some(true),
+            )
+            .await,
+        );
     }
     if tool == "message.askBundle" {
         let Some(write) = writes.bundle.as_ref() else {

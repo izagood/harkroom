@@ -80,6 +80,7 @@ export function runErrorText(code: string | null | undefined, t: Translate): str
     case 'forbidden': return t('automations.err.forbidden');
     case 'rejected': return t('automations.err.rejected');
     case 'bad_thread': return t('automations.err.badThread');
+    case 'replaced_by_builtin': return t('automations.err.replacedByBuiltin');
     case 'rate_limited': return t('automations.err.rateLimited');
     case 'not_found': case 'not_yours': case 'already_attached': return t('automations.err.attachment');
     default: return t('automations.err.unknown');

@@ -61,6 +61,8 @@ pub struct MemoryWriteState {
     pub trust: TrustProxy,
     /// 쓰기 풀에 [`BG_REVERT_PRIVILEGES`] 가 다 있는가 — 아니면 되돌리기 줄을 달지 않는다(→ TS).
     pub revert: bool,
+    /// [`MEMORY_CLEANUP_PRIVILEGES`] 가 다 있는가 — 아니면 매일 정리 설정 줄을 달지 않는다.
+    pub cleanup: bool,
 }
 
 /// 쓰기 함수들은 `me.id` 만 읽는다 — 사람이 남의(에이전트의) 기억을 고치므로 그 에이전트를 주인 자리에 둔다.
@@ -454,6 +456,178 @@ pub async fn background(
     json_ok(json!({ "ok": true, "enabled": enabled }).to_string())
 }
 
+/// 매일 기억 정리 설정이 [`AGENT_MEMORY_WRITE_PRIVILEGES`] 위에 더 쓰는 것. 없으면 그 줄들을 달지 않는다.
+pub const MEMORY_CLEANUP_PRIVILEGES: &[(&str, &str)] = &[
+    ("agent_config.memory_cleanup_on", "UPDATE"),
+    ("workspace_profile.id", "SELECT"),
+    ("workspace_profile.memory_cleanup_on", "SELECT"),
+    ("workspace_profile.memory_cleanup_time", "SELECT"),
+    ("workspace_profile.memory_cleanup_tz", "SELECT"),
+    ("workspace_profile.memory_cleanup_on", "UPDATE"),
+    ("workspace_profile.memory_cleanup_time", "UPDATE"),
+    ("workspace_profile.memory_cleanup_tz", "UPDATE"),
+];
+
+/// `GET /accounts/agents/{id}/memory-cleanup` — 이 에이전트의 매일 정리 켜짐.
+pub async fn cleanup_get(
+    State(st): State<Arc<MemoryWriteState>>,
+    crate::auth::RequireAccount(me, _): crate::auth::RequireAccount,
+    Path(id): Path<String>,
+) -> Response {
+    if let Err(r) = access(&st.read, &me, &id, None).await {
+        return r;
+    }
+    match sqlx::query_scalar::<_, bool>(
+        "select memory_cleanup_on from agent_config where account_id = $1::uuid",
+    )
+    .bind(&id)
+    .fetch_optional(&st.write)
+    .await
+    {
+        Ok(v) => json_ok(json!({ "enabled": v.unwrap_or(true) }).to_string()),
+        Err(e) => internal(e),
+    }
+}
+
+/// `PUT /accounts/agents/{id}/memory-cleanup` — `{ enabled }`.
+pub async fn cleanup_put(
+    State(st): State<Arc<MemoryWriteState>>,
+    Path(id): Path<String>,
+    req: Request,
+) -> Response {
+    let (body, RequireAccount(me, _), parts) = match body_then::<RequireAccount>(req).await {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    if let Err(r) = access(&st.read, &me, &id, None).await {
+        return r;
+    }
+    let Body::Json(Value::Object(m)) = &body else {
+        return bad("body");
+    };
+    let Some(Value::Bool(enabled)) = m.get("enabled") else {
+        return bad("body");
+    };
+    if let Err(r) = agent_target(&st.write, &id, true).await {
+        return r;
+    }
+    if let Err(e) = sqlx::query(
+        "insert into agent_config (account_id, memory_cleanup_on) values ($1::uuid, $2) \
+         on conflict (account_id) do update set memory_cleanup_on = excluded.memory_cleanup_on",
+    )
+    .bind(&id)
+    .bind(enabled)
+    .execute(&st.write)
+    .await
+    {
+        return internal(e);
+    }
+    let detail = json!({ "enabled": enabled });
+    audit(
+        &st,
+        &parts,
+        &me,
+        "agent.memory_cleanup.toggled",
+        &id,
+        detail,
+    )
+    .await;
+    json_ok(json!({ "ok": true, "enabled": enabled }).to_string())
+}
+
+/// `HH:MM`(24시간).
+fn valid_time(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() == 5
+        && b[2] == b':'
+        && s[..2].parse::<u8>().is_ok_and(|h| h < 24)
+        && s[3..].parse::<u8>().is_ok_and(|m| m < 60)
+        && [0, 1, 3, 4].iter().all(|&i| b[i].is_ascii_digit())
+}
+
+type Workspace = (bool, String, String);
+
+async fn workspace_cleanup(pool: &PgPool) -> Result<Workspace, sqlx::Error> {
+    sqlx::query_as(
+        "select memory_cleanup_on, to_char(memory_cleanup_time, 'HH24:MI'), memory_cleanup_tz \
+         from workspace_profile where id = true",
+    )
+    .fetch_one(pool)
+    .await
+}
+
+fn workspace_json((enabled, time, tz): Workspace) -> Response {
+    json_ok(json!({ "enabled": enabled, "time": time, "tz": tz }).to_string())
+}
+
+/// `GET /settings/memory-cleanup` — 워크스페이스의 매일 정리 켜짐·시각·시간대(admin).
+pub async fn workspace_get(
+    State(st): State<Arc<MemoryWriteState>>,
+    crate::auth::RequireAdmin(_me): crate::auth::RequireAdmin,
+) -> Response {
+    match workspace_cleanup(&st.write).await {
+        Ok(w) => workspace_json(w),
+        Err(e) => internal(e),
+    }
+}
+
+/// `PUT /settings/memory-cleanup` — `{ enabled, time: "HH:MM", tz }`(admin).
+pub async fn workspace_put(State(st): State<Arc<MemoryWriteState>>, req: Request) -> Response {
+    let (body, crate::auth::RequireAdmin(me), parts) =
+        match body_then::<crate::auth::RequireAdmin>(req).await {
+            Ok(v) => v,
+            Err(r) => return r,
+        };
+    let Body::Json(Value::Object(m)) = &body else {
+        return bad("body");
+    };
+    let (Some(Value::Bool(enabled)), Some(time), Some(tz)) = (
+        m.get("enabled"),
+        m.get("time").and_then(Value::as_str),
+        m.get("tz").and_then(Value::as_str),
+    ) else {
+        return bad("body");
+    };
+    if !valid_time(time) || tz.len() > 64 {
+        return bad("body");
+    }
+    // 모르는 시간대를 저장하면 넣기 질의가 매번 실패한다 — Postgres 가 아는 이름만.
+    match sqlx::query_scalar::<_, bool>(
+        "select exists(select 1 from pg_timezone_names where name = $1)",
+    )
+    .bind(tz)
+    .fetch_one(&st.write)
+    .await
+    {
+        Ok(true) => {}
+        Ok(false) => return bad("body"),
+        Err(e) => return internal(e),
+    }
+    if let Err(e) = sqlx::query(
+        "update workspace_profile set memory_cleanup_on = $1, memory_cleanup_time = $2::text::time, memory_cleanup_tz = $3 \
+         where id = true",
+    )
+    .bind(enabled)
+    .bind(time)
+    .bind(tz)
+    .execute(&st.write)
+    .await
+    {
+        return internal(e);
+    }
+    let detail = json!({ "enabled": enabled, "time": time, "tz": tz });
+    audit(
+        &st,
+        &parts,
+        &me,
+        "workspace.memory_cleanup.updated",
+        "workspace",
+        detail,
+    )
+    .await;
+    workspace_json((*enabled, time.to_owned(), tz.to_owned()))
+}
+
 /// TS `revertBgRun` 의 결말.
 enum Reverted {
     Done {
@@ -670,6 +844,7 @@ pub fn routes(
 ) -> crate::route_table::Routes<()> {
     use crate::route_table::Table;
     let revert_on = st.revert;
+    let cleanup_on = st.cleanup;
     let t = Table::<Arc<MemoryWriteState>>::new()
         .delete("/accounts/agents/{id}/memory/{slug}", remove)
         .put("/accounts/agents/{id}/memory/{slug}", put)
@@ -682,6 +857,14 @@ pub fn routes(
             "/accounts/agents/{id}/background/runs/{runId}/revert",
             revert,
         )
+    } else {
+        t
+    };
+    let t = if cleanup_on {
+        t.get("/accounts/agents/{id}/memory-cleanup", cleanup_get)
+            .put("/accounts/agents/{id}/memory-cleanup", cleanup_put)
+            .get("/settings/memory-cleanup", workspace_get)
+            .put("/settings/memory-cleanup", workspace_put)
     } else {
         t
     };
@@ -711,6 +894,16 @@ mod tests {
 
     fn j(v: Value) -> Body {
         Body::Json(v)
+    }
+
+    #[test]
+    fn cleanup_time_is_hh_mm() {
+        for ok in ["00:00", "03:00", "23:59"] {
+            assert!(valid_time(ok), "{ok}");
+        }
+        for no in ["24:00", "3:00", "03:60", "+3:00", "03-00", "", "한:0"] {
+            assert!(!valid_time(no), "{no}");
+        }
     }
 
     #[test]

@@ -7,9 +7,7 @@ use serde_json::Value;
 use sqlx::PgPool;
 
 /// TS `memory.list` = `listMemoryIndex` · `memoryRev` · `bgCleanupOn`(services/memory.ts · bgJobs.ts) 의 문장 그대로.
-/// `bgCleanup` 은 서버 env(`HARKROOM_BACKGROUND_ENABLED`)에 걸려 있다 — 앞단이 그 env 를 받았으면(`AdmitSwitches.background`)
-/// Rust 가 TS 와 같은 판정으로 붙인다. 앞단에 값이 없고 그 값이 참일 **수 있는** 에이전트(설정이 켜졌고 하네스가 claude-code)만
-/// TS 로 넘긴다([`memory_list_text`]). 나머지는 env 와 상관없이 거짓이다.
+/// `bgCleanup` 은 매일 기억 정리가 **실제로 돌고 있을 때**(지난 3일 안에 끝난 정리 회차) 참이다 — 러너가 목록의 정리 신호를 싣지 않는다.
 const MEMORY_LIST_SQL: &str = "with e as (select slug, case when flagged_at is null then description end as description, kind, char_length(value) as chars \
        from agent_memory where account_id = $1::uuid and archived_at is null order by slug) \
      select json_build_object( \
@@ -17,7 +15,7 @@ const MEMORY_LIST_SQL: &str = "with e as (select slug, case when flagged_at is n
        'entries', coalesce((select json_agg(e) from e), '[]'::json), \
        'rev', (select coalesce(md5(string_agg(slug || ':' || (extract(epoch from updated_at) * 1000000)::bigint, ',' order by slug)), 'empty') \
                from agent_memory where account_id = $1::uuid))::text, \
-       coalesce((select bg_enabled = true and harness = 'claude-code' from agent_config where account_id = $1::uuid), false)";
+       exists (select 1 from bg_job where account_id = $1::uuid and kind = 'cleanup' and status = 'done' and finished_at > now() - interval '3 days')";
 
 /// TS `listGrantedSecrets`(services/secretAccess.ts) 그대로 — 값·판·소유자는 싣지 않는다.
 const SECRET_LIST_SQL: &str = "select coalesce(json_agg(t), '[]'::json)::text from ( \
@@ -207,27 +205,21 @@ async fn memory_revisions(pool: &PgPool, me: &Account, args: &Value) -> Option<S
     Some(text_result(&out))
 }
 
-/// TS `memory.list` 의 마지막 줄 — `...(bgCleanup ? { bgCleanup: true } : {})`. `bgCleanupOn` = `backgroundEnabled(env) && 에이전트 설정`.
-/// `agent_bg` 는 에이전트 설정 쪽(설정 켬·claude-code), `background` 는 앞단 env(없으면 `None` → 설정이 켜진 에이전트만 TS 로).
-fn memory_list_text(row: &str, agent_bg: bool, background: Option<bool>) -> Option<String> {
+/// `memory.list` 의 마지막 줄 — 매일 정리가 돌고 있으면 `bgCleanup: true`.
+fn memory_list_text(row: &str, bg_cleanup: bool) -> Option<String> {
     let body = minify(row);
-    match (agent_bg, background) {
-        (false, _) | (true, Some(false)) => Some(text_result(&body)),
-        (true, Some(true)) => {
-            let head = body.strip_suffix('}')?;
-            Some(text_result(&format!("{head},\"bgCleanup\":true}}")))
-        }
-        (true, None) => None,
+    if !bg_cleanup {
+        return Some(text_result(&body));
     }
+    let head = body.strip_suffix('}')?;
+    Some(text_result(&format!("{head},\"bgCleanup\":true}}")))
 }
 
-/// `background` 는 앞단 env `HARKROOM_BACKGROUND_ENABLED`([`super::route::AdmitSwitches::background`]).
 pub(super) async fn answer(
     pool: &PgPool,
     me: &Account,
     tool: &str,
     args: &Value,
-    background: Option<bool>,
 ) -> Option<String> {
     match tool {
         "memory.list" => {
@@ -239,7 +231,7 @@ pub(super) async fn answer(
                 .fetch_one(pool)
                 .await
                 .ok()?;
-            memory_list_text(&text, bg, background)
+            memory_list_text(&text, bg)
         }
         // MCP 는 에이전트만 오므로 TS 의 「에이전트가 아니면 빈 목록」 갈래는 닿지 않는다.
         "secret.list" => {
@@ -308,34 +300,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn memory_list_bg_cleanup_follows_front_env() {
+    fn memory_list_bg_cleanup_flag() {
         let row = r#"{"slugs" : ["mem/a"], "entries" : [{"slug":"mem/a","description":null,"kind":"topic"}], "rev" : "abc"}"#;
-        let plain = memory_list_text(row, false, None).expect("설정 꺼짐 → Rust");
-        assert!(!plain.contains("bgCleanup"));
-        // 설정이 꺼진 에이전트는 env 와 상관없이 같은 글자.
-        assert_eq!(
-            memory_list_text(row, false, Some(true)).as_deref(),
-            Some(plain.as_str())
-        );
-        assert_eq!(
-            memory_list_text(row, false, Some(false)).as_deref(),
-            Some(plain.as_str())
-        );
-        // 앞단 env 가 꺼짐이면 TS `backgroundEnabled` 도 거짓 — 칸 없이 Rust 가 답한다.
-        assert_eq!(
-            memory_list_text(row, true, Some(false)).as_deref(),
-            Some(plain.as_str())
-        );
-        // 앞단 env 가 켜짐 — TS 처럼 rev 뒤에 `bgCleanup:true` 를 붙인다.
-        let on = memory_list_text(row, true, Some(true)).expect("켜짐 → Rust");
+        assert!(!memory_list_text(row, false).unwrap().contains("bgCleanup"));
+        let on = memory_list_text(row, true).unwrap();
         let inner: Value = serde_json::from_str(&on).unwrap();
         let text = inner["content"][0]["text"].as_str().expect("text");
         assert!(text.ends_with(r#""rev":"abc","bgCleanup":true}"#), "{text}");
-        let v: Value = serde_json::from_str(text).unwrap();
-        assert_eq!(v["bgCleanup"], Value::Bool(true));
-        assert_eq!(v["slugs"][0], "mem/a");
-        // 앞단에 env 가 없으면 설정이 켜진 에이전트만 TS 로.
-        assert_eq!(memory_list_text(row, true, None), None);
     }
 
     #[test]

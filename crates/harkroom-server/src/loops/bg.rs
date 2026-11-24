@@ -2,7 +2,7 @@
 //!
 //! - 집은 지 [`BG_STALE_RUNNING`] 넘게 `running` 인 회차 → `failed`(`timeout`). 러너의 하드 타임아웃(10분)보다 길다.
 //! - 지난 KST 날의 집히지 않은(`queued`) 일감 → `skipped`(`expired`). 회차는 그날 창(03~07 KST)에서만 집힌다.
-//! - 스위치 `HARKROOM_BACKGROUND_ENABLED=1` 이 아니면 아무것도 안 한다(TS 와 같다).
+//! - 매일 기억 정리 회차(`not_before` 있음)는 그때부터 24시간 뒤에 닫는다. 이 회차는 전역 스위치와 상관없이 돌아 이 sweep 은 늘 돈다.
 //! - 생산자(distill·cleanup·organize)는 아직 TS 다 — 문지기 이름을 `bg.produce` 로 따로 두어 이 루프(`bg`)의 주인과 상관없이 TS 가 돈다.
 //! - 이중 실행: 평소에는 문지기(이름 `bg`)가 한쪽만 돌린다. 이 sweep 은 `skip locked` 가 아니라 조건부 `update … where status = …` 다 —
 //!   두 쪽이 같은 줄을 동시에 고치면 늦은 쪽은 줄 잠금을 기다린 뒤 조건을 다시 보고(이미 `failed`·`skipped`) 건너뛴다. 한 줄은 한 번만 닫힌다.
@@ -19,7 +19,8 @@ const CLOSE_TIMEOUT_SQL: &str = "update bg_job set status = 'failed', error = 't
      where status = 'running' and claimed_at < now() - interval '15 minutes'";
 /// TS `kstDay(now)` — UTC 시각에 9시간을 더한 날짜 = `Asia/Seoul` 의 날짜(KST 는 서머타임이 없다).
 const CLOSE_EXPIRED_SQL: &str = "update bg_job set status = 'skipped', error = 'expired', finished_at = now() \
-     where status = 'queued' and day < (now() at time zone 'Asia/Seoul')::date";
+     where status = 'queued' and ((not_before is null and day < (now() at time zone 'Asia/Seoul')::date) \
+       or not_before <= now() - interval '24 hours')";
 
 /// 이 루프가 쓰는 권한(표, 권한) — homelab GRANT 와 같아야 한다. 없으면 `main.rs` 가 루프를 띄우지 않는다(TS 에 남는다).
 pub const BG_PRIVILEGES: &[(&str, &str)] = &[
@@ -46,17 +47,14 @@ pub async fn close(pool: &PgPool) -> Result<(u64, u64), sqlx::Error> {
     Ok((timeout, expired))
 }
 
-/// 1분마다 문지기 아래서 닫기. 스위치(`enabled`)가 꺼져 있으면 tick 마다 아무것도 안 한다(TS 와 같다 — 잠금·주인도 안 본다).
+/// 1분마다 문지기 아래서 닫기.
 /// `gate` 는 문지기(잠금) 연결 전용 풀, `pool` 은 sweep 풀이다.
-pub fn spawn(gate: PgPool, pool: PgPool, enabled: bool) -> tokio::task::JoinHandle<()> {
+pub fn spawn(gate: PgPool, pool: PgPool) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut every = tokio::time::interval(BG_SWEEP_INTERVAL);
         every.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             every.tick().await;
-            if !enabled {
-                continue;
-            }
             match run_gated(&gate, "bg", Side::Rust, || async {
                 close(&pool).await.map(|_| ())
             })

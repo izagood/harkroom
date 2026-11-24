@@ -354,15 +354,7 @@ pub async fn handle(
             {
                 return r;
             }
-            super::tools::answer(
-                &pool,
-                &me,
-                tool,
-                &args,
-                cause.as_deref(),
-                writes.switches.background,
-            )
-            .await
+            super::tools::answer(&pool, &me, tool, &args, cause.as_deref()).await
         })
     };
     let relay_moved = writes.relay_moved;
@@ -486,6 +478,7 @@ pub const BG_ALLOWED_TOOLS: &[&str] = &[
     "memory.set",
     "memory.archive",
     "memory.merge",
+    "memory.lease",
     "thread.note",
     "thread.plan",
     "message.read",
@@ -609,7 +602,8 @@ fn local_admit(
 /// TS `/mcp/admit` 의 마지막 두 줄과 같은 답 — `bg.claim` 은 `bgEnabled` 만, 나머지는 `registered`(`toolRegisteredNow`).
 fn switch_answer(sw: AdmitSwitches, tool: &str) -> Option<super::respond::Admit> {
     let (bg_enabled, registered) = match tool {
-        "bg.claim" => (sw.background?, None),
+        // 매일 기억 정리는 전역 스위치와 상관없이 집힌다 — 스위치는 `bg_claim::claim` 이 회차마다 본다.
+        "bg.claim" => (true, None),
         "delegation.close" => (false, Some(sw.delegation_v2?)),
         _ => (false, Some(true)),
     };
@@ -1197,7 +1191,7 @@ mod tests {
         assert_eq!(
             switch_answer(on, "bg.claim"),
             Some(Admit::Yes {
-                bg_enabled: false,
+                bg_enabled: true,
                 registered: None
             })
         );
@@ -1217,7 +1211,7 @@ mod tests {
         );
         // env 가 없으면 그 도구는 TS 에 묻는다.
         let unset = AdmitSwitches::default();
-        assert_eq!(switch_answer(unset, "bg.claim"), None);
+        assert!(switch_answer(unset, "bg.claim").is_some());
         assert_eq!(switch_answer(unset, "delegation.close"), None);
         assert!(switch_answer(unset, "memory.get").is_some());
     }
