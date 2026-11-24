@@ -73,6 +73,8 @@ pub struct Preempted {
     pub report: Vec<(String, String)>,
     /// 닫힌 대기 줄.
     pub rows: Vec<String>,
+    /// 그 밖에 meta 가 바뀌어 다시 알릴 글(위임 글의 열린 목록) — 대기 줄 뒤에 알린다.
+    pub updated: Vec<String>,
 }
 
 /// TS `preemptWakesForThread`(사람 작성자). `notified` 는 이 글이 이미 부른 계정 — 그 계정의 깨움은 접는다.
@@ -147,7 +149,7 @@ pub async fn announce(conn: &mut sqlx::PgConnection, p: &Preempted) -> Result<()
         .await?;
     }
     let mut rows = HashSet::new();
-    for id in &p.rows {
+    for id in p.rows.iter().chain(&p.updated) {
         if rows.insert(id.clone()) {
             announce_updated(&mut *conn, id).await?;
         }

@@ -306,6 +306,8 @@ async fn auto_close_ids(conn: &mut sqlx::PgConnection) -> Result<(u64, Vec<Strin
             .bind(&ids)
             .execute(&mut *conn)
             .await?;
+        // 나이로 닫힌 미결 담당을 위임 글의 열린 목록에서 뺀다(idle 은 이미 보고한 담당이라 목록이 그대로다).
+        crate::core::turn_settle::sync_open_announce(conn, &ids).await?;
     }
     Ok((n, ids))
 }

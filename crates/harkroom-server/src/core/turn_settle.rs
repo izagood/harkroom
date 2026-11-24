@@ -32,10 +32,8 @@ struct Sql {
     delegate_item: String,
     as_lead: String,
     lead_items: String,
-    lead_meta: String,
     lead_mark: String,
     still: String,
-    meta: String,
     mark: String,
     inbox: String,
     fold: String,
@@ -58,10 +56,8 @@ fn sql() -> &'static Sql {
             delegate_item: frag("cancel_delegate_item"),
             as_lead: frag("cancel_as_lead"),
             lead_items: frag("cancel_lead_items"),
-            lead_meta: frag("cancel_lead_meta"),
             lead_mark: frag("cancel_lead_mark"),
             still: frag("settled_still"),
-            meta: frag("settled_meta"),
             mark: frag("settled_mark"),
             inbox: frag("settled_inbox"),
             fold: frag("fold_wakes_for_delegation"),
@@ -114,6 +110,48 @@ async fn closed_wakes(
     Ok(())
 }
 
+/// 위임 글의 `meta.delegation.open` 을 **지금 미결인 담당**(`outcome is null`)으로 다시 쓴다 — 의무를 닫는 길은 모두 여기를 지난다
+/// (결과 글·기한·중단 = [`notify_if_settled`], 넘긴 쪽이 닫음·새 위임으로 대체·나이·idle = [`sync_open_announce`]).
+/// 화면의 대기 사슬과 스레드 머리의 `openAskLinks` 가 이 값을 읽는다. 같은 글에 묶인 위임을 함께 세고, 담당 집합이 같으면
+/// (순서만 다르면) 건드리지 않는다. `open` 칸이 없는 옛 글은 그대로 둔다. 값이 바뀐 글 id 를 돌려준다.
+pub(crate) const SYNC_OPEN_SQL: &str = "update message m \
+        set meta = jsonb_set(m.meta, '{delegation,open}', s.open) \
+       from (select d.message_id, \
+                    coalesce(jsonb_agg(i.delegate_account_id::text order by i.delegate_account_id) \
+                             filter (where i.outcome is null), '[]'::jsonb) as open \
+               from team_delegation d \
+               left join team_delegation_item i on i.delegation_id = d.id \
+              where d.message_id in (select message_id from team_delegation where id = any($1::uuid[])) \
+              group by d.message_id) s \
+      where m.id = s.message_id and m.meta->>'kind' = 'delegation' \
+        and not (m.meta->'delegation'->'open' @> s.open and m.meta->'delegation'->'open' <@ s.open) \
+  returning m.id::text";
+
+/// [`SYNC_OPEN_SQL`] — 바뀐 위임 글 id.
+pub(crate) async fn sync_open(
+    conn: &mut sqlx::PgConnection,
+    delegations: &[String],
+) -> Result<Vec<String>, sqlx::Error> {
+    if delegations.is_empty() {
+        return Ok(Vec::new());
+    }
+    sqlx::query_scalar(SYNC_OPEN_SQL)
+        .bind(delegations)
+        .fetch_all(&mut *conn)
+        .await
+}
+
+/// 조용히 닫는 길(깨우지 않는 닫힘)용 — 열린 목록을 맞추고 바뀐 글마다 `message.updated` 를 outbox 에 넣는다(같은 tx, 커밋 뒤 배달).
+pub(crate) async fn sync_open_announce(
+    conn: &mut sqlx::PgConnection,
+    delegations: &[String],
+) -> Result<(), sqlx::Error> {
+    for id in sync_open(conn, delegations).await? {
+        super::ask_sync::announce_updated(&mut *conn, &id).await?;
+    }
+    Ok(())
+}
+
 /// TS `notifyIfSettled` — 미결이 0 이면 팀장을 **한 번만** 깨운다. 깨웠으면 팀장 id.
 pub(crate) async fn notify_if_settled(
     conn: &mut sqlx::PgConnection,
@@ -125,11 +163,9 @@ pub(crate) async fn notify_if_settled(
         .bind(delegation)
         .fetch_all(&mut *conn)
         .await?;
-    sqlx::query(s.meta.as_str())
-        .bind(delegation)
-        .bind(Value::from(still.clone()).to_string())
-        .execute(&mut *conn)
-        .await?;
+    // 글의 열린 목록을 맞추고, 바뀐 글은 `out.updated` 로 — 부르는 쪽의 `announce` 가 `message.updated` 로 알린다.
+    let changed = sync_open(conn, std::slice::from_ref(&delegation.to_owned())).await?;
+    out.updated.extend(changed);
     if !still.is_empty() {
         return Ok(None);
     }
@@ -208,9 +244,16 @@ async fn settle_in(
         .fetch_all(&mut *conn)
         .await?;
     for d in as_lead {
-        for q in [&s.lead_items, &s.lead_meta, &s.lead_mark] {
-            sqlx::query(q.as_str()).bind(&d).execute(&mut *conn).await?;
-        }
+        sqlx::query(s.lead_items.as_str())
+            .bind(&d)
+            .execute(&mut *conn)
+            .await?;
+        let changed = sync_open(conn, std::slice::from_ref(&d)).await?;
+        out.updated.extend(changed);
+        sqlx::query(s.lead_mark.as_str())
+            .bind(&d)
+            .execute(&mut *conn)
+            .await?;
     }
     // 그 에이전트·그 스레드의 예약.
     let wakes: Vec<(Option<Value>, String)> = sqlx::query_as(s.wakes.as_str())
@@ -262,7 +305,9 @@ mod tests {
     fn golden_loads() {
         let s = sql();
         assert!(s.as_delegate.contains("for update of d"));
-        assert!(s.lead_meta.contains("'[]'::jsonb"));
+        assert!(SYNC_OPEN_SQL.contains("'{delegation,open}'"));
+        assert!(SYNC_OPEN_SQL.contains("filter (where i.outcome is null)"));
+        assert!(SYNC_OPEN_SQL.contains("returning m.id::text"));
         assert!(s.inbox.contains("'delegation_done'"));
         assert!(
             s.wakes

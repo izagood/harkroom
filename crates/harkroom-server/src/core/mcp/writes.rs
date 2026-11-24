@@ -83,6 +83,8 @@ pub const DELEGATION_CLOSE_PRIVILEGES: &[(&str, &str)] = &[
     ("team_delegation_item.update_pending_message_id", "UPDATE"),
     ("team_delegation_item.update_pending_at", "UPDATE"),
     ("team_delegation.notified_at", "UPDATE"),
+    // 닫은 뒤 위임 글의 열린 목록을 다시 쓴다([`crate::core::turn_settle::SYNC_OPEN_SQL`]). 읽기는 `pg_read_all_data`.
+    ("message.meta", "UPDATE"),
     ("team_delegation_item.delegation_id", "SELECT"),
     ("team_delegation_item.delegate_account_id", "SELECT"),
     ("team_delegation_item.outcome", "SELECT"),
@@ -571,6 +573,8 @@ async fn close_tx(
             .bind(&ids)
             .execute(&mut *tx)
             .await?;
+        // 위임 글의 열린 목록(`meta.delegation.open`)을 맞추고 화면에 알린다 — 안 맞추면 닫힌 담당이 대기 사슬에 남는다.
+        crate::core::turn_settle::sync_open_announce(&mut tx, &ids).await?;
         // F1b — 내가 닫은 것이 마지막 자기 조각이고 보류해 둔 형제가 있으면 그 결말을 모아 깨운다. 스위치가 꺼져 있으면 아무것도 하지 않는다.
         crate::core::split_collect::after_quiet_close(&mut tx, &ids).await?;
     }
@@ -717,9 +721,10 @@ mod tests {
             );
         }
         assert!(has("team_delegation.notified_at", "UPDATE"));
+        assert!(has("message.meta", "UPDATE"));
         assert_eq!(
             DELEGATION_CLOSE_PRIVILEGES.len(),
-            read.len() + 6,
+            read.len() + 7,
             "목록에 남는 칸이 없다"
         );
     }
