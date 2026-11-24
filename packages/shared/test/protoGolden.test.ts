@@ -88,6 +88,11 @@ const p2OperatorToServer = [
   { type: 'gh.lines.result', requestId: 'g1', ok: true },
   { type: 'gh.lines.result', requestId: 'g2', ok: false, code: 'unknown_login', previous: null },
   { type: 'wake.ack', wakeId: 'w-00000000-0000-4000-8000-000000000001' },
+  { type: 'work.claim', requestId: 'q1', slotGeneration: 0 },
+  { type: 'work.claim', requestId: 'q2', slotGeneration: 3, leaseSecs: 120, agents: [ID], threadRootId: ID },
+  { type: 'work.renew', requestId: 'q3', held: [{ workId: ID, attempts: 2 }] },
+  { type: 'work.renew', requestId: 'q4', leaseSecs: 60, held: [] },
+  { type: 'work.release', workId: ID, attempts: 2, reason: 'released' },
   { type: 'runner.announce', runnerId: RUNNER, sessions: [session] },
   { type: 'runner.announce', runnerId: RUNNER, sessions: [], caps: ['interactive'] as unknown as Extract<OperatorToServerFrame, { type: 'runner.announce' }>['caps'] },
   { type: 'session.started', runnerId: RUNNER, session },
@@ -125,6 +130,11 @@ const p2ServerToOperator = [
   { type: 'gh.lines.set', requestId: 'g1', scope: 'example/*', ghUser: null },
   { type: 'wake', wakeId: 'w-00000000-0000-4000-8000-000000000001', agentId: 'a1', messageId: 'm1', channelId: 'c1', threadRootId: 'm1', reason: 'mention' },
   { type: 'wake', wakeId: 'w-00000000-0000-4000-8000-000000000002', agentId: 'a1', messageId: 'm2', channelId: 'c1', threadRootId: 'm1', workId: 'k1', reason: 'reply' },
+  { type: 'work.claimed', requestId: 'q1' },
+  { type: 'work.claimed', requestId: 'q1', error: 'work_claim_disabled' },
+  { type: 'work.claimed', requestId: 'q2', work: { workId: ID, agentId: ID, channelId: ID, threadRootId: ID, rootId: ID, attempts: 2, leaseExpiresAt: '2026-01-01T00:00:00.000Z' } },
+  { type: 'work.renewed', requestId: 'q3', workIds: [ID], leaseSecs: 90 },
+  { type: 'work.renewed', requestId: 'q4', workIds: [], error: 'work_claim_disabled' },
 ] satisfies ServerToOperatorFrame[];
 
 // ── P3 앱(Tauri) ↔ 오퍼레이터 소켓 — 봉투. 요청별 payload 타입은 S2 앞 PR 에서 Rust 로 옮긴다. ─────────────

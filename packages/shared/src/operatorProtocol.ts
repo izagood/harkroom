@@ -90,6 +90,15 @@ export type OperatorToServerFrame =
   /** `wake` 를 받았다는 답(E2a, 그림자). 서버는 그 깨움 행을 `delivered` 로만 적는다. */
   | { type: 'wake.ack'; wakeId: string }
   /**
+   * 판에서 작업 하나를 잡는다(I2b). 누가 잡는지는 연결이 말한다 — 오퍼레이터를 가리키는 칸은 없다. `agents`·`threadRootId` 는
+   * 후보를 좁히기만 한다. 답은 `work.claimed`. 모르는 옛 서버는 버린다(답 없음).
+   */
+  | { type: 'work.claim'; requestId: string; slotGeneration: number; leaseSecs?: number; agents?: string[]; threadRootId?: string }
+  /** 쥔 임대를 묶어서 민다(I2b). `held` 의 횟수는 잡을 때 받은 값 그대로다. 답은 `work.renewed`. */
+  | { type: 'work.renew'; requestId: string; leaseSecs?: number; held: { workId: string; attempts: number }[] }
+  /** 쥔 임대 하나를 놓는다(I2b). 답은 없다. */
+  | { type: 'work.release'; workId: string; attempts: number; reason: 'done' | 'failed' | 'released' }
+  /**
    * 러너가 링크에 붙을 때마다(재접속 포함) 자기 세션·능력을 다시 선언한다 — 옛 릴레이의
    * `announce` 그대로다(`runnerLink.ts`). 서버는 이 목록으로 그 러너의 세션을 **교체**한다.
    */
@@ -141,20 +150,30 @@ export type ServerToOperatorFrame =
    */
   | { type: 'gh.lines.set'; requestId: string; scope: string; ghUser: string | null }
   /** 깨움 한 건(E2a, 그림자) — hello 에 `wakeFrames: true` 를 실은 오퍼레이터에게만 보낸다. 받은 쪽은 적어 두고 `wake.ack` 만 답한다. */
-  | { type: 'wake'; wakeId: string; agentId: string; messageId: string; channelId: string; threadRootId: string; workId?: string; reason: string };
+  | { type: 'wake'; wakeId: string; agentId: string; messageId: string; channelId: string; threadRootId: string; workId?: string; reason: string }
+  /**
+   * `work.claim` 의 답(I2b) — 잡았으면 `work`, 잡을 것이 없으면 둘 다 없음, 하지 않았으면 `error`
+   * (`work_claim_disabled`·`invalid_request`·`unavailable`). `work_claim_disabled` 면 오퍼레이터는 옛 길로 물러난다.
+   */
+  | {
+      type: 'work.claimed'; requestId: string; error?: string;
+      work?: { workId: string; agentId: string; channelId: string; threadRootId: string; rootId: string; attempts: number; leaseExpiresAt: string };
+    }
+  /** `work.renew` 의 답(I2b) — 실제로 갱신된 작업 id(빠진 것은 잃은 줄)와 적용된 임대 길이. */
+  | { type: 'work.renewed'; requestId: string; workIds: string[]; leaseSecs?: number; error?: string };
 
 const OPERATOR_TYPES = new Set<OperatorToServerFrame['type']>([
   'hello', 'capabilities', 'runner.started', 'runner.exited', 'runner.announce', 'session.started', 'session.updated', 'session.ended',
   'pty.output', 'pty.replay', 'interactive.opened', 'interactive.error', 'attention.required', 'status', 'upgrade.progress',
-  'local.input', 'gh.report', 'gh.lines.result', 'wake.ack',
+  'local.input', 'gh.report', 'gh.lines.result', 'wake.ack', 'work.claim', 'work.renew', 'work.release',
 ]);
 const SERVER_TYPES = new Set<ServerToOperatorFrame['type']>([
   'assign', 'unassign', 'assign.synced', 'agent.restart', 'runner.kill', 'pty.replay.request', 'pty.input', 'pty.resize', 'viewer.count', 'session.cancel', 'interactive.open',
-  'local.writer', 'local.view', 'gh.lines.set', 'wake',
+  'local.writer', 'local.view', 'gh.lines.set', 'wake', 'work.claimed', 'work.renewed',
 ]);
 
 /** `hello` 와 배정 넷(`assign`·`unassign`·`assign.synced`·`agent.restart`)만 러너 밖의 말이다 — 나머지는 전부 `runnerId` 가 있어야 한다. */
-const NO_RUNNER_ID = new Set<string>(['hello', 'capabilities', 'status', 'upgrade.progress', 'gh.report', 'gh.lines.result', 'gh.lines.set', 'wake', 'wake.ack', 'assign', 'unassign', 'assign.synced', 'agent.restart']);
+const NO_RUNNER_ID = new Set<string>(['hello', 'capabilities', 'status', 'upgrade.progress', 'gh.report', 'gh.lines.result', 'gh.lines.set', 'wake', 'wake.ack', 'work.claim', 'work.renew', 'work.release', 'work.claimed', 'work.renewed', 'assign', 'unassign', 'assign.synced', 'agent.restart']);
 
 function parse(raw: string, known: Set<string>): Record<string, unknown> | null {
   let value: unknown;

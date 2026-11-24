@@ -288,6 +288,27 @@ pub mod p2 {
         }
     }
 
+    /// 쥔 임대 하나(I2b) — 작업과, 그 작업을 잡을 때 받은 횟수.
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct WorkHeld {
+        pub work_id: String,
+        pub attempts: i32,
+    }
+
+    /// 잡은 작업 하나(I2b, `work.claimed.work`). `attempts` 가 그 임대의 이름이다 — 갱신·놓기에 그대로 돌려보낸다.
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct WorkClaimedItem {
+        pub work_id: String,
+        pub agent_id: String,
+        pub channel_id: String,
+        pub thread_root_id: String,
+        pub root_id: String,
+        pub attempts: i32,
+        pub lease_expires_at: String,
+    }
+
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
     #[serde(tag = "type")]
     pub enum OperatorToServerFrame {
@@ -391,6 +412,34 @@ pub mod p2 {
         /// `wake` 를 받았다는 답(E2a, 그림자) — 서버는 그 깨움 행을 `delivered` 로만 적는다.
         #[serde(rename = "wake.ack", rename_all = "camelCase")]
         WakeAck { wake_id: String },
+        /// 판에서 작업 하나를 잡는다(I2b). 누가 잡는지는 연결이 말한다 — 오퍼레이터를 가리키는 칸은 없다.
+        /// `agents`·`threadRootId` 는 후보를 좁히기만 한다. 답은 `work.claimed`. 모르는 옛 서버는 버린다(답 없음).
+        #[serde(rename = "work.claim", rename_all = "camelCase")]
+        WorkClaim {
+            request_id: String,
+            slot_generation: i64,
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            lease_secs: Option<i32>,
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            agents: Option<Vec<String>>,
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            thread_root_id: Option<String>,
+        },
+        /// 쥔 임대를 묶어서 민다(I2b). `held` 의 횟수는 잡을 때 받은 값 그대로다. 답은 `work.renewed`.
+        #[serde(rename = "work.renew", rename_all = "camelCase")]
+        WorkRenew {
+            request_id: String,
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            lease_secs: Option<i32>,
+            held: Vec<WorkHeld>,
+        },
+        /// 쥔 임대 하나를 놓는다(I2b). `reason` 은 `done`·`failed`·`released`. 답은 없다.
+        #[serde(rename = "work.release", rename_all = "camelCase")]
+        WorkRelease {
+            work_id: String,
+            attempts: i32,
+            reason: String,
+        },
         #[serde(rename = "runner.announce", rename_all = "camelCase")]
         RunnerAnnounce {
             runner_id: String,
@@ -459,7 +508,7 @@ pub mod p2 {
     }
 
     /// 정본의 `OPERATOR_TYPES`.
-    pub const OPERATOR_TO_SERVER_TYPES: [&str; 19] = [
+    pub const OPERATOR_TO_SERVER_TYPES: [&str; 22] = [
         "hello",
         "capabilities",
         "runner.started",
@@ -479,6 +528,9 @@ pub mod p2 {
         "gh.report",
         "gh.lines.result",
         "wake.ack",
+        "work.claim",
+        "work.renew",
+        "work.release",
     ];
 
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -573,10 +625,30 @@ pub mod p2 {
             work_id: Option<String>,
             reason: String,
         },
+        /// `work.claim` 의 답(I2b) — 잡았으면 `work`, 잡을 것이 없으면 둘 다 없음, 하지 않았으면 `error`
+        /// (`work_claim_disabled`·`invalid_request`·`unavailable`). `work_claim_disabled` 면 오퍼레이터는 옛 길로 물러난다.
+        #[serde(rename = "work.claimed", rename_all = "camelCase")]
+        WorkClaimed {
+            request_id: String,
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            work: Option<WorkClaimedItem>,
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            error: Option<String>,
+        },
+        /// `work.renew` 의 답(I2b) — 실제로 갱신된 작업 id(빠진 것은 잃은 줄)와 적용된 임대 길이.
+        #[serde(rename = "work.renewed", rename_all = "camelCase")]
+        WorkRenewed {
+            request_id: String,
+            work_ids: Vec<String>,
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            lease_secs: Option<i32>,
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            error: Option<String>,
+        },
     }
 
     /// 정본의 `SERVER_TYPES`.
-    pub const SERVER_TO_OPERATOR_TYPES: [&str; 15] = [
+    pub const SERVER_TO_OPERATOR_TYPES: [&str; 17] = [
         "assign",
         "unassign",
         "assign.synced",
@@ -592,6 +664,8 @@ pub mod p2 {
         "local.view",
         "gh.lines.set",
         "wake",
+        "work.claimed",
+        "work.renewed",
     ];
 }
 

@@ -42,6 +42,9 @@ const OPERATOR_TYPES: &[&str] = &[
     "gh.report",
     "gh.lines.result",
     "wake.ack",
+    "work.claim",
+    "work.renew",
+    "work.release",
 ];
 const SERVER_TYPES: &[&str] = &[
     "assign",
@@ -59,6 +62,8 @@ const SERVER_TYPES: &[&str] = &[
     "local.view",
     "gh.lines.set",
     "wake",
+    "work.claimed",
+    "work.renewed",
 ];
 const NO_RUNNER_ID: &[&str] = &[
     "hello",
@@ -70,6 +75,11 @@ const NO_RUNNER_ID: &[&str] = &[
     "gh.lines.set",
     "wake",
     "wake.ack",
+    "work.claim",
+    "work.renew",
+    "work.release",
+    "work.claimed",
+    "work.renewed",
     "assign",
     "unassign",
     "assign.synced",
@@ -112,6 +122,17 @@ fn parse(raw: &str, known: &[&str]) -> Option<Map<String, Value>> {
     if matches!(ty.as_str(), "wake" | "wake.ack")
         && !frame.get("wakeId").is_some_and(Value::is_string)
     {
+        return None;
+    }
+    // 잡기(I2b): 답을 짝지을 `requestId`, 놓기는 `workId`.
+    if matches!(
+        ty.as_str(),
+        "work.claim" | "work.renew" | "work.claimed" | "work.renewed"
+    ) && !frame.get("requestId").is_some_and(Value::is_string)
+    {
+        return None;
+    }
+    if ty == "work.release" && !frame.get("workId").is_some_and(Value::is_string) {
         return None;
     }
     // 버전이 틀린 모양이면 hello 를 버리지 않고 버전만 뗀다(TS 와 같음).
