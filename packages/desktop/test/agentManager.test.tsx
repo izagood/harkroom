@@ -56,6 +56,8 @@ const fakeController = (agents: AgentView[] = []) => {
       agent('rusalka', { id, stopRequestedAt: '2026-09-03T10:00:00.000Z', stopAckedAt: null })
     )),
     // #139: 기본은 "읽었고 비어 있다". 실패나 목록이 필요한 테스트가 갈아끼운다.
+    agentMemoryCleanup: vi.fn(async () => ({ enabled: true })),
+    agentBackground: vi.fn(async () => ({ enabled: false, paused: [], serverEnabled: true, runs: [] })),
     agentMemory: vi.fn(async (): Promise<{ slug: string; value: string; updatedAt: string }[]> => []),
     deleteAgentMemory: vi.fn(async (): Promise<void> => undefined),
     // 사진을 건 에이전트를 그리면 `Identity` 가 바이트를 받으러 온다 — 없으면 화면이

@@ -1,3 +1,4 @@
+import type { AgentBackground, AgentCleanup, BackgroundChange, CleanupSchedule, RevertResult } from './memoryCleanupSettings';
 import type {
   AutomationIngressIssued, AutomationRunView, AutomationTrigger, AutomationView,
   McpServerRow, AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentSessionView,
@@ -1236,6 +1237,41 @@ export class ApiClient {
   /** 서버 080: 쓰기 검사에 걸린 기억을 사람이 확인한다 — 표시를 풀어 다시 프롬프트에 싣는다. */
   confirmAgentMemory(agentId: string, slug: string): Promise<{ ok: true }> {
     return this.req('POST', `/accounts/agents/${agentId}/memory/${encodeURIComponent(slug)}/confirm`);
+  }
+
+  /** 매일 기억 정리 — 워크스페이스(admin). */
+  memoryCleanupSchedule(): Promise<CleanupSchedule> {
+    return this.req('GET', '/settings/memory-cleanup');
+  }
+
+  setMemoryCleanupSchedule(s: CleanupSchedule): Promise<CleanupSchedule> {
+    return this.req('PUT', '/settings/memory-cleanup', s);
+  }
+
+  /** 매일 기억 정리 — 에이전트(소유자·admin). */
+  agentMemoryCleanup(agentId: string): Promise<AgentCleanup> {
+    return this.req('GET', `/accounts/agents/${agentId}/memory-cleanup`);
+  }
+
+  setAgentMemoryCleanup(agentId: string, enabled: boolean): Promise<{ ok: true; enabled: boolean }> {
+    return this.req('PUT', `/accounts/agents/${agentId}/memory-cleanup`, { enabled });
+  }
+
+  /** 증류·구조 정리 켜짐과 정리 회차 기록(최근 30). */
+  agentBackground(agentId: string): Promise<AgentBackground> {
+    return this.req('GET', `/accounts/agents/${agentId}/background`);
+  }
+
+  setAgentBackground(agentId: string, enabled: boolean): Promise<{ ok: true; enabled: boolean }> {
+    return this.req('PUT', `/accounts/agents/${agentId}/background`, { enabled });
+  }
+
+  async agentBackgroundRun(agentId: string, runId: string): Promise<BackgroundChange[]> {
+    return (await this.req<{ changes: BackgroundChange[] }>('GET', `/accounts/agents/${agentId}/background/runs/${runId}`)).changes;
+  }
+
+  revertAgentBackgroundRun(agentId: string, runId: string): Promise<RevertResult> {
+    return this.req('POST', `/accounts/agents/${agentId}/background/runs/${runId}/revert`);
   }
 
   /** 정리 후보(#1186). 에이전트 `memory.audit` 과 같은 분류, 사람 화면은 목록 상한 200. */

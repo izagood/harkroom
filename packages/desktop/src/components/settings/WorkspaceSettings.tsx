@@ -4,6 +4,7 @@ import { getController } from '../../state/controller';
 import { AVATAR_ACCEPT, AVATAR_FORMATS } from '../../lib/avatar';
 import { SettingsGroup, SettingsPage } from './primitives';
 import { useT } from '../../i18n/useT';
+import { WorkspaceMemoryCleanup } from './WorkspaceMemoryCleanup';
 import { AvatarStatus, useAvatarEdit, type AvatarEditInput } from './avatarEdit';
 
 /**
@@ -95,6 +96,7 @@ export function WorkspaceSettings() {
           </div>
         </div>
       </SettingsGroup>
+      <WorkspaceMemoryCleanup isAdmin={isAdmin} />
     </SettingsPage>
   );
 }

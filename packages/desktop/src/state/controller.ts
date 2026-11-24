@@ -1,3 +1,4 @@
+import type { AgentBackground, AgentCleanup, BackgroundChange, CleanupSchedule, RevertResult } from '../lib/memoryCleanupSettings';
 import type { AccountStatus, AvatarSourceMeta, AddTeamToChannelResult, AgentModelOptions, AgentPickableModel, AgentPickableSaved, AgentModelPick, AgentView, ThreadAgentModelView, ThreadPlanView, AgentTeamMemberRow, AgentTeamRow, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelRow, ChannelMemberRow, ChannelPrefRow, ChannelSectionRow, HandleGroupRow, InboxEntry, InviteCreated, InviteView, InvokeScope, MessageRow, NotifyLevel, SavedMessageRow, WsServerEvent, WorkspaceSkillView } from '@harkroom/shared';
 import { endSession } from '../lib/sessionEnd';
 import { clearPlanOpenKeys } from '../lib/threadPlan';
@@ -2802,6 +2803,38 @@ export class Controller {
 
   confirmAgentMemory(agentId: string, slug: string): Promise<{ ok: true }> {
     return this.api.confirmAgentMemory(agentId, slug);
+  }
+
+  memoryCleanupSchedule(): Promise<CleanupSchedule> {
+    return this.api.memoryCleanupSchedule();
+  }
+
+  setMemoryCleanupSchedule(s: CleanupSchedule): Promise<CleanupSchedule> {
+    return this.api.setMemoryCleanupSchedule(s);
+  }
+
+  agentMemoryCleanup(agentId: string): Promise<AgentCleanup> {
+    return this.api.agentMemoryCleanup(agentId);
+  }
+
+  setAgentMemoryCleanup(agentId: string, enabled: boolean): Promise<{ ok: true; enabled: boolean }> {
+    return this.api.setAgentMemoryCleanup(agentId, enabled);
+  }
+
+  agentBackground(agentId: string): Promise<AgentBackground> {
+    return this.api.agentBackground(agentId);
+  }
+
+  setAgentBackground(agentId: string, enabled: boolean): Promise<{ ok: true; enabled: boolean }> {
+    return this.api.setAgentBackground(agentId, enabled);
+  }
+
+  agentBackgroundRun(agentId: string, runId: string): Promise<BackgroundChange[]> {
+    return this.api.agentBackgroundRun(agentId, runId);
+  }
+
+  revertAgentBackgroundRun(agentId: string, runId: string): Promise<RevertResult> {
+    return this.api.revertAgentBackgroundRun(agentId, runId);
   }
 
   agentMemoryAudit(agentId: string): Promise<MemoryAudit> {

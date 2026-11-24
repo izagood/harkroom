@@ -57,6 +57,8 @@ const fakeController = (memories: MemoryEntry[]) => {
     agentDefaults: vi.fn(async (): Promise<AgentDefaults> => (
       { harness: 'claude-code', model: null, effort: null }
     )),
+    agentMemoryCleanup: vi.fn(async () => ({ enabled: true })),
+    agentBackground: vi.fn(async () => ({ enabled: false, paused: [], serverEnabled: true, runs: [] })),
     agentMemory: vi.fn(async (_id: string) => memories),
     agentMemoryAudit: vi.fn(async () => audit),
     agentMemoryRevisions: vi.fn(async () => []),

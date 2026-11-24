@@ -18,6 +18,7 @@
 // 예외 하나: **없으면 스스로 물러나는 읽기**(`GET /threads/:p/turns` — 404 면 다시 묻지 않고 옛 판정으로 그린다, `threadTurns.ts`).
 // 옛 서버 앞에서도 화면이 같은 뜻으로 서므로 하한을 올릴 근거가 아니다. 물러나는 길은 시험으로 못 박아 둔다(`threadTurns.test.tsx`).
 // `GET /threads/:p/work`(작업 서랍)도 같다 — 404 면 다시 묻지 않고 서랍 맨 위에 한 줄로 말한 뒤 턴·카드·예약으로 그린다(`threadPanelProgress.test.tsx`).
+// `…/memory-cleanup` 넷도 같다 — 읽기가 404 면 카드를 그리지 않고, 고치기는 읽은 뒤에만 부른다(`memoryCleanupSettings.test.tsx`).
 //
 // **못 잡는 것:** 있던 라우트에 필드를 더하는 것(#797 `PATCH /channels/:id` 의 `name` —
 // 낡은 서버는 zod strip 으로 조용한 200 을 준다). 그건 여전히 PR 작성자 몫이다.
