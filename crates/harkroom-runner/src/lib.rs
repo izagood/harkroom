@@ -47,6 +47,7 @@ pub mod codex_home;
 pub mod codex_prep;
 pub mod codex_rules;
 pub mod config;
+pub mod disk_full;
 pub mod fail_text;
 pub mod harness_errors;
 pub mod harness_memory;

@@ -853,10 +853,17 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
         _turn_id: &str,
     ) -> Result<AttemptPrep, AttemptError> {
         let acc = AttemptAccount::of(account, is_last_account);
-        let fail = || AttemptError {
-            message: PREPARE_FAILED.to_string(),
+        // 디스크가 가득 차서 실패했으면 그렇게 적는다 — 실패한 그때 상태 폴더 자리의 여유를 잰다(`disk_full`).
+        let disk_dir = self.state_dir.clone();
+        let fail_with = move |storage_full: bool| AttemptError {
+            message: crate::disk_full::prepare_failure(
+                crate::disk_full::free_bytes(&disk_dir),
+                storage_full,
+            )
+            .unwrap_or_else(|| PREPARE_FAILED.to_string()),
             ..AttemptError::default()
         };
+        let fail = || fail_with(false);
         let mut new_id = crate::link::random_uuid;
         let prepared = prepare_turn(
             &mut self.io,
@@ -940,7 +947,11 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
         sys.memory = &memory.system;
         let file = write_turn_system_prompt(&self.state_dir, &self.key, &sys).map_err(|e| {
             eprintln!("[mentionTurn] {}: 지시문 파일 쓰기 실패 — {e}", self.key);
-            fail()
+            fail_with(matches!(
+                &e,
+                crate::turn_files::TurnFileError::Io { source, .. }
+                    if crate::disk_full::is_storage_full(source)
+            ))
         })?;
         // 지시문 플래그가 없는 하네스(codex·opencode)는 프롬프트 앞에 붙여야 닿는다(정본 `prefixesSystemPrompt`).
         prepared.prompt.prompt = crate::turn_parts::prefix_system_prompt(
