@@ -31,6 +31,8 @@ use crate::turn_success::SilentPath;
 enum Read {
     /// 오류 결과 — 준비 실패로 접힌다(정상 길).
     Error,
+    /// 턴 임대 발급이 거절된다(403).
+    LeaseDenied,
     /// 패닉 — 호출 자리 안에서 패닉이 난다.
     Panic,
 }
@@ -76,6 +78,13 @@ impl RunnerLink for &Link {
                 } else {
                     json!({})
                 };
+                if path == "/agent/turn-leases" && self.read == Read::LeaseDenied {
+                    return RunnerLinkResponse::HttpResponse {
+                        id: "x".into(),
+                        status: 403,
+                        body: json!({ "error": "not_granted" }).to_string(),
+                    };
+                }
                 RunnerLinkResponse::HttpResponse {
                     id: "x".into(),
                     status: 200,
@@ -694,5 +703,42 @@ fn screen_ended_turn_prefers_harness_record_words_over_screen_lines() {
             );
         }
         other => panic!("기록 끝말을 옮겨야 한다: {other:?}"),
+    }
+}
+
+/// 👀·💬 는 곁 스레드에서 달린다(턴 임대를 막지 않는다). 그래도 턴 실패·임대 거절·패닉 어느 길에서든 👀 → 💬 달기 →
+/// 💬 떼기가 빠짐없이 그 순서로 나가고, 떼기는 이 호출이 돌아오기 전에 끝난다.
+#[test]
+fn reactions_are_added_in_order_and_removed_last_on_every_ending() {
+    for (tag, read) in [
+        ("react-fail", Read::Error),
+        ("react-denied", Read::LeaseDenied),
+        ("react-panic", Read::Panic),
+    ] {
+        let w = world(tag);
+        let (mine, other) = (link(read), link(Read::Error));
+        let clients = AgentClients::new(&mine, "t");
+        let seen = RefCell::new(Seen::default());
+        let (ledger, book) = (fresh(), LeaseBook::default());
+        call(
+            &w,
+            &ledger,
+            &book,
+            (&mine, &other),
+            &clients,
+            Sched::default(),
+            &seen,
+            false,
+        );
+        let reacts: Vec<String> = got(&mine.tools)
+            .into_iter()
+            .filter(|t| t == "message.react" || t == "message.unreact")
+            .collect();
+        assert_eq!(
+            reacts,
+            ["message.react", "message.react", "message.unreact"],
+            "{tag}: 👀·💬 달기 뒤에 💬 떼기, 각 한 번"
+        );
+        assert_eq!(n(&other.tools), 0, "{tag}: 다른 링크로 가지 않는다");
     }
 }

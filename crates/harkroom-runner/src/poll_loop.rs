@@ -216,6 +216,82 @@ impl BatchContext {
     }
 }
 
+/// 채널·계정 목록을 이만큼 지나면 모르는 id 가 없어도 다시 읽는다 — 이름 바뀜(채널 이름·handle·내 handle)이 이 안에 따라온다.
+pub const DIRECTORY_MAX_AGE_MS: u64 = 5 * 60_000;
+
+/// 배치가 가리키는 채널·글쓴이 id(글마다 `channelId`·`authorId`). 목록에 없는 것이 하나라도 있으면 목록을 다시 읽는다.
+pub fn batch_ids(batch: &Value) -> HashSet<String> {
+    let mut ids = HashSet::new();
+    for m in batch
+        .get("messages")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+    {
+        for k in ["channelId", "authorId"] {
+            if let Some(id) = m.get(k).and_then(Value::as_str).filter(|s| !s.is_empty()) {
+                ids.insert(id.to_string());
+            }
+        }
+    }
+    ids
+}
+
+/// 폴 루프가 쥐는 채널·계정 목록(정본은 배치마다 둘 다 다시 읽었다 — 서버 왕복 두 번이 멘션마다 턴 시작 앞에 섰다).
+///
+/// 다시 읽는 때: ① 아직 없다 ② [`DIRECTORY_MAX_AGE_MS`] 가 지났다 ③ 배치에 **모르는 id** 가 있다(새 채널·새 계정).
+/// 다시 읽어도 목록에 없는 id(DM 채널 등)는 `absent` 로 적어 같은 id 로 거듭 읽지 않는다 — 나이가 차서 읽을 때 지운다.
+#[derive(Debug)]
+pub struct Directory {
+    pub channels: Vec<(String, String)>,
+    pub accounts: Vec<Value>,
+    known: HashSet<String>,
+    absent: HashSet<String>,
+    read_at_ms: u64,
+}
+
+impl Directory {
+    /// 방금 읽은 목록으로 짓는다. `ids` 는 이 읽기를 부른 배치의 id, `carried` 는 앞 목록에서 넘겨받는 「없음」 표.
+    pub fn new(
+        channels: Vec<(String, String)>,
+        accounts: Vec<Value>,
+        ids: &HashSet<String>,
+        carried: HashSet<String>,
+        now_ms: u64,
+    ) -> Self {
+        let mut known: HashSet<String> = channels.iter().map(|(id, _)| id.clone()).collect();
+        known.extend(
+            accounts
+                .iter()
+                .filter_map(|a| a.get("id").and_then(Value::as_str))
+                .map(str::to_string),
+        );
+        let absent = carried
+            .into_iter()
+            .chain(ids.iter().cloned())
+            .filter(|id| !known.contains(id))
+            .collect();
+        Self {
+            channels,
+            accounts,
+            known,
+            absent,
+            read_at_ms: now_ms,
+        }
+    }
+
+    /// 나이가 찼는가.
+    pub fn aged(&self, now_ms: u64) -> bool {
+        now_ms.saturating_sub(self.read_at_ms) >= DIRECTORY_MAX_AGE_MS
+    }
+
+    /// 이 배치에 목록이 모르는(그리고 「없음」으로 확인한 적도 없는) id 가 있는가.
+    pub fn misses(&self, ids: &HashSet<String>) -> bool {
+        ids.iter()
+            .any(|id| !self.known.contains(id) && !self.absent.contains(id))
+    }
+}
+
 /// 배치 하나를 받아들인 결과(정본 `admit` 의 돌려준 값).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct AdmitOutcome {
@@ -265,6 +341,9 @@ pub struct PollLoop {
     kicked: AtomicBool,
     started_at_ms: i64,
     me: Mutex<Me>,
+    /// 채널·계정 목록 캐시와 그 나이를 재는 기준.
+    directory: Mutex<Option<Directory>>,
+    born: std::time::Instant,
 }
 
 impl PollLoop {
@@ -275,7 +354,34 @@ impl PollLoop {
             kicked: AtomicBool::new(false),
             started_at_ms,
             me: Mutex::new(me),
+            directory: Mutex::new(None),
+            born: std::time::Instant::now(),
         }
+    }
+
+    /// 이 배치에 쓸 채널·계정 목록 — 필요할 때만 서버에서 다시 읽는다([`Directory`]). 읽기가 실패하면 앞 목록은 그대로
+    /// 두고 오류를 올린다(폴 실패와 같이 물러났다 다시 붙는다 — 정본과 같다).
+    fn refresh_directory(
+        &self,
+        src: &dyn PollSource,
+        batch: &Value,
+        now_ms: u64,
+    ) -> Result<(Vec<(String, String)>, Vec<Value>), HarkroomError> {
+        let ids = batch_ids(batch);
+        let mut dir = self.directory.lock().unwrap_or_else(|p| p.into_inner());
+        let aged = dir.as_ref().is_none_or(|d| d.aged(now_ms));
+        if aged || dir.as_ref().is_some_and(|d| d.misses(&ids)) {
+            let channels = crate::call_timing::timed("channel.list", || src.channels())?;
+            let accounts = crate::call_timing::timed("GET /accounts", || src.accounts())?;
+            // 나이가 차서 읽을 때는 「없음」 표를 새로 시작한다 — 그 사이 생긴 것을 영영 놓치지 않는다.
+            let carried = match dir.take() {
+                Some(d) if !aged => d.absent,
+                _ => HashSet::new(),
+            };
+            *dir = Some(Directory::new(channels, accounts, &ids, carried, now_ms));
+        }
+        let d = dir.as_ref().expect("위에서 채웠다");
+        Ok((d.channels.clone(), d.accounts.clone()))
     }
 
     pub fn running(&self) -> bool {
@@ -342,8 +448,16 @@ impl PollLoop {
             self.consider_stop_request(at.as_deref());
             return Ok(0);
         }
-        let channels = src.channels()?;
-        let accounts = src.accounts()?;
+        eprintln!(
+            "{} 폴 돌아옴 — entry {}개",
+            crate::call_timing::HEAD,
+            batch
+                .get("entries")
+                .and_then(Value::as_array)
+                .map_or(0, Vec::len)
+        );
+        let now_ms = u64::try_from(self.born.elapsed().as_millis()).unwrap_or(u64::MAX);
+        let (channels, accounts) = self.refresh_directory(src, &batch, now_ms)?;
         {
             let mut me = self.me.lock().unwrap_or_else(|p| p.into_inner());
             if let Some(was) = apply_self_rename(&mut me, &accounts) {

@@ -165,3 +165,143 @@ fn exact_shell_only_follows_lane_not_model_id() {
         "xdg 아닌 하네스"
     );
 }
+
+// ---- read_mention: 일곱 읽기를 한꺼번에 ----
+
+use crate::link::LinkRequest;
+use crate::mcp::MCP_PROTOCOL_VERSION;
+use crate::rest::RunnerLink;
+use harkroom_proto::p1::RunnerLinkResponse;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
+
+/// 요청마다 잠깐 머무는 서버 — 동시에 걸린 요청 수의 최고값과 받은 호출 이름을 적는다.
+#[derive(Default)]
+struct SlowLink {
+    seen: Mutex<Vec<String>>,
+    in_flight: AtomicUsize,
+    peak: AtomicUsize,
+    /// 정의(`/agent/config`)에 줄 상태.
+    config_status: u16,
+}
+
+impl RunnerLink for &SlowLink {
+    fn request(&self, req: LinkRequest) -> RunnerLinkResponse {
+        let now = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+        self.peak.fetch_max(now, Ordering::SeqCst);
+        std::thread::sleep(Duration::from_millis(60));
+        let res = match req {
+            LinkRequest::Http { path, .. } => {
+                let name = path.split('?').next().unwrap_or("").to_string();
+                let (status, body) = match name.as_str() {
+                    "/agent/config" => (
+                        self.config_status,
+                        json!({"instructions": "지시", "model": "m-def"}).to_string(),
+                    ),
+                    "/agent/thread-model" => (
+                        200,
+                        json!({"model": "m-thread", "effort": null,
+                               "source": {"model": "thread", "effort": "agent"}})
+                        .to_string(),
+                    ),
+                    _ => (200, "{}".to_string()),
+                };
+                self.seen.lock().unwrap().push(name);
+                RunnerLinkResponse::HttpResponse {
+                    id: "x".into(),
+                    status,
+                    body,
+                }
+            }
+            LinkRequest::Mcp { payload } => {
+                let id = payload.get("id").cloned();
+                let messages = match (payload["method"].as_str().unwrap(), id) {
+                    ("notifications/initialized", None) => vec![],
+                    ("initialize", Some(id)) => vec![json!({"jsonrpc":"2.0","id":id,"result":{
+                        "protocolVersion": MCP_PROTOCOL_VERSION, "capabilities": {},
+                        "serverInfo": {"name":"s","version":"1"}}})],
+                    ("tools/call", Some(id)) => {
+                        let name = payload["params"]["name"].as_str().unwrap_or("").to_string();
+                        self.seen.lock().unwrap().push(name);
+                        vec![json!({"jsonrpc":"2.0","id":id,"result":{
+                            "content":[{"type":"text","text": json!({"guide": "가이드"}).to_string()}],
+                            "isError": false}})]
+                    }
+                    other => panic!("unexpected {other:?}"),
+                };
+                RunnerLinkResponse::McpResponse {
+                    id: "x".into(),
+                    messages,
+                }
+            }
+        };
+        self.in_flight.fetch_sub(1, Ordering::SeqCst);
+        res
+    }
+}
+
+impl crate::turn_attempt::LeaseNotice for SlowLink {
+    fn lease_ended(&self, _cause: &str) {}
+}
+impl crate::mention_hooks::LeaseHandoff for SlowLink {
+    fn heartbeat(&self, _cause: &str) {}
+    fn lease(&self, _cause: &str, _lease_id: &str, _token: &str, _expires_at: &str) {}
+    fn lease_ended(&self, _cause: &str) {}
+}
+impl AgentLink for &SlowLink {
+    type Operator = SlowLink;
+    fn operator(&self) -> &SlowLink {
+        self
+    }
+}
+
+#[test]
+fn read_mention_calls_all_seven_at_once_and_keeps_every_answer() {
+    let link = SlowLink {
+        config_status: 200,
+        ..Default::default()
+    };
+    let clients = AgentClients::new(&link, "t");
+    let r = read_mention(&clients, &target(None)).expect("정의를 읽었다");
+
+    let mut seen = link.seen.lock().unwrap().clone();
+    seen.sort();
+    assert_eq!(
+        seen,
+        [
+            "/agent/api-grants",
+            "/agent/config",
+            "/agent/merge-grants",
+            "/agent/secret-create",
+            "/agent/thread-model",
+            "/agent/tool-allows",
+            "workspace.guide",
+        ],
+        "일곱 읽기가 빠짐없이, 한 번씩"
+    );
+    // 차례로 부르면 최고값은 1 이다. 서로 겹쳐야 왕복 일곱 번이 한 번 남짓으로 줄어든다.
+    assert!(
+        link.peak.load(Ordering::SeqCst) >= 4,
+        "동시에 걸린 요청 최고 {}",
+        link.peak.load(Ordering::SeqCst)
+    );
+    // 답은 차례로 부를 때와 같은 칸에 들어간다 — 스레드 모델은 미리 읽은 값을 정의 값과 합친다.
+    assert_eq!(r.guide, "가이드");
+    assert_eq!(r.def["instructions"], "지시");
+    assert_eq!(r.turn_model.model.as_deref(), Some("m-thread"));
+    assert_eq!(r.turn_model.source.model, AxisSource::Thread);
+}
+
+#[test]
+fn read_mention_without_a_definition_does_not_launch() {
+    let link = SlowLink {
+        config_status: 500,
+        ..Default::default()
+    };
+    let clients = AgentClients::new(&link, "t");
+    assert_eq!(
+        read_mention(&clients, &target(None)).unwrap_err(),
+        DefinitionUnreadable
+    );
+}

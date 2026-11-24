@@ -65,8 +65,10 @@ impl<L: RunnerLink> MentionIo for LinkIo<'_, L> {
             .map_err(|e| e.to_string())
     }
     fn issue_lease(&mut self, cause: &str) -> LeaseOutcome {
-        self.rest
-            .issue_turn_lease(cause, self.log, self.claim_holder)
+        crate::call_timing::timed("POST /agent/turn-leases", || {
+            self.rest
+                .issue_turn_lease(cause, self.log, self.claim_holder)
+        })
     }
 }
 

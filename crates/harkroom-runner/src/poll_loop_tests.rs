@@ -436,3 +436,149 @@ fn kick_cuts_the_current_rest_and_skips_one_pending_rest() {
     );
     assert!(poll.running(), "깨움은 루프를 멈추지 않는다");
 }
+
+// ---- 채널·계정 목록 캐시 ----
+
+/// 목록을 몇 번 읽었는지 세고, 시험이 목록을 바꿀 수 있는 서버.
+struct ListSource {
+    channels: RefCell<Vec<(String, String)>>,
+    accounts: RefCell<Vec<Value>>,
+    reads: Cell<(usize, usize)>,
+    fail: Cell<bool>,
+}
+
+impl PollSource for ListSource {
+    fn poll(&self, _: &[i64]) -> Result<Value, HarkroomError> {
+        unreachable!("이 시험은 폴을 부르지 않는다")
+    }
+    fn definition(&self) -> Result<Value, HarkroomError> {
+        Ok(json!({}))
+    }
+    fn channels(&self) -> Result<Vec<(String, String)>, HarkroomError> {
+        if self.fail.get() {
+            return Err(HarkroomError::new("transport".into(), None));
+        }
+        let (c, a) = self.reads.get();
+        self.reads.set((c + 1, a));
+        Ok(self.channels.borrow().clone())
+    }
+    fn accounts(&self) -> Result<Vec<Value>, HarkroomError> {
+        let (c, a) = self.reads.get();
+        self.reads.set((c, a + 1));
+        Ok(self.accounts.borrow().clone())
+    }
+    fn reset(&self) {}
+}
+
+fn batch_of(channel: &str, author: &str) -> Value {
+    json!({"entries": [{"id": 1, "messageId": "m"}],
+           "messages": [{"id": "m", "channelId": channel, "authorId": author}]})
+}
+
+#[test]
+fn directory_is_reread_only_for_unknown_ids_or_age() {
+    let lp = PollLoop::new(
+        Me {
+            id: "me".into(),
+            handle: "me".into(),
+        },
+        START,
+    );
+    let src = ListSource {
+        channels: RefCell::new(vec![("c1".into(), "task".into())]),
+        accounts: RefCell::new(vec![json!({"id":"h","handle":"jb","kind":"human"})]),
+        reads: Cell::new((0, 0)),
+        fail: Cell::new(false),
+    };
+    let names = |r: &(Vec<(String, String)>, Vec<Value>)| BatchContext::new(&r.0, &r.1);
+
+    // 처음에는 읽는다. 같은 채널·같은 글쓴이의 다음 배치는 읽지 않는다(멘션마다 왕복 두 번이 사라진다).
+    lp.refresh_directory(&src, &batch_of("c1", "h"), 0).unwrap();
+    assert_eq!(src.reads.get(), (1, 1));
+    for now in [1_000, 60_000] {
+        lp.refresh_directory(&src, &batch_of("c1", "h"), now)
+            .unwrap();
+    }
+    assert_eq!(src.reads.get(), (1, 1), "아는 id 뿐이면 다시 읽지 않는다");
+
+    // 새 채널이 생겼다 → 그 채널의 첫 배치에서 다시 읽고 이름이 보인다.
+    src.channels
+        .borrow_mut()
+        .push(("c2".into(), "새채널".into()));
+    let r = lp
+        .refresh_directory(&src, &batch_of("c2", "h"), 61_000)
+        .unwrap();
+    assert_eq!(src.reads.get(), (2, 2));
+    assert_eq!(names(&r).channel_name("c2"), "새채널");
+
+    // 새 계정이 생겼다 → 그 계정이 쓴 첫 글에서 다시 읽고, 사람인지가 보인다(묶기·알림 판정이 이 표를 본다).
+    src.accounts
+        .borrow_mut()
+        .push(json!({"id":"h2","handle":"new","kind":"human"}));
+    let r = lp
+        .refresh_directory(&src, &batch_of("c2", "h2"), 62_000)
+        .unwrap();
+    assert_eq!(src.reads.get(), (3, 3));
+    let ctx = names(&r);
+    assert!(ctx.human_ids.contains("h2"));
+    assert_eq!(ctx.handles.get("h2").map(String::as_str), Some("new"));
+
+    // 목록에 없는 채널(DM)은 한 번만 다시 읽는다 — 같은 DM 의 다음 글마다 읽지 않는다. 다른 모르는 id 로 다시 읽은
+    // 뒤에도 「없음」은 넘겨받는다.
+    lp.refresh_directory(&src, &batch_of("dm9", "h"), 63_000)
+        .unwrap();
+    assert_eq!(src.reads.get(), (4, 4));
+    lp.refresh_directory(&src, &batch_of("dm9", "h"), 64_000)
+        .unwrap();
+    assert_eq!(
+        src.reads.get(),
+        (4, 4),
+        "없다고 확인한 id 로 거듭 읽지 않는다"
+    );
+    lp.refresh_directory(&src, &batch_of("dm8", "h"), 65_000)
+        .unwrap();
+    lp.refresh_directory(&src, &batch_of("dm9", "h"), 66_000)
+        .unwrap();
+    assert_eq!(src.reads.get(), (5, 5));
+
+    // 읽기가 실패하면 오류를 올리고 앞 목록은 남는다 — 아는 id 의 배치는 그대로 돈다.
+    src.fail.set(true);
+    assert!(
+        lp.refresh_directory(&src, &batch_of("c3", "h"), 67_000)
+            .is_err()
+    );
+    let r = lp
+        .refresh_directory(&src, &batch_of("c2", "h2"), 68_000)
+        .unwrap();
+    assert_eq!(names(&r).channel_name("c2"), "새채널");
+    src.fail.set(false);
+
+    // 나이가 차면 모르는 id 가 없어도 다시 읽는다 — 이름 바뀜이 따라온다. 「없음」 표도 새로 시작한다.
+    src.accounts.borrow_mut()[0] = json!({"id":"h","handle":"renamed","kind":"human"});
+    let r = lp
+        .refresh_directory(&src, &batch_of("c1", "h"), 65_000 + DIRECTORY_MAX_AGE_MS)
+        .unwrap();
+    assert_eq!(src.reads.get(), (6, 6));
+    assert_eq!(
+        names(&r).handles.get("h").map(String::as_str),
+        Some("renamed")
+    );
+    lp.refresh_directory(&src, &batch_of("dm9", "h"), 66_000 + DIRECTORY_MAX_AGE_MS)
+        .unwrap();
+    assert_eq!(
+        src.reads.get(),
+        (7, 7),
+        "나이로 읽은 뒤에는 없음 표가 비어 있다"
+    );
+}
+
+#[test]
+fn batch_ids_collects_channels_and_authors() {
+    let ids = batch_ids(&json!({"messages": [
+        {"id": "m1", "channelId": "c1", "authorId": "a"},
+        {"id": "m2", "channelId": "c1", "authorId": ""},
+        {"id": "m3"}
+    ]}));
+    assert_eq!(ids, HashSet::from(["c1".to_string(), "a".to_string()]));
+    assert!(batch_ids(&json!({})).is_empty());
+}
