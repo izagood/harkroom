@@ -679,6 +679,8 @@ enum Job {
     Started(String),
     Ended(String, String),
     Tick,
+    /// 앞에 쌓인 일이 다 끝났음을 알린다([`flush`]).
+    Flush(Sender<()>),
     Backfill(PathBuf, Box<dyn FnOnce() -> Vec<Value> + Send>),
 }
 
@@ -704,6 +706,9 @@ pub fn install(reporter: CleanupReporter) -> std::io::Result<()> {
                     Job::Started(k) => r.turn_started(&k),
                     Job::Ended(k, m) => r.turn_ended(&k, &m),
                     Job::Tick => r.tick(),
+                    Job::Flush(done) => {
+                        let _ = done.send(());
+                    }
                     Job::Backfill(marker, collect) => {
                         let threads = collect();
                         let n = threads.len();
@@ -776,6 +781,17 @@ pub fn on_turn_started(key: &str) {
 /// 지금 한 번 훑는다(I1b) — 「작업 하나」 러너는 30분 박동까지 살지 않으므로 뜰 때마다 한 번 돈다.
 pub fn tick_now() {
     enqueue(Job::Tick);
+}
+
+/// 지금까지 넘긴 일(훑기 포함)이 끝나기를 `limit` 까지 기다린다. 끝났으면 `true`. 일꾼이 없으면 기다릴 것이 없다.
+/// 「작업 하나」 러너는 금방 물러나므로, 뜰 때 건 훑기가 끝나기 전에 프로세스가 끝나지 않게 종료 직전에 부른다.
+pub fn flush(limit: std::time::Duration) -> bool {
+    if HANDLE.get().is_none() {
+        return true;
+    }
+    let (tx, rx) = channel::<()>();
+    enqueue(Job::Flush(tx));
+    rx.recv_timeout(limit).is_ok()
 }
 
 /// 턴 끝(정본 `turnWatch.ended`).

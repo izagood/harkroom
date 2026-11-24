@@ -81,6 +81,15 @@ impl Roster {
     fn closed(&self) -> bool {
         self.lock().closed
     }
+    /// 도는 턴이 없을 때만 닫는다 — 닫았으면 `true`. 「없음을 본 것」과 「닫은 것」이 한 잠금 안이라, 그 사이에 새 턴이
+    /// 끼어들 수 없다(끼어든 쪽은 `add` 에서 거절된다).
+    fn close_if_idle(&self) -> bool {
+        let mut g = self.lock();
+        if g.live.is_empty() {
+            g.closed = true;
+        }
+        g.closed
+    }
     fn remove(&self, id: u64) {
         let mut g = self.lock();
         g.live.retain(|(i, _)| *i != id);
@@ -554,6 +563,13 @@ impl<L: AgentLink + Send + Sync + 'static> RunnerMaker<L> {
         }
     }
 
+    /// 「작업 하나」 러너가 물러나려 한다 — 도는 새 터미널 턴이 없으면 그 자리에서 새 턴 받기를 닫고 `true`.
+    /// 하나라도 돌면 닫지 않고 `false`(아직 물러나면 안 된다). 닫은 뒤의 열기는 「물러나는 중」으로 거절된다 —
+    /// 물러나기로 정한 직후 열린 턴이 곧바로 회수되는 틈을 없앤다.
+    pub fn close_interactive_if_idle(&self) -> bool {
+        self.interactive.close_if_idle()
+    }
+
     /// 러너가 물러난다 — 도는 새 터미널 턴을 모두 회수하고(SIGTERM → 5초 뒤 SIGKILL) 끝 처리까지 `limit` 만큼 기다린다.
     /// 건 수와 남은 수를 돌려준다. 링크를 닫기 **전에** 불러야 끝 처리가 스레드를 읽고 기록을 저장한다.
     pub fn shutdown_interactive(&self, limit: Duration) -> (usize, usize) {
@@ -654,6 +670,26 @@ mod roster_tests {
             controls: None,
             orphan_gen: 0,
         }))
+    }
+
+    #[test]
+    fn close_if_idle_closes_only_an_empty_roster_and_then_refuses_new_turns() {
+        let r = Roster::default();
+        let a = fresh();
+        let ia = r.add(&a).unwrap();
+        // 도는 턴이 있으면 닫지 않는다 — 아직 물러나면 안 된다. 새 턴도 그대로 받는다.
+        assert!(!r.close_if_idle());
+        assert!(!r.closed());
+        let ib = r.add(&fresh()).unwrap();
+        r.remove(ia);
+        assert!(!r.close_if_idle());
+        r.remove(ib);
+        // 비었으면 그 자리에서 닫는다 — 그 뒤에 온 턴은 받지 않는다(회수할 것이 생기지 않는다).
+        assert!(r.close_if_idle());
+        assert!(r.closed());
+        assert!(r.add(&fresh()).is_none());
+        assert!(r.close_if_idle(), "이미 닫혔으면 그대로 닫힌 것이다");
+        assert_eq!(r.shutdown_all(), 0);
     }
 
     #[test]
