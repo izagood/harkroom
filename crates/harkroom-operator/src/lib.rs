@@ -77,6 +77,7 @@ pub mod runner_ledger;
 pub mod runner_link;
 pub mod runner_log;
 pub mod runner_pick;
+pub mod runner_pool;
 pub mod runners;
 pub mod serve;
 pub mod server_link;

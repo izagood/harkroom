@@ -301,6 +301,46 @@ pub fn serve_main(args: &[String], env_home: Option<String>) -> (String, i32) {
     }
 }
 
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// 러너 풀 그림자 장부 — 프로세스 하나에 하나(턴 칸이 프로세스 하나에 하나라서). 스위치가 꺼져 있으면 `None` 이고 칸 통지도 걸지 않는다.
+fn pool_shadow_if_on() -> Option<std::sync::Arc<std::sync::Mutex<crate::runner_pool::PoolShadow>>> {
+    type Shared = std::sync::Arc<std::sync::Mutex<crate::runner_pool::PoolShadow>>;
+    static POOL: std::sync::OnceLock<Option<Shared>> = std::sync::OnceLock::new();
+    POOL.get_or_init(|| {
+        let mode = crate::runner_pool::mode(
+            std::env::var(crate::runner_pool::RUNNER_POOL_ENV)
+                .ok()
+                .as_deref(),
+        );
+        if mode != crate::runner_pool::PoolMode::Shadow {
+            return None;
+        }
+        let pool: Shared = Default::default();
+        let seen = std::sync::Arc::clone(&pool);
+        crate::turn_slots::TurnSlots::process()
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .set_observer(Box::new(move |runner, held| {
+                let mut p = seen.lock().unwrap_or_else(|p| p.into_inner());
+                if p.on_slots(runner, held, now_ms()) {
+                    eprintln!("러너 풀(그림자): 반납 — {}", p.describe());
+                }
+            }));
+        eprintln!(
+            "러너 풀 그림자 켜짐({}=shadow) — 세기만 하고 러너는 그대로 상주한다",
+            crate::runner_pool::RUNNER_POOL_ENV
+        );
+        Some(pool)
+    })
+    .clone()
+}
+
 /// 서버 링크 스레드(s21a-2) — 이 커뮤니티의 토큰이 있으면 `wss://…/operator` 로 붙어 hello 를 올리고, 끊기면 backoff 로 다시 붙는다.
 /// 토큰이 없으면(등록 전) 띄우지 않는다 — `operatorRegister`(s9)가 claim 한 뒤 다시 부른다.
 /// 러너로 가는 프레임은 릴레이 다중화기로 넘기고(s21b-2), 나머지는 종류만 stderr 에 적는다(assign·unassign 처리는 s21c).
@@ -848,6 +888,8 @@ pub fn spawn_server_link(
         std::sync::Arc::clone(&state.runners),
         std::sync::Arc::clone(&bridge_link_adopt),
     );
+    // I1a(스위치 `HARKROOM_RUNNER_POOL=shadow`, 기본 꺼짐) — 풀이 정본이었다면 빌렸을·반납했을 수를 세기만 한다.
+    let pool_shadow = pool_shadow_if_on();
     let on_frame = Box::new(move |frame: harkroom_proto::p2::ServerToOperatorFrame| {
         // E2a(그림자) — 깨움 프레임은 적어 두고 받았다고만 답한다. 턴을 열지 않고 다른 동작도 바꾸지 않는다(글 내용은 오지 않는다).
         if let harkroom_proto::p2::ServerToOperatorFrame::Wake { wake_id, .. } = &frame {
@@ -864,6 +906,20 @@ pub fn spawn_server_link(
                     |runner, f| wake_runner_link.send(runner, f),
                 );
                 eprintln!("깨움 넘김(E2b): {wake_id} → {out:?}");
+            }
+            if let (Some(pool), harkroom_proto::p2::ServerToOperatorFrame::Wake { agent_id, .. }) =
+                (&pool_shadow, &frame)
+            {
+                // 턴 칸을 먼저 읽고 놓은 뒤에 장부를 잠근다 — 칸 통지(칸 잠금 → 장부 잠금)와 순서가 엇갈리지 않게.
+                let (in_use, max) = {
+                    let slots = crate::turn_slots::TurnSlots::process();
+                    let s = slots.lock().unwrap_or_else(|p| p.into_inner());
+                    (s.in_use(), s.max())
+                };
+                let runner = wake_runners.current_incarnation(agent_id);
+                let mut p = pool.lock().unwrap_or_else(|p| p.into_inner());
+                let d = p.on_wake(agent_id, runner.as_deref(), in_use, max, now_ms());
+                eprintln!("러너 풀(그림자): {wake_id} → {d:?} — {}", p.describe());
             }
             return;
         }
