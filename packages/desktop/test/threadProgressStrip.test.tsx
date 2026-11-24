@@ -39,6 +39,11 @@ describe('ThreadProgressStrip', () => {
     render(<ThreadProgressStrip progress={{ ...ZERO, waiting: 2, waitingUnknown: true }} plan={null} />);
     expect(screen.getByTestId('thread-progress-waiting').getAttribute('data-count')).toBe('2');
     expect(screen.getByTestId('thread-progress-waitingUnknown')).toBeTruthy();
+    cleanup();
+    // 「모름」은 기다림 바로 옆이다 — 오늘 끝 뒤로 밀리지 않는다.
+    render(<ThreadProgressStrip progress={{ ...ZERO, waiting: 2, waitingUnknown: true, doneToday: 1 }} plan={null} />);
+    const ids = Array.from(screen.getByTestId('thread-progress').children).map((c) => c.getAttribute('data-testid'));
+    expect(ids).toEqual(['thread-progress-waiting', 'thread-progress-waitingUnknown', 'thread-progress-doneToday']);
   });
 
   it('빈 띠는 마지막 끝의 시각을 말하고, 완료 보고가 없으면 마지막 답의 시각을 말한다', () => {

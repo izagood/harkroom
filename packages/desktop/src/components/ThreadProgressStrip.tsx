@@ -73,7 +73,18 @@ export function ThreadProgressStrip({ progress, plan, onMyTurn, drawer }: {
       )}
       {!idle && ORDER.map((slot) => {
         const n = progress[slot];
-        if (n === 0) return null;
+        // 예약 목록을 못 읽었다 — 읽힌 것만 센 수 바로 옆에 「모름」을 세운다. 0 으로 말하지 않는다.
+        const waitingUnknown = slot === 'waiting' && progress.waitingUnknown && (
+          <span
+            key="waitingUnknown"
+            data-testid="thread-progress-waitingUnknown"
+            data-unknown
+            className="inline-flex items-center gap-1 rounded-row border border-dashed border-border px-1.5 text-fg-subtle"
+          >
+            {t('thread.progress.waitingUnknown')}
+          </span>
+        );
+        if (n === 0) return waitingUnknown || null;
         if (n === null) {
           return (
             <span
@@ -110,22 +121,13 @@ export function ThreadProgressStrip({ progress, plan, onMyTurn, drawer }: {
             </button>
           );
         }
-        return (
+        return [
           <span key={slot} data-testid={`thread-progress-${slot}`} data-count={n} className={tone}>
             {cell}
-          </span>
-        );
+          </span>,
+          waitingUnknown || null,
+        ];
       })}
-      {/* 예약 목록을 못 읽었다 — 읽힌 것만 센 수 옆에 「모름」을 세운다. 0 으로 말하지 않는다. */}
-      {!idle && progress.waitingUnknown && (
-        <span
-          data-testid="thread-progress-waitingUnknown"
-          data-unknown
-          className="inline-flex items-center gap-1 rounded-row border border-dashed border-border px-1.5 text-fg-subtle"
-        >
-          {t('thread.progress.waitingUnknown')}
-        </span>
-      )}
       {plan && plan.total > 0 && (
         <span data-testid="thread-progress-plan" className="text-fg-subtle">
           {t('thread.progress.plan', { done: plan.done, total: plan.total })}
@@ -138,7 +140,7 @@ export function ThreadProgressStrip({ progress, plan, onMyTurn, drawer }: {
           data-testid="thread-work-toggle"
           aria-expanded={drawer.open}
           onClick={drawer.onToggle}
-          className="ml-auto hidden text-accent-text hover:underline @[720px]:inline"
+          className="ml-auto hidden text-accent-text hover:underline @[700px]:inline"
         >
           {t(drawer.open ? 'thread.work.close' : 'thread.work.open')}
         </button>

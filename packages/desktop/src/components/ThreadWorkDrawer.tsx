@@ -13,7 +13,7 @@ import type { DrawerGroup, DrawerItem } from '../lib/threadWork';
  * 띠와 같은 다섯 묶음을 같은 순서로 세운다. 빈 묶음은 그리지 않고, 「오늘 끝」은 접어 둔다(시안 D5).
  * 줄을 고르는 일은 `lib/threadWork` 가 한다 — 여기는 그리기만 한다. 띠의 수와 줄 수가 갈라지지 않게 하려는 것이다.
  *
- * 넓은 폭에서만 선다(부모의 컨테이너 폭 720px 부터). 좁으면 띠만 남는다.
+ * 넓은 폭에서만 선다(부모의 컨테이너 폭 700px 부터 — 스레드 패널의 기본 폭 711px 에서 서도록 잡았다). 좁으면 띠만 남는다.
  */
 const ORDER: readonly DrawerGroup[] = ['myTurn', 'blocked', 'running', 'waiting', 'doneToday'];
 
@@ -98,7 +98,7 @@ export function ThreadWorkDrawer({ items, work, onOpenMessage, onClose }: {
     <aside
       data-testid="thread-work-drawer"
       aria-label={t('thread.work.title')}
-      className="hidden w-[340px] shrink-0 flex-col overflow-y-auto border-l border-border pb-3 text-meta @[720px]:flex"
+      className="hidden w-[340px] shrink-0 flex-col overflow-y-auto border-l border-border pb-3 text-meta @[700px]:flex"
     >
       <div className="flex items-center gap-2 px-3 py-2">
         <span className="font-semibold text-fg">{t('thread.work.title')}</span>
@@ -159,7 +159,8 @@ export function ThreadWorkDrawer({ items, work, onOpenMessage, onClose }: {
                       <span className="line-clamp-2 font-medium text-fg">{item.title ?? name(item.actorId)}</span>
                     )}
                     <span className="block text-fg-muted">
-                      {!unknown && item.title !== null && item.actorId !== null && `${name(item.actorId)} · `}
+                      {/* 내 차례 카드는 뒤 문장이 이미 누가 물었는지 말한다 — 이름을 두 번 적지 않는다. */}
+                      {!unknown && item.title !== null && item.actorId !== null && !(item.detail.kind === 'ask' && item.group === 'myTurn') && `${name(item.actorId)} · `}
                       {meta(item)}
                     </span>
                     {item.group === 'myTurn' && item.messageId !== null && (
