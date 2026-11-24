@@ -179,6 +179,18 @@ impl Ledger {
         PreGate::Proceed
     }
 
+    /// [`Ledger::pre_gate`] 가 이 entry 를 `Proceed` 로 넘길 것이 **확실한가** — 장부를 고치지 않고 본다(스레드 임대를
+    /// 미리 한꺼번에 잡을 entry 를 고르는 데 쓴다). 관문 대기가 걸린 entry 는 판정이 표식 읽기에 달려 있어 `false` 로
+    /// 준다 — 그 entry 는 미리 잡지 않고 제 차례에 잡는다.
+    pub fn would_proceed(&self, id: i64, now: u64, held: &HashSet<i64>) -> bool {
+        !(self.attempts.get(&id).is_some_and(|r| r.not_before > now)
+            || self.gate_waits.contains_key(&id)
+            || self.is_done_unread(id)
+            || self.recently_done.contains_key(&id)
+            || self.in_flight_entries.contains(&id)
+            || held.contains(&id))
+    }
+
     /// 이 프로세스 안에서 그 스레드에 턴을 띄우기로 이미 정했는가(정본 `inFlightThreads`). 레지스트리 판정은 호출자가 더한다.
     pub fn thread_in_flight(&self, key: &str) -> bool {
         self.in_flight_threads.contains(key)

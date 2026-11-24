@@ -19,6 +19,11 @@ pub fn joined_line(what: &str, total_ms: u128, parts: &[(&str, u128)]) -> String
     format!("{HEAD} {what} {total_ms}ms — {}", parts.join(" · "))
 }
 
+/// 한꺼번에 부른 같은 호출 여럿의 줄 — `머리 N건 전체ms`. 호출 하나하나의 줄은 그 호출이 따로 남긴다.
+pub fn counted_line(what: &str, count: usize, total_ms: u128) -> String {
+    format!("{HEAD} {what} {count}건 {total_ms}ms")
+}
+
 /// `f` 를 돌리고 걸린 시간(ms)을 같이 돌려준다. 줄은 남기지 않는다.
 pub fn measured<T>(f: impl FnOnce() -> T) -> (T, u128) {
     let t = Instant::now();
@@ -46,6 +51,14 @@ mod tests {
         assert_eq!(
             joined_line("멘션 읽기(동시)", 520, &[("config", 410), ("guide", 430)]),
             "[시간] 멘션 읽기(동시) 520ms — config 410 · guide 430"
+        );
+    }
+
+    #[test]
+    fn counted_line_carries_count_and_total() {
+        assert_eq!(
+            counted_line("스레드 선점(동시)", 4, 561),
+            "[시간] 스레드 선점(동시) 4건 561ms"
         );
     }
 

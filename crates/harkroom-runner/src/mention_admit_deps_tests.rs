@@ -23,6 +23,12 @@ struct Link {
     http: Mutex<Vec<String>>,
     tools: Mutex<Vec<(String, Value)>>,
     claims: Mutex<VecDeque<u16>>,
+    /// 스레드(앵커)별 임대 답 — 있으면 `claims` 보다 먼저 본다.
+    claim_by_root: Mutex<std::collections::HashMap<String, u16>>,
+    /// 임대 요청 하나를 이만큼 붙든다(동시에 걸린 수를 재려는 것).
+    claim_delay_ms: std::sync::atomic::AtomicU64,
+    claims_in_flight: std::sync::atomic::AtomicUsize,
+    claims_peak: std::sync::atomic::AtomicUsize,
 }
 
 fn link() -> &'static Link {
@@ -48,10 +54,23 @@ impl Link {
 impl RunnerLink for &'static Link {
     fn request(&self, req: LinkRequest) -> RunnerLinkResponse {
         match req {
-            LinkRequest::Http { method, path, .. } => {
+            LinkRequest::Http {
+                method, path, body, ..
+            } => {
+                use std::sync::atomic::Ordering::SeqCst;
                 lk(&self.http).push(format!("{method} {path}"));
                 let status = if path == "/agent/thread-claims" {
-                    lk(&self.claims).pop_front().unwrap_or(200)
+                    let now = self.claims_in_flight.fetch_add(1, SeqCst) + 1;
+                    self.claims_peak.fetch_max(now, SeqCst);
+                    std::thread::sleep(Duration::from_millis(self.claim_delay_ms.load(SeqCst)));
+                    self.claims_in_flight.fetch_sub(1, SeqCst);
+                    let root = body
+                        .as_deref()
+                        .and_then(|b| serde_json::from_str::<Value>(b).ok())
+                        .and_then(|v| v["threadRootId"].as_str().map(str::to_string))
+                        .unwrap_or_default();
+                    let by_root = lk(&self.claim_by_root).get(&root).copied();
+                    by_root.unwrap_or_else(|| lk(&self.claims).pop_front().unwrap_or(200))
                 } else {
                     200
                 };
@@ -484,4 +503,98 @@ fn control_ledger_is_the_shared_registry_and_queue() {
     assert!(deps.defer("c/r", 6, 41, 4_000).warned);
     // 끝(B-2c)의 클램프 재료가 같은 장부에 남는다.
     assert_eq!(lock_control(&control).queue.min_seq("c/r"), Some(40));
+}
+
+/// s63: 한 폴의 임대 여럿은 동시에 나간다 — 답은 물은 순서대로 제 칸에, 거절(409)·확인 못 함(500)이 섞여도 잡힌 것만 칸을 쥔다.
+#[test]
+fn hold_claims_asks_concurrently_and_keeps_each_answer_in_its_place() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let l = link();
+    l.claim_delay_ms.store(80, SeqCst);
+    lk(&l.claim_by_root).extend([("r2".to_string(), 409), ("r4".to_string(), 500)]);
+    let c = clients(l);
+    // 박동은 멀리 둔다 — 동시에 걸린 수에 박동이 섞이지 않게.
+    let tc = ThreadClaims::with_timing(Arc::clone(&c), "me".into(), 90, Duration::from_secs(600));
+    let mut got = Launched::default();
+    let mut deps = LinkAdmitDeps::new(
+        &c,
+        &tc,
+        MentionSlots::default(),
+        SharedControl::default(),
+        now,
+        &mut got,
+    );
+    let wants: Vec<(String, String)> = ["r1", "r2", "r3", "r4"]
+        .iter()
+        .map(|r| ("c".to_string(), r.to_string()))
+        .collect();
+    let holds = deps.hold_claims(&wants);
+    let held: Vec<bool> = holds
+        .iter()
+        .map(|h| matches!(h, ClaimHold::Held(_)))
+        .collect();
+    assert_eq!(held, vec![true, false, true, false]);
+    assert!(
+        matches!(holds[1], ClaimHold::Busy) && matches!(holds[3], ClaimHold::Busy),
+        "거절·확인 못 함은 Busy"
+    );
+    assert!(
+        l.claims_peak.load(SeqCst) >= 3,
+        "동시에 걸린 임대 요청 최고 {} — 차례로 불렀다",
+        l.claims_peak.load(SeqCst)
+    );
+    assert_eq!(deps.cell_count(), 2, "잡힌 둘만 칸을 쥔다");
+    assert_eq!(
+        tc.held_count(),
+        2,
+        "거절된 스레드는 이 프로세스 열쇠도 놓는다"
+    );
+    // 띄우지 않고 놓으면 칸도 임대도 빠진다.
+    l.claim_delay_ms.store(0, SeqCst);
+    drop(holds);
+    assert_eq!(deps.cell_count(), 0);
+    assert_eq!(tc.held_count(), 0);
+    assert_eq!(l.releases(), 2);
+}
+
+/// s63: 한꺼번에 잡은 임대도 띄울 때 제 멘션에 묶인다 — 박동이 409 를 받으면 그 멘션 슬롯만 펜스된다.
+#[test]
+fn a_claim_taken_in_a_batch_still_fences_its_own_mention() {
+    let l = link();
+    let c = clients(l);
+    let tc = claims(&c);
+    let mut got = Launched::default();
+    let slots = MentionSlots::default();
+    let mut deps = LinkAdmitDeps::new(
+        &c,
+        &tc,
+        slots.clone(),
+        SharedControl::default(),
+        now,
+        &mut got,
+    );
+    let wants = vec![
+        ("c".to_string(), "ra".to_string()),
+        ("c".to_string(), "rb".to_string()),
+    ];
+    let mut holds = deps.hold_claims(&wants);
+    let (ClaimHold::Held(b), ClaimHold::Held(a)) = (holds.pop().unwrap(), holds.pop().unwrap())
+    else {
+        panic!("둘 다 잡혀야 한다")
+    };
+    let mut la = launch_of("ma", Some(a));
+    la.anchor = "ra".into();
+    let mut lb = launch_of("mb", Some(b));
+    lb.anchor = "rb".into();
+    deps.launch(la);
+    deps.launch(lb);
+    assert_eq!(deps.cell_count(), 0, "띄우면 둘 다 꺼낸다");
+    // rb 의 박동만 409.
+    lk(&l.claim_by_root).insert("rb".into(), 409);
+    let (oa, ob) = (slots.open("ma"), slots.open("mb"));
+    assert!(
+        wait_until(|| fenced_after_bind(&ob.slot())),
+        "rb 를 잃으면 mb 가 접힌다"
+    );
+    assert!(!fenced_after_bind(&oa.slot()), "ra 는 그대로다");
 }

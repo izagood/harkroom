@@ -30,6 +30,14 @@ struct Fake {
     notices: Vec<(String, AdmitNotice)>,
     fails: Vec<String>,
     claims: Option<ClaimMode>,
+    /// 앵커별 임대 답(없으면 `claims`).
+    claim_by_root: HashMap<String, ClaimMode>,
+    /// 서버에 물은 앵커(하나씩이든 한꺼번에든 물은 순서대로).
+    claim_asked: Vec<String>,
+    /// 한꺼번에 잡기로 온 묶음.
+    claim_batches: Vec<Vec<String>>,
+    /// 한꺼번에 잡은 직후 인터랙티브가 끼어든 스레드(레지스트리가 바빠진다).
+    busy_after_batch: HashSet<String>,
     claim_releases: Arc<AtomicUsize>,
     slot: Option<SlotOutcome>,
     slot_releases: Vec<String>,
@@ -87,8 +95,17 @@ impl AdmitDeps for Fake {
         self.fails.push(body.into());
         Err("down".into())
     }
-    fn hold_claim(&mut self, _: &str, _: &str) -> ClaimHold {
-        match self.claims {
+    fn hold_claims(&mut self, wants: &[(String, String)]) -> Vec<ClaimHold> {
+        self.claim_batches
+            .push(wants.iter().map(|(_, a)| a.clone()).collect());
+        let holds = wants.iter().map(|(c, a)| self.hold_claim(c, a)).collect();
+        let late = std::mem::take(&mut self.busy_after_batch);
+        self.busy.extend(late);
+        holds
+    }
+    fn hold_claim(&mut self, _: &str, anchor: &str) -> ClaimHold {
+        self.claim_asked.push(anchor.into());
+        match self.claim_by_root.get(anchor).copied().or(self.claims) {
             None => ClaimHold::NotConfigured,
             Some(ClaimMode::Busy) => ClaimHold::Busy,
             Some(ClaimMode::Grant) => ClaimHold::Held(Box::new(Claim(self.claim_releases.clone()))),
@@ -409,4 +426,165 @@ fn interactive_racing_in_before_reserve_blocks_and_releases_holds() {
     assert!(!l.thread_in_flight("c/r"));
     assert_eq!(f.slot_releases, vec!["c/r"]);
     assert_eq!(f.claim_releases.load(Ordering::SeqCst), 1);
+}
+
+/// 서로 다른 스레드의 임대는 한 묶음으로 잡는다 — 거절이 섞여도 잡힌 것만 띄우고, 스레드마다 한 번만 묻는다.
+#[test]
+fn distinct_threads_are_claimed_in_one_batch_and_refusals_only_block_their_own() {
+    let mut l = Ledger::default();
+    let mut f = Fake {
+        claims: Some(ClaimMode::Grant),
+        ..Fake::default()
+    };
+    f.claim_by_root.insert("r2".into(), ClaimMode::Busy);
+    let b = batch(
+        vec![ent(1, "m1"), ent(2, "m2"), ent(3, "m3"), ent(4, "m4")],
+        vec![
+            msg("m1", "u1", "r1"),
+            msg("m2", "u1", "r2"),
+            msg("m3", "u1", "r3"),
+            // 거절된 스레드의 두 번째 글(다른 사람) — 다시 묻지 않는다.
+            msg("m4", "a1", "r2"),
+        ],
+    );
+    let out = admit(&mut l, &mut f, &b, &human_ctx()).unwrap();
+    assert_eq!(
+        out,
+        AdmitOutcome {
+            started: 2,
+            deferred: 0,
+            blocked: 2
+        }
+    );
+    assert_eq!(f.claim_batches, vec![vec!["r1", "r2", "r3"]]);
+    assert_eq!(f.claim_asked, vec!["r1", "r2", "r3"], "스레드마다 한 번");
+    assert_eq!(
+        *f.launches.borrow(),
+        vec![(1, 1, 0, true, false), (3, 1, 0, true, false)]
+    );
+    assert_eq!(f.claim_releases.load(Ordering::SeqCst), 0);
+}
+
+/// 스레드가 하나면 묶지 않고 전처럼 제 차례에 잡는다. 남이 쥔 스레드의 글이 여럿이어도 한 폴에 한 번만 묻는다.
+#[test]
+fn a_single_thread_is_claimed_in_turn_and_asked_once_per_poll() {
+    let mut l = Ledger::default();
+    let mut f = Fake {
+        claims: Some(ClaimMode::Busy),
+        ..Fake::default()
+    };
+    let b = batch(
+        vec![ent(1, "m1"), ent(2, "m2"), ent(3, "m3")],
+        vec![
+            msg("m1", "u1", "r"),
+            msg("m2", "a1", "r"),
+            msg("m3", "u1", "r"),
+        ],
+    );
+    let out = admit(&mut l, &mut f, &b, &human_ctx()).unwrap();
+    assert_eq!(out.blocked, 3);
+    assert!(f.claim_batches.is_empty());
+    assert_eq!(f.claim_asked, vec!["r"]);
+    // 다음 폴에는 다시 묻는다 — 남이 놓았는지는 서버만 안다.
+    admit(&mut l, &mut f, &b, &human_ctx()).unwrap();
+    assert_eq!(f.claim_asked, vec!["r", "r"]);
+}
+
+/// 이 프로세스가 돌리고 있는 스레드는 서버에 묻지 않는다. 그 턴이 끝나면 다시 잡는다.
+#[test]
+fn a_running_thread_is_not_claimed_until_its_turn_ends() {
+    let mut l = Ledger::default();
+    let mut f = Fake {
+        claims: Some(ClaimMode::Grant),
+        ..Fake::default()
+    };
+    let first = batch(vec![ent(1, "m1")], vec![msg("m1", "u1", "r1")]);
+    assert_eq!(
+        admit(&mut l, &mut f, &first, &human_ctx()).unwrap().started,
+        1
+    );
+    assert_eq!(f.claim_asked, vec!["r1"]);
+
+    // r1 이 도는 동안: 도는 entry(1)·같은 스레드의 새 글(2)은 묻지 않고, 다른 스레드 둘만 한 묶음으로 잡는다.
+    let second = batch(
+        vec![ent(1, "m1"), ent(2, "m2"), ent(3, "m3"), ent(4, "m4")],
+        vec![
+            msg("m1", "u1", "r1"),
+            msg("m2", "u1", "r1"),
+            msg("m3", "u1", "r2"),
+            msg("m4", "u1", "r3"),
+        ],
+    );
+    let out = admit(&mut l, &mut f, &second, &human_ctx()).unwrap();
+    assert_eq!((out.started, out.blocked), (2, 2));
+    assert_eq!(f.claim_batches, vec![vec!["r2", "r3"]]);
+    assert_eq!(
+        f.claim_asked,
+        vec!["r1", "r2", "r3"],
+        "도는 r1 은 다시 묻지 않는다"
+    );
+
+    // r1 의 턴이 끝났다(읽음 처리는 아직) — 같은 스레드의 새 글은 다시 잡아 띄운다.
+    l.release(1, "c/r1");
+    let third = batch(vec![ent(2, "m2")], vec![msg("m2", "u1", "r1")]);
+    assert_eq!(
+        admit(&mut l, &mut f, &third, &human_ctx()).unwrap().started,
+        1
+    );
+    assert_eq!(f.claim_asked, vec!["r1", "r2", "r3", "r1"]);
+}
+
+/// 미리 잡은 뒤 그 스레드에 인터랙티브가 끼어들면 띄우지 않고, 잡아 둔 임대는 놓는다.
+#[test]
+fn a_prefetched_claim_that_is_not_used_is_released() {
+    let mut l = Ledger::default();
+    let mut f = Fake {
+        claims: Some(ClaimMode::Grant),
+        ..Fake::default()
+    };
+    f.busy_after_batch.insert("c/r2".into());
+    let b = batch(
+        vec![ent(1, "m1"), ent(2, "m2")],
+        vec![msg("m1", "u1", "r1"), msg("m2", "u1", "r2")],
+    );
+    let out = admit(&mut l, &mut f, &b, &human_ctx()).unwrap();
+    assert_eq!((out.started, out.blocked), (1, 1));
+    assert_eq!(*f.launches.borrow(), vec![(1, 1, 0, true, false)]);
+    assert_eq!(f.claim_releases.load(Ordering::SeqCst), 1, "안 쓴 r2 임대");
+    assert_eq!(f.claim_asked, vec!["r1", "r2"]);
+}
+
+/// 조종 중·백오프 중인 entry 는 미리 잡는 묶음에 넣지 않는다.
+#[test]
+fn controlled_and_backing_off_entries_are_left_out_of_the_batch() {
+    let mut l = Ledger::default();
+    let mut f = Fake {
+        now: 1_000,
+        claims: Some(ClaimMode::Grant),
+        ..Fake::default()
+    };
+    f.controlled.insert("c/r1".into(), None);
+    f.defer_result = Some(DeferResult {
+        should_notify: false,
+        pending: 1,
+        held_ms: 0,
+        warned: false,
+    });
+    // entry 2 는 한 번 실패해 백오프 중이다.
+    let tried = l.start(&[2], "c/r2");
+    assert!(l.retry_later(2, tried, 1_000));
+    l.release(2, "c/r2");
+    let b = batch(
+        vec![ent(1, "m1"), ent(2, "m2"), ent(3, "m3"), ent(4, "m4")],
+        vec![
+            msg("m1", "u1", "r1"),
+            msg("m2", "u1", "r2"),
+            msg("m3", "u1", "r3"),
+            msg("m4", "u1", "r4"),
+        ],
+    );
+    let out = admit(&mut l, &mut f, &b, &human_ctx()).unwrap();
+    assert_eq!((out.started, out.deferred, out.blocked), (2, 1, 1));
+    assert_eq!(f.claim_batches, vec![vec!["r3", "r4"]]);
+    assert_eq!(f.claim_asked, vec!["r3", "r4"]);
 }

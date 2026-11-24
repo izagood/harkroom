@@ -6,7 +6,7 @@
 //! 통지·경고의 실패는 관측의 실패라 판정을 바꾸지 않는다(정본 주석 그대로). 고아·관문 상한 읽음 처리의 실패만
 //! 호출자에게 돌려준다(정본 `await deps.harkroom.markRead(orphans)` 가 던지는 것과 같다).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use serde_json::Value;
 
@@ -75,6 +75,14 @@ pub trait AdmitDeps {
         reason: &str,
     ) -> Result<(), String>;
     fn hold_claim(&mut self, channel_id: &str, anchor: &str) -> ClaimHold;
+    /// 서로 다른 스레드 여럿의 임대를 한꺼번에 잡는다 — `wants` 는 (채널, 앵커)이고 답은 같은 순서다. 기본은 하나씩
+    /// 차례로 잡는다. 실물은 동시에 부른다(서버 왕복이 건수만큼 줄 서지 않게).
+    fn hold_claims(&mut self, wants: &[(String, String)]) -> Vec<ClaimHold> {
+        wants
+            .iter()
+            .map(|(channel, anchor)| self.hold_claim(channel, anchor))
+            .collect()
+    }
     /// 머신 전체 동시 턴 자리. `None` 이면 자리 제한을 쓰지 않는다(정본 `deps.turnSlots` 없음).
     fn acquire_slot(&mut self, key: &str) -> Option<SlotOutcome>;
     fn release_slot(&mut self, key: &str);
@@ -172,6 +180,11 @@ pub fn admit(
         .map(Vec::as_slice)
         .unwrap_or_default();
 
+    // 스레드 임대는 미리 한꺼번에 잡는다 — 하나씩 잡으면 서버 왕복이 건수만큼 턴 시작 앞에 줄을 선다.
+    let mut prefetched = prefetch_claims(ledger, deps, batch, entries, &held);
+    // 이 폴에서 「남이 쥠」으로 답이 온 스레드 — 같은 스레드의 다음 entry 는 서버에 다시 묻지 않는다.
+    let mut claim_busy: HashSet<String> = HashSet::new();
+
     for (idx, entry) in entries.iter().enumerate() {
         let id = entry_id(entry);
         let Some(mention) = message_for(batch, entry) else {
@@ -254,9 +267,17 @@ pub fn admit(
         }
 
         // 러너 사이의 잠금. 기다리는 사이 이 프로세스 안에서 같은 스레드가 시작됐을 수 있다 — 다시 본다.
-        let claim = match deps.hold_claim(channel, &anchor) {
+        let hold = if claim_busy.contains(&key) {
+            ClaimHold::Busy
+        } else {
+            prefetched
+                .remove(&key)
+                .unwrap_or_else(|| deps.hold_claim(channel, &anchor))
+        };
+        let claim = match hold {
             ClaimHold::NotConfigured => None,
             ClaimHold::Busy => {
+                claim_busy.insert(key);
                 out.blocked += 1;
                 continue;
             }
@@ -340,6 +361,13 @@ pub fn admit(
         });
     }
 
+    // 미리 잡았는데 쓰지 않은 임대는 놓는다(그 사이 조종·인터랙티브가 끼어들어 제 차례에 띄우지 않은 스레드).
+    for hold in prefetched.into_values() {
+        if let ClaimHold::Held(c) = hold {
+            c.release();
+        }
+    }
+
     // 정본 순서: 고아 읽음 처리가 던지면 다시 읽음 처리(doneAgain)는 다음 폴로 미뤄진다.
     if !orphans.is_empty() {
         deps.mark_read(&orphans)?;
@@ -362,6 +390,49 @@ pub fn admit(
         ledger.mark_read_result(&done_again, ok, deps.now());
     }
     Ok(out)
+}
+
+/// 이 배치에서 스레드 임대까지 갈 것이 확실한 스레드들의 임대를 한꺼번에 잡는다(스레드 열쇠 → 잡은 결과).
+///
+/// 고르는 기준은 본 루프의 앞쪽 판정과 같되 **읽기만** 한다: 글이 있고, 장부 관문을 지나고([`Ledger::would_proceed`]),
+/// 조종 중이 아니고, 이 프로세스가 그 스레드를 돌리고 있지 않다(장부·레지스트리 — 돌고 있는 스레드는 서버에 묻지 않는다).
+/// 같은 스레드는 한 번만 넣는다. 둘 이상일 때만 미리 잡는다 — 하나면 본 루프가 제 차례에 잡는 것과 같다.
+/// 여기서 빠진 entry 는 본 루프가 전처럼 제 차례에 잡고, 잡았는데 쓰이지 않은 것은 본 루프 끝에서 놓는다.
+fn prefetch_claims(
+    ledger: &Ledger,
+    deps: &mut dyn AdmitDeps,
+    batch: &Value,
+    entries: &[Value],
+    held: &HashSet<i64>,
+) -> HashMap<String, ClaimHold> {
+    let now = deps.now();
+    let mut keys: Vec<String> = Vec::new();
+    let mut wants: Vec<(String, String)> = Vec::new();
+    for entry in entries {
+        let Some(mention) = message_for(batch, entry) else {
+            continue;
+        };
+        if !ledger.would_proceed(entry_id(entry), now, held) {
+            continue;
+        }
+        let channel = str_of(mention, "channelId");
+        let anchor = mention_anchor(mention);
+        let key = thread_key(channel, Some(anchor));
+        if keys.contains(&key)
+            || deps.control_of(&key).is_some()
+            || ledger.thread_in_flight(&key)
+            || deps.registry_busy(&key)
+        {
+            continue;
+        }
+        keys.push(key);
+        wants.push((channel.to_string(), anchor.to_string()));
+    }
+    if wants.len() < 2 {
+        return HashMap::new();
+    }
+    let holds = deps.hold_claims(&wants);
+    keys.into_iter().zip(holds).collect()
 }
 
 /// 정본 `noticeBlocked` — 사람이 부른 멘션이 같은 스레드 앞 턴 때문에 밀렸으면 entry 당 1회 알린다.
