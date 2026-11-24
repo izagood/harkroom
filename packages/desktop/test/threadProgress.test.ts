@@ -27,7 +27,9 @@ function count(messages: MessageRow[], turns: ThreadTurnsSnapshot = { kind: 'kno
 describe('threadProgress', () => {
   it('아무 일도 없으면 빈 띠다', () => {
     const p = count([row({})]);
-    expect(p).toEqual({ myTurn: 0, blocked: 0, running: 0, waiting: 0, doneToday: 0 });
+    expect(p).toEqual({
+      myTurn: 0, blocked: 0, running: 0, waiting: 0, waitingUnknown: false, doneToday: 0, lastDoneAt: null, lastReplyAt: TODAY,
+    });
     expect(isIdle(p)).toBe(true);
   });
 
@@ -71,5 +73,23 @@ describe('threadProgress', () => {
 
   it('이 스레드로 돌아올 예약은 기다림에 더한다', () => {
     expect(count([row({})], undefined, { wakes: 2 }).waiting).toBe(2);
+  });
+
+  it('예약을 못 읽었으면(null) 읽힌 것만 세고 「모름」을 세운다 — 빈 띠가 아니다', () => {
+    const p = count([ask({ kind: 'account', accountId: 'other' })], undefined, { wakes: null });
+    expect(p.waiting).toBe(1);
+    expect(p.waitingUnknown).toBe(true);
+    expect(isIdle(count([row({})], undefined, { wakes: null }))).toBe(false);
+  });
+
+  it('기다리는 작업 행도 기다림에 센다', () => {
+    expect(count([row({})], undefined, { wakes: 1, workWaiting: 2 }).waiting).toBe(3);
+  });
+
+  it('마지막 끝은 마지막 완료 보고의 시각이고, 마지막 답은 진행·예약 줄을 건너뛴다', () => {
+    const p = count([report(YESTERDAY), row({ createdAt: TODAY }), row({ kind: 'progress', createdAt: new Date(NOW).toISOString() })]);
+    expect(p.lastDoneAt).toBe(YESTERDAY);
+    expect(p.lastReplyAt).toBe(TODAY);
+    expect(p.doneToday).toBe(0);
   });
 });

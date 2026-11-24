@@ -31,6 +31,7 @@
 import { useEffect, useState } from 'react';
 import type { AgentSessionView, AgentWakeView, MessageRow } from '@harkroom/shared';
 import { getController } from '../state/controller';
+import { getCommunityController, useCommunityRegistry } from '../state/communities';
 import { bodyWithHandles } from './mention';
 import { errorTextNow } from './errorText';
 
@@ -109,37 +110,60 @@ export type AgentWakesSnapshot =
   | { kind: 'known'; wakes: AgentWakeView[] }
   | { kind: 'unknown'; reason: string };
 
-const wakeListeners = new Set<(snapshot: AgentWakesSnapshot) => void>();
-let sharedWakes: AgentWakesSnapshot = { kind: 'checking' };
-let wakeTimer: ReturnType<typeof setInterval> | null = null;
+/**
+ * 폴러는 **커뮤니티마다 하나**다. 모듈에 스냅숏 하나만 두면 커뮤니티를 바꾼 직후 앞 커뮤니티에서 받은
+ * 예약 목록이 새 커뮤니티의 화면에 그대로 선다 — 받은 답은 물은 커뮤니티의 것으로만 쓴다.
+ */
+interface WakePoll {
+  snapshot: AgentWakesSnapshot;
+  listeners: Set<(snapshot: AgentWakesSnapshot) => void>;
+  timer: ReturnType<typeof setInterval>;
+}
+const wakePolls = new Map<string, WakePoll>();
 
-async function askWakes(): Promise<void> {
+async function askWakes(communityId: string): Promise<void> {
+  const poll = wakePolls.get(communityId);
+  if (!poll) return;
+  let next: AgentWakesSnapshot;
   try {
-    sharedWakes = { kind: 'known', wakes: await getController().api.agentWakes() };
+    // 컨트롤러는 물을 때마다 그 커뮤니티의 것을 꺼낸다 — 잡아 두면 로그아웃 뒤 옛 토큰으로 계속 묻는다.
+    next = { kind: 'known', wakes: await getCommunityController(communityId).api.agentWakes() };
   } catch (err) {
-    sharedWakes = { kind: 'unknown', reason: errorTextNow(err) };
+    next = { kind: 'unknown', reason: errorTextNow(err) };
   }
-  for (const listener of wakeListeners) listener(sharedWakes);
+  // 묻는 사이 보는 화면이 다 사라졌으면(폴러가 걷혔으면) 늦게 온 답은 버린다.
+  if (wakePolls.get(communityId) !== poll) return;
+  poll.snapshot = next;
+  for (const listener of poll.listeners) listener(next);
 }
 
-export function useAgentWakes(enabled: boolean): AgentWakesSnapshot {
-  const [snapshot, setSnapshot] = useState<AgentWakesSnapshot>(sharedWakes);
+/** `communityId` 를 안 주면 지금 보고 있는 커뮤니티다. 스레드 창처럼 자기 커뮤니티가 정해진 화면은 그 id 를 준다. */
+export function useAgentWakes(enabled: boolean, communityId?: string | null): AgentWakesSnapshot {
+  const activeId = useCommunityRegistry((s) => s.activeId);
+  const key = communityId ?? activeId;
+  const [snapshot, setSnapshot] = useState<AgentWakesSnapshot>({ kind: 'checking' });
   useEffect(() => {
+    setSnapshot(wakePolls.get(key)?.snapshot ?? { kind: 'checking' });
     if (!enabled) return;
-    wakeListeners.add(setSnapshot);
-    setSnapshot(sharedWakes);
-    if (!wakeTimer) {
-      void askWakes();
-      wakeTimer = setInterval(() => { void askWakes(); }, AGENT_TURNS_POLL_MS);
+    let poll = wakePolls.get(key);
+    if (!poll) {
+      poll = {
+        snapshot: { kind: 'checking' },
+        listeners: new Set(),
+        timer: setInterval(() => { void askWakes(key); }, AGENT_TURNS_POLL_MS),
+      };
+      wakePolls.set(key, poll);
+      void askWakes(key);
     }
+    const mine = poll;
+    mine.listeners.add(setSnapshot);
     return () => {
-      wakeListeners.delete(setSnapshot);
-      if (wakeListeners.size || !wakeTimer) return;
-      clearInterval(wakeTimer);
-      wakeTimer = null;
-      sharedWakes = { kind: 'checking' };
+      mine.listeners.delete(setSnapshot);
+      if (mine.listeners.size) return;
+      clearInterval(mine.timer);
+      if (wakePolls.get(key) === mine) wakePolls.delete(key);
     };
-  }, [enabled]);
+  }, [enabled, key]);
   return enabled ? snapshot : { kind: 'checking' };
 }
 

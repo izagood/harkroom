@@ -148,7 +148,7 @@ function resolvesFailure(m: MessageRow, failedBy: string | null): boolean {
 export function threadStateFromFacts(input: {
   row: Pick<MessageRow,
     'openAskHumanCount' | 'openAskAccountIds' | 'failureCount' | 'lastKind' | 'lastAuthorId'>
-    & Partial<Pick<MessageRow, 'unresolvedFailureCount' | 'openGateAccountIds'>>;
+    & Partial<Pick<MessageRow, 'unresolvedFailureCount' | 'openGateAccountIds' | 'planProgress'>>;
   myAccountId: string | null;
   isAgent: (accountId: string) => boolean;
   live: Liveness;
@@ -170,7 +170,9 @@ export function threadStateFromFacts(input: {
     othersTurn: row.openAskAccountIds.some((id) => id !== myAccountId),
     // 해소를 아는 서버면 그것을 보고, 모르는 **옛 서버**면 누적으로 물러난다 — 해소를
     // 모를 때는 실패를 숨기는 쪽보다 남기는 쪽이 안전하다.
-    failed: (row.unresolvedFailureCount ?? row.failureCount) > 0,
+    // 계획의 막힌 단계도 막힘이다(R2-d) — 스레드 머리의 진행 띠가 그렇게 세므로, 목록의 배지가 「끝남」이라 하면
+    // 같은 스레드가 자리마다 다른 말을 한다. 계획 칸이 없는 행(옛 서버·계획 없는 스레드)은 앞과 같다.
+    failed: (row.unresolvedFailureCount ?? row.failureCount) > 0 || (row.planProgress?.blocked ?? 0) > 0,
     lastIsProgress: row.lastKind === 'progress' && row.lastAuthorId != null && isAgent(row.lastAuthorId),
     lastAuthorId: row.lastAuthorId,
     live,

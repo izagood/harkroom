@@ -32,10 +32,16 @@ export interface ThreadProgress {
   blocked: number;
   /** 도는 턴 수. `null` 은 모름(점선으로 그린다). */
   running: number | null;
-  /** 남에게 간 미답 카드 + 이 스레드로 돌아올 예약. */
+  /** 남에게 간 미답 카드 + 이 스레드로 돌아올 예약 + 기다리는 작업 행. 예약을 못 읽었으면 읽힌 것만 센 수다. */
   waiting: number;
+  /** 예약 목록을 못 읽었다 — `waiting` 은 모자랄 수 있다. 0 으로 말하지 않고 점선 칸 「기다림 모름」을 세운다. */
+  waitingUnknown: boolean;
   /** 오늘(이 기기의 0시부터) 올라온 완료 보고. */
   doneToday: number;
+  /** 마지막 완료 보고의 시각. 한 번도 없으면 `null`. 빈 띠의 「마지막 끝」 재료다. */
+  lastDoneAt: string | null;
+  /** 마지막 답(진행·예약 줄 제외)의 시각. 완료 보고가 없을 때 빈 띠가 대신 말한다. */
+  lastReplyAt: string | null;
 }
 
 export interface ThreadProgressInput {
@@ -43,8 +49,10 @@ export interface ThreadProgressInput {
   messages: readonly MessageRow[];
   myAccountId: string | null;
   turns: ThreadTurnsSnapshot;
-  /** 이 스레드로 돌아올 예약 수. 모르면 0(예약을 못 읽어도 띠는 선다). */
-  wakes: number;
+  /** 이 스레드로 돌아올 예약 수. 못 읽었으면 `null`(아직 첫 답 전이면 0 을 준다 — 깜박임을 막는다). */
+  wakes: number | null;
+  /** 기다리는 작업 행 수(B1 `state=waiting`). 읽는 길이 없거나 못 읽었으면 0. */
+  workWaiting?: number;
   plan: Pick<PlanProgress, 'blocked'> | null | undefined;
   /** `off`·`checking` 일 때 턴 칸을 대신할 값 — 마지막 말이 진행이고 그 에이전트가 살아 있는가(`threadState` 의 running). */
   legacyRunning: boolean;
@@ -53,6 +61,8 @@ export interface ThreadProgressInput {
 
 export function threadProgress(input: ThreadProgressInput): ThreadProgress {
   const { messages, myAccountId, turns, wakes, plan, legacyRunning, now } = input;
+  let lastDoneAt: string | null = null;
+  let lastReplyAt: string | null = null;
   let myAsks = 0;
   let otherAsks = 0;
   let doneToday = 0;
@@ -73,7 +83,11 @@ export function threadProgress(input: ThreadProgressInput): ThreadProgress {
       failedBy = null;
       gateMine = false;
     }
-    if (readReportMeta(m.meta) != null && Date.parse(m.createdAt) >= dayStart) doneToday += 1;
+    if (readReportMeta(m.meta) != null) {
+      lastDoneAt = m.createdAt;
+      if (Date.parse(m.createdAt) >= dayStart) doneToday += 1;
+    }
+    if (m.kind !== 'progress' && m.kind !== 'wake' && m.kind !== 'system') lastReplyAt = m.createdAt;
     const ask = readAskMeta(m.meta);
     if (!ask || !isAskOpen(ask)) continue;
     if (ask.to.kind === 'human' ? myAccountId != null : ask.to.accountId === myAccountId) myAsks += 1;
@@ -87,14 +101,17 @@ export function threadProgress(input: ThreadProgressInput): ThreadProgress {
       : turns.kind === 'unknown' ? null
         // `off`(읽는 길 없음)와 `checking`(첫 답 전)은 옛 판정으로 물러난다 — 머리 배지가 말하던 것과 같은 값이다.
         : (legacyRunning ? 1 : 0),
-    waiting: otherAsks + wakes,
+    waiting: otherAsks + (wakes ?? 0) + (input.workWaiting ?? 0),
+    waitingUnknown: wakes === null,
     doneToday,
+    lastDoneAt,
+    lastReplyAt,
   };
 }
 
 /** 띠에 설 칸이 하나도 없는가(「진행 중인 일 없음」 한 줄로 줄인다). 「모름」은 칸이다. */
 export function isIdle(p: ThreadProgress): boolean {
-  return p.myTurn === 0 && p.blocked === 0 && p.running === 0 && p.waiting === 0 && p.doneToday === 0;
+  return p.myTurn === 0 && p.blocked === 0 && p.running === 0 && p.waiting === 0 && !p.waitingUnknown && p.doneToday === 0;
 }
 
 function startOfDay(now: number): number {

@@ -281,7 +281,22 @@ const saveWidth = (key: string, width: number, min: number, max: number): void =
   } catch { /* 저장 불가 환경 허용 */ }
 };
 
+/** 스레드 작업 서랍(R2-b)을 열어 둘지 — 보는 사람마다의 편의라 이 기기에만 둔다. 한 번도 안 골랐으면 열림이다. */
+const THREAD_WORK_DRAWER_KEY = 'harkroom.threadWorkDrawer';
+
 export const paneStorage = {
+  loadWorkDrawerOpen(): boolean {
+    try {
+      return localStorage.getItem(THREAD_WORK_DRAWER_KEY) !== '0';
+    } catch {
+      return true;
+    }
+  },
+  saveWorkDrawerOpen(open: boolean): void {
+    try {
+      localStorage.setItem(THREAD_WORK_DRAWER_KEY, open ? '1' : '0');
+    } catch { /* 저장 불가 환경 허용 */ }
+  },
   loadThreadWidth(): number {
     return loadWidth(THREAD_WIDTH_KEY, DEFAULT_THREAD_WIDTH, MIN_THREAD_WIDTH, MAX_THREAD_WIDTH);
   },
