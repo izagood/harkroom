@@ -71,7 +71,7 @@ import type { Message } from './types';
  * 뼈대 PR 이 **대기 사슬** 13개를, 그 다음이 **사이드바** 107개를, 그 다음이
  * **에이전트 설정**(`AgentsSettings`) 146개를, 그 다음이 **러너 판정 둘**
  * (`runnerLauncher.ts` 35 · `daemonFacts.ts` 18)을, 그다음이 **대화 화면 묶음**
- * (여덟 가지 말 · 메시지 행 · `threadState` · `inboxRow`)을, 이 PR 이 **러너·투영 화면**
+ * (여덟 가지 말 · 메시지 행 · `threadState`)을, 이 PR 이 **러너·투영 화면**
  * (`TerminalPanel` 23 · `ProjectionUrl` 16 · `projectionBanner.ts` 11 ·
  * `RunnerStatus` 10 · 나머지 넷 11)을 옮겼다.
 
@@ -93,9 +93,7 @@ import type { Message } from './types';
  * | ~~`MessageItem`~~ | — | **끝났다**(아래 `message.*`·`speech.*`). 그 표가 지목한 손수 복수형(`replyCount === 1 ? 'reply' : 'replies'`)은 `message.summary.replies` 로 갔고, **`subjectParticle` 과 `lib/particle.ts` 는 지웠다** — 그 함수의 마지막 호출처가 이 행의 말 슬롯이었고, 조사는 이제 번역기 안에 있다 |
  * | ~~여덟 가지 말~~ | — | **끝났다**(아래 `speech.*`). `AskCard`·`FailureCard`·`ReportCard`·`ProgressRow`·`AgentExchange` 다섯이 이루는 어휘 하나이고, 그리는 화면이 넷이라 판정도 화면도 아닌 **어휘 이름**으로 영역을 잡았다 |
  * | ~~`threadState.ts`~~ | — | **끝났다**(아래 `thread.*`). `THREAD_STATE_LABEL` 이 **모듈 상수라 로드 시점 언어로 굳어 있었다** — `SkillsSettings`·`STRANGER_ATTACHED` 와 같은 모양이고 같은 방식으로 함수로 내렸다 |
- * | ~~`inboxRow.ts`~~ | — | **끝났다**(아래 `inbox.*`). 번역기를 **필수 인자로 맨 뒤에** 받는다 |
  * | `Composer` | 55 | |
- * | `Inbox` | 49 | **말표는 이미 옮겼다**(`inbox.label.*`) — 그 화면이 `useT` 를 이미 들고 있으므로 나머지는 키만 씌우면 된다 |
  * | ~~`daemonFacts.ts`~~ | — | **끝났다**(아래 `daemonFacts.*`). 그 표가 경고한 대로 회귀선을 **키가 아니라 문구로** 남겼다 — `i18n.test.tsx` 가 제약 1(주어)·제약 2(판정 낱말 없음)를 **두 언어로** 다시 잰다 |
  * | ~~시간 표기~~ | — | **끝났다** — 아래 `time.*` 과 `lib/time.ts` 를 보라 |
  * | 설정 목차 14개 · `Save`·`Cancel`·`Invite` 등 | 소수 | 이미 영어다 — **키만 씌우면 된다.** 둘 이상이 쓰므로 `common.*` 로 간다 |
@@ -2184,17 +2182,6 @@ export const en = {
   'sidebar.channel.privateOption': 'Private (members only)',
   'sidebar.channel.unread': '{count} unread in {name}',
 
-  /**
-   * 인박스 줄의 두 표시는 **화면에 글자가 없다**(숫자 하나와 점 하나). 그래서 이 두 키가
-   * 유일한 이름이다 — 스크린리더와 시험이 읽는다(`InboxRowBadge`).
-   *
-   * 빨간 숫자와 회색 점을 **다른 말로** 적는다. 같은 말("안 읽은 것 N개")로 적으면 둘이
-   * 무엇이 다른지 이름만 듣는 사람에게 사라진다: 하나는 내 답을 기다리는 것이고 하나는
-   * 새 대화가 있다는 것이다.
-   */
-  'sidebar.inbox.blocking': '{count} unread mentions and DMs',
-  'sidebar.inbox.unread': '{count} unread in Inbox',
-
   'sidebar.delete.cancel': 'Cancel',
   'sidebar.delete.confirm': 'Delete for good',
   'sidebar.delete.countFailed': 'The message count could not be read',
@@ -3367,72 +3354,6 @@ export const en = {
   'terminal.writer.unknown': 'Read-only — input from this window does not reach the runner.',
 
   // ---------------------------------------------------------------------------
-  // inbox — **화면 이름이다.** `components/Inbox.tsx` 가 그리는 말이다.
-  //
-  // **사슬 구획은 여기 없다** — `waitChain.*` 이 이미 그것을 지고 있고(그 머리말: 판정
-  // 이름이지 화면 이름이 아니다), 이 화면은 `WaitChainSection` 을 부르기만 한다.
-  // 구획의 `aria-label` 도 `waitChain.sectionTitle` 을 그대로 쓴다 — 같은 말을 두 번
-  // 적으면 그중 하나가 낡는다.
-  //
-  // | 덩어리 | 그 구획 |
-  // |---|---|
-  // | `drafts` | 「쓰다 만 초안」 구획 |
-  // | `entries` | 「나를 부른 것」 구획 — 줄의 꼬리표 · 빈 상태 |
-  // | `filter` | 필터 칩 넷 |
-  // | `pane` | 자리 자체 — 이름 · 닫기 · 조회 실패 · 대기 |
-  //
-  // ## 영어를 새로 설계한 자리
-  //
-  // | 한국어 | 영어 | 왜 |
-  // |---|---|---|
-  // | 나를 부른 것 | `Called you` | `Mentions` 는 수단(`@`)을 가리키는데 이 구획에는 답글·물음도 든다(`reason` 이 셋이다). 이 목록의 기준은 **나에게 왔는가**이지 어떻게 왔는가가 아니다 |
-  // | 나를 막는 것 | `Blocking you` | 규칙 04 가 강조를 주는 그 축이고, `waitChain` 이 이미 `waiting`/`blocked` 어휘를 쓴다 |
-  // | 읽을 것 | `To read` | `Unread` 는 바로 옆 칩(`안 읽은 것`)의 이름이라 겹친다 — 이쪽은 rank 축(무엇이 나를 부르나)이고 그쪽은 내 읽음 상태다. **축이 다르다는 것이 이름에서 갈려야 한다** |
-  // | 안 읽은 것 · 안 읽음 | `Unread` | 칩과 줄 끝 표시가 같은 말을 한다 — 한 키다 |
-  // | 전부 | `Everything` | `sidebar.notify.all` 이 이미 그 낱말이고 뜻도 같다. 아래 `common` 판단 참고 |
-  // | 쓰다 만 초안 | `Unfinished drafts` | `Drafts` 만 두면 저장된 초안함으로 읽힌다. 이것은 **쓰다 만 것**이고, 그 미완이 목록에 서는 이유다 |
-  // | 초안 | `Draft` | 줄의 꼬리표. 위 구획 이름과 갈라 둔다 — 꼬리표는 그 한 줄이 무엇인지만 말한다 |
-  // | 인박스를 불러오지 못했다 | `The inbox did not arrive` | `did not arrive` 규율(`en.ts` 머리말) |
-  // | 필터에 맞는 것이 없다 | `Nothing matches the filter` | **`나를 부른 것이 없다` 와 갈린다** — 하나는 목록이 비었고 하나는 걸러 낸 것이다. 원래 화면이 그 둘을 갈라 뒀고 그 구별이 이 목록의 값이다 |
-  //
-  // ## 사전에 **안** 넣은 것
-  //
-  // - **`row.label` · `o.label`** — `lib/inboxRow.ts` 판정과 서버의 선택지 문구다.
-  //   **이 파일 밖이다**(`agents` 머리말의 경계)
-  // - **`channelLabel`** — `#general` · handle 이다. 사람이 지은 이름을 번역하지 않는다
-  // - **`✕`** — 기호다. 접근 이름은 `pane.close` 가 진다
-  // - **`Inbox`(머리글)** — 이미 영어다. 그러나 **키를 씌운다**: 다음 언어가 그 자리를
-  //   자기 말로 적을 수 있어야 하고, 지금 영어인 것은 우연이지 계약이 아니다
-  // ---------------------------------------------------------------------------
-
-  /** 남을 기다리는 열. "막힘" 이 아니다 — 스레드 상태 리액션(088)에서 막힘은 실패를 뜻한다(designer). */
-  /** 내 차례 띠의 덧말 — 띠 안의 순서(designer W2). */
-  /** 열 머리의 수. **내 차례만 센다** — 다른 열은 줄지 않는 숫자라 아무 말도 하지 않는다. */
-  /** 열이 비었을 때. 내 차례가 0 이 되는 것이 이 화면의 목적이다. */
-  /** 처음부터 아무것도 없을 때(걸러 낸 것과 다르다). */
-  /** "N일째" — 이 열에 들어오게 한 말부터 센다. */
-  /** 카드에 쌓인 말의 수 — 같은 일에서 온 것이 여럿이면 한 장에 모인다는 표시. */
-  /** 치우기 — 서버의 내 상태(2/2). 보드에서 내려 끝남 맨 아래 "치운 것" 으로 접는다. 내 차례에도 있다(R3). */
-  /** 나중에 — 내일 아침까지 그 열 맨 아래로 접고, 내 차례 수에서 뺀다. */
-  /** 치운 것·미룬 것을 되돌린다. */
-  /** 미룬 카드가 다시 서는 시각. `{when}` 은 `오늘 시각 · tomorrowAt · 날짜 시각` 중 하나다. */
-  /** 열 맨 아래 접힘 줄. 접힌 카드도 수로 남는다. */
-  /** A안 받은 일(목록+상세). 보기 둘: 받은 일 / 진행 보드. */
-  /** 7일 넘은 접힘 줄에 섞인 결정 수(designer n2). */
-  /** 치운 뒤·미룬 뒤 되돌리기 알림(designer n4). */
-  /** 쓰다 만 초안 — 보드 밖 한 줄. */
-  'inbox.board.drafts': 'Unfinished drafts ({count})',
-
-  'inbox.pane.close': 'Close Inbox',
-  /**
-   * 조회 실패. **빈 목록으로 삼키지 않는다** — 실패했는데 빈 목록만 보이면 사람은
-   * "아무도 나를 부르지 않았다"로 읽는다(원래 주석). `{reason}` 은 서버 것이다.
-   */
-  /** 자리의 이름(`aria-label`)이자 머리글. 스크린리더가 이 구획을 찾는 이름이다. */
-  'inbox.pane.title': 'Inbox',
-  'inbox.list.empty': 'No unread mentions or DMs',
-
-  // ---------------------------------------------------------------------------
   // profile — **화면 이름이다.** `components/Profile.tsx` 가 그리는 겹창이고,
   // **사람과 에이전트가 같은 틀을 쓴다**(그 화면 주석: 행 이름만 다르다).
   //
@@ -3715,7 +3636,7 @@ export const en = {
   'message.callGap.attention':
     '@{handle} needs a hand — see Settings › Agents',
   'message.callGap.offline':
-    '@{handle} is offline — the call is waiting in its inbox',
+    '@{handle} is offline — the call is waiting for that agent',
 
   /**
    * 답글 요약 버튼의 접근 가능한 이름. **상태를 라벨에도 싣는다**(그 자리 주석) —
@@ -4097,50 +4018,6 @@ export const en = {
    * 표). 조사가 번역기 안으로 들어가면서 그 함수와 `lib/particle.ts` 가 함께 사라졌다.
    */
 
-  // ---------------------------------------------------------------------------
-  // inbox — **판정 이름이면서 화면 이름이기도 하다** — 두 규칙이 같은 곳에 떨어졌다.
-  //
-  // 이 여섯 말표는 `lib/inboxRow.ts::inboxRow` 가 `meta` 를 읽어 정하고, 그리는 화면은
-  // `Inbox` 하나다. 규칙 2(판정 이름)와 규칙 3(화면 이름)이 **같은 이름을 낸다** —
-  // 그래서 어느 쪽으로 읽어도 `inbox` 다.
-  //
-  // 그럼에도 **판정 쪽으로 읽어 두는 것**이 이 머리말의 요점이다: 이 판정은 인박스 밖에서
-  // 불릴 수 있는 모양(순수 함수 + `meta` 만 본다)이고, 실제로 `AgentExchange` 가 그 어휘를
-  // 이미 빌려 쓴다(그 파일 주석: *"`inboxRow` 가 보고에 쓰는 `끝냈다` 를 그대로 가져온다"*).
-  // 두 번째 화면이 오면 그때 이름을 안 바꾸어도 된다.
-  //
-  // ## 여섯이 **rank 순으로 읽힌다** — 낱말이 그 순서를 져야 한다
-  //
-  // 이 파일의 요점은 *"네 줄이 글자 하나까지 똑같다"* 를 고친 것이고, 그래서 여섯이
-  // 서로 달라야 한다는 것이 어휘의 제약이다. 그리고 rank(0 나를 막는다 → 1 읽을 것 →
-  // 2 배경)가 낱말의 무게로도 읽혀야 한다.
-  //
-  // | 한국어 | rank | 영어 | 왜 |
-  // |---|---|---|---|
-  // | 골라 줘 | 0 | `Pick one` | **`speech.ask.pickOne` 과 같은 말이다.** 같은 물음이 카드에서도 인박스에서도 나를 부르므로, 다르게 부르면 사람은 둘을 다른 사건으로 센다. 그래도 **키는 따로 둔다** — 승격 자격은 "글자가 같다"가 아니라 "뜻이 하나다"이고(`en.ts` 머리말), 인박스의 말표는 카드의 머리글과 달리 **한 줄에 서는 말표**라 나중에 짧아질 수 있다 |
-  // | 막혔다 | 0 | `Stuck` | `thread.state.stuck` 과 같은 낱말. 실패는 **언제나 사람에게 온다**(`FailureMeta` 에 `to` 가 없는 이유) |
-  // | 고르는 중 | 1 | `Being picked` | **남에게 간 물음이다.** `Waiting` 은 내가 기다린다고 읽히는데, 여기서 기다리는 것은 그 물음이다. 진행형이 "아직 안 끝났다"를 진다 |
-  // | 끝냈다 | 1 | `Finished` | `speech.exchange.finished` 와 같은 낱말 — 완료 보고를 두 자리가 같은 말로 부른다 |
-  // | 불렀다 | 1 | `Called you` | **누가 누구를**이 있어야 한다. `Mention` 은 명사라 그것이 나에게 온 일이라는 사실이 빠지고, 그러면 rank 1 인 이유가 안 읽힌다 |
-  // | 답글 | 2 | `Reply` | 배경이다. 명사 한 낱말인 것이 이 rank 의 무게다 — 위 다섯이 문장인데 이것만 명사인 것이 곧 "나에게 온 일이 아니다"를 말한다 |
-  //
-  // `DM` 은 옮기지 않는다 — **이 제품의 고유어**이고 `waitChain.dm` 이 이미 같은 판단을 했다.
-  // ---------------------------------------------------------------------------
-
-  'inbox.label.ask': 'Pick one',
-  'inbox.label.askOther': 'Being picked',
-  'inbox.label.failure': 'Stuck',
-  'inbox.label.report': 'Finished',
-  'inbox.label.delegated': 'Handed you work',
-  'inbox.label.delegationDone': 'Results are in',
-  'inbox.label.mention': 'Called you',
-  'inbox.label.teamMention': 'Called your team',
-  'inbox.label.reply': 'Reply',
-  'inbox.delegation.update': 'Progress',
-  'inbox.delegation.reported': 'Results are in',
-  'inbox.delegation.failed': 'Handoff stuck',
-  'inbox.delegation.stalled': 'Stalled · quiet {hours}h',
-  'inbox.delegation.updates': { one: '{count} update', other: '{count} updates' },
   'thread.delegations.handedOff': 'Handed off',
   'thread.delegations.assignedBy': 'Assigned by {who}',
   'thread.delegations.open': 'Working',

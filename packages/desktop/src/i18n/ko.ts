@@ -1380,8 +1380,6 @@ export const ko = {
   'sidebar.channel.privateOption': '비공개 (멤버만 볼 수 있다)',
   'sidebar.channel.unread': '{name} 에 안 읽은 것 {count}개',
 
-  'sidebar.inbox.blocking': '안 읽은 멘션·DM {count}개',
-  'sidebar.inbox.unread': '인박스에 안 읽은 것 {count}개',
 
   'sidebar.delete.cancel': '취소',
   'sidebar.delete.confirm': '정말 삭제',
@@ -1871,16 +1869,6 @@ export const ko = {
   'terminal.writer.unknown': '읽기 전용 — 이 창의 입력은 러너에 닿지 않는다.',
 
   // ---------------------------------------------------------------------------
-  // inbox — 사슬 구획은 여기 없다(`waitChain.*` 이 진다, `en.ts` 머리말).
-  // ---------------------------------------------------------------------------
-
-  'inbox.board.drafts': '쓰다 만 초안 ({count})',
-
-  'inbox.pane.close': '인박스 닫기',
-  'inbox.pane.title': '인박스',
-  'inbox.list.empty': '안 읽은 멘션·DM이 없다',
-
-  // ---------------------------------------------------------------------------
   // profile — 사람과 에이전트가 같은 틀을 쓴다(그 화면 주석: 행 이름만 다르다).
   // ---------------------------------------------------------------------------
 
@@ -2047,7 +2035,7 @@ export const ko = {
   'message.callGap.restarting': '@{handle} 재기동 중 — 돌아오면 이 부름부터 집는다',
   'message.callGap.stopped': '@{handle} 꺼져 있다 — 켜면 이 부름부터 집는다',
   'message.callGap.attention': '@{handle} 러너에 손이 필요하다 — 설정 › 에이전트에서 본다',
-  'message.callGap.offline': '@{handle} 지금 오프라인 — 부름은 인박스에 남아 있다',
+  'message.callGap.offline': '@{handle} 지금 오프라인 — 부름은 그 에이전트에게 남아 있다',
 
   // 접근 라벨의 네 틀. 영어와 **같은 순서**(상태 → 수 → 마지막)로 둔다 — 화면이 그
   // 순서로 그리므로 눈으로 읽는 것과 귀로 듣는 것이 어긋나면 안 된다.
@@ -2251,27 +2239,6 @@ export const ko = {
   'threadStatus.aria': '스레드 상태: {sentence}',
   'saved.unavailable': '이 채널을 볼 수 없어 내용을 보여 줄 수 없다',
 
-  // ---------------------------------------------------------------------------
-  // inbox — **키 순서는 `en.ts` 와 같다**. 여섯이 서로 달라야 한다는 것이 이 판정의
-  // 존재 이유이고(*"네 줄이 글자 하나까지 똑같다"*), 원래 화면의 낱말이 이미 그렇다.
-  // ---------------------------------------------------------------------------
-
-  'inbox.label.ask': '골라 줘',
-  'inbox.label.askOther': '고르는 중',
-  'inbox.label.failure': '막혔다',
-  'inbox.label.report': '끝냈다',
-  'inbox.label.delegated': '넘겨받았다',
-  // report 가 위임을 닫지 않게 되어(위임 재설계 v1) 「결말」이 아니라 「결과」다 — 닫기는 넘긴 쪽이 한다.
-  'inbox.label.delegationDone': '결과가 왔다',
-  'inbox.label.mention': '불렀다',
-  'inbox.label.teamMention': '팀을 불렀다',
-  'inbox.label.reply': '답글',
-  // 위임 라벨(위임 재설계 v1 P6) — 카드 요약 앞. 실패·멈춤은 「막힘」 묶음으로 간다.
-  'inbox.delegation.update': '진행 소식',
-  'inbox.delegation.reported': '결과가 왔다',
-  'inbox.delegation.failed': '맡긴 일이 막혔다',
-  'inbox.delegation.stalled': '멈췄다 · {hours}시간 조용',
-  'inbox.delegation.updates': { other: '소식 {count}' },
   // 스레드 머리 아래 「맡긴 일」 칩 줄.
   'thread.delegations.handedOff': '맡긴 일',
   'thread.delegations.assignedBy': '맡은 일 · {who}',

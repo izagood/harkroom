@@ -46,7 +46,7 @@ const seed = (isAdmin: boolean) => {
 };
 
 const sidebar = () => render(
-  <SidebarWithSheet panel="home" onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}}
+  <SidebarWithSheet panel="home" onOpenChannelDirectory={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}}
     collapsed={false} onToggleCollapse={vi.fn()} />,
 );
 

@@ -49,7 +49,6 @@ import { GallerySettings } from '../src/components/settings/GallerySettings';
 import { Profile } from '../src/components/Profile';
 import { AgentGrid } from '../src/components/settings/AgentGrid';
 import { Composer } from '../src/components/Composer';
-import { Inbox } from '../src/components/Inbox';
 import { SkillsSettings } from '../src/components/settings/SkillsSettings';
 import { AgentDefaultsSettings } from '../src/components/settings/AgentDefaultsSettings';
 import { MessageItem } from '../src/components/MessageItem';
@@ -59,7 +58,6 @@ import { NotifiedGapRow } from '../src/components/NotifiedGapRow';
 import { TypingLine } from '../src/components/TypingLine';
 import { ThreadStateBadge } from '../src/components/ThreadStateBadge';
 import { threadStateLabel, type ThreadState } from '../src/lib/threadState';
-import { inboxRow } from '../src/lib/inboxRow';
 import { fireEvent, within } from '@testing-library/react';
 import { waitChainFromLinks } from '../src/lib/waitChain';
 import { daemonFactRows } from '../src/lib/daemonFacts';
@@ -314,7 +312,6 @@ describe('스레드 패널의 사슬 줄 — 어순이 언어를 따른다', () 
 
 const sidebarProps = {
   onOpenChannelDirectory: () => {},
-  onOpenInbox: () => {},
   // #629 가 더한 두 열기 훅. 이 파일은 문자열만 재지만 **필수 prop 이라 빠지면 타입이
   // 깨진다** — 실제로 #630(이 테스트)과 #629(prop 추가)가 각자 초록으로 머지된 뒤 main 에서
   // 처음 만나 깨졌다. 여는 동작은 이 테스트의 관심사가 아니므로 빈 함수로 둔다.
@@ -1516,49 +1513,6 @@ describe('스레드 상태 — 판정이 두 언어로 말한다', () => {
   });
 });
 
-describe('인박스 줄 — 판정이 두 언어로 말한다', () => {
-  const entry = (over: Partial<InboxEntry> = {}): InboxEntry => ({
-    id: 1, messageId: 'm1', reason: 'thread_reply', readAt: null, channelId: 'c1',
-    authorId: ALPHA, body: '본문', meta: {}, createdAt: '2026-09-08T00:00:00.000Z',
-    threadRootId: null, ...over,
-  });
-
-  /**
-   * **여섯이 서로 다르다** — 그것이 이 판정의 존재 이유다(*"네 줄이 글자 하나까지
-   * 똑같다"*). 언어를 바꿔도 여섯이 여전히 여섯이어야 한다.
-   */
-  it.each(LOCALES)('%s 에서 여섯 말표가 서로 다르다', (locale) => {
-    const t = translator(locale);
-    const labels = [
-      inboxRow(entry({ meta: askMeta({ kind: 'human' }) }), ME, t).label,
-      inboxRow(entry({ meta: askMeta({ kind: 'account', accountId: CODEX }) }), ME, t).label,
-      inboxRow(entry({ meta: { kind: 'failure', failure: { retryable: true } } }), ME, t).label,
-      inboxRow(entry({ meta: { kind: 'report', report: { checks: ['ok'] } } }), ME, t).label,
-      inboxRow(entry({ reason: 'mention' }), ME, t).label,
-      inboxRow(entry({ reason: 'thread_reply' }), ME, t).label,
-    ];
-    expect(new Set(labels).size).toBe(6);
-  });
-
-  it('말표가 두 언어로 갈리고 DM 만 그대로다', () => {
-    const en1 = inboxRow(entry({ meta: { kind: 'failure', failure: { retryable: true } } }), ME, translator('en'));
-    const ko1 = inboxRow(entry({ meta: { kind: 'failure', failure: { retryable: true } } }), ME, translator('ko'));
-    expect(en1.label).toBe('Stuck');
-    expect(ko1.label).toBe('막혔다');
-    // `DM` 은 **이 제품의 고유어**다 — `waitChain.dm` 이 같은 판단을 이미 했다.
-    expect(inboxRow(entry({ reason: 'dm' }), ME, translator('en')).label).toBe('DM');
-    expect(inboxRow(entry({ reason: 'dm' }), ME, translator('ko')).label).toBe('DM');
-  });
-
-  /** **rank 는 언어를 안 탄다** — 말표만 바뀌고 정렬은 그대로여야 한다. */
-  it.each(LOCALES)('%s 에서 rank 가 같다 — 정렬은 언어를 안 탄다', (locale) => {
-    const t = translator(locale);
-    expect(inboxRow(entry({ meta: askMeta({ kind: 'human' }) }), ME, t).rank).toBe(0);
-    expect(inboxRow(entry({ meta: { kind: 'report', report: { checks: ['ok'] } } }), ME, t).rank).toBe(1);
-    expect(inboxRow(entry({ reason: 'thread_reply' }), ME, t).rank).toBe(2);
-  });
-});
-
 // ---------------------------------------------------------------------------
 // `lib/` 판정 — **사전만 읽지 않고 판정 함수를 두 언어로 부른다**
 //
@@ -1671,13 +1625,13 @@ describe('daemon 사실 — 판정이 두 언어로 말한다', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 6. 화면 넷이 두 언어로 뜬다 — `Profile` · `AgentGrid` · `Composer` · `Inbox`
+// 6. 화면 셋이 두 언어로 뜬다 — `Profile` · `AgentGrid` · `Composer`
 //
 // **화면을 열어서 잰다.** 위 1번 묶음이 이미 사전을 재고 있으므로 여기서 사전을 또 읽는
 // 것은 아무것도 더 지키지 않는다 — 사전이 갈려 있어도 **화면이 `t()` 를 안 지나면** 그
 // 화면은 한 언어로 굳는다(사이드바 묶음의 머리말이 적은 그 이유 그대로다).
 //
-// 다른 회귀선 아홉(`profile`·`inbox`·`composer`·`scheduledSend`·… )은 **한국어로 고정**
+// 다른 회귀선 아홉(`profile`·`composer`·`scheduledSend`·… )은 **한국어로 고정**
 // 돼 있다 — 그것들이 재는 것은 언어가 아니라 그 언어로 표현된 규율이고, 언어를 재는
 // 자리는 이 파일 하나다.
 // ---------------------------------------------------------------------------
@@ -1879,43 +1833,6 @@ describe('작성창 — 두 언어로 뜬다', () => {
     fireEvent.click(screen.getByLabelText('나중에 보내기'));
     expect(screen.getByText('예약 발송')).toBeTruthy();
     expect(screen.getByLabelText('예약 시각')).toBeTruthy();
-  });
-});
-
-describe('인박스 — 두 언어로 뜬다', () => {
-  beforeEach(() => {
-    stubController();
-    useActiveStore.getState().set({
-      me: acc(ME, 'me'), accounts: { [ME]: acc(ME, 'me') },
-      channels: [chan('c1', 'general')], messages: { c1: [] }, connected: true, unread: [],
-    });
-  });
-
-  it('빈 목록이 두 언어로 뜬다', async () => {
-    render(<Inbox open onClose={() => {}} />);
-    await waitFor(() => expect(screen.getByTestId('inbox-empty').textContent).toBe('No unread mentions or DMs'));
-    // 자리의 이름이자 머리글이다 — 랜드마크로 찾을 수 있어야 한다.
-    expect(screen.getByRole('complementary', { name: 'Inbox' })).toBeTruthy();
-    cleanup();
-    speak('ko');
-    render(<Inbox open onClose={() => {}} />);
-    await waitFor(() => expect(screen.getByTestId('inbox-empty').textContent).toBe('안 읽은 멘션·DM이 없다'));
-    expect(screen.getByRole('complementary', { name: '인박스' })).toBeTruthy();
-  });
-
-  it('안 읽은 멘션 줄의 꼬리표가 두 언어로 뜬다', async () => {
-    useActiveStore.getState().set({
-      unread: [{
-        id: 1, messageId: 'm1', reason: 'mention', readAt: null, channelId: 'c1', authorId: ME,
-        body: '봐 줘', meta: {}, createdAt: new Date().toISOString(), threadRootId: null,
-      }],
-    });
-    render(<Inbox open onClose={() => {}} />);
-    expect((await screen.findByTestId('inbox-row-label-1')).textContent).toBe('Called you');
-    cleanup();
-    speak('ko');
-    render(<Inbox open onClose={() => {}} />);
-    expect((await screen.findByTestId('inbox-row-label-1')).textContent).toBe('불렀다');
   });
 });
 

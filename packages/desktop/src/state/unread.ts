@@ -1,3 +1,5 @@
+import { notifyLevelOf, type NotifyLevel } from '@harkroom/shared';
+
 /**
  * 미읽음을 **두 가지 신호**로 읽는 규칙. 사이드바가 이미 이 둘을 나눠 그리고 있고
  * (`Sidebar.tsx` 의 `UnreadBadge` · `ChannelUnreadDot`), 그 주석이 이유를 적었다:
@@ -22,21 +24,29 @@ export function hasUnreadMessages(reads: Record<string, { unread: number }>): bo
   return Object.values(reads).some((r) => r.unread > 0);
 }
 
-/**
- * **안 읽은 멘션·DM 수** — 레일·사이드바·독·커뮤니티 타일의 숫자 배지가 모두 이것 하나를 읽는다.
- * 재료는 스토어의 `unread`(`GET /inbox?unread=1`, 안 읽은 것만 담긴다)다 — 따로 조회하지 않는다.
- * 그 밖의 사유(답글·위임 소식 등)는 "새 대화가 있다"에 가깝고 숫자로 세지 않는다.
- */
-export function unreadMentionCount(unread: ReadonlyArray<{ reason: string }>): number {
-  let n = 0;
-  for (const e of unread) if (isMentionOrDm(e)) n += 1;
-  return n;
+/** 배지가 세는 데 드는 것 — 스토어의 안 읽은 줄과 채널 선호. */
+export interface UnreadSource {
+  unread: ReadonlyArray<{ reason: string; channelId: string }>;
+  channelPrefs: Record<string, { notifyLevel?: NotifyLevel } | undefined>;
 }
 
 /**
- * 배지가 세는 줄인가 — 멘션·DM·팀장으로서 불림(`team_mention`). 인박스 목록도 같은 판정으로
- * 고른다(배지 수 = 목록 줄 수). 모바일(`inboxMentionCount`)과 같은 판정이다.
+ * **안 읽은 멘션·DM 수** — 레일·독·커뮤니티 타일의 숫자 배지가 모두 이것 하나를 읽는다.
+ * 재료는 스토어의 `unread`(`GET /inbox?unread=1`, 안 읽은 것만 담긴다)다 — 따로 조회하지 않는다.
+ * 그 밖의 사유(답글·위임 소식 등)는 "새 대화가 있다"에 가깝고 숫자로 세지 않는다.
+ *
+ * **음소거(`notifyLevel: 'none'`) 채널의 것은 빼고 센다.** 사이드바의 채널 숫자도 음소거면 숨으므로
+ * (`Sidebar.tsx` 의 `UnreadBadge`), 세면 어디서 왔는지 찾을 길이 없는 숫자가 된다.
+ *
+ * 스토어 상태를 통째로 받는 까닭: 선호를 따로 넘기는 인자면 한 곳이 빠뜨렸을 때 그 배지만 갈린다.
  */
+export function unreadMentionCount({ unread, channelPrefs }: UnreadSource): number {
+  let n = 0;
+  for (const e of unread) if (isMentionOrDm(e) && notifyLevelOf(channelPrefs[e.channelId]) !== 'none') n += 1;
+  return n;
+}
+
+/** 배지가 세는 사유인가 — 멘션·DM·팀장으로서 불림(`team_mention`). */
 export function isMentionOrDm(e: { reason: string }): boolean {
   return e.reason === 'mention' || e.reason === 'dm' || e.reason === 'team_mention';
 }

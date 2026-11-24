@@ -42,7 +42,7 @@ const fakeController = () => {
 const renderDmPanel = () =>
   render(
     <Sidebar panel="dm" onOpenChannelDirectory={() => {}}
-      onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}} collapsed={false} onToggleCollapse={vi.fn()} />,
+      onOpenAgentConfig={() => {}} onOpenProfile={() => {}} collapsed={false} onToggleCollapse={vi.fn()} />,
   );
 
 const dm = (id: string, peerId: string, lastMessageAt: string | null): DmView =>
@@ -361,7 +361,7 @@ describe('로그인이 풀려 멈춘 에이전트 (2026-10-15 ③-3)', () => {
     const onReauth = vi.fn();
     render(
       <Sidebar panel="dm" onOpenChannelDirectory={() => {}}
-        onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}} collapsed={false} onToggleCollapse={vi.fn()}
+        onOpenAgentConfig={() => {}} onOpenProfile={() => {}} collapsed={false} onToggleCollapse={vi.fn()}
         onOpenClaudeReauth={onReauth} />,
     );
     const line = screen.getByTestId('runner-login-forge');

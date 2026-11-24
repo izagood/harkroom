@@ -13,7 +13,7 @@ import { acc, chan, fakeApi } from './helpers/fakeApi';
  */
 const sidebar = () => render(
   <Sidebar panel="home"
-    onOpenChannelDirectory={vi.fn()} onOpenInbox={vi.fn()} onOpenAgentConfig={() => {}} onOpenProfile={() => {}}
+    onOpenChannelDirectory={vi.fn()} onOpenAgentConfig={() => {}} onOpenProfile={() => {}}
     collapsed={false} onToggleCollapse={vi.fn()} />,
 );
 

@@ -59,6 +59,21 @@ describe('독 배지', () => {
     await waitFor(() => expect(badger.last()).toEqual({ count: 2, dot: false }));
   });
 
+  it('음소거 채널의 멘션은 세지 않는다 — 음소거를 풀면 다시 센다', async () => {
+    const badger = fakeBadger();
+    render(<Harness badger={badger} />);
+    const pref = (notifyLevel: 'none' | 'mentions') => ({ [entry(1, 'mention').channelId]: { notifyLevel } }) as never;
+
+    act(() => { useAppStore.getState().set({ unread: [entry(1, 'mention')], channelPrefs: pref('mentions') }); });
+    await waitFor(() => expect(badger.last()).toEqual({ count: 1, dot: false }));
+
+    act(() => { useAppStore.getState().set({ channelPrefs: pref('none') }); });
+    await waitFor(() => expect(badger.last()).toEqual({ count: 0, dot: false }));
+
+    act(() => { useAppStore.getState().set({ channelPrefs: pref('mentions') }); });
+    await waitFor(() => expect(badger.last()).toEqual({ count: 1, dot: false }));
+  });
+
   it('커뮤니티 전부를 합친다 — 활성 커뮤니티만 세지 않는다', async () => {
     const badger = fakeBadger();
     const second = useCommunityRegistry.getState().register({ baseUrl: 'https://b.example' });

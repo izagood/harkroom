@@ -22,7 +22,7 @@ const section = (id: string, name: string, position: number, o: Partial<ChannelS
 const mount = () => render(
   <Sidebar panel="home"
     onOpenChannelDirectory={() => {}}
-    onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}}
+    onOpenAgentConfig={() => {}} onOpenProfile={() => {}}
     collapsed={false} onToggleCollapse={vi.fn()}
   />,
 );

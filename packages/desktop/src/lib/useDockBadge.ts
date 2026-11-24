@@ -14,7 +14,7 @@ import { hasUnreadMessages, unreadMentionCount } from '../state/unread';
  *
  * ## 무엇을 세는가 — 화면과 **같은 것**
  *
- * 숫자는 안 읽은 멘션·DM 수(`unreadMentionCount`)이고 레일·사이드바가 같은 값을 쓴다. 독이 자기 식으로
+ * 숫자는 안 읽은 멘션·DM 수(`unreadMentionCount`)이고 레일·커뮤니티 타일이 같은 값을 쓴다. 독이 자기 식으로
  * 세면 "독에는 3, 화면에는 2" 가 되고 그때 사람이 믿는 숫자는 없다.
  *
  * ## 커뮤니티 전부를 **합친다**
@@ -62,7 +62,7 @@ export function badgeOf(entries: CommunityEntry[]): Badge {
   let dot = false;
   for (const e of entries) {
     const s = e.store.getState();
-    count += unreadMentionCount(s.unread);
+    count += unreadMentionCount(s);
     dot = dot || hasUnreadMessages(s.reads);
   }
   return { count, dot: count === 0 && dot };

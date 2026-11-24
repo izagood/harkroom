@@ -357,7 +357,7 @@ export type NameOf = (accountId: string | null) => string;
  * 한다.
  *
  * 그러면 그 채우기는 어디서 하나. 이 저장소의 규율은 **판정과 렌더를 가른다**
- * (`threadState`·`faceState`·`inboxRow` 가 전부 `lib/` 에 있고 화면은 그리기만 한다).
+ * (`threadState`·`faceState` 가 전부 `lib/` 에 있고 화면은 그리기만 한다).
  * 문장을 고르는 것은 판정 쪽이다 — 어떤 마디가 `linkAnyone` 이고 어떤 것이 `link`
  * 인지는 **`blockedBy` 가 null 인가**라는 판정이고, 그것을 화면에 두면 두 화면
  * (스레드 패널·인박스)이 각자 판정하게 된다.

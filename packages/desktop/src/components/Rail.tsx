@@ -144,15 +144,14 @@ export function Rail({ panel, onPanelChange, onOpenSettings, onManageCommunities
    * "새 대화가 있다"에 가깝다. 사이드바의 채널별 `UnreadBadge` 와 같은 배열을 쓰므로
    * 두 표시가 갈라지지 않는다.
    *
-   * 세는 규칙은 `state/unread::unreadMentionCount` 하나다 — 독·사이드바·커뮤니티 타일이
+   * 세는 규칙은 `state/unread::unreadMentionCount` 하나다 — 독·커뮤니티 타일이
    * 같은 함수를 읽는다. 여기서 다시 적으면 화면의 숫자와 독의 숫자가 갈라진다.
    *
-   * **이 배지가 홈 칸에 있는 것이 문서의 요구다** — Inbox 는 홈 패널 맨 위 한 줄로
-   * 내려가고 배지만 레일이 대신 받는다. 그래야 어느 칸에 있든 "나를 기다리는 것 2개"가
-   * 계속 보인다.
+   * **이 배지가 홈 칸에 있는 것이 문서의 요구다** — 어느 칸에 있든 "나를 기다리는 것 2개"가
+   * 계속 보인다. 음소거 채널의 것은 빠진다(`unreadMentionCount`).
    */
   // 안 읽은 멘션·DM 수(`unreadMentionCount`).
-  const blockingCount = useActiveStore((s) => unreadMentionCount(s.unread));
+  const blockingCount = useActiveStore((s) => unreadMentionCount(s));
 
   /**
    * 담아 둔 메시지 수(#219). **배지로 그리지 않는다** — 문서: *"배지는 나를 막는 것만

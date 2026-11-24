@@ -123,21 +123,6 @@ export interface AppState {
    */
   backfilling: Record<string, boolean>;
   unread: InboxEntry[];
-  /**
-   * 인박스가 서버에서 바뀐 것을 **확인한 횟수**(2026-09-10). `refreshUnread` 가 새 목록을
-   * 반영할 때마다 1 올라간다 — 그 함수가 도는 자리가 곧 "서버의 인박스가 달라졌다"를 아는
-   * 자리다(`inbox.updated` 이벤트, 그리고 재연결 뒤의 `reconcile`).
-   *
-   * 인박스 패널은 위의 `unread` 를 자기 목록으로 쓸 수 없다 — 그 배열은 `?unread=1` 로만
-   * 채워져 읽은 줄이 없다(`Inbox.tsx` 의 주석). 그래서 자기 목록을 따로 조회하는데, 예전에는
-   * **열 때 한 번만** 조회했다: 열어 둔 채로 멘션이 와도 화면에 아무 일이 없어 닫았다 열어야
-   * 보였다(2026-09-10 신고). 이 수가 그 패널에 "다시 읽어라"만 전한다 — 목록 자체를 여기
-   * 담지 않는 이유는 `skillsRevision` 과 같다(두 벌을 두면 어느 쪽이 최신인지 갈린다).
-   *
-   * **시각이 아니라 세는 수인 이유도 그것과 같다:** 같은 밀리초에 둘이 오면 `Date.now()` 는
-   * 같은 값이라 화면이 두 번째를 못 본다.
-   */
-  inboxRevision: number;
   /** 채널별 읽음 상태(서버 진실). 사이드바 배지가 여기서 나온다. */
   reads: Record<string, { lastReadSeq: number; unread: number }>;
   /**
@@ -419,7 +404,7 @@ export interface AppState {
    * 한 줄을 붙이면 다음에 하나 더 생길 때 또 빠지고, 빠진 곳만 조용히 고장 난다.
    * 이동의 정본은 `controller.openChannel` 하나이므로 신호도 거기서 난다.
    *
-   * **값이 아니라 세는 수인 이유는 `inboxRevision` 과 같다:** 보던 채널을 사이드바에서 다시
+   * **값이 아니라 세는 수인 이유:** 보던 채널을 사이드바에서 다시
    * 누르면 `activeChannelId` 가 그대로라, 값을 지켜보는 화면은 그 클릭을 못 본다.
    *
    * **모든 이동이 올리지는 않는다.** 답글로 가는 이동(`openThread`, 그리고 스레드에 있는
@@ -569,7 +554,7 @@ export const NO_TEAMS: AgentTeamRow[] = [];
 
 const initial = {
   me: null, accounts: {}, groups: [], teams: null, channels: [], dms: [], activeChannelId: null, threadRootId: null,
-  messages: {}, typing: {}, hasMore: {}, firstPageLoading: {}, backfilling: {}, unread: [], inboxRevision: 0, reads: {}, dividerSeq: {},
+  messages: {}, typing: {}, hasMore: {}, firstPageLoading: {}, backfilling: {}, unread: [], reads: {}, dividerSeq: {},
   online: [], terminalTarget: null, channelSheetId: null, artifactPreview: null, artifactPreviewFrom: null, channelSheetTab: null, leases: [], connected: false, link: 'online' as AppState['link'], offlineSince: null, threadFetch: null as AppState['threadFetch'], serverVersion: null, workspaceIconUrl: null,
   projectionStatus: null, projectionStatusError: null,
   channelPrefs: {}, channelSections: null, pins: {}, channelDocs: {}, channelMembers: {}, channelAutoMentions: {}, threadAgentModels: {}, threadPlans: {}, threadPlanDenied: {}, planAsks: {}, planFocus: null, drafts: {}, stickyMentions: {}, uploads: {},

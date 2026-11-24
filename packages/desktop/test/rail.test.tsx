@@ -75,7 +75,7 @@ const mountSidebar = (panel: 'home' | 'dm' | 'agents') =>
     <Sidebar
       panel={panel}
       onOpenChannelDirectory={vi.fn()}
-      onOpenInbox={vi.fn()} onOpenAgentConfig={() => {}} onOpenProfile={() => {}}
+      onOpenAgentConfig={() => {}} onOpenProfile={() => {}}
       collapsed={false}
       onToggleCollapse={vi.fn()}
     />,
@@ -548,20 +548,14 @@ describe('즐겨찾기가 채널 위에 선다', () => {
   });
 });
 
-describe('Inbox 는 홈 맨 위, 북마크는 레일에만', () => {
-  it('Inbox 가 홈 패널의 첫 줄이다', () => {
-    /*
-      문서: *"Inbox 는 목록이 아니라 하나의 화면이라 레일 한 칸을 통째로 쓸 만큼 크지 않다.
-      홈 패널 맨 위 한 줄로 두고…"* 예전에는 채널·보관·숨김 **다음**이라 채널이 몇 개만
-      늘어도 아래로 밀렸다.
-    */
+describe('북마크는 레일에만, Inbox 줄은 없다', () => {
+  it('홈 패널에 Inbox 줄이 없다 — 첫 줄은 채널 묶음이다', () => {
     fakeController();
     useAppStore.getState().set({ channels: [chan('c1', 'general')] });
     mountSidebar('home');
 
-    const inbox = screen.getByText('인박스');
-    const channel = screen.getByRole('button', { name: /# general/ });
-    expect(inbox.compareDocumentPosition(channel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByText('인박스')).toBeNull();
+    expect(screen.getByRole('button', { name: /# general/ })).toBeTruthy();
   });
 
   it('홈에 `Saved` 한 줄을 세우지 않는다 — 같은 것으로 가는 길을 둘로 만들지 않는다', () => {

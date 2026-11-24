@@ -251,10 +251,10 @@ function useCommunityShortcuts(entries: CommunityEntry[], activeId: string): voi
  * 구독한다(`useDockBadge` 와 같은 방식).
  */
 function useOthersBlocking(others: CommunityEntry[]): number {
-  const sum = (): number => others.reduce((n, e) => n + unreadMentionCount(e.store.getState().unread), 0);
+  const sum = (): number => others.reduce((n, e) => n + unreadMentionCount(e.store.getState()), 0);
   const [count, setCount] = useState(sum);
   useEffect(() => {
-    const recompute = (): void => setCount(others.reduce((n, e) => n + unreadMentionCount(e.store.getState().unread), 0));
+    const recompute = (): void => setCount(others.reduce((n, e) => n + unreadMentionCount(e.store.getState()), 0));
     recompute();
     const offs = others.map((e) => e.store.subscribe(recompute));
     return () => { for (const off of offs) off(); };
@@ -370,7 +370,7 @@ function CommunityRow({ entry, current, shortcut, onSelect }: {
   const t = useT();
   const connected = useStore(entry.store, (s) => s.connected);
   const iconUrl = useStore(entry.store, (s) => s.workspaceIconUrl);
-  const blocking = useStore(entry.store, (s) => unreadMentionCount(s.unread));
+  const blocking = useStore(entry.store, (s) => unreadMentionCount(s));
   const label = communityLabel(entry);
   const host = hostOf(entry);
   const state = communityState(t, entry.signedOut, connected);

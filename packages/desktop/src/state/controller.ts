@@ -4,7 +4,7 @@ import { clearPlanOpenKeys } from '../lib/threadPlan';
 import { swapAskMention, type PlanAsk } from '../lib/planRef';
 import { planAskRecipient } from '@harkroom/shared';
 import type { MemoryEdit, MemoryEntry, MemoryRevision, MemoryAudit, MemoryBatchResult } from '../lib/memoryList';
-import { countsAsReply, isAccountRank, isPoolRank, notifyLevelOf, readFailureMeta, type InboxThreadState } from '@harkroom/shared';
+import { countsAsReply, isAccountRank, isPoolRank, notifyLevelOf, readFailureMeta } from '@harkroom/shared';
 import { accountChipOf } from '../lib/accountChip';
 import { ApiClient, ApiError, type AvatarSourceRef, type BundleAcceptResult, type PlanStartDone, type PlanStartPreview, type PlanStartStep, type PreviewTicket } from '../lib/api';
 import type { AvatarSave } from '../lib/avatarCrop';
@@ -1443,21 +1443,11 @@ export class Controller {
   }
 
   // 단조 버전 가드 — 나중에 발행됐지만 먼저 도착한 응답만 반영되도록, stale 응답은 버린다.
-  /**
-   * 반영과 **함께 `inboxRevision` 을 올린다**(2026-09-10). 이 함수가 도는 자리가 곧 "서버의
-   * 인박스가 달라진 것을 방금 확인했다"는 자리다 — `inbox.updated` 이벤트와, 소켓이 다시
-   * 붙은 뒤의 `reconcile` 둘뿐이다. 그래서 신호를 이벤트 처리기가 아니라 여기에 둔다:
-   * 끊긴 동안 놓친 항목도 재연결 한 번으로 열려 있는 인박스에 닿는다.
-   *
-   * stale 응답에서는 올리지 않는다 — 낡은 목록을 버리면서 "바뀌었다"고 알리면, 받는 쪽은
-   * 아무것도 달라지지 않은 채로 조회를 한 번 더 낸다.
-   */
   private async refreshUnread(): Promise<void> {
     const seq = ++this.unreadFetchSeq;
     const entries = await this.api.inboxUnread();
     if (seq !== this.unreadFetchSeq) return;
-    const store = this.store.getState();
-    store.set({ unread: entries, inboxRevision: store.inboxRevision + 1 });
+    this.store.getState().set({ unread: entries });
   }
 
   /**
@@ -1786,9 +1776,8 @@ export class Controller {
       return;
     }
     // **자리를 요구하는가는 목적지가 정한다.** 답글이면 아래에서 스레드 패널이 서므로
-    // 본문은 그대로 둔다 — 인박스를 훑으며 답글을 여는 기본 동작이 그것이다(#783, 그
-    // 판정이 `Inbox.openEntry` 와 같은 술어여야 한다는 것도 거기 적혀 있다). 본문의 말이면
-    // 목적지가 채널 타임라인이라, 인박스·관제탑이 서 있으면 방금 누른 것이 그 뒤에 숨는다.
+    // 본문은 그대로 둔다(#783). 본문의 말이면
+    // 목적지가 채널 타임라인이라, 관제탑이 서 있으면 방금 누른 것이 그 뒤에 숨는다.
     /**
      * **"스토어에 있다"가 아니라 "이웃을 받아 왔다"로 판정한다**(2026-10-06, 링크 이동이 외톨이 줄로 감).
      * 인박스로 연 스레드의 뿌리는 `openThread` 가 채널 목록에 홀로 넣고, 열어 본 적 없는 채널의 글은
