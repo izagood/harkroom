@@ -490,7 +490,7 @@ fn directory_is_reread_only_for_unknown_ids_or_age() {
         reads: Cell::new((0, 0)),
         fail: Cell::new(false),
     };
-    let names = |r: &(Vec<(String, String)>, Vec<Value>)| BatchContext::new(&r.0, &r.1);
+    let names = |r: &Lists| BatchContext::new(&r.0, &r.1);
 
     // 처음에는 읽는다. 같은 채널·같은 글쓴이의 다음 배치는 읽지 않는다(멘션마다 왕복 두 번이 사라진다).
     lp.refresh_directory(&src, &batch_of("c1", "h"), 0).unwrap();

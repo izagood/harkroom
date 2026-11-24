@@ -237,6 +237,9 @@ pub fn batch_ids(batch: &Value) -> HashSet<String> {
     ids
 }
 
+/// 채널 목록(id·이름)과 계정 목록 한 벌.
+pub type Lists = (Vec<(String, String)>, Vec<Value>);
+
 /// 폴 루프가 쥐는 채널·계정 목록(정본은 배치마다 둘 다 다시 읽었다 — 서버 왕복 두 번이 멘션마다 턴 시작 앞에 섰다).
 ///
 /// 다시 읽는 때: ① 아직 없다 ② [`DIRECTORY_MAX_AGE_MS`] 가 지났다 ③ 배치에 **모르는 id** 가 있다(새 채널·새 계정).
@@ -366,7 +369,7 @@ impl PollLoop {
         src: &dyn PollSource,
         batch: &Value,
         now_ms: u64,
-    ) -> Result<(Vec<(String, String)>, Vec<Value>), HarkroomError> {
+    ) -> Result<Lists, HarkroomError> {
         let ids = batch_ids(batch);
         let mut dir = self.directory.lock().unwrap_or_else(|p| p.into_inner());
         let aged = dir.as_ref().is_none_or(|d| d.aged(now_ms));
