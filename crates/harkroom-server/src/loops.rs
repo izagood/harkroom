@@ -15,6 +15,7 @@ pub mod bg_produce;
 pub mod delegation_deadline;
 pub mod mandate_idle;
 pub mod memory_daily;
+pub mod memory_embed;
 pub mod outbox_prune;
 pub mod permission_expire;
 pub mod plan_progress;
@@ -39,7 +40,7 @@ pub const DEFAULT_OWNER: &str = "rust";
 pub const LOOP_LOCK_CLASS: i32 = 0x4c4f_4f50;
 
 /// 루프 이름 — TS `LOOP_NAMES` 와 같아야 한다(`server_loop.name` 의 키).
-pub const LOOP_NAMES: [&str; 17] = [
+pub const LOOP_NAMES: [&str; 18] = [
     "wake",
     "delegation.deadline",
     "automation",
@@ -61,6 +62,8 @@ pub const LOOP_NAMES: [&str; 17] = [
     "wake.mirror",
     // 계획 진행(K1, `loops::plan_progress`) — 그림자: 판정의 갈래와 수만 기록한다. 스위치가 꺼져 있으면 뜨지 않는다.
     "plan.progress",
+    // 기억 조각 채우기(기억 벡터 V3, `loops::memory_embed`) — 임베딩 설정과 조각 표가 있을 때만 뜬다.
+    "memory.embed",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

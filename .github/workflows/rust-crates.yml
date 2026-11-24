@@ -61,7 +61,8 @@ jobs:
     timeout-minutes: 40
     services:
       postgres:
-        image: postgres:16-alpine
+        # pgvector 가 든 이미지 — 확장이 없는 배포의 길은 `tests/memory_embed.rs` 가 따로 본다.
+        image: pgvector/pgvector:0.8.7-pg16
         env:
           POSTGRES_USER: harkroom
           POSTGRES_PASSWORD: harkroom

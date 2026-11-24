@@ -95,10 +95,10 @@ async fn main() {
         seed_claim_with_write_pool(write.as_ref(), hash).await;
     }
     // C5b — 서버 루프(예약 깨움). 주인이 `rust` 일 때만 실제로 돈다(`server_loop`, 줄이 없으면 `rust` — `loops.rs`).
+    let embedder = spawn_embed();
     if write.is_some() {
-        spawn_loops().await;
+        spawn_loops(embedder).await;
     }
-    spawn_embed();
     // `HARKROOM_FRONT_TS_ROUTES`(옮긴 줄을 TS 로 되돌림)는 더 읽지 않는다 — 되돌릴 TS 가 없어(11-21) 되돌린 줄은 404 가 될 뿐이다.
     if std::env::var_os("HARKROOM_FRONT_TS_ROUTES").is_some() {
         eprintln!("front: HARKROOM_FRONT_TS_ROUTES is ignored (TS server removed)");
@@ -5779,24 +5779,32 @@ async fn enable_work_route(pool: &sqlx::PgPool) {
 }
 
 /// 임베딩 서비스(기억 벡터 검색)의 준비 상태를 지켜본다. 설정이 없거나 틀리면 낱말 검색만 쓴다 — 기동은 막지 않는다.
-fn spawn_embed() {
+fn spawn_embed() -> Option<std::sync::Arc<harkroom_server::embed::Embedder>> {
     use harkroom_server::embed::{EmbedConfig, Embedder, spawn_health};
     match EmbedConfig::from_env(|k| std::env::var(k).ok()) {
-        Ok(None) => eprintln!("front: embed off — HARKROOM_EMBED_URL unset"),
+        Ok(None) => {
+            eprintln!("front: embed off — HARKROOM_EMBED_URL unset");
+            None
+        }
         Ok(Some(cfg)) => {
             eprintln!("front: embed on (model={} dim={})", cfg.model, cfg.dim);
-            spawn_health(std::sync::Arc::new(Embedder::new(cfg)));
+            let embedder = std::sync::Arc::new(Embedder::new(cfg));
+            spawn_health(embedder.clone());
+            Some(embedder)
         }
-        Err(e) => eprintln!("front: embed off — {e}"),
+        Err(e) => {
+            eprintln!("front: embed off — {e}");
+            None
+        }
     }
 }
 
 /// 서버 루프 전용 풀(문지기·sweep)을 따로 연다 — 루프 tick 은 문지기 연결 1 + sweep 연결 1 + 이벤트 연결 1 을 쓰는데 쓰기 풀은
 /// 요청과 나눠 쓴다. 이 풀이 막혀도 요청은 막히지 않는다. 권한([`loops::wake::WAKE_PRIVILEGES`])이 모자라면 띄우지 않는다(TS 에 남는다).
-async fn spawn_loops() {
+async fn spawn_loops(embedder: Option<std::sync::Arc<harkroom_server::embed::Embedder>>) {
     use harkroom_server::loops::{
-        bg, bg_produce, delegation_deadline, mandate_idle, outbox_prune, permission_expire,
-        plan_progress, retention, scheduled, wake, wake_mirror,
+        bg, bg_produce, delegation_deadline, mandate_idle, memory_embed, outbox_prune,
+        permission_expire, plan_progress, retention, scheduled, wake, wake_mirror,
     };
     let Some(url) = std::env::var("DATABASE_WRITE_URL")
         .ok()
@@ -5868,6 +5876,29 @@ async fn spawn_loops() {
             }
             Ok(m) => eprintln!("front: loop plan.progress off — missing privileges {m:?}"),
             Err(e) => eprintln!("front: loop plan.progress off — privilege check failed: {e}"),
+        }
+    }
+    // V3 — 기억 조각 채우기. 임베딩 설정이 있고 조각 표(pgvector)가 있을 때만.
+    if let Some(embedder) = embedder {
+        match memory_embed::table_exists(&pool).await {
+            Ok(false) => {
+                eprintln!("front: loop memory.embed off — no agent_memory_chunk (pgvector)")
+            }
+            Err(e) => eprintln!("front: loop memory.embed off — table check failed: {e}"),
+            Ok(true) => {
+                match write::missing_in(&pool, memory_embed::MEMORY_EMBED_PRIVILEGES, &[]).await {
+                    Ok(m) if m.is_empty() => {
+                        eprintln!(
+                            "front: loop memory.embed on (runs unless server_loop pins it to ts)"
+                        );
+                        memory_embed::spawn(gate.clone(), pool.clone(), embedder);
+                    }
+                    Ok(m) => eprintln!("front: loop memory.embed off — missing privileges {m:?}"),
+                    Err(e) => {
+                        eprintln!("front: loop memory.embed off — privilege check failed: {e}")
+                    }
+                }
+            }
         }
     }
     // C5c — 보존 기간 정리.
@@ -6186,10 +6217,10 @@ async fn push_sweeper(
 }
 
 /// Rust 로 옮긴 루프 수(wake·retention·mandate.idle·permission.expire·delegation.deadline·outbox.prune·projection·scheduled·
-/// automation·bg·push·stale·thread.status·thread.plan·bg.produce·wake.mirror·plan.progress = 17, `spawn_loops` 가 띄우는 순서) — 문지기 풀 크기. 한 루프는
+/// automation·bg·push·stale·thread.status·thread.plan·bg.produce·wake.mirror·plan.progress·memory.embed = 18, `spawn_loops` 가 띄우는 순서) — 문지기 풀 크기. 한 루프는
 /// tick 동안 잠금 연결 하나를 쥐고(`projection` 은 저장소마다 long-poll 이라 오래 쥔다), 쉬는 연결은 [`LOOP_POOL_IDLE`] 뒤 닫힌다.
 /// 루프를 더하면 같이 올린다.
-const LOOP_GATE_CONNECTIONS: u32 = 17;
+const LOOP_GATE_CONNECTIONS: u32 = 18;
 /// sweep 풀 크기.
 const LOOP_SWEEP_CONNECTIONS: u32 = 3;
 /// 루프 풀에서 쉬는 연결을 닫기까지 — 가장 긴 루프 주기(retention 1시간)보다 길게 둔다. 짧으면(옛 30초) 주기가 그보다 긴
@@ -6266,6 +6297,7 @@ mod loop_pool_tests {
             retention::RETENTION_SWEEP_INTERVAL,
             retention::RETENTION_FIRST_DELAY,
             mandate_idle::MANDATE_IDLE_SWEEP_INTERVAL,
+            memory_embed::MEMORY_EMBED_INTERVAL,
             permission_expire::PERMISSION_EXPIRE_SWEEP_INTERVAL,
             delegation_deadline::DELEGATION_SWEEP_INTERVAL,
             outbox_prune::OUTBOX_PRUNE_INTERVAL,

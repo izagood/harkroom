@@ -17,6 +17,7 @@ pub mod http_metrics;
 pub mod inbox_today;
 pub mod lists;
 pub mod loops;
+pub mod mem_chunk;
 pub mod migrate;
 pub mod password;
 pub mod perm;

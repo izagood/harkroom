@@ -347,6 +347,21 @@ docker compose --profile embed up -d embed
 docker compose exec -T embed python - < ops/embed/bench.py
 ```
 
+### 기억 조각 표 (pgvector)
+
+벡터는 같은 Postgres 의 `agent_memory_chunk` 에 둔다. pgvector 를 켤 수 없으면 마이그레이션(195)이 표를 만들지 않고 넘어가며
+서버는 낱말 검색만 쓴다. 켜는 순서:
+
+1. pgvector 가 든 Postgres 를 쓴다. compose 는 `HARKROOM_DB_IMAGE=pgvector/pgvector:0.8.7-pg16`. **alpine 이미지의 볼륨을 그대로
+   물리지 않는다** — 글 정렬(musl ↔ glibc)이 달라 text 색인이 어긋난다. 2절의 덤프를 떠서 **새 볼륨**에 복원한다.
+2. 이미 195 가 지나간 DB 라면 확장을 켤 수 있는 역할로 `create extension vector;`, 마이그레이션 역할로
+   `select memory_chunk_setup();` 을 부른다(`t` 면 됐다).
+3. 쓰기 역할에 준다: `grant select, insert, delete on agent_memory_chunk to <쓰기 역할>;` — `agent_memory` 읽기 권한도 있어야 한다.
+   읽기 역할에도 `select` 를 준다.
+4. 서버를 다시 띄운다. 로그의 `front: loop memory.embed on` 뒤로 30초마다 50개씩 채운다(처음 한 번이 백필이다).
+
+끄려면 `HARKROOM_EMBED_URL` 을 비운다. 조각은 본문 사본이 아니라 벡터와 자리만 담는다.
+
 ## 7. 관측 지점
 
 문제가 났을 때 먼저 볼 곳:
