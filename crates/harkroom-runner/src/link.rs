@@ -47,6 +47,8 @@ pub struct LinkOptions {
     /// 응답·거절·이관 통지가 아닌 서버 프레임(replay.request·input·resize·viewer.count·session.cancel·interactive.open).
     pub on_frame: Box<dyn Fn(Value) + Send + Sync>,
     pub on_handover_released: Hook,
+    /// 오퍼레이터가 넘긴 `wake` 프레임(E2b). 기본은 버린다.
+    pub on_wake: Box<dyn Fn(Value) + Send + Sync>,
     pub on_link_open: Hook,
     /// 링크가 끊길 때(사유). B3b 가 뷰어 수를 0 으로 돌리는 자리다.
     pub on_link_down: Box<dyn Fn() + Send + Sync>,
@@ -63,6 +65,7 @@ impl LinkOptions {
             announce_sessions: Box::new(Vec::new),
             on_frame: Box::new(|_| {}),
             on_handover_released: Box::new(|| {}),
+            on_wake: Box::new(|_| {}),
             on_link_open: Box::new(|| {}),
             on_link_down: Box::new(|| {}),
             on_rejected_give_up: Box::new(|| {}),
@@ -444,6 +447,7 @@ impl LinkClient {
                     }
                 }
                 "handover.released" => (self.opts.on_handover_released)(),
+                "wake" => (self.opts.on_wake)(v),
                 _ => (self.opts.on_frame)(v),
             }
         }

@@ -261,6 +261,8 @@ pub struct LoopHooks<'a> {
 pub struct PollLoop {
     running: AtomicBool,
     sleep: StoppableSleep,
+    /// 깨움 신호(E2b)가 걸어 둔 「쉬지 말고 한 번 더 당겨라」. [`PollLoop::kick`] 만 켠다 — 부르는 쪽이 없으면 늘 꺼져 있다.
+    kicked: AtomicBool,
     started_at_ms: i64,
     me: Mutex<Me>,
 }
@@ -270,6 +272,7 @@ impl PollLoop {
         Self {
             running: AtomicBool::new(true),
             sleep: StoppableSleep::new(),
+            kicked: AtomicBool::new(false),
             started_at_ms,
             me: Mutex::new(me),
         }
@@ -283,6 +286,21 @@ impl PollLoop {
     pub fn stop(&self) {
         self.running.store(false, Ordering::SeqCst);
         self.sleep.wake();
+    }
+
+    /// 깨움 신호(E2b) — 지금 쉬고 있으면 끊고, 폴이 도는 중이면 그 뒤의 쉼 한 번을 건너뛴다.
+    /// 턴을 열지 않는다: 다음 바퀴가 평소와 같은 길(폴 → admit)로 당긴다.
+    pub fn kick(&self) {
+        self.kicked.store(true, Ordering::SeqCst);
+        self.sleep.wake();
+    }
+
+    /// 걸린 깨움이 없을 때만 쉰다. 걸려 있었으면 지우고 바로 돌아온다.
+    fn rest(&self, ms: u64) {
+        if !self.kicked.swap(false, Ordering::SeqCst) {
+            self.sleep.sleep(ms);
+            self.kicked.store(false, Ordering::SeqCst);
+        }
     }
 
     pub fn me(&self) -> Me {
@@ -349,7 +367,10 @@ impl PollLoop {
                 Ok(wait) => {
                     backoff = POLL_BACKOFF_START_MS;
                     if wait > 0 {
-                        self.sleep.sleep(wait);
+                        self.rest(wait);
+                    } else {
+                        // 쉬지 않는 바퀴는 어차피 바로 당긴다 — 걸린 깨움을 다음 쉼까지 들고 가지 않는다.
+                        self.kicked.store(false, Ordering::SeqCst);
                     }
                 }
                 Err(e) => {

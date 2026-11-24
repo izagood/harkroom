@@ -93,6 +93,7 @@ pub mod turn_slots;
 pub mod turn_uploads;
 pub mod update;
 pub mod usage_meter;
+pub mod wake_forward;
 pub mod wipe;
 pub mod workspace_cleanup;
 pub mod ws_dialer;
