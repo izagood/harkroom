@@ -25,6 +25,8 @@ struct Link {
     /// 활동 보고가 나가는 순간 읽을 기록 파일과 그때 본 내용 — 보고가 가리기 뒤인지 본다.
     watch: Option<PathBuf>,
     seen_at_activity: Mutex<Option<String>>,
+    /// 활동 보고에 실린 본문(없으면 `None`) — 턴 토큰(PX0).
+    activity_bodies: Mutex<Vec<Option<String>>>,
 }
 
 impl Link {
@@ -40,10 +42,13 @@ impl Link {
 
 impl RunnerLink for &Link {
     fn request(&self, req: LinkRequest) -> RunnerLinkResponse {
-        let LinkRequest::Http { path, .. } = req else {
+        let LinkRequest::Http { path, body, .. } = req else {
             panic!("mcp")
         };
         self.hits.lock().unwrap().push(path.clone());
+        if path == "/agent/activity" {
+            self.activity_bodies.lock().unwrap().push(body);
+        }
         if path == "/agent/activity"
             && let Some(rec) = &self.watch
         {
@@ -242,6 +247,7 @@ fn link() -> Link {
         hits: Mutex::default(),
         watch: None,
         seen_at_activity: Mutex::default(),
+        activity_bodies: Mutex::default(),
     }
 }
 
@@ -304,6 +310,69 @@ fn mounted_secret_is_masked_in_records_outcome_and_after_turn() {
     assert!(
         !seen.contains(&w.secret) && !seen.contains(&w.key),
         "활동 보고 때 기록이 아직 안 가려졌다: {seen}"
+    );
+    // PX0: 기록에 usage 가 없으면 본문 없이 — 예전과 같은 요청이다(0 을 보내지 않는다).
+    assert_eq!(*link.activity_bodies.lock().unwrap(), [None]);
+}
+
+/// PX0: 이 시도의 기록에 usage 가 있으면 활동 보고가 `tokens` 를 싣는다 — 수와 이름만.
+#[test]
+fn activity_report_carries_turn_tokens_from_the_record() {
+    let w = world("tok");
+    let link = link();
+    let client = HarkroomRestClient::new(&link);
+    let ops = Ops {
+        log: RefCell::default(),
+        lease: w.lease.clone(),
+    };
+    let (end, live) = (Mutex::new(EndState::default()), LiveTurn::default());
+    let masked = Cell::new(false);
+    let mut inp = input(&client, &w, &ops, 0);
+    inp.spawn = Box::new(|_| {
+        // 시각은 시도 시작 뒤여야 센다 — 먼 뒷날로 적는다.
+        let line = |id: &str, out: u64| {
+            format!(
+                r#"{{"type":"assistant","timestamp":"2999-01-01T00:00:00.000Z","message":{{"id":"{id}","model":"model-a","content":[{{"type":"text","text":"비밀 아닌 글"}}],"usage":{{"input_tokens":3,"output_tokens":{out},"cache_read_input_tokens":20}}}}}}"#
+            )
+        };
+        std::fs::write(&w.record, format!("{}\n{}\n", line("m1", 4), line("m2", 6))).unwrap();
+        Ok(TurnResult {
+            exit_code: 0,
+            timed_out: false,
+            tail: String::new(),
+        })
+    });
+    let r = run_attempt(
+        setup(&w),
+        inp,
+        &ops,
+        &live,
+        outcome_with(&end, &live, &w, &masked),
+        |_| Ok(()),
+    );
+    assert!(r.is_ok());
+    let bodies = link.activity_bodies.lock().unwrap().clone();
+    assert_eq!(bodies.len(), 1);
+    let body: serde_json::Value = serde_json::from_str(bodies[0].as_deref().unwrap()).unwrap();
+    let t = &body["tokens"];
+    assert_eq!(
+        (&t["harness"], &t["model"], &t["input"], &t["output"]),
+        (
+            &serde_json::json!("claude-code"),
+            &serde_json::json!("model-a"),
+            &serde_json::json!(6),
+            &serde_json::json!(10)
+        )
+    );
+    assert_eq!(
+        (&t["cacheRead"], &t["cacheWrite"]),
+        (&serde_json::json!(40), &serde_json::json!(0))
+    );
+    assert_eq!(t["messages"], 2);
+    assert!(t["durationMs"].is_u64());
+    assert!(
+        !bodies[0].as_deref().unwrap().contains("글"),
+        "글은 싣지 않는다"
     );
 }
 
