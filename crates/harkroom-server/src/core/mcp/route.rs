@@ -170,7 +170,7 @@ pub async fn handle(
                 if let Some(r) = super::message_ask::answer(&pool, &me, &args).await {
                     return Some(r);
                 }
-                return super::message_ask::answer_plain(
+                let r = super::message_ask::answer_plain(
                     &pool,
                     writes.post.as_deref(),
                     &me,
@@ -179,7 +179,21 @@ pub async fn handle(
                     turn.as_deref(),
                     has_operator,
                 )
-                .await;
+                .await?;
+                // Q1 그림자 — 카드가 선 뒤에 「이미 받은 것으로 할 수 있는 일인가」를 대조해 기록한다. 카드는 막지 않는다.
+                return Some(
+                    crate::core::self_serve::after_ask(
+                        &pool,
+                        &me.id,
+                        me.kind == "agent",
+                        &args,
+                        r,
+                        crate::core::self_serve::hint_on(crate::env_once::get(
+                            &crate::env_once::ASK_SELF_SERVE,
+                        )),
+                    )
+                    .await,
+                );
             }
             if matches!(
                 tool,
