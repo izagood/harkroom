@@ -571,6 +571,8 @@ async fn close_tx(
             .bind(&ids)
             .execute(&mut *tx)
             .await?;
+        // F1b — 내가 닫은 것이 마지막 자기 조각이고 보류해 둔 형제가 있으면 그 결말을 모아 깨운다. 스위치가 꺼져 있으면 아무것도 하지 않는다.
+        crate::core::split_collect::after_quiet_close(&mut tx, &ids).await?;
     }
     tx.commit().await?;
     Ok(ids.len() as u64)

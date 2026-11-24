@@ -2,7 +2,9 @@
 //! 넘긴 쪽을 깨우지 않고 **열린 조각이 0 이 되는 순간 한 번** 깨운다. 스위치 `HARKROOM_SPLIT_COLLECT`(기본 꺼짐).
 //!
 //! - 판정은 [`decide`] 하나다. 닫는 길(결과 글·기한·중단)은 모두 [`turn_settle::notify_if_settled`](super::turn_settle) 를 지나고
-//!   그 함수가 [`gate`] 를 부른다. 깨우지 않고 닫는 길(자동 닫힘)은 [`after_quiet_close`] 가 같은 판정을 지난다.
+//!   그 함수가 [`gate`] 를 부른다. 깨우지 않고 닫는 길(자동 닫힘 · 넘긴 쪽이 스스로 닫기)은 [`after_quiet_close`] 가 같은 판정을 지난다.
+//!   새 위임이 앞 의무를 대체하는 길(`superseded`)은 자기 조각을 건드리지 않는다(F1a) — 지날 것이 없다.
+//! - 판정은 savepoint 안에서 돈다. 실패하면 그 부분만 되돌리고 옛 동작(바로 깨움)이 된다.
 //! - 보류한 조각은 그 위임 글 `meta.splitCollect.state = "held"` 로 적는다. 마지막 조각이 닫히면 보류한 조각과 함께
 //!   표([`collect_body`])를 만들어 마지막 조각의 위임 글 `meta.splitCollect` 에 싣고(`state = "collected"`) 그 글로 깨운다.
 //! - 동시성: 같은 (넘긴 쪽, 스레드) 는 `pg_advisory_xact_lock` 으로 줄을 세운 뒤 열린 형제를 센다. 마지막 두 조각이 동시에
@@ -156,6 +158,9 @@ pub(crate) struct Gate {
 
 /// 닫힌 위임 하나를 판정하고 보류·모음 표지를 적는다. 자기 조각이 아니거나 스위치가 꺼졌으면 `None`(지금 동작 그대로).
 /// 부르는 쪽은 그 위임의 항목을 **이미 닫은 같은 tx** 에서 부른다.
+///
+/// 판정은 savepoint 안에서 돈다 — 읽기·표지 쓰기가 실패하면(권한 등) 그 부분만 되돌리고 `None` 을 돌려준다.
+/// 판정 실패는 본 tx 를 깨지 않고 옛 동작(바로 깨움)이 된다.
 pub(crate) async fn gate(
     conn: &mut sqlx::PgConnection,
     delegation: &str,
@@ -163,6 +168,34 @@ pub(crate) async fn gate(
     if !enabled() {
         return Ok(None);
     }
+    sqlx::query("savepoint split_collect")
+        .execute(&mut *conn)
+        .await?;
+    match gate_in(conn, delegation).await {
+        Ok(g) => {
+            sqlx::query("release savepoint split_collect")
+                .execute(&mut *conn)
+                .await?;
+            Ok(g)
+        }
+        Err(e) => {
+            eprintln!("split_collect: gate failed, waking as before: {e}");
+            sqlx::query("rollback to savepoint split_collect")
+                .execute(&mut *conn)
+                .await?;
+            sqlx::query("release savepoint split_collect")
+                .execute(&mut *conn)
+                .await?;
+            Ok(None)
+        }
+    }
+}
+
+/// [`gate`] 의 몸통(savepoint 안).
+async fn gate_in(
+    conn: &mut sqlx::PgConnection,
+    delegation: &str,
+) -> Result<Option<Gate>, sqlx::Error> {
     let piece: Option<(String, String, String)> = sqlx::query_as(SELF_PIECE_SQL)
         .bind(delegation)
         .fetch_optional(&mut *conn)
@@ -257,14 +290,29 @@ pub(crate) async fn after_quiet_close(
             continue;
         };
         if g.verdict == Verdict::Collect {
-            sqlx::query(
+            // 이 길의 역할에 inbox 쓰기가 없을 수 있다 — 실패해도 닫기 tx 는 깨지 않는다(그 길의 옛 동작: 깨우지 않음).
+            sqlx::query("savepoint split_collect_wake")
+                .execute(&mut *conn)
+                .await?;
+            let put = sqlx::query(
                 "insert into inbox (account_id, message_id, reason) values ($1::uuid, $2::uuid, 'delegation_done')",
             )
             .bind(&g.lead)
             .bind(&g.message)
             .execute(&mut *conn)
-            .await?;
-            woke.push(g.lead);
+            .await;
+            if let Err(e) = &put {
+                eprintln!("split_collect: collected wake failed: {e}");
+                sqlx::query("rollback to savepoint split_collect_wake")
+                    .execute(&mut *conn)
+                    .await?;
+            }
+            sqlx::query("release savepoint split_collect_wake")
+                .execute(&mut *conn)
+                .await?;
+            if put.is_ok() {
+                woke.push(g.lead);
+            }
         }
     }
     Ok(woke)
@@ -328,6 +376,28 @@ mod tests {
         assert!(body.contains("| 3 | harkroom://message/m3 | 기한 | — |"));
         assert!(body.contains("| 4 | harkroom://message/m4 | 중단 | — |"));
         assert!(body.contains("| 5 | harkroom://message/m5 | 기한 | — |"));
+    }
+
+    /// 넘긴 쪽이 스스로 닫은 조각(`delegator_close`)이 마지막이어도 보류한 형제가 있으면 모은다 — 표에는 닫힌 까닭이 적힌다.
+    #[test]
+    fn delegator_closed_last_piece_still_collects_held_siblings() {
+        assert_eq!(decide(true, true, 0, 1), Verdict::Collect);
+        let body = collect_body(&[
+            Piece {
+                message_id: "m1".into(),
+                outcome: Some("reported".into()),
+                reason: None,
+                result_message_id: Some("r1".into()),
+            },
+            Piece {
+                message_id: "m2".into(),
+                outcome: Some("closed".into()),
+                reason: Some("delegator_close".into()),
+                result_message_id: None,
+            },
+        ]);
+        assert!(body.contains("| 1 | harkroom://message/m1 | report | harkroom://message/r1 |"));
+        assert!(body.contains("| 2 | harkroom://message/m2 | 닫힘(delegator_close) | — |"));
     }
 
     #[test]
