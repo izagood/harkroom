@@ -23,6 +23,7 @@ pub const MEMORY_DAILY_PRIVILEGES: &[(&str, &str)] = &[
     ("bg_job.day", "INSERT"),
     ("bg_job.input", "INSERT"),
     ("bg_job.not_before", "INSERT"),
+    ("workspace_profile.id", "SELECT"),
     ("workspace_profile.memory_cleanup_on", "SELECT"),
     ("workspace_profile.memory_cleanup_time", "SELECT"),
     ("workspace_profile.memory_cleanup_tz", "SELECT"),

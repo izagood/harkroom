@@ -215,6 +215,26 @@ pub async fn answer(
     res
 }
 
+/// 회차가 잡는 정리 임대의 최대 길이(분) — 서버가 회차를 닫는 시한(`bg_job` running 15분)과 같다.
+pub const LEASE_MINUTES: i64 = 15;
+
+/// `memory.lease` 의 인자를 회차 시한에 맞춘다. 회차가 임대를 쥔 채 죽어도 일반 턴이 그보다 오래 물러나지 않는다.
+/// 정수가 아닌 값은 그대로 둔다(도구가 거절한다).
+pub fn lease_args(mut args: Value) -> Value {
+    if let Some(o) = args.as_object_mut() {
+        match o.get("minutes") {
+            None => {
+                o.insert("minutes".into(), LEASE_MINUTES.into());
+            }
+            Some(v) if v.as_f64().is_some_and(|m| m > LEASE_MINUTES as f64) => {
+                o.insert("minutes".into(), LEASE_MINUTES.into());
+            }
+            Some(_) => {}
+        }
+    }
+    args
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -238,6 +258,16 @@ mod tests {
             Some(vec!["mem/a", "mem/b"])
         );
         assert_eq!(merge_from("memory.set", &a, "mem/c"), None);
+    }
+
+    #[test]
+    fn lease_is_capped_to_the_run() {
+        let m = |v: Value| lease_args(v)["minutes"].clone();
+        assert_eq!(m(json!({"action":"acquire"})), 15);
+        assert_eq!(m(json!({"action":"acquire","minutes":180})), 15);
+        assert_eq!(m(json!({"action":"acquire","minutes":5})), 5);
+        assert_eq!(m(json!({"action":"acquire","minutes":"x"})), "x");
+        assert_eq!(m(json!({"action":"acquire","minutes":0})), 0);
     }
 
     #[test]

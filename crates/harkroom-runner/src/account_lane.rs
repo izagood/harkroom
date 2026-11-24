@@ -316,6 +316,11 @@ impl AccountLaneHub {
         present_accounts(lane)
     }
 
+    /// 지금 축(스레드 고정 없이).
+    pub fn current_lane(&self) -> Lane {
+        self.live.current().lane
+    }
+
     pub fn snapshot(&self) -> LaneSnapshot {
         self.live.snapshot()
     }

@@ -417,6 +417,19 @@ fn main() {
         );
     }
 
+    // 백그라운드 회차(기억 정리 등) — API 키 lane 러너는 돌리지 않는다(키 없이 띄우지 않는다).
+    let bg = if provider_lane {
+        None
+    } else {
+        match harkroom_runner::bg_wire::start(&maker) {
+            Ok(b) => Some(Arc::new(b)),
+            Err(e) => {
+                eprintln!("[bg] 주기 스레드를 띄우지 못했다: {}", e.kind());
+                None
+            }
+        }
+    };
+
     let ledger = Arc::new(Mutex::new(Ledger::new(&[], now_ms())));
     let slots = MentionSlots::default();
     // 턴 비밀 뿌리는 오퍼레이터가 준 값 그대로(없으면 임대 값 가리기만 건너뛴다).
@@ -526,8 +539,13 @@ fn main() {
             exit_with(p);
         }
     };
-    let poll_stopped =
-        move |holding: &[i64], done: &[i64]| stopped_link.notify_poll_stopped(holding, done);
+    let bg_close = bg.clone();
+    let poll_stopped = move |holding: &[i64], done: &[i64]| {
+        if let Some(b) = &bg_close {
+            b.close();
+        }
+        stopped_link.notify_poll_stopped(holding, done);
+    };
     // 폴 멈춤 → 인박스 놓음 알림 → drain(시한) 은 `PollLoop::run` 안의 차례다.
     poll.run(
         &src,
@@ -538,6 +556,12 @@ fn main() {
             notify_poll_stopped: &poll_stopped,
         },
     );
+    // 도는 백그라운드 회차를 죽이고 닫는다 — 링크를 닫기 전이어야 결과 보고와 열쇠 거두기가 간다.
+    if let Some(b) = &bg
+        && !b.shutdown(SHUTDOWN_GRACE)
+    {
+        eprintln!("[shutdown] 백그라운드 회차가 유예 안에 끝나지 않았다");
+    }
     // drain 시한이 지나도 도는 턴이 있으면(P2): 물러남 표지 → 감시 루프가 SIGTERM → 10초 유예 → 남은 PTY 그룹에 SIGKILL.
     // 기록 가리기(아래 임대 놓기)는 SIGKILL **뒤**다 — 하네스가 죽은 뒤에 가려야 덮어쓰기에 지지 않는다.
     // 사람이 연 새 터미널 턴은 drain 이 기다리지 않는다(기다릴 답이 없다) — 바로 회수하고 끝 처리(기록 저장)까지 기다린다.

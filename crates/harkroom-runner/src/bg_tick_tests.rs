@@ -6,10 +6,6 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex};
 
 const JOB_ID: &str = "11111111-1111-1111-1111-111111111111";
-/// 2026-10-21 04:00 KST(창 안).
-const IN_WINDOW: i64 = 1_792_522_800_000;
-/// 2026-10-21 12:00 KST.
-const NOON: i64 = IN_WINDOW + 8 * 3_600_000;
 
 fn job(kind: &str) -> BgJob {
     BgJob {
@@ -93,7 +89,6 @@ impl ForkChild for Fake {
 
 struct Opts {
     harness: AgentHarness,
-    now: i64,
     slot: SlotGrant,
     job: Option<BgJob>,
     out: Option<serde_json::Value>,
@@ -108,7 +103,6 @@ impl Default for Opts {
     fn default() -> Self {
         Self {
             harness: AgentHarness::ClaudeCode,
-            now: IN_WINDOW,
             slot: SlotGrant::Granted,
             job: Some(job("distill")),
             out: Some(serde_json::json!({
@@ -140,7 +134,6 @@ fn make(o: Opts) -> (BgExecutor, Arc<Rec>, Arc<Mutex<String>>, PathBuf) {
     let st = Arc::clone(&stdin);
     let harness = o.harness;
     let (out, code, hang, spawn_fails) = (o.out, o.code, o.hang, o.spawn_fails);
-    let now = o.now;
     let r4 = Arc::clone(&rec);
     let deps = BgExecutorDeps {
         harness: Box::new(move || {
@@ -188,7 +181,6 @@ fn make(o: Opts) -> (BgExecutor, Arc<Rec>, Arc<Mutex<String>>, PathBuf) {
                 stdin: Arc::clone(&st),
             }) as Box<dyn ForkChild>)
         })),
-        now_ms: Some(Box::new(move || now)),
         timeout: Some(o.timeout),
         log: Some(Box::new(|_| {})),
     };
@@ -203,20 +195,12 @@ fn outcome(rec: &Rec) -> BgOutcome {
 }
 
 #[test]
-fn gates_not_claude_outside_window_no_slot_none_and_always_releases_slot() {
+fn gates_not_claude_no_slot_none_and_always_releases_slot() {
     let (ex, _, _, _) = make(Opts {
         harness: AgentHarness::Codex,
         ..Opts::default()
     });
     assert_eq!(ex.tick(), BgTickResult::NotClaude);
-
-    let (ex, rec, _, _) = make(Opts {
-        now: NOON,
-        ..Opts::default()
-    });
-    assert_eq!(ex.tick(), BgTickResult::OutsideWindow);
-    // 창 밖 틱은 하네스(GET /agent/config)를 읽지 않는다.
-    assert_eq!(rec.harness_reads.load(Ordering::SeqCst), 0);
 
     let (ex, rec, _, _) = make(Opts {
         slot: SlotGrant::Full,
@@ -521,4 +505,34 @@ fn lane_runner_refuses_bg_before_building_plan() {
     assert_eq!(o.error.as_deref(), Some("runner"));
     assert!(!dir.join("bg").join(JOB_ID).exists(), "작업 폴더도 치운다");
     assert_eq!(rec.released.load(Ordering::SeqCst), 1, "슬롯은 놓는다");
+}
+
+/// 러너가 물러나면 도는 회차를 죽이고 보고하고, 그 뒤로는 집지 않는다.
+#[test]
+fn stop_kills_the_running_job_and_blocks_new_claims() {
+    let (ex, rec, _stdin, dir) = make(Opts {
+        hang: true,
+        timeout: Duration::from_secs(30),
+        ..Opts::default()
+    });
+    let ex = Arc::new(ex);
+    let e2 = Arc::clone(&ex);
+    let t = std::thread::spawn(move || e2.tick());
+    let t0 = Instant::now();
+    while rec.spawned.lock().unwrap().is_empty() && t0.elapsed() < Duration::from_secs(2) {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    ex.stop();
+    assert_eq!(t.join().unwrap(), BgTickResult::Ran);
+    assert!(t0.elapsed() < Duration::from_secs(5));
+    let o = outcome(&rec);
+    assert_eq!(
+        (o.status, o.error.as_deref()),
+        (BgStatus::Failed, Some("stopped"))
+    );
+    assert_eq!(rec.plan_releases.load(Ordering::SeqCst), 1);
+    assert_eq!(rec.released.load(Ordering::SeqCst), 1);
+    assert!(!dir.join("bg").join(JOB_ID).exists());
+    assert_eq!(ex.tick(), BgTickResult::Busy);
+    assert_eq!(rec.claims.load(Ordering::SeqCst), 1);
 }
