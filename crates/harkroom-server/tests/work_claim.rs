@@ -1,30 +1,37 @@
-//! I2a 잡은 기록 — 자격(허용 표·회수·개인 자격증명)·순서·한 작업 한 줄·임대 갱신·만료 뒤 다시 잡기를 실제 스키마에서 본다.
+//! I2a 잡은 기록 — 자격(허용 표·회수·개인 자격증명)·순서·한 작업 한 줄·임대 갱신·만료 뒤 다시 잡기·펜싱(횟수)·갱신 때 자격·
+//! 경로가 겹치는 작업의 동시 잡기를 실제 스키마에서 본다.
 //! `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `scripts/db-tests.sh` 가 넘긴다).
 //! `HARKROOM_TEST_WRITE_DATABASE_URL` 이 있으면 잡기·갱신·놓기는 그 역할(`WORK_CLAIM_PRIVILEGES` 만 더 가진 쓰기 역할)로 한다.
 //! 스위치 읽기는 단위 시험이 본다 — 여기서는 스위치 값을 인자로 넘긴다.
 use harkroom_server::core::work_claim::{
-    Refusal, ReleaseReason, WORK_CLAIM_PRIVILEGES, claim_next_with, note_turn_with, release_with,
-    renew_with,
+    Held, Refusal, ReleaseReason, WORK_CLAIM_PRIVILEGES, claim_next_with, note_turn_with,
+    release_with, renew_with,
 };
 use sqlx::PgPool;
-use sqlx::postgres::PgPoolOptions;
 
 struct Db {
     admin: PgPool,
     w: PgPool,
+    /// 이 파일의 시험은 한 번에 하나만 돈다([`GATE`]).
+    _gate: tokio::sync::MutexGuard<'static, ()>,
 }
 
-/// 쓰기 역할의 연결은 `scripts/db-tests.sh` 가 8개로 묶는다. 시험 셋이 함께 돌므로 상한의 합(2 + 2 + 3)이 그 안이어야 한다.
-async fn db(write_connections: u32) -> Option<Db> {
+/// 쓰기 역할은 연결 수가 묶여 있다(`scripts/db-tests.sh` 의 `connection limit`). 동시 잡기 시험이 연결을 여럿 쓰므로
+/// 시험들이 나란히 돌면 그 한도를 넘는다 — 이 파일의 시험을 한 줄로 세우고 풀 크기도 한도 아래로 둔다.
+static GATE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+const WRITE_POOL_MAX: u32 = 6;
+
+async fn db() -> Option<Db> {
     let Ok(url) = std::env::var("HARKROOM_TEST_DATABASE_URL") else {
         eprintln!("skip: HARKROOM_TEST_DATABASE_URL unset");
         return None;
     };
     let write_url =
         std::env::var("HARKROOM_TEST_WRITE_DATABASE_URL").unwrap_or_else(|_| url.clone());
+    let gate = GATE.lock().await;
     let admin = PgPool::connect(&url).await.unwrap();
-    let w = PgPoolOptions::new()
-        .max_connections(write_connections)
+    let w = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(WRITE_POOL_MAX)
         .connect(&write_url)
         .await
         .unwrap();
@@ -32,7 +39,11 @@ async fn db(write_connections: u32) -> Option<Db> {
         .await
         .unwrap();
     assert!(missing.is_empty(), "{missing:?}");
-    Some(Db { admin, w })
+    Some(Db {
+        admin,
+        w,
+        _gate: gate,
+    })
 }
 
 async fn account(admin: &PgPool, kind: &str, handle: &str) -> String {
@@ -167,6 +178,14 @@ async fn next(db: &Db, op: &str) -> Option<String> {
         .map(|c| c.work_id)
 }
 
+/// 임대를 가리키는 짝.
+fn held(work_id: &str, attempts: i32) -> Held {
+    Held {
+        work_id: work_id.to_string(),
+        attempts,
+    }
+}
+
 async fn expire(admin: &PgPool, work_id: &str) {
     sqlx::query("update work_claim set lease_expires_at = now() - interval '1 second' where work_id = $1::uuid")
         .bind(work_id)
@@ -177,7 +196,7 @@ async fn expire(admin: &PgPool, work_id: &str) {
 
 #[tokio::test]
 async fn eligibility_and_order() {
-    let Some(db) = db(2).await else { return };
+    let Some(db) = db().await else { return };
     let a = &db.admin;
     let owner = account(a, "human", "wc1-owner").await;
     let stranger = account(a, "human", "wc1-stranger").await;
@@ -275,7 +294,7 @@ async fn eligibility_and_order() {
 
 #[tokio::test]
 async fn lease_renew_release_and_takeover() {
-    let Some(db) = db(2).await else { return };
+    let Some(db) = db().await else { return };
     let a = &db.admin;
     let owner = account(a, "human", "wc2-owner").await;
     let agent = account(a, "agent", "wc2-agent").await;
@@ -292,13 +311,13 @@ async fn lease_renew_release_and_takeover() {
     assert_eq!(next(&db, &op1).await, None);
 
     // 갱신은 내 줄만, 내가 말한 작업만.
-    let renewed = renew_with(&db.w, true, &op1, Some(300), &[w1.clone(), w2.clone()])
+    let renewed = renew_with(&db.w, true, &op1, Some(300), &[held(&w1, 1), held(&w2, 1)])
         .await
         .unwrap()
         .unwrap();
     assert_eq!(renewed, vec![w1.clone()]);
     assert_eq!(
-        renew_with(&db.w, false, &op1, None, std::slice::from_ref(&w1))
+        renew_with(&db.w, false, &op1, None, &[held(&w1, 1)])
             .await
             .unwrap(),
         Err(Refusal::Disabled)
@@ -306,19 +325,19 @@ async fn lease_renew_release_and_takeover() {
     // 남의 줄은 못 놓고, 턴도 못 적는다.
     let turn = "00000000-0000-4000-8000-0000000000aa";
     assert!(
-        !release_with(&db.w, true, &op1, &w2, ReleaseReason::Released)
+        !release_with(&db.w, true, &op1, &held(&w2, 1), ReleaseReason::Released)
             .await
             .unwrap()
             .unwrap()
     );
     assert!(
-        !note_turn_with(&db.w, true, &op1, &w2, turn)
+        !note_turn_with(&db.w, true, &op1, &held(&w2, 1), turn)
             .await
             .unwrap()
             .unwrap()
     );
     assert!(
-        note_turn_with(&db.w, true, &op2, &w2, turn)
+        note_turn_with(&db.w, true, &op2, &held(&w2, 1), turn)
             .await
             .unwrap()
             .unwrap()
@@ -327,7 +346,7 @@ async fn lease_renew_release_and_takeover() {
     // 임대가 끝나면 판으로 돌아간다 — 다른 기기가 같은 줄을 이어 잡고 횟수가 오른다.
     expire(a, &w1).await;
     assert!(
-        renew_with(&db.w, true, &op1, None, std::slice::from_ref(&w1))
+        renew_with(&db.w, true, &op1, None, &[held(&w1, 1)])
             .await
             .unwrap()
             .unwrap()
@@ -342,7 +361,7 @@ async fn lease_renew_release_and_takeover() {
     assert_eq!((again.work_id.as_str(), again.attempts), (w1.as_str(), 2));
     // 옛 주인은 이제 놓을 수도 없다.
     assert!(
-        !release_with(&db.w, true, &op1, &w1, ReleaseReason::Done)
+        !release_with(&db.w, true, &op1, &held(&w1, 2), ReleaseReason::Done)
             .await
             .unwrap()
             .unwrap()
@@ -359,13 +378,13 @@ async fn lease_renew_release_and_takeover() {
 
     // 스스로 놓으면 바로 다시 잡을 수 있다. 작업이 닫혔으면 다시 잡히지 않는다.
     assert!(
-        release_with(&db.w, true, &op2, &w2, ReleaseReason::Released)
+        release_with(&db.w, true, &op2, &held(&w2, 1), ReleaseReason::Released)
             .await
             .unwrap()
             .unwrap()
     );
     assert!(
-        release_with(&db.w, true, &op2, &w1, ReleaseReason::Done)
+        release_with(&db.w, true, &op2, &held(&w1, 2), ReleaseReason::Done)
             .await
             .unwrap()
             .unwrap()
@@ -383,7 +402,7 @@ async fn lease_renew_release_and_takeover() {
 
 #[tokio::test]
 async fn predecessor_path_overlap_and_concurrent_claims() {
-    let Some(db) = db(3).await else { return };
+    let Some(db) = db().await else { return };
     let a = &db.admin;
     let owner = account(a, "human", "wc3-owner").await;
     let agent = account(a, "agent", "wc3-agent").await;
@@ -412,7 +431,7 @@ async fn predecessor_path_overlap_and_concurrent_claims() {
         "경로가 겹치는 줄이 아직 살아 있다"
     );
     assert!(
-        release_with(&db.w, true, &op, &first, ReleaseReason::Done)
+        release_with(&db.w, true, &op, &held(&first, 1), ReleaseReason::Done)
             .await
             .unwrap()
             .unwrap()
@@ -455,4 +474,230 @@ async fn predecessor_path_overlap_and_concurrent_claims() {
     }
     got.sort();
     assert_eq!(got, fresh);
+}
+
+/// 펜싱: 임대가 끝난 뒤 **같은 기기**가 다시 잡으면 횟수가 오른다. 옛 횟수를 쥔 쪽은 새 줄을 갱신·놓기·턴 적기 할 수 없다.
+#[tokio::test]
+async fn stale_holder_of_the_same_operator_is_fenced_by_attempts() {
+    let Some(db) = db().await else { return };
+    let a = &db.admin;
+    let owner = account(a, "human", "wc4-owner").await;
+    let agent = account(a, "agent", "wc4-agent").await;
+    let op = operator(a, &owner, "wc4-op").await;
+    allow(a, &agent, &op).await;
+    let t = thread(a, &owner, "wc4-ch").await;
+    let w = work(a, &t, Some(&agent), Some(&owner), "open", 5).await;
+
+    let first = claim_next_with(&db.w, true, &op, 1, None, None)
+        .await
+        .unwrap()
+        .unwrap()
+        .expect("first claim");
+    assert_eq!((first.work_id.as_str(), first.attempts), (w.as_str(), 1));
+    expire(a, &w).await;
+    let second = claim_next_with(&db.w, true, &op, 2, None, None)
+        .await
+        .unwrap()
+        .unwrap()
+        .expect("same operator claims again");
+    assert_eq!((second.work_id.as_str(), second.attempts), (w.as_str(), 2));
+
+    let turn = "00000000-0000-4000-8000-0000000000bb";
+    let (old, new) = (held(&w, 1), held(&w, 2));
+    // 옛 임대(횟수 1)는 아무것도 못 한다.
+    assert!(
+        renew_with(&db.w, true, &op, None, std::slice::from_ref(&old))
+            .await
+            .unwrap()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        !note_turn_with(&db.w, true, &op, &old, turn)
+            .await
+            .unwrap()
+            .unwrap()
+    );
+    assert!(
+        !release_with(&db.w, true, &op, &old, ReleaseReason::Failed)
+            .await
+            .unwrap()
+            .unwrap()
+    );
+    let (released, turn_id): (bool, Option<String>) = sqlx::query_as(
+        "select released_at is not null, turn_id::text from work_claim where work_id = $1::uuid",
+    )
+    .bind(&w)
+    .fetch_one(a)
+    .await
+    .unwrap();
+    assert_eq!((released, turn_id), (false, None));
+    // 횟수가 0 이하면 DB 에 닿기 전에 거절된다.
+    assert_eq!(
+        renew_with(&db.w, true, &op, None, &[held(&w, 0)])
+            .await
+            .unwrap(),
+        Err(Refusal::BadRequest)
+    );
+    // 새 임대(횟수 2)는 다 된다. 옛 짝과 새 짝을 같이 보내면 새 것만 갱신된다.
+    assert_eq!(
+        renew_with(&db.w, true, &op, None, &[old.clone(), new.clone()])
+            .await
+            .unwrap()
+            .unwrap(),
+        vec![w.clone()]
+    );
+    assert!(
+        note_turn_with(&db.w, true, &op, &new, turn)
+            .await
+            .unwrap()
+            .unwrap()
+    );
+    assert!(
+        release_with(&db.w, true, &op, &new, ReleaseReason::Done)
+            .await
+            .unwrap()
+            .unwrap()
+    );
+}
+
+/// 갱신도 잡을 때와 같은 자격을 본다: 허용 줄이 빠지거나, 기기가 회수되거나, 개인 자격증명 에이전트의 주인이 달라지면 끊긴다.
+#[tokio::test]
+async fn renew_rechecks_eligibility() {
+    let Some(db) = db().await else { return };
+    let a = &db.admin;
+    let owner = account(a, "human", "wc5-owner").await;
+    let other = account(a, "human", "wc5-other").await;
+    let t = thread(a, &owner, "wc5-ch").await;
+    // 경우마다 에이전트·기기·작업을 따로 둔다.
+    let mut cases = Vec::new();
+    for name in ["allow", "revoke", "personal", "deleted", "kept"] {
+        let agent = account(a, "agent", &format!("wc5-agent-{name}")).await;
+        let op = operator(a, &owner, &format!("wc5-op-{name}")).await;
+        allow(a, &agent, &op).await;
+        let w = work(a, &t, Some(&agent), Some(&owner), "open", 5).await;
+        assert_eq!(next(&db, &op).await, Some(w.clone()), "{name}");
+        cases.push((name, agent, op, w));
+    }
+    for (name, agent, op, w) in &cases {
+        let renewed = renew_with(&db.w, true, op, None, &[held(w, 1)])
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            renewed,
+            vec![w.clone()],
+            "{name}: 자격이 있는 동안은 갱신된다"
+        );
+        match *name {
+            "allow" => {
+                sqlx::query("delete from agent_operator_allow where agent_id = $1::uuid and operator_id = $2::uuid")
+                    .bind(agent)
+                    .bind(op)
+                    .execute(a)
+                    .await
+                    .unwrap();
+            }
+            "revoke" => {
+                sqlx::query("update operator set revoked_at = now() where id = $1::uuid")
+                    .bind(op)
+                    .execute(a)
+                    .await
+                    .unwrap();
+            }
+            "personal" => {
+                sqlx::query(
+                    "insert into agent_config (account_id, owner_account_id, credential_scope) \
+                     values ($1::uuid, $2::uuid, 'personal') \
+                     on conflict (account_id) do update \
+                        set owner_account_id = excluded.owner_account_id, credential_scope = 'personal'",
+                )
+                .bind(agent)
+                .bind(&other)
+                .execute(a)
+                .await
+                .unwrap();
+            }
+            "deleted" => {
+                sqlx::query("update account set deleted_at = now() where id = $1::uuid")
+                    .bind(agent)
+                    .execute(a)
+                    .await
+                    .unwrap();
+            }
+            _ => {}
+        }
+        let after = renew_with(&db.w, true, op, None, &[held(w, 1)])
+            .await
+            .unwrap()
+            .unwrap();
+        if *name == "kept" {
+            assert_eq!(after, vec![w.clone()]);
+        } else {
+            assert!(after.is_empty(), "{name}: 자격을 잃으면 갱신되지 않는다");
+        }
+    }
+}
+
+/// 경로가 겹치는 작업 여럿에 동시에 덤벼도, 같은 뿌리에서 겹치는 것은 한 번에 하나만 잡힌다(뿌리 잠금).
+/// 여러 판을 돌려 창을 넓힌다 — 잠금이 없으면 서로의 아직 안 적힌 줄을 못 봐 둘 이상이 잡힌다.
+#[tokio::test]
+async fn overlapping_paths_are_never_claimed_together() {
+    let Some(db) = db().await else { return };
+    let a = &db.admin;
+    let owner = account(a, "human", "wc6-owner").await;
+    let agent = account(a, "agent", "wc6-agent").await;
+    let op = operator(a, &owner, "wc6-op").await;
+    allow(a, &agent, &op).await;
+    for round in 0..6 {
+        let t = thread(a, &owner, &format!("wc6-ch-{round}")).await;
+        let root = work(a, &t, Some(&agent), Some(&owner), "running", 60).await;
+        // 여섯 조각이 모두 같은 파일을 건드리고, 한 조각은 아무와도 안 겹친다.
+        for i in 0..6 {
+            let own = format!("src/own-{i}.rs");
+            child(a, &t, &root, &agent, &["src/shared.rs", &own], None, i).await;
+        }
+        let free = child(a, &t, &root, &agent, &["docs/free.md"], None, 0).await;
+        let mut tasks = Vec::new();
+        for _ in 0..8 {
+            let (w, op) = (db.w.clone(), op.clone());
+            tasks.push(tokio::spawn(async move {
+                claim_next_with(&w, true, &op, 0, None, None)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .map(|c| c.work_id)
+            }));
+        }
+        for task in tasks {
+            task.await.unwrap();
+        }
+        // 뒤에 남은 것을 마저 잡게 해도 겹치는 여섯 가운데 살아 있는 줄은 하나뿐이다.
+        while next(&db, &op).await.is_some() {}
+        let live: Vec<(String, bool)> = sqlx::query_as(
+            "select w.id::text, w.paths && array['src/shared.rs'] from work_claim c join work w on w.id = c.work_id \
+              where w.thread_root_id = $1::uuid and c.released_at is null and c.lease_expires_at > now()",
+        )
+        .bind(&t.1)
+        .fetch_all(a)
+        .await
+        .unwrap();
+        let shared = live.iter().filter(|(_, s)| *s).count();
+        assert_eq!(
+            shared, 1,
+            "round {round}: 겹치는 조각이 {shared}개 잡혔다 — {live:?}"
+        );
+        assert!(
+            live.iter().any(|(id, _)| *id == free),
+            "round {round}: 안 겹치는 조각은 잡힌다"
+        );
+        // 다음 판의 후보에 섞이지 않게 이 판의 줄을 모두 놓는다.
+        sqlx::query(
+            "update work set state = 'canceled', closed_at = now() where thread_root_id = $1::uuid and closed_at is null",
+        )
+        .bind(&t.1)
+        .execute(a)
+        .await
+        .unwrap();
+    }
 }
