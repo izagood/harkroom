@@ -747,6 +747,12 @@ pub fn spawn_server_link(
             }
         });
     }
+    // 박동(`status`) — 도는 턴·메모리·디스크 여유. 디스크는 동시 턴 상한이 보는 자리와 같다(HOME 의 데이터 디렉터리 → HOME).
+    crate::status_beat::spawn(
+        link.clone(),
+        crate::turn_slots::TurnSlots::process(),
+        std::env::var_os("HOME").map(std::path::PathBuf::from),
+    );
     // gh 계정 보고(D1, TS community.ts `beatGh`) — 붙을 때·주인 같은 배정이 올 때·박동(30초)마다. 같은 값이면 보내지 않는다.
     let (gh_kick, gh_rx) = std::sync::mpsc::channel::<()>();
     let gh_reporter = std::sync::Arc::new(crate::gh_report::GhReporter::new(gh_ledger));
