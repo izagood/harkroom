@@ -753,6 +753,7 @@ async fn write(
             deadline_at: &deadline_at,
             team_id,
             close_on: delegate_write::CloseOn::Report,
+            plan_step_id: None,
         }),
         system: false,
         progress: false,

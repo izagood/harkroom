@@ -34,6 +34,8 @@ pub(crate) struct Plan<'a> {
     pub(crate) team_id: Option<&'a str>,
     /// 무엇으로 닫히나(마이그레이션 183) — `message.delegate` 는 언제나 [`CloseOn::Report`].
     pub(crate) close_on: CloseOn,
+    /// 이 의무가 걸린 계획 단계(`team_delegation.plan_step_id`) — `agent.call` 만 채운다([`call_plan_step`]).
+    pub(crate) plan_step_id: Option<&'a str>,
 }
 
 /// `agent.call` 의 의무 있는 부름(U1) — 담당은 글 tx 안의 멘션 판정이 정한다([`super::msg_post::Origin::call_obligation`]).
@@ -45,6 +47,47 @@ pub(crate) struct CallObligation<'a> {
     pub(crate) unreachable: &'a [String],
     pub(crate) deadline_at: &'a str,
     pub(crate) close_on: CloseOn,
+    /// `planStepId` 인자 — 부르는 쪽이 그 스레드 계획에 있는 단계인지 이미 봤다.
+    pub(crate) plan_step: Option<&'a str>,
+    /// 그 스레드의 계획 문서(`thread_plan.doc`) — 인자가 비었을 때 단계를 미루어 잡는 데 쓴다. 계획이 없으면 없음.
+    pub(crate) plan_doc: Option<&'a Value>,
+}
+
+/// `agent.call` 의 의무가 걸리는 계획 단계. 순서: ① 인자(`planStepId`)가 그 계획에 있는 단계면 그것 → ② 담당마다
+/// [`implicit_delegation::plan_step_for`](본문의 단계 링크 → 담당의 진행 중 단계 하나 → 담당의 안 끝난 단계 하나)로 미루어 잡고,
+/// 담당 모두가 **같은 한 단계**를 가리킬 때만 그것 → ③ 모르면 비운다. 틀린 단계에 잇느니 비우는 쪽이다.
+pub(crate) fn call_plan_step(
+    explicit: Option<&str>,
+    doc: Option<&Value>,
+    thread_root_id: &str,
+    delegate_ids: &[String],
+    body: &str,
+) -> Option<String> {
+    let doc = doc?;
+    if let Some(want) = explicit {
+        return plan_has_step(doc, want).then(|| want.to_owned());
+    }
+    let mut found: Option<String> = None;
+    for d in delegate_ids {
+        let step = super::implicit_delegation::plan_step_for(doc, thread_root_id, d, body)?;
+        match &found {
+            None => found = Some(step),
+            Some(f) if *f == step => {}
+            Some(_) => return None,
+        }
+    }
+    found
+}
+
+/// 계획 문서에 그 id 의 단계가 있나.
+pub(crate) fn plan_has_step(doc: &Value, step_id: &str) -> bool {
+    doc.get("steps")
+        .and_then(Value::as_array)
+        .is_some_and(|steps| {
+            steps
+                .iter()
+                .any(|s| s.get("id").and_then(Value::as_str) == Some(step_id))
+        })
 }
 
 /// 의무를 닫는 조건 — `team_delegation.close_on`.
@@ -156,7 +199,7 @@ pub(crate) async fn create(
         thread_root_id,
         plan.deadline_at,
         "delegate",
-        None,
+        plan.plan_step_id,
         plan.close_on,
     )
     .await?;
@@ -212,6 +255,64 @@ pub(crate) async fn create(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn call_plan_step_prefers_explicit_then_inference() {
+        use serde_json::json;
+        let root = "11111111-1111-4111-8111-111111111111";
+        let (a, b) = ("a".to_owned(), "b".to_owned());
+        let doc = json!({ "steps": [
+            { "id": "s1", "assigneeId": "a", "state": "active" },
+            { "id": "s2", "assigneeId": "a", "state": "pending" },
+            { "id": "s3", "assigneeId": "b", "state": "active" },
+            { "id": "s4", "assigneeId": "b", "state": "active" },
+            { "id": "s5", "assigneeId": "c", "state": "done" },
+        ]});
+        let one = std::slice::from_ref(&a);
+        // ① 인자가 먼저다 — 담당의 진행 중 단계가 따로 있어도, 남의 단계·끝난 단계여도 적은 대로.
+        assert_eq!(
+            call_plan_step(Some("s2"), Some(&doc), root, one, ""),
+            Some("s2".into())
+        );
+        assert_eq!(
+            call_plan_step(Some("s5"), Some(&doc), root, one, ""),
+            Some("s5".into())
+        );
+        // 계획에 없는 단계·계획 없음은 비운다(미루어 잡지 않는다).
+        assert_eq!(call_plan_step(Some("s9"), Some(&doc), root, one, ""), None);
+        assert_eq!(call_plan_step(Some("s1"), None, root, one, ""), None);
+        // ② 인자가 없으면 담당의 진행 중 단계 하나.
+        assert_eq!(
+            call_plan_step(None, Some(&doc), root, one, ""),
+            Some("s1".into())
+        );
+        // 본문의 단계 링크가 진행 중 단계보다 먼저다.
+        let body = format!("harkroom://plan/{root}/s2 부탁");
+        assert_eq!(
+            call_plan_step(None, Some(&doc), root, one, &body),
+            Some("s2".into())
+        );
+        // ③ 담당의 진행 중 단계가 둘이면 모른다.
+        assert_eq!(
+            call_plan_step(None, Some(&doc), root, std::slice::from_ref(&b), ""),
+            None
+        );
+        // 담당이 여럿이면 모두 같은 단계일 때만.
+        let both = [a.clone(), b.clone()];
+        assert_eq!(call_plan_step(None, Some(&doc), root, &both, ""), None);
+        let shared = json!({ "steps": [
+            { "id": "s1", "assigneeId": "a", "state": "active" },
+            { "id": "s2", "assigneeId": "b", "state": "active" },
+        ]});
+        assert_eq!(call_plan_step(None, Some(&shared), root, &both, ""), None);
+        // 단계를 맡지 않은 담당·계획 없음·담당 없음.
+        assert_eq!(
+            call_plan_step(None, Some(&doc), root, &["z".to_owned()], ""),
+            None
+        );
+        assert_eq!(call_plan_step(None, None, root, one, ""), None);
+        assert_eq!(call_plan_step(None, Some(&doc), root, &[], ""), None);
+    }
 
     #[test]
     fn golden_sql_loads() {

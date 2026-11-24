@@ -258,4 +258,71 @@ async fn expect_makes_obligations_only_for_gate_passed_targets() {
     assert!(v.get("delegationId").is_none(), "{plain}");
     assert!(v["message"]["meta"].get("kind").is_none(), "{plain}");
     assert_eq!(rows(&pool, &root).await.len(), 4);
+
+    // 계획 단계(`planStepId`) — 의무 행의 `plan_step_id` 에 남는다. 다른 스레드에서 본다.
+    let plan_root: String = sqlx::query_scalar(
+        "insert into message(channel_id, author_id, body, kind) values ($1::uuid, $2::uuid, 'plan root', 'user') returning id::text",
+    )
+    .bind(&channel)
+    .bind(&alice.id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let step_call = |extra: Value| {
+        let mut args = json!({ "channelId": channel, "threadRootId": plan_root, "body": "해 줘", "expect": "report" });
+        args.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        let (st, who) = (&st, me.clone());
+        async move {
+            answer_call(st, &who, &args, None, None, false, true, false)
+                .await
+                .expect("answered")
+        }
+    };
+    let steps = || async {
+        sqlx::query_scalar::<_, Option<String>>(
+            "select plan_step_id from team_delegation where thread_root_id = $1::uuid order by created_at, id",
+        )
+        .bind(&plan_root)
+        .fetch_all(&pool)
+        .await
+        .unwrap()
+    };
+    // 의무 없는 부름에는 실을 수 없다 · 계획이 없으면 거절 — 글도 의무도 없다.
+    let stray = call(&me, json!({ "to": ["ce-mate"], "planStepId": "s1" })).await;
+    assert!(stray.contains("bad_request"), "{stray}");
+    let no_plan = step_call(json!({ "to": ["ce-mate"], "planStepId": "s1" })).await;
+    assert!(no_plan.contains("no_plan"), "{no_plan}");
+    // 계획이 없는 스레드의 부름은 그대로 서고 단계는 비어 있다.
+    step_call(json!({ "to": ["ce-mate"] })).await;
+    assert_eq!(steps().await, vec![None]);
+    sqlx::query(
+        "insert into thread_plan(root_id, channel_id, doc) values ($1::uuid, $2::uuid, $3::jsonb)",
+    )
+    .bind(&plan_root)
+    .bind(&channel)
+    .bind(json!({ "goal": "g", "groups": [], "steps": [
+        { "id": "s1", "title": "one", "state": "active", "assigneeId": mate.id },
+        { "id": "s2", "title": "two", "state": "active", "assigneeId": other.id },
+        { "id": "s3", "title": "three", "state": "active", "assigneeId": other.id },
+    ]}))
+    .execute(&pool)
+    .await
+    .unwrap();
+    // 계획에 없는 단계는 거절 — 아무것도 쓰지 않는다.
+    let unknown = step_call(json!({ "to": ["ce-mate"], "planStepId": "s9" })).await;
+    assert!(unknown.contains("unknown_item"), "{unknown}");
+    assert_eq!(steps().await.len(), 1);
+    // 적은 단계가 먼저다(담당의 진행 중 단계가 s1 이어도).
+    let explicit = step_call(json!({ "to": ["ce-mate"], "planStepId": "s3" })).await;
+    assert!(inner(&explicit)["delegationId"].is_string(), "{explicit}");
+    // 비우면 담당의 진행 중 단계 하나로 미루어 잡는다.
+    step_call(json!({ "to": ["ce-mate"] })).await;
+    // 담당의 진행 중 단계가 둘이면 비운다.
+    step_call(json!({ "to": ["ce-other"] })).await;
+    assert_eq!(
+        steps().await,
+        vec![None, Some("s3".into()), Some("s1".into()), None]
+    );
 }

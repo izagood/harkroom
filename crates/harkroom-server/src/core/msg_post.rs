@@ -1205,13 +1205,22 @@ pub(crate) async fn post_tx(
         (None, on) => match (&origin.call_obligation, &call_open) {
             (Some(o), Some(open)) => {
                 let ids: Vec<String> = open.iter().map(|(id, _)| id.clone()).collect();
+                let root = root.unwrap_or(&id);
+                // 걸린 계획 단계 — 인자가 먼저, 없으면 게이트를 지난 담당으로 미루어 잡는다. 모르면 비운다.
+                let step = delegate_write::call_plan_step(
+                    o.plan_step,
+                    o.plan_doc,
+                    root,
+                    &ids,
+                    &calls.normalized_body,
+                );
                 let plan = delegate_write::Plan {
                     delegate_ids: &ids,
                     deadline_at: o.deadline_at,
                     team_id: None,
                     close_on: o.close_on,
+                    plan_step_id: step.as_deref(),
                 };
-                let root = root.unwrap_or(&id);
                 Some(delegate_write::create(&mut tx, on, &id, channel, root, author, &plan).await?)
             }
             _ => None,
