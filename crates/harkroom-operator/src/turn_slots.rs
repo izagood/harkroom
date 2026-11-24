@@ -81,7 +81,12 @@ pub struct TurnSlots {
     last_full_log_at: u64,
     now: Box<dyn Fn() -> u64 + Send + Sync>,
     log: Box<dyn Fn(&str) + Send + Sync>,
+    /// 러너 하나가 쥔 자리 수가 바뀔 때마다 `(runner_id, 쥔 수)` 를 받는다(러너 풀 그림자, I1a). 판정에는 쓰지 않는다.
+    observer: Option<SlotObserver>,
 }
+
+/// 자리 수 통지를 받는 쪽. **이 표의 잠금을 쥔 채 불린다** — 안에서 `TurnSlots` 를 다시 잠그지 않는다.
+pub type SlotObserver = Box<dyn Fn(&str, usize) + Send + Sync>;
 
 fn answer(req: &RunnerLinkRequest, status: u16, body: String) -> RunnerLinkResponse {
     let id = match req {
@@ -105,6 +110,20 @@ impl TurnSlots {
             last_full_log_at: 0,
             now: Box::new(now),
             log: Box::new(log),
+            observer: None,
+        }
+    }
+
+    /// 자리 수 통지를 건다(한 번 — 두 번째는 앞 것을 덮지 않고 버린다).
+    pub fn set_observer(&mut self, observer: SlotObserver) {
+        if self.observer.is_none() {
+            self.observer = Some(observer);
+        }
+    }
+
+    fn notify(&self, runner_id: &str) {
+        if let Some(o) = &self.observer {
+            o(runner_id, self.held.get(runner_id).map_or(0, HashSet::len));
         }
     }
 
@@ -262,6 +281,7 @@ impl TurnSlots {
                 if mine.is_empty() {
                     self.held.remove(runner_id);
                 }
+                self.notify(runner_id);
             }
             // 멱등 — 없는 자리를 놓아도 204 다.
             return Some(answer(req, 204, String::new()));
@@ -312,6 +332,7 @@ impl TurnSlots {
             .or_default()
             .insert(key);
         self.count += 1;
+        self.notify(runner_id);
         Some(answer(req, 200, ok_body(self.count, self.max)))
     }
 
@@ -319,6 +340,7 @@ impl TurnSlots {
     pub fn release_runner(&mut self, runner_id: &str) {
         if let Some(mine) = self.held.remove(runner_id) {
             self.count -= mine.len();
+            self.notify(runner_id);
         }
     }
 }
@@ -532,6 +554,35 @@ mod tests {
             )),
             200
         );
+    }
+
+    #[test]
+    fn observer_hears_each_change_of_a_runners_held_count() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let mut s = slots(Some(4));
+        let sink = Arc::clone(&seen);
+        s.set_observer(Box::new(move |r, n| {
+            sink.lock().unwrap().push((r.to_string(), n))
+        }));
+        // 두 번째 배선은 버린다.
+        s.set_observer(Box::new(|_, _| panic!("앞 통지를 덮으면 안 된다")));
+        let take = |s: &mut TurnSlots, r: &str, path: &str, key: &str| {
+            status(s.maybe_handle(r, &req(path, json!({"key": key})), RunnerLinkKind::Relay))
+        };
+        assert_eq!(take(&mut s, "r1", TURN_SLOTS_PATH, "k1"), 200);
+        // 같은 키 재시도·없는 자리 놓기는 수가 안 바뀌므로 통지도 없다.
+        assert_eq!(take(&mut s, "r1", TURN_SLOTS_PATH, "k1"), 200);
+        assert_eq!(take(&mut s, "r1", TURN_SLOTS_RELEASE_PATH, "nope"), 204);
+        assert_eq!(take(&mut s, "r1", TURN_SLOTS_PATH, "k2"), 200);
+        assert_eq!(take(&mut s, "r1", TURN_SLOTS_RELEASE_PATH, "k1"), 204);
+        assert_eq!(take(&mut s, "r2", TURN_SLOTS_PATH, "k1"), 200);
+        s.release_runner("r1");
+        s.release_runner("r1");
+        let want: Vec<(String, usize)> = [("r1", 1), ("r1", 2), ("r1", 1), ("r2", 1), ("r1", 0)]
+            .iter()
+            .map(|(r, n)| (r.to_string(), *n))
+            .collect();
+        assert_eq!(*seen.lock().unwrap(), want);
     }
 
     #[test]
