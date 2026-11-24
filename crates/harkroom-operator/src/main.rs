@@ -1,4 +1,4 @@
-//! `harkroom-operator-rs` — `merge`(A1)·`serve`(A2, 앱 소켓 서버)·`mcp-bridge`(s21b-2b)·`api`(3d-3a)·`hook`(3d-3b-2a)·`register`(P1a)·`doctor`(L1a, 기기 점검)·`account`(L1a, 터미널 계정 로그인)·`agent`(L1c, 돌릴 에이전트 목록)만 한다.
+//! `harkroom-operator-rs` — `merge`(A1)·`serve`(A2, 앱 소켓 서버)·`mcp-bridge`(s21b-2b)·`api`(3d-3a)·`hook`(3d-3b-2a)·`register`(P1a)·`doctor`(L1a, 기기 점검)·`account`(L1a, 터미널 계정 로그인)·`update`(M1, 스스로 판 올리기)·`agent`(L1c, 돌릴 에이전트 목록)만 한다.
 //! 나머지는 TS 오퍼레이터가 맡는다.
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -159,6 +159,16 @@ fn main() {
             }
             std::process::exit(exit);
         }
+        Some("update") => {
+            let (out, err, exit) = harkroom_operator::update::update_main(&args[1..]);
+            if !out.is_empty() {
+                println!("{out}");
+            }
+            if !err.is_empty() {
+                eprintln!("{err}");
+            }
+            std::process::exit(exit);
+        }
         Some("account") => {
             let code = harkroom_operator::account_cli::account_main(
                 &args[1..],
@@ -186,7 +196,7 @@ fn main() {
         }
         other => {
             eprintln!(
-                "harkroom-operator-rs: {} is not implemented yet (only `merge`, `api`, `hook`, `mcp-bridge`, `register`, `doctor`, `account`, `agent`, `serve` and `--version`)",
+                "harkroom-operator-rs: {} is not implemented yet (only `merge`, `api`, `hook`, `mcp-bridge`, `register`, `doctor`, `update`, `account`, `agent`, `serve` and `--version`)",
                 other.unwrap_or("(none)")
             );
             std::process::exit(2);
