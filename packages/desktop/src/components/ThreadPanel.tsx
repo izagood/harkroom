@@ -237,15 +237,23 @@ export function ThreadPanel({ onOpenProfile, onOpenSettings, reserveLeft = MIN_C
     「오늘 끝」만 남은 스레드에서도 서랍은 물러난다 — 볼 일이 없는데 글 칸을 좁히지 않는다. 다만 그 상태에서 사람이
     여닫이를 눌러 직접 연 것은 그대로 둔다(이 스레드를 보는 동안만 — 기기의 선택과 따로 든다).
   */
-  const [drawerHeld, setDrawerHeld] = useState(false);
+  /*
+    `peek` 는 기기의 선택이 「열림」인 채 물러나 있던 서랍을 잠깐 연 것이다 — 다시 닫아도 기기의 선택은 그대로다(다음 스레드에서
+    일이 돌면 서랍은 전처럼 선다). `own` 은 그 열기가 기기의 선택까지 바꾼 것이라, 닫으면 선택도 같이 닫힌다.
+  */
+  const [drawerHeld, setDrawerHeld] = useState<false | 'peek' | 'own'>(false);
   useEffect(() => { setDrawerHeld(false); }, [threadRootId]);
   const liveWork = hasLiveWork(progress);
-  const drawerShown = drawerOpen && !stripIdle && (liveWork || drawerHeld);
+  const drawerShown = drawerOpen && !stripIdle && (liveWork || drawerHeld !== false);
   const setDrawerOpen = useCallback((open: boolean) => {
+    if (!liveWork && drawerOpen && (open || drawerHeld === 'peek')) {
+      setDrawerHeld(open ? 'peek' : false);
+      return;
+    }
     setDrawer(open);
-    setDrawerHeld(open && !liveWork);
+    setDrawerHeld(open && !liveWork ? 'own' : false);
     paneStorage.saveWorkDrawerOpen(open);
-  }, [liveWork]);
+  }, [liveWork, drawerOpen, drawerHeld]);
   const openWorkMessage = useCallback(
     (id: string) => { void getController().openMessage(id).catch(() => {}); },
     [],

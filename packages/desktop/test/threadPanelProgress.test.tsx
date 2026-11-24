@@ -5,6 +5,7 @@ import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { ThreadPanel } from '../src/components/ThreadPanel';
 import { acc, msg } from './helpers/fakeApi';
+import { paneStorage } from '../src/lib/prefs';
 
 const root = msg('m1', 'c1', 1, 'root message', 'u1');
 const reply = msg('m2', 'c1', 2, 'a reply', 'u2', { threadRootId: 'm1' });
@@ -121,6 +122,36 @@ describe('스레드 머리의 진행 띠 (R2)', () => {
     fireEvent.click(toggle);
     expect(screen.getByTestId('thread-work-drawer')).toBeTruthy();
     expect(screen.getByTestId('thread-work-toggle').getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('물러난 서랍을 직접 열었다 닫아도 기기의 선택은 그대로다 — 서랍만 닫힌다', () => {
+    const done = msg('m4', 'c1', 4, 'done', 'u2', {
+      threadRootId: 'm1', createdAt: new Date().toISOString(), meta: { kind: 'report', report: { checks: ['ok'] } },
+    } as never);
+    useAppStore.getState().set({ messages: { c1: [root, reply, done] } });
+    render(<ThreadPanel />);
+    fireEvent.click(screen.getByTestId('thread-work-toggle'));
+    expect(screen.getByTestId('thread-work-drawer')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('thread-work-toggle'));
+    expect(screen.queryByTestId('thread-work-drawer')).toBeNull();
+    // 기기에 「닫힘」을 적지 않았다 — 일이 도는 다음 스레드에서 서랍은 전처럼 선다.
+    expect(paneStorage.loadWorkDrawerOpen()).toBe(true);
+    expect(localStorage.getItem('harkroom.threadWorkDrawer')).not.toBe('0');
+  });
+
+  it('기기의 선택이 「닫힘」일 때 연 것은 닫으면 선택도 닫힌다', () => {
+    paneStorage.saveWorkDrawerOpen(false);
+    const done = msg('m4', 'c1', 4, 'done', 'u2', {
+      threadRootId: 'm1', createdAt: new Date().toISOString(), meta: { kind: 'report', report: { checks: ['ok'] } },
+    } as never);
+    useAppStore.getState().set({ messages: { c1: [root, reply, done] } });
+    render(<ThreadPanel />);
+    fireEvent.click(screen.getByTestId('thread-work-toggle'));
+    expect(screen.getByTestId('thread-work-drawer')).toBeTruthy();
+    expect(paneStorage.loadWorkDrawerOpen()).toBe(true);
+    fireEvent.click(screen.getByTestId('thread-work-toggle'));
+    expect(screen.queryByTestId('thread-work-drawer')).toBeNull();
+    expect(paneStorage.loadWorkDrawerOpen()).toBe(false);
   });
 
   it('예약을 못 읽으면 띠에 「기다림 모름」이 서고 서랍에도 모름 줄이 선다', async () => {
