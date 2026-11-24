@@ -337,8 +337,8 @@ pub type ReadPlanFn<'a> = Box<dyn Fn(&str) -> Result<Option<serde_json::Value>, 
 pub type ListSkillsFn<'a> = Box<dyn Fn() -> Result<Vec<crate::skills_sync::Skill>, String> + 'a>;
 /// 진행 줄 닫개(`message.progress` — channel·body·anchor). lane 판 경고 한 줄에 쓴다.
 pub type PostProgressFn<'a> = Box<dyn Fn(&str, &str, Option<&str>) -> Result<(), String> + 'a>;
-/// `memory.recalled` 닫개.
-pub type RecordRecallFn<'a> = Box<dyn Fn(&[String]) -> Result<(), String> + 'a>;
+/// `memory.recalled` 닫개(실은 키, 턴 id).
+pub type RecordRecallFn<'a> = Box<dyn Fn(&[String], &str) -> Result<(), String> + 'a>;
 
 /// 정본 `recallQuery` — 앞 턴이 먹인 뒤의 남(나 아님·진행 글 아님)의 새 말 끝 셋, 1000자. 깨움 턴은 찾지 않는다(빈 값).
 pub fn recall_query(
@@ -1510,7 +1510,7 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
             }
             if !c.memory.recalled.is_empty()
                 && let Some(f) = &self.record_recall
-                && let Err(e) = f(&c.memory.recalled)
+                && let Err(e) = f(&c.memory.recalled, &ctx.turn_id)
             {
                 eprintln!(
                     "[mentionTurn] {}: recall 집계 실패(턴은 계속한다) — {e}",

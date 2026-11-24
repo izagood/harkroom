@@ -523,8 +523,8 @@ where
                     .map_err(|e| e.to_string())?;
                 serde_json::from_value(v).map_err(|e| e.to_string())
             }));
-            p.record_recall = Some(Box::new(move |keys| {
-                mcp.record_recall(keys).map_err(|e| e.to_string())
+            p.record_recall = Some(Box::new(move |keys, turn_id| {
+                mcp.record_recall(keys, turn_id).map_err(|e| e.to_string())
             }));
             // 스레드 메모·계획판 읽기(정본 `readThreadNote`·`readThreadPlan`) — 이 에이전트 묶음으로만.
             p.read_note = Some(Box::new(move |root| {

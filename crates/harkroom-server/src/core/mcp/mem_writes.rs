@@ -261,6 +261,13 @@ async fn get(read: &PgPool, write: &PgPool, me: &Account, args: &Value) -> Optio
 
 /// `memory.recalled` — `slugs: z.array(z.string().min(1).max(300)).min(1).max(5)` · `recordRecall`.
 async fn recalled(write: &PgPool, me: &Account, args: &Value) -> Option<String> {
+    // 어느 턴에 무엇 때문에 실렸나(사건 표). 턴 id 가 없으면(옛 러너) 수만 센다.
+    let turn = super::tools::opt_uuid(args, "turnId")?;
+    let trigger = match args.get("trigger") {
+        None => "turn_start",
+        Some(Value::String(t)) if (1..=64).contains(&utf16_len(t)) => t.as_str(),
+        Some(_) => return None,
+    };
     let arr = args.get("slugs")?.as_array()?;
     if arr.is_empty() || arr.len() > 5 {
         return None;
@@ -294,7 +301,46 @@ async fn recalled(write: &PgPool, me: &Account, args: &Value) -> Option<String> 
     {
         return Some(internal());
     }
+    if let Some(turn) = turn
+        && let Err(e) = record_events(write, me, &turn, trigger, &slugs).await
+    {
+        // 사건은 지표다 — 못 적어도 센 수와 답은 그대로다.
+        eprintln!("[memory.recalled] 사건 기록 실패: {e}");
+    }
     Some(ok_text("{\"ok\":true}"))
+}
+
+/// 실린 사건(턴·기억·계기·순위) — 순위는 러너가 실은 차례다. 같은 턴의 되풀이 보고는 한 줄로 남는다.
+async fn record_events(
+    write: &PgPool,
+    me: &Account,
+    turn: &str,
+    trigger: &str,
+    slugs: &[String],
+) -> Result<(), sqlx::Error> {
+    if slugs.is_empty() {
+        return Ok(());
+    }
+    sqlx::query(
+        "insert into memory_recall_event (account_id, turn_id, slug, trigger, rank) \
+         select $1::uuid, $2::uuid, m.slug, $3, t.n::smallint \
+         from unnest($4::text[]) with ordinality as t(slug, n) \
+         join agent_memory m on m.account_id = $1::uuid and m.slug = t.slug \
+         on conflict do nothing",
+    )
+    .bind(&me.id)
+    .bind(turn)
+    .bind(trigger)
+    .bind(slugs)
+    .execute(write)
+    .await?;
+    sqlx::query(
+        "delete from memory_recall_event where account_id = $1::uuid and created_at < now() - interval '90 days'",
+    )
+    .bind(&me.id)
+    .execute(write)
+    .await?;
+    Ok(())
 }
 
 /// `{acquiredAt, expiresAt}`(TS `view`).
