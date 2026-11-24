@@ -111,12 +111,9 @@ class _Fake {
 
 final _acme = _Fake('acme', 'acct-acme', 'jb');
 final _beta = _Fake('beta', 'acct-beta', 'beta-jb');
-final _gamma = _Fake('gamma', 'acct-gamma', 'gamma-jb');
 
 const _acmeUrl = 'https://acme.example.com';
 const _betaUrl = 'https://beta.example.com';
-const _gammaUrl = 'https://gamma.example.com';
-const _gammaKey = '$_gammaUrl#acct-gamma';
 
 /// 행의 열쇠는 (origin, 계정 id) 다(security F1).
 const _acmeKey = '$_acmeUrl#acct-acme';
@@ -153,7 +150,7 @@ AppState _app(SessionStore store, {Duration timeout = const Duration(seconds: 10
       apiFactory: (base, token) => ApiClient(
         baseUrl: base,
         token: token,
-        httpClient: (base == _acmeUrl ? _acme : base == _gammaUrl ? _gamma : _beta).client(token),
+        httpClient: (base == _acmeUrl ? _acme : _beta).client(token),
       ),
       connector: _noSocket,
     );
@@ -176,7 +173,7 @@ Future<void> _settle(WidgetTester tester) async {
 
 void main() {
   setUp(() {
-    for (final f in [_acme, _beta, _gamma]) {
+    for (final f in [_acme, _beta]) {
       f.liveToken = 'tok';
       f.logouts.clear();
       f.logoutStatus = 204;
@@ -343,9 +340,9 @@ void main() {
 
     testWidgets('시트에서 옮기면 채널 탭·목록으로 가고 토스트가 선다', (tester) async {
       final app = await pumpHome(tester, _seed());
-      // 나 탭에 있다가 머리로 갈 길은 없지만, 인박스 탭에서 채널 탭으로 돌아와 시트를 연다 —
+      // 나 탭에 있다가 머리로 갈 길은 없지만, 에이전트 탭에서 홈 탭으로 돌아와 시트를 연다 —
       // 시트 전환은 어느 탭에서 왔든 채널 탭으로 간다.
-      await tester.tap(find.byKey(const Key('tab-inbox')));
+      await tester.tap(find.byKey(const Key('tab-agents')));
       await _settle(tester);
       await tester.tap(find.byKey(const Key('tab-home')));
       await _settle(tester);
@@ -493,54 +490,7 @@ void main() {
     });
   });
 
-  group('M3 인박스 한 줄·쓰던 글', () {
-    String seed3() => jsonEncode({
-          'active': _acmeKey,
-          'communities': [
-            {'accountId': 'acct-acme', 'baseUrl': _acmeUrl, 'token': 'tok', 'handle': 'jb'},
-            {'accountId': 'acct-beta', 'baseUrl': _betaUrl, 'token': 'tok', 'handle': 'beta-jb'},
-            {'accountId': 'acct-gamma', 'baseUrl': _gammaUrl, 'token': 'tok', 'handle': 'gamma-jb'},
-          ],
-        });
-
-    Future<AppState> pumpInbox(WidgetTester tester, String seed) async {
-      final app = _app(SessionStore.inMemory(seed: seed));
-      addTearDown(app.dispose);
-      await tester.pumpWidget(HarkroomApp(state: app));
-      await _settle(tester);
-      await tester.tap(find.byKey(const Key('tab-inbox')));
-      await _settle(tester);
-      return app;
-    }
-
-    testWidgets('인박스 맨 위에 다른 커뮤니티마다 한 줄 — 0 인 커뮤니티는 줄이 없다', (tester) async {
-      _beta.unreadInbox = 2;
-      _gamma.unreadInbox = 0;
-      await pumpInbox(tester, seed3());
-      expect(find.byKey(Key('inbox-other-$_betaKey')), findsOneWidget);
-      expect(find.byKey(Key('inbox-other-$_gammaKey')), findsNothing);
-      expect(find.byKey(Key('inbox-other-$_acmeKey')), findsNothing, reason: '지금 커뮤니티는 줄이 아니다');
-      expect(
-        find.descendant(of: find.byKey(Key('inbox-other-$_betaKey')), matching: find.textContaining('2')),
-        findsOneWidget,
-      );
-    });
-
-    testWidgets('「보기」는 그 커뮤니티로 옮기고 인박스 탭에 남는다', (tester) async {
-      _beta.unreadInbox = 2;
-      _gamma.unreadInbox = 1;
-      final app = await pumpInbox(tester, seed3());
-      expect(find.byKey(Key('inbox-other-$_gammaKey')), findsOneWidget);
-      final inboxTab = app.homeTab; // 탭 번호는 탭바가 정한다 — 옮기기 전 값과 같으면 된다.
-      await tester.tap(find.byKey(Key('inbox-other-$_betaKey')));
-      await _settle(tester);
-      expect(app.activeKey, _betaKey);
-      expect(app.homeTab, inboxTab);
-      // 옮긴 뒤: beta 줄은 사라지고, 앞 커뮤니티 acme(0)는 줄이 없고, gamma 는 남는다.
-      expect(find.byKey(Key('inbox-other-$_betaKey')), findsNothing);
-      expect(find.byKey(Key('inbox-other-$_gammaKey')), findsOneWidget);
-    });
-
+  group('M3 쓰던 글', () {
     test('쓰던 글은 커뮤니티 key 별로 남고 다른 커뮤니티로 새지 않는다(D8)', () async {
       final app = _app(SessionStore.inMemory(seed: _seed()));
       await app.boot();
@@ -581,55 +531,6 @@ void main() {
       gate.complete();
       await out;
       expect(app.draftFor('c1', community: _acmeKey), '');
-    });
-
-    testWidgets('인박스 머리에 지금 커뮤니티 이름이 부제로 선다 — 하나뿐이면 없다', (tester) async {
-      await pumpInbox(tester, seed3());
-      expect(
-        find.descendant(of: find.byKey(const Key('inbox-title')), matching: find.text('acme.example.com')),
-        findsOneWidget,
-      );
-    });
-
-    testWidgets('커뮤니티가 하나면 인박스 머리에 부제가 없다', (tester) async {
-      await pumpInbox(
-        tester,
-        jsonEncode({
-          'active': _acmeKey,
-          'communities': [
-            {'accountId': 'acct-acme', 'baseUrl': _acmeUrl, 'token': 'tok', 'handle': 'jb'},
-          ],
-        }),
-      );
-      expect(
-        find.descendant(of: find.byKey(const Key('inbox-title')), matching: find.text('acme.example.com')),
-        findsNothing,
-      );
-    });
-
-    testWidgets('아주 긴 이름이어도 줄의 수는 잘리지 않는다(designer #1066)', (tester) async {
-      _beta.unreadInbox = 7;
-      final long = 'very-long-company-name-that-keeps-going-and-going.example.com' * 2;
-      await pumpInbox(
-        tester,
-        jsonEncode({
-          'active': _acmeKey,
-          'communities': [
-            {'accountId': 'acct-acme', 'baseUrl': _acmeUrl, 'token': 'tok', 'handle': 'jb'},
-            {'accountId': 'acct-beta', 'baseUrl': _betaUrl, 'token': 'tok', 'handle': 'beta-jb', 'label': long},
-          ],
-        }),
-      );
-      final row = find.byKey(Key('inbox-other-$_betaKey'));
-      expect(row, findsOneWidget);
-      // 수가 든 조각은 이름과 따로 서고, 자기 글자를 다 그린다(잘리면 didExceedMaxLines).
-      final countPiece = find.descendant(of: row, matching: find.textContaining('7'));
-      expect(countPiece, findsOneWidget);
-      final para = tester.renderObject<RenderParagraph>(countPiece);
-      expect(para.didExceedMaxLines, isFalse);
-      // 이름은 줄어든다.
-      final name = tester.renderObject<RenderParagraph>(find.byKey(Key('inbox-other-name-$_betaKey')));
-      expect(name.didExceedMaxLines, isTrue);
     });
 
     testWidgets('채널에서 쓰던 글은 다른 커뮤니티에 다녀와도 작성칸에 남아 있다', (tester) async {

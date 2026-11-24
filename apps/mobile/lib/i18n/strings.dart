@@ -271,9 +271,6 @@ abstract class Strings {
   /// 같은 구분선의 글자(스레드).
   String get threadNewDivider;
 
-  /// 인박스를 못 읽음.
-  String get inboxLoadFailed;
-
   /// 빈 채널에서 할 일.
   String get messagesEmptyHint;
 
@@ -282,9 +279,6 @@ abstract class Strings {
 
   /// 채널 맨 위 — 이전 페이지를 못 받았다. 옆에 "다시 시도" 가 붙는다.
   String get olderLoadFailed;
-
-  /// 빈 인박스의 뜻.
-  String get inboxEmptyHint;
 
   /// 부팅 때 서버에 못 닿음.
   String get bootUnreachableTitle;
@@ -516,16 +510,13 @@ abstract class Strings {
   /// 탭 이름 — 채널.
   String get tabChannels;
 
-  /// 탭 이름 — 나를 부른 것들.
-  String get tabInbox;
-
   /// 탭 이름 — 나와 연결.
   String get tabMe;
 
   /// 머리 프로필 사진 버튼의 이름(tooltip·스크린리더) — 나 시트를 연다.
   String get meSettings;
 
-  /// 탭바(개정판 3.1): 홈 · DM · 인박스 · 에이전트. 「나」 는 탭이 아니라 머리의 프로필 사진이다.
+  /// 탭바: 홈 · DM · 에이전트. 「나」 는 탭이 아니라 머리의 프로필 사진이다.
   String get tabHome;
   String get tabDms;
   String get tabAgents;
@@ -571,9 +562,6 @@ abstract class Strings {
   String get sectionStarredNote;
   String get sectionHasUnread;
   String get sectionEmpty;
-
-  /// 바로가기 카드(S5c): 나를 기다리는 것(인박스 안 본 수).
-  String get cardMyTurn;
 
   /// 바로가기 카드(S5c): 안 읽은 말이 있는 채널.
   String get cardNew;
@@ -845,65 +833,6 @@ abstract class Strings {
 
   /// 「새로 온 것」 만 볼 때 안 읽은 채널이 없다.
   String get unreadOnlyEmpty;
-
-  /// 부른 사람이 없다.
-  String get inboxEmpty;
-
-  /// 인박스 맨 위 — 다른 커뮤니티에 안 읽은 부름이 있다. `{name}`·`{count}` 가 바뀐다(조사는 「에」만).
-  String get inboxOtherCommunity;
-
-  /// 인박스 맨 위 줄 — 그 커뮤니티로 옮긴다.
-  String get inboxOtherView;
-
-  /// 머리 숫자 — 안 읽은 부름 수. `{count}` 가 바뀐다.
-  String get inboxUnreadCount;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-  /// 누가 나를 불렀다.
-  String get inboxReasonMention;
-
-  /// 내 스레드에 답이 달렸다.
-  String get inboxReasonThreadReply;
-
-  /// DM.
-  String get inboxReasonDm;
-
-  /// 내가 낸 물음에 답이 왔다.
-  String get inboxReasonAskAnswered;
-
-  /// 내가 낸 물음을 접었다.
-  String get inboxReasonAskClosed;
-
-  /// 모르는 사유. 줄을 **지우지 않는다** — 사유를 몰라도 보이는 편이 낫다.
-  String get inboxReasonOther;
 
   /// 어느 계정으로 들어와 있나. `{handle}` 이 바뀐다.
   String get meSignedInAs;
@@ -1594,11 +1523,9 @@ Map<String, String> stringsToMap(Strings s) => {
       'channelJumpA11yNew': s.channelJumpA11yNew,
       'channelNewDivider': s.channelNewDivider,
       'threadNewDivider': s.threadNewDivider,
-      'inboxLoadFailed': s.inboxLoadFailed,
       'messagesEmptyHint': s.messagesEmptyHint,
       'channelStartLine': s.channelStartLine,
       'olderLoadFailed': s.olderLoadFailed,
-      'inboxEmptyHint': s.inboxEmptyHint,
       'bootUnreachableTitle': s.bootUnreachableTitle,
       'connectionLostBand': s.connectionLostBand,
       'connectionRetryNow': s.connectionRetryNow,
@@ -1679,7 +1606,6 @@ Map<String, String> stringsToMap(Strings s) => {
       'failureRetryable': s.failureRetryable,
       'failureNeedsHand': s.failureNeedsHand,
       'tabChannels': s.tabChannels,
-      'tabInbox': s.tabInbox,
       'tabMe': s.tabMe,
       'meSettings': s.meSettings,
       'tabHome': s.tabHome,
@@ -1706,7 +1632,6 @@ Map<String, String> stringsToMap(Strings s) => {
       'sectionStarredNote': s.sectionStarredNote,
       'sectionHasUnread': s.sectionHasUnread,
       'sectionEmpty': s.sectionEmpty,
-      'cardMyTurn': s.cardMyTurn,
       'cardNew': s.cardNew,
       'cardSaved': s.cardSaved,
       'messageSave': s.messageSave,
@@ -1738,16 +1663,6 @@ Map<String, String> stringsToMap(Strings s) => {
       'newDmNoMatch': s.newDmNoMatch,
       'newMessageDmFailed': s.newMessageDmFailed,
       'unreadOnlyEmpty': s.unreadOnlyEmpty,
-      'inboxEmpty': s.inboxEmpty,
-      'inboxOtherCommunity': s.inboxOtherCommunity,
-      'inboxOtherView': s.inboxOtherView,
-      'inboxUnreadCount': s.inboxUnreadCount,
-      'inboxReasonMention': s.inboxReasonMention,
-      'inboxReasonThreadReply': s.inboxReasonThreadReply,
-      'inboxReasonDm': s.inboxReasonDm,
-      'inboxReasonAskAnswered': s.inboxReasonAskAnswered,
-      'inboxReasonAskClosed': s.inboxReasonAskClosed,
-      'inboxReasonOther': s.inboxReasonOther,
       'meSignedInAs': s.meSignedInAs,
       'meCommunitiesSection': s.meCommunitiesSection,
       'communityAdd': s.communityAdd,

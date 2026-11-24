@@ -6,6 +6,7 @@ import '../i18n/i18n.dart';
 import '../screens/message_list_screen.dart';
 import '../screens/thread_screen.dart';
 import '../state/app_scope.dart';
+import '../state/app_state.dart';
 import 'push_coordinator.dart';
 import 'push_platform.dart';
 import 'push_target.dart';
@@ -83,9 +84,19 @@ class _PushGateState extends State<PushGate> {
     unawaited(_open(target));
   }
 
+  Future<void> _readPushed(AppState app, String channelId) async {
+    await app.loadInboxNew();
+    // 채널을 아직 받는 중이면 `openChannel` 이 다 받은 뒤 같은 일을 한다.
+    if (app.openChannelId == channelId && app.channelLoad[channelId] == LoadState.loaded) {
+      await app.markChannelInboxRead(channelId);
+    }
+  }
+
   Future<void> _open(PushTarget target) async {
     final app = context.app;
     unawaited(app.openChannel(target.channelId));
+    // 이 알림이 만든 inbox 줄은 앱이 아직 못 받았을 수 있다 — 받은 뒤 읽음으로 해야 배지가 준다.
+    unawaited(_readPushed(app, target.channelId));
     // 목록에 아직 없는 채널(알림으로 막 생긴 DM)이면 DM 목록을 다시 받는다 — 그래야 DM 탭을 고른다
     // (security #1368 n2). 이미 아는 채널이면 묻지 않고 곧장 간다.
     await app.refreshDmsFor(target.channelId);

@@ -11,8 +11,8 @@ import 'package:harkroom/theme.dart';
 /// 막대 높이는 [floatingTabBarHeight] 가 고정으로 잡고 있어 칸을 키우지 않는다. 라벨을 한 줄로
 /// 묶고(넓으면 줄여 맞춤), 탭 바 안에서만 배율 상한을 둔다. 앱의 다른 글자는 큰 글자를 그대로 따른다.
 const _labels = {
-  'ko': ['홈', 'DM', '인박스', '에이전트'],
-  'en': ['Home', 'DMs', 'Inbox', 'Agents'],
+  'ko': ['홈', 'DM', '에이전트'],
+  'en': ['Home', 'DMs', 'Agents'],
 };
 
 /// 앱의 탭 바 줄과 같은 폭으로 세운다: 좌우 12 · 막대 · 틈 8 · 찾기 버튼 58.
@@ -21,8 +21,7 @@ Widget _bar({required double scale, required double width, String lang = 'en', B
   final items = [
     TabItem(key: const Key('tab-home'), icon: Icons.home_outlined, selectedIcon: Icons.home, label: l[0]),
     TabItem(key: const Key('tab-dms'), icon: Icons.mail_outline, selectedIcon: Icons.mail, label: l[1], badge: 3),
-    TabItem(key: const Key('tab-inbox'), icon: Icons.inbox_outlined, selectedIcon: Icons.inbox, label: l[2], badge: 12),
-    TabItem(key: const Key('tab-agents'), icon: Icons.smart_toy_outlined, selectedIcon: Icons.smart_toy, label: l[3]),
+    TabItem(key: const Key('tab-agents'), icon: Icons.smart_toy_outlined, selectedIcon: Icons.smart_toy, label: l[2]),
   ];
   return MaterialApp(
     theme: harkroomTheme(b),

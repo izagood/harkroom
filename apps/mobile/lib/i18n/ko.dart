@@ -572,9 +572,6 @@ class StringsKo implements Strings {
   String get tabChannels => '채널';
 
   @override
-  String get tabInbox => '인박스';
-
-  @override
   String get tabMe => '나';
   @override
   String get meSettings => '나 · 설정';
@@ -626,8 +623,6 @@ class StringsKo implements Strings {
   String get sectionHasUnread => '안 읽은 채널 있음';
   @override
   String get sectionEmpty => '채널을 길게 눌러 이 섹션으로 옮긴다';
-  @override
-  String get cardMyTurn => '내 차례';
   @override
   String get cardNew => '새로 온 것';
   @override
@@ -1012,30 +1007,6 @@ class StringsKo implements Strings {
   String get unreadOnlyEmpty => '새로 온 것이 없다.';
 
   @override
-  String get inboxEmpty => '인박스가 비어 있다.';
-
-  @override
-  String get inboxUnreadCount => '안 읽음 {count}';
-
-  @override
-  String get inboxReasonMention => '불렀다';
-
-  @override
-  String get inboxReasonThreadReply => '답글';
-
-  @override
-  String get inboxReasonDm => '다이렉트 메시지';
-
-  @override
-  String get inboxReasonAskAnswered => '내 물음에 답했다';
-
-  @override
-  String get inboxReasonAskClosed => '내 물음을 닫았다';
-
-  @override
-  String get inboxReasonOther => '불렀다';
-
-  @override
   String get meSignedInAs => '@{handle} 계정으로 로그인했다';
 
   @override
@@ -1335,9 +1306,6 @@ class StringsKo implements Strings {
   String get threadNewDivider => '새 답글';
 
   @override
-  String get inboxLoadFailed => '인박스를 불러오지 못했다';
-
-  @override
   String get messagesEmptyHint => '첫 말을 남기거나 @ 로 에이전트를 불러 본다.';
 
   @override
@@ -1345,9 +1313,6 @@ class StringsKo implements Strings {
 
   @override
   String get olderLoadFailed => '이전 메시지를 불러오지 못했다';
-
-  @override
-  String get inboxEmptyHint => '누가 부르거나 DM을 보내면 여기 선다.';
 
   @override
   String get bootUnreachableTitle => '서버에 닿지 못했다';
@@ -1607,12 +1572,6 @@ class StringsKo implements Strings {
 
   @override
   String get searchSortRecentHint => '새 글 먼저';
-
-  @override
-  String get inboxOtherCommunity => '{name} 에 나를 기다리는 것 {count}';
-
-  @override
-  String get inboxOtherView => '보기';
 
   @override
   Map<String, String> get systemTemplates => const {

@@ -135,11 +135,11 @@ void main() {
   // 상태바 글자색 — 밝은 화면엔 검은 글자(iOS statusBarBrightness: light = "바탕이 밝다"), 어두운 화면엔 흰 글자.
   // 반투명 머리의 AppBar 는 투명이라 Flutter 가 "어두운 바탕"으로 짐작해 밝은 모드에서도 흰 글자였다.
   for (final b in Brightness.values) {
-    testWidgets('상태바 글자색이 테마를 따른다 — 탭 넷(${b.name})', (tester) async {
+    testWidgets('상태바 글자색이 테마를 따른다 — 탭 셋(${b.name})', (tester) async {
       tester.platformDispatcher.platformBrightnessTestValue = b;
       addTearDown(tester.platformDispatcher.clearPlatformBrightnessTestValue);
       await _pump(tester);
-      for (final k in ['tab-home', 'tab-dms', 'tab-inbox', 'tab-agents']) {
+      for (final k in ['tab-home', 'tab-dms', 'tab-agents']) {
         await tester.tap(find.byKey(Key(k)));
         await tester.pumpAndSettle();
         expect(SystemChrome.latestStyle?.statusBarBrightness, b, reason: '$k iOS');
@@ -149,12 +149,13 @@ void main() {
     });
   }
 
-  testWidgets('탭 넷이 서고 「나」 탭은 없다', (tester) async {
+  testWidgets('탭 셋(홈 · DM · 에이전트)이 서고 「나」·인박스 탭은 없다', (tester) async {
     await _pump(tester);
-    for (final k in ['tab-home', 'tab-dms', 'tab-inbox', 'tab-agents']) {
+    for (final k in ['tab-home', 'tab-dms', 'tab-agents']) {
       expect(find.byKey(Key(k)), findsOneWidget, reason: k);
     }
     expect(find.byKey(const Key('tab-me')), findsNothing);
+    expect(find.byKey(const Key('tab-inbox')), findsNothing);
   });
 
   testWidgets('홈은 DM 을 빼고, DM 탭은 DM 만 — DM 탭 배지는 안 읽은 수', (tester) async {
@@ -256,9 +257,9 @@ void main() {
     expect(app.phase, AppPhase.ready);
   });
 
-  testWidgets('프로필 사진은 탭 넷 모두의 머리에 있다 — 인박스도', (tester) async {
+  testWidgets('프로필 사진은 탭 셋 모두의 머리에 있다', (tester) async {
     await _pump(tester);
-    for (final tab in ['tab-home', 'tab-dms', 'tab-inbox', 'tab-agents']) {
+    for (final tab in ['tab-home', 'tab-dms', 'tab-agents']) {
       await tester.tap(find.byKey(Key(tab)));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('open-me')), findsOneWidget, reason: tab);
@@ -282,9 +283,11 @@ void main() {
     expect(find.byKey(const Key('channel-c1')), findsOneWidget);
   });
 
-  testWidgets('S5c 카드: 「내 차례」 는 인박스 탭, 「새로 온 것」 은 안 읽은 채널만', (tester) async {
+  testWidgets('S5c 카드: 「새로 온 것」·「저장」 둘이 같은 폭으로 서고, 「새로 온 것」 은 안 읽은 채널만', (tester) async {
     await _pump(tester);
-    expect(find.byKey(const Key('card-my-turn')), findsOneWidget);
+    expect(find.byKey(const Key('card-my-turn')), findsNothing);
+    final newCard = tester.getSize(find.byKey(const Key('card-new')));
+    expect(tester.getSize(find.byKey(const Key('card-saved'))).width, newCard.width);
     // 안 읽은 채널은 c1 하나다(DM 은 DM 탭이 센다).
     expect(find.descendant(of: find.byKey(const Key('card-new')), matching: find.text('1')), findsOneWidget);
     await tester.tap(find.byKey(const Key('card-new')));
@@ -295,10 +298,6 @@ void main() {
     await tester.tap(find.byKey(const Key('card-new')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('channel-c2')), findsOneWidget);
-    await tester.tap(find.byKey(const Key('card-my-turn')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('inbox-mark-all')).evaluate().isEmpty, isTrue);
-    expect(find.byKey(const Key('card-my-turn')), findsNothing, reason: '인박스 탭으로 옮겼다');
   });
 
   testWidgets('D8 DM 탭 ＋: 사람을 고르면 POST /dms 로 DM 을 열고, 뒤로 가면 DM 목록이다 — ✎ 버튼은 없다', (tester) async {
@@ -347,7 +346,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(ThreadScreen), findsOneWidget);
     expect(find.byKey(const Key('home-tab-bar')), findsOneWidget, reason: '스레드에서도 보인다(D2 B)');
-    await tester.tap(find.byKey(const Key('tab-inbox')));
+    await tester.tap(find.byKey(const Key('tab-agents')));
     await tester.pumpAndSettle();
     expect(find.byType(ThreadScreen), findsNothing);
     await tester.tap(find.byKey(const Key('tab-home')));
@@ -463,12 +462,12 @@ void main() {
     expect(find.byKey(const Key('glass-app-bar-blur')), findsNothing, reason: '투명도 줄이기면 흐림을 걷는다');
   });
 
-  testWidgets('④·g1 첫 화면 넷도 고대비면 불투명 머리, 아래 선은 한 단 진하게(designer g1-1)', (tester) async {
+  testWidgets('④·g1 첫 화면 셋도 고대비면 불투명 머리, 아래 선은 한 단 진하게(designer g1-1)', (tester) async {
     await _pump(tester);
     tester.platformDispatcher.accessibilityFeaturesTestValue = const FakeAccessibilityFeatures(highContrast: true);
     addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
     await tester.pump();
-    for (final tab in ['tab-home', 'tab-dms', 'tab-inbox', 'tab-agents']) {
+    for (final tab in ['tab-home', 'tab-dms', 'tab-agents']) {
       await tester.tap(find.byKey(Key(tab)));
       await tester.pumpAndSettle();
       final head = find.byKey(const Key('glass-app-bar'));

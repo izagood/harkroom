@@ -568,9 +568,6 @@ class StringsEn implements Strings {
   String get tabChannels => 'Channels';
 
   @override
-  String get tabInbox => 'Inbox';
-
-  @override
   String get tabMe => 'You';
   @override
   String get meSettings => 'Me · Settings';
@@ -622,8 +619,6 @@ class StringsEn implements Strings {
   String get sectionHasUnread => 'Has unread channels';
   @override
   String get sectionEmpty => 'Long-press a channel to move it here';
-  @override
-  String get cardMyTurn => 'My turn';
   @override
   String get cardNew => 'New';
   @override
@@ -1008,30 +1003,6 @@ class StringsEn implements Strings {
   String get unreadOnlyEmpty => 'All caught up.';
 
   @override
-  String get inboxEmpty => 'Nothing here yet.';
-
-  @override
-  String get inboxUnreadCount => '{count} unread';
-
-  @override
-  String get inboxReasonMention => 'Called you';
-
-  @override
-  String get inboxReasonThreadReply => 'Reply';
-
-  @override
-  String get inboxReasonDm => 'DM';
-
-  @override
-  String get inboxReasonAskAnswered => 'Answered your question';
-
-  @override
-  String get inboxReasonAskClosed => 'Declined your question';
-
-  @override
-  String get inboxReasonOther => 'Called you';
-
-  @override
   String get meSignedInAs => 'Signed in as @{handle}';
 
   @override
@@ -1331,9 +1302,6 @@ class StringsEn implements Strings {
   String get threadNewDivider => 'New replies';
 
   @override
-  String get inboxLoadFailed => 'Could not load your inbox';
-
-  @override
   String get messagesEmptyHint => 'Say something, or call an agent with @.';
 
   @override
@@ -1341,9 +1309,6 @@ class StringsEn implements Strings {
 
   @override
   String get olderLoadFailed => "Couldn't load earlier messages";
-
-  @override
-  String get inboxEmptyHint => 'When someone mentions you or sends a DM, it shows up here.';
 
   @override
   String get bootUnreachableTitle => 'Could not reach the server';
@@ -1603,12 +1568,6 @@ class StringsEn implements Strings {
 
   @override
   String get searchSortRecentHint => 'Newest first';
-
-  @override
-  String get inboxOtherCommunity => '{count} waiting for you in {name}';
-
-  @override
-  String get inboxOtherView => 'View';
 
   @override
   Map<String, String> get systemTemplates => const {

@@ -14,12 +14,11 @@ import '../ui/states.dart';
 import 'channel_list_screen.dart';
 import 'message_list_screen.dart';
 import 'thread_screen.dart';
-import 'inbox_screen.dart';
 import 'search_screen.dart';
 import 'tab_nav.dart';
 import '../ui/tokens.dart';
 
-/// 폰의 루트 — **탭 넷**(개정판 3.1: 홈 · DM · 인박스 · 에이전트). 「나」 는 머리의 프로필 사진이다.
+/// 폰의 루트 — **탭 셋**(홈 · DM · 에이전트). 「나」 는 머리의 프로필 사진이다.
 ///
 /// 데스크탑의 3컬럼(레일·사이드바·채널)을 접지 않는다. 접으면 셋 다 좁아진다.
 /// 폰에서는 한 번에 하나를 보고, 채널 → 스레드는 **그 탭의 쌓기에 밀어 넣어** 연다 — 탭 바는 채널·스레드
@@ -113,15 +112,13 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     final t = context.t;
     final app = context.app;
-    // 인박스 탭 배지 = 안 읽은 멘션·DM 수([AppState.inboxMentionCount]) — 이미 받은 인박스에서 센다.
-    final unread = app.inboxMentionCount;
     // DM 탭 배지 = DM 채널들의 안 읽은 수 합(서버가 센 값).
     var dmUnread = 0;
     for (final c in app.channels) {
       if (c.isDm) dmUnread += app.reads[c.id]?.unread ?? 0;
     }
     // 탭은 [AppState.homeTab] 이 쥔다 — 커뮤니티를 옮기며 부팅 화면을 거쳐도 살아남게.
-    final tab = app.homeTab.clamp(0, 3);
+    final tab = app.homeTab.clamp(0, TabNavigators.count - 1);
     final mq = MediaQuery.of(context);
     final keyboard = mq.viewInsets.bottom;
     final barHeight = floatingTabBarHeight(mq);
@@ -150,11 +147,10 @@ class _HomeScreenState extends State<HomeScreen> {
         children: [
           _tabNavigator(0, const ChannelListScreen(), tab),
           _tabNavigator(1, const ChannelListScreen(dms: true), tab),
-          _tabNavigator(2, const InboxScreen(), tab),
-          _tabNavigator(3, const AgentsScreen(), tab),
+          _tabNavigator(TabNavigators.agents, const AgentsScreen(), tab),
         ],
       )),
-      // 개정판 3.1: 떠 있는 둥근 막대에 탭 넷 + 오른쪽 둥근 찾기 버튼. 찾기 버튼은 어느 탭에서나
+      // 개정판 3.1: 떠 있는 둥근 막대에 탭 셋 + 오른쪽 둥근 찾기 버튼. 찾기 버튼은 어느 탭에서나
       // 같은 자리에 서고 **전체** 범위로 연다(채널·스레드 범위는 그 화면 머리의 돋보기).
       bottomNavigationBar: hideBar
           ? null
@@ -173,9 +169,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     items: [
                       TabItem(key: const Key('tab-home'), icon: Icons.home_outlined, selectedIcon: Icons.home, label: t.tabHome),
                       TabItem(key: const Key('tab-dms'), icon: Icons.mail_outline, selectedIcon: Icons.mail, label: t.tabDms, badge: dmUnread),
-                      // 안 본 것이 **0 이면 배지를 그리지 않는다** — 빈 배지는 "뭔가 있다"는 거짓 신호다.
-                      // 고른 탭에서도 수를 보인다(designer #976 판정 ②).
-                      TabItem(key: const Key('tab-inbox'), icon: Icons.inbox_outlined, selectedIcon: Icons.inbox, label: t.tabInbox, badge: unread),
                       TabItem(key: const Key('tab-agents'), icon: Icons.smart_toy_outlined, selectedIcon: Icons.smart_toy, label: t.tabAgents),
                     ],
                   )),

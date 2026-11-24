@@ -805,23 +805,16 @@ void main() {
     expect(find.byKey(const Key('mention-picker')), findsNothing);
   });
 
-  testWidgets('인박스 탭에서 안 읽은 부름을 누르면 읽음이 되고 그 채널로 간다', (tester) async {
+  testWidgets('채널을 열면 그 채널의 안 읽은 부름이 읽음이 된다', (tester) async {
     final state = _state();
     await tester.pumpWidget(HarkroomApp(state: state));
     await tester.pumpAndSettle();
     addTearDown(state.dispose);
 
-    await tester.tap(find.byKey(const Key('tab-inbox')));
-    await tester.pumpAndSettle();
-
-    expect(find.byKey(const Key('inbox-entry-1')), findsOneWidget);
     expect(state.inboxUnread, 1);
-    await tester.tap(find.byKey(const Key('inbox-entry-1')));
+    await tester.tap(find.byKey(const Key('channel-c1')));
     await _settle(tester);
-
-    // 눌러서 열면 읽음이 된다.
     expect(state.inboxUnread, 0);
-    // 그 채널의 메시지가 선다.
     expect(find.byKey(const Key('message-m1')), findsOneWidget);
   });
 
@@ -841,7 +834,7 @@ void main() {
     // 채널 화면을 닫고 탭을 옮겼다 돌아온다.
     Navigator.of(tester.element(find.byKey(const Key('composer')))).pop();
     await _settle(tester);
-    await tester.tap(find.byKey(const Key('tab-inbox')));
+    await tester.tap(find.byKey(const Key('tab-agents')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('tab-home')));
     await tester.pumpAndSettle();
@@ -849,7 +842,7 @@ void main() {
     expect(find.byKey(const Key('channel-c1')), findsOneWidget);
   });
 
-  testWidgets('④ 탭 첫 화면 넷도 반투명 머리 — 목록은 머리 밑부터, 끊김 띠만 고정, 바로 가기 카드는 목록 안', (tester) async {
+  testWidgets('④ 탭 첫 화면 셋도 반투명 머리 — 목록은 머리 밑부터, 끊김 띠만 고정, 바로 가기 카드는 목록 안', (tester) async {
     final state = _state();
     await tester.pumpWidget(HarkroomApp(state: state));
     await tester.pumpAndSettle();
@@ -875,23 +868,16 @@ void main() {
     bandUnderHead();
     // 바로 가기 카드는 목록의 첫 줄 — 같이 굴러간다.
     expect(
-      find.descendant(of: find.byType(CustomScrollView), matching: find.byKey(const Key('card-my-turn'))),
+      find.descendant(of: find.byType(CustomScrollView), matching: find.byKey(const Key('card-new'))),
       findsOneWidget,
     );
-    expect(tester.getRect(find.byKey(const Key('card-my-turn'))).top, greaterThanOrEqualTo(glass().bottom));
+    expect(tester.getRect(find.byKey(const Key('card-new'))).top, greaterThanOrEqualTo(glass().bottom));
 
     // DM
     await tester.tap(find.byKey(const Key('tab-dms')));
     await tester.pumpAndSettle();
     bandUnderHead();
-    expect(find.byKey(const Key('card-my-turn')), findsNothing);
-
-    // 받은 것: 목록은 머리 밑부터, 당기기 회전자도 끊김 띠 밑에서 나온다.
-    await tester.tap(find.byKey(const Key('tab-inbox')));
-    await tester.pumpAndSettle();
-    bandUnderHead();
-    expect(tester.widget<RefreshIndicator>(find.byType(RefreshIndicator)).edgeOffset,
-        tester.getRect(find.byKey(const Key('connection-band'))).bottom);
+    expect(find.byKey(const Key('card-new')), findsNothing);
 
     // 에이전트 탭의 목록 여백은 tab_bar_test(S7)가 잰다 — 이 가짜 서버에는 에이전트 응답이 없다.
     await tester.tap(find.byKey(const Key('tab-agents')));
