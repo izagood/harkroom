@@ -1,27 +1,25 @@
-//! 가벼운 쓰기③(S5.2 P4c-2) — 작업 항목·스레드 임대·푸시 기기.
+//! 가벼운 쓰기③(S5.2 P4c-2) — 스레드 임대·푸시 기기.
 //!
 //! | TS | 옮김 |
 //! |---|---|
-//! | `routes/workItemRoutes.ts` | `GET /work-items` · `DELETE /work-items/{id}`. **`PUT /work-items` 는 TS 에 남긴다** — `state: 'done'` 이면 같은
-//! |  | 트랜잭션에서 위임장을 끝내고(`endMandatesForDoneThreadTx`) 권한 카드 글을 다시 쓴다(`refreshMandateCards`) → 위임장·메시지 표를 쓰는 일이라 S5.3 코어 몫 |
 //! | `routes/threadClaimRoutes.ts` | `POST /agent/thread-claims` · `POST /agent/thread-claims/release` |
 //! | `routes/pushRoutes.ts` | `PUT /push/devices` · `DELETE /push/devices/current` |
 //!
-//! 메모리 상태: 없다(`workItems.ts`·`threadClaims.ts`·`pushRoutes.ts` 에 모듈 수준 Map·캐시 없음). 「내 것만」: 작업 항목은 보드 주인
-//! (`resolveWorkItemOwner`)과 주인이 아닌 쪽의 가시성(`actorSeesItemSql`, TS 술어를 골든으로) · 임대는 PAT 주인 에이전트 몫만 · 푸시는 지금 세션에
+//! 작업 항목 REST(`GET·PUT /work-items`·`DELETE /work-items/{id}`)는 「내 작업」 보드를 걷으며 지웠다(P4) — 부르는 앱이 없다.
+//! 표 `work_item` 은 남긴다(지우는 것은 뒤 단계).
+//!
+//! 메모리 상태: 없다(`threadClaims.ts`·`pushRoutes.ts` 에 모듈 수준 Map·캐시 없음). 「내 것만」: 임대는 PAT 주인 에이전트 몫만 · 푸시는 지금 세션에
 //! 묶인 줄만. 순서는 TS 와 같다(본문 → preHandler → zod).
 use crate::auth::{Auth, RequireAccount, Via};
-use crate::directory::{form_pairs, internal, json_err, json_ok};
+use crate::directory::{internal, json_err, json_ok};
 use crate::lists::is_zod_uuid;
 use crate::routes::AppState;
-use crate::write::{Body, emit_event};
+use crate::write::Body;
 use crate::writes_settings::{bad, body_then, js_len, write_pool};
-use axum::extract::{Path, RawQuery, Request, State};
+use axum::extract::{Request, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde_json::{Map, Value, json};
-use sqlx::PgPool;
-use std::sync::OnceLock;
 
 macro_rules! tri {
     ($e:expr) => {
@@ -38,243 +36,6 @@ macro_rules! db {
             Err(e) => return internal(e),
         }
     };
-}
-
-// ── 작업 항목 ─────────────────────────────────────────────────────────
-
-/// services/workItems.ts `WORK_ITEM_SOURCES`·`MAX_ITEMS_PER_OWNER`.
-pub(crate) const WORK_ITEM_SOURCES: &[&str] = &["github", "jira", "slack", "other", "avcs"];
-pub(crate) const NO_OWNER: &str = "this agent has no human owner, so it has no board to write to";
-
-struct Frags {
-    vis_owner: String,
-    vis_actor: String,
-}
-fn frags() -> &'static Frags {
-    static F: OnceLock<Frags> = OnceLock::new();
-    F.get_or_init(|| {
-        let v: Value =
-            serde_json::from_str(include_str!("../golden/sql_fragments.json")).expect("golden");
-        Frags {
-            vis_owner: v["channel_visible_c_p1uuid"]
-                .as_str()
-                .expect("c_p1")
-                .to_string(),
-            vis_actor: v["channel_visible_ac_p2uuid"]
-                .as_str()
-                .expect("ac_p2")
-                .to_string(),
-        }
-    })
-}
-
-/// TS `actorSeesItemSql('w', '$2')` — 주인이 아닌 쪽은 자기가 지금 볼 수 있는 스레드에 붙은 항목만.
-pub(crate) fn actor_sees() -> String {
-    format!(
-        "(w.thread_root_id is not null and exists (select 1 from message am join channel ac on ac.id = am.channel_id \
-          where am.id = w.thread_root_id and am.deleted_at is null and {}))",
-        frags().vis_actor
-    )
-}
-
-/// TS `resolveWorkItemOwner` — 사람은 자신, 에이전트는 살아 있는 사람 주인, 그 밖은 없음.
-pub(crate) async fn work_item_owner(
-    pool: &PgPool,
-    me: &crate::auth::Account,
-) -> Result<Option<String>, sqlx::Error> {
-    match me.kind.as_str() {
-        "human" => Ok(Some(me.id.clone())),
-        "agent" => sqlx::query_scalar(
-            "select o.id::text from agent_config c join account o on o.id = c.owner_account_id \
-              where c.account_id = $1::uuid and o.kind = 'human' and o.deleted_at is null and o.disabled_at is null",
-        )
-        .bind(&me.id)
-        .fetch_optional(pool)
-        .await,
-        _ => Ok(None),
-    }
-}
-
-/// `PUT /work-items` 를 Rust 가 답해도 되는가 — `main.rs` 가 MCP `workitem.upsert` 권한
-/// (`core::mcp::workitem::WORK_ITEM_UPSERT_PRIVILEGES`)을 다 확인했을 때만 켠다. 꺼져 있으면 요청을 그대로 TS 로 넘긴다.
-pub static WORK_ITEM_UPSERT_READY: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-
-/// `PUT /work-items` — TS `workItemRoutes.ts` 의 upsert. 판정 순서: 본문 파서 → `requireAccount` → zod(400 `invalid_request`)
-/// → 주인(403 `no_owner`) → `upsertWorkItem`(거절 404·403·409·400) → `{ item }`. 코어는 MCP `workitem.upsert` 와 같다.
-pub async fn put_item(
-    State(st): State<AppState>,
-    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<std::net::SocketAddr>,
-    req: Request,
-) -> Response {
-    if !WORK_ITEM_UPSERT_READY.load(std::sync::atomic::Ordering::Relaxed) {
-        return crate::proxy::forward(State(st.up.clone()), axum::extract::ConnectInfo(peer), req)
-            .await;
-    }
-    let (body, RequireAccount(me, _), _) = tri!(body_then::<RequireAccount>(req).await);
-    let args = match body {
-        Body::Json(v) => v,
-        _ => return bad("Expected object"),
-    };
-    let Some(u) = crate::core::mcp::workitem::parse_upsert(&args) else {
-        return bad("invalid work item");
-    };
-    let pool = tri!(write_pool(&st));
-    use crate::core::mcp::workitem::Upserted;
-    match crate::core::mcp::workitem::upsert_core(pool, pool, &me, &u).await {
-        Some(Upserted::Item(item)) => json_ok(format!("{{\"item\":{item}}}")),
-        Some(Upserted::NoOwner) => no_owner(),
-        Some(Upserted::Refused(code)) => {
-            let status = match code {
-                "thread_not_found" => StatusCode::NOT_FOUND,
-                "thread_forbidden" => StatusCode::FORBIDDEN,
-                "too_many" => StatusCode::CONFLICT,
-                _ => StatusCode::BAD_REQUEST,
-            };
-            json_err(
-                status,
-                code,
-                crate::core::mcp::workitem::refusal_message(code),
-            )
-        }
-        Some(Upserted::Internal) | None => json_err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal",
-            "internal error",
-        ),
-    }
-}
-
-fn no_owner() -> Response {
-    json_err(StatusCode::FORBIDDEN, "no_owner", NO_OWNER)
-}
-
-/// zod `{ threadRootId: uuid?, source: enum? }` — 모르는 키는 버린다.
-pub fn parse_items_query(
-    raw: Option<&str>,
-) -> Result<(Option<String>, Option<String>), &'static str> {
-    let (mut root, mut source) = (None, None);
-    let mut seen: Vec<String> = vec![];
-    for (k, v) in form_pairs(raw.unwrap_or("")) {
-        if !matches!(k.as_str(), "threadRootId" | "source") {
-            continue;
-        }
-        if seen.contains(&k) {
-            return Err("duplicate query key");
-        }
-        seen.push(k.clone());
-        if k == "threadRootId" {
-            if !is_zod_uuid(&v) {
-                return Err("threadRootId");
-            }
-            root = Some(v);
-        } else {
-            if !WORK_ITEM_SOURCES.contains(&v.as_str()) {
-                return Err("source");
-            }
-            source = Some(v);
-        }
-    }
-    Ok((root, source))
-}
-
-fn list_items_sql() -> &'static str {
-    static S: OnceLock<String> = OnceLock::new();
-    S.get_or_init(|| {
-        format!(
-            "select json_build_object('items', coalesce((select json_agg(x order by x.ord desc) from (\
-               select w.id, w.source, w.external_key as \"externalKey\", w.url, w.title, w.state, \
-                      w.thread_root_id as \"threadRootId\", w.updated_by as \"updatedBy\", \
-                      {created} as \"createdAt\", {updated} as \"updatedAt\", w.updated_at as ord \
-                 from work_item w left join message m on m.id = w.thread_root_id left join channel c on c.id = m.channel_id \
-                where w.owner_account_id = $1::uuid \
-                  and ($2::uuid = $1::uuid or {actor}) \
-                  and ($3::uuid is null or w.thread_root_id = $3::uuid) \
-                  and ($4::text is null or w.source = $4::text) \
-                  and (w.thread_root_id is null or (m.deleted_at is null and {vis})) \
-                order by w.updated_at desc limit 500) x), '[]'::json))::text",
-            created = crate::iso!("w.created_at"),
-            updated = crate::iso!("w.updated_at"),
-            actor = actor_sees(),
-            vis = frags().vis_owner,
-        )
-    })
-}
-
-/// `GET /work-items` — 보드 주인의 항목(주인이 아니면 볼 수 있는 스레드의 것만). 정렬용 칸은 지운다.
-pub async fn list_items(
-    State(pool): State<PgPool>,
-    RequireAccount(me, _): RequireAccount,
-    RawQuery(raw): RawQuery,
-) -> Response {
-    let (root, source) = match parse_items_query(raw.as_deref()) {
-        Ok(q) => q,
-        Err(m) => return bad(m),
-    };
-    let Some(owner) = db!(work_item_owner(&pool, &me).await) else {
-        return no_owner();
-    };
-    let text: String = db!(sqlx::query_scalar(list_items_sql())
-        .bind(&owner)
-        .bind(&me.id)
-        .bind(&root)
-        .bind(&source)
-        .fetch_one(&pool)
-        .await);
-    let mut v: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
-    if let Some(items) = v["items"].as_array_mut() {
-        for it in items {
-            if let Some(o) = it.as_object_mut() {
-                o.remove("ord");
-            }
-        }
-    }
-    json_ok(v.to_string())
-}
-
-fn delete_item_sql() -> &'static str {
-    static S: OnceLock<String> = OnceLock::new();
-    S.get_or_init(|| {
-        format!(
-            "delete from work_item w where w.owner_account_id = $1::uuid and w.id = $3::uuid and ($2::uuid = $1::uuid or {})",
-            actor_sees()
-        )
-    })
-}
-
-/// `DELETE /work-items/{id}` — 주인 보드의 것만, 주인이 아니면 볼 수 있는 스레드의 것만(범위 밖은 없는 것과 같은 404).
-/// 지우면 주인에게 `inbox.updated`(같은 트랜잭션).
-pub async fn delete_item(
-    State(st): State<AppState>,
-    Path(id): Path<String>,
-    req: Request,
-) -> Response {
-    let (_, RequireAccount(me, _), _) = tri!(body_then::<RequireAccount>(req).await);
-    if !is_zod_uuid(&id) {
-        return bad("id");
-    }
-    let pool = tri!(write_pool(&st));
-    let Some(owner) = db!(work_item_owner(pool, &me).await) else {
-        return no_owner();
-    };
-    let mut tx = db!(pool.begin().await);
-    let n = db!(sqlx::query(delete_item_sql())
-        .bind(&owner)
-        .bind(&me.id)
-        .bind(&id)
-        .execute(&mut *tx)
-        .await)
-    .rows_affected();
-    if n == 0 {
-        return json_err(StatusCode::NOT_FOUND, "not_found", "no such work item");
-    }
-    db!(emit_event(
-        &mut tx,
-        &json!({ "type": "inbox.updated", "accountId": owner })
-    )
-    .await);
-    db!(tx.commit().await);
-    StatusCode::NO_CONTENT.into_response()
 }
 
 // ── 스레드 임대 ───────────────────────────────────────────────────────
@@ -632,15 +393,5 @@ mod tests {
             ))
             .is_err()
         );
-    }
-
-    #[test]
-    fn items_query() {
-        assert_eq!(
-            parse_items_query(Some("source=github&x=1")),
-            Ok((None, Some("github".into())))
-        );
-        assert!(parse_items_query(Some("source=gitlab")).is_err());
-        assert!(parse_items_query(Some("threadRootId=nope")).is_err());
     }
 }

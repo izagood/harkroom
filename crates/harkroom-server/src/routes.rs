@@ -152,12 +152,6 @@ pub const MOVED: &[Moved] = &[
         path: "/accounts/me/blocks",
         route: || axum::routing::get(crate::writes_moderation::list_blocks),
     },
-    // P4c-2 작업 항목 읽기(`writes_misc.rs`).
-    Moved {
-        key: "GET /work-items",
-        path: "/work-items",
-        route: || axum::routing::get(crate::writes_misc::list_items),
-    },
     // S5.4 H1 운영 표면(`health.rs`). `/healthz`·`/readyz` 는 [`OPEN`] — 인증 층을 걸지 않는다(TS 도 인증 앞).
     Moved {
         key: "GET /healthz",
@@ -363,17 +357,7 @@ pub const MOVED_WRITE: &[Moved] = &[
         path: "/accounts/me/blocks/{id}",
         route: || axum::routing::delete(crate::writes_moderation::delete_block),
     },
-    // P4c-2 작업 항목·스레드 임대·푸시 기기(`writes_misc.rs`). PUT /work-items 는 MCP `workitem.upsert` 권한이 다 있을 때만 Rust(`WORK_ITEM_UPSERT_READY`), 아니면 TS.
-    Moved {
-        key: "PUT /work-items",
-        path: "/work-items",
-        route: || axum::routing::put(crate::writes_misc::put_item),
-    },
-    Moved {
-        key: "DELETE /work-items/{id}",
-        path: "/work-items/{id}",
-        route: || axum::routing::delete(crate::writes_misc::delete_item),
-    },
+    // P4c-2 스레드 임대·푸시 기기(`writes_misc.rs`). 작업 항목 REST(`/work-items`)는 「내 작업」 보드 제거(P4)로 지웠다.
     Moved {
         key: "POST /agent/thread-claims",
         path: "/agent/thread-claims",

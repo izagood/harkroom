@@ -2,49 +2,10 @@
 //! `rustFrontDb.test.ts` 의 MCP 줄), zod 가 그대로 받는 인자만, DB 오류·모르는 꼴은 TS 로.
 use super::reads2::{js_truthy, jsonb_as_js};
 use super::respond::text_result;
-use super::tools::{err, opt_uuid};
+use super::tools::err;
 use crate::auth::Account;
 use serde_json::Value;
 use sqlx::PgPool;
-
-/// TS `WORK_ITEM_SOURCES`.
-const WORK_ITEM_SOURCES: &[&str] = &["github", "jira", "slack", "other", "avcs"];
-/// TS `MAX_ITEMS_PER_OWNER`.
-const MAX_ITEMS_PER_OWNER: i64 = 500;
-/// TS `WORK_ITEM_REFUSAL_MESSAGE.no_owner`.
-const NO_OWNER: &str = "this agent has no human owner, so it has no board to write to";
-
-/// TS `resolveWorkItemOwner`(에이전트 갈래) — 살아 있는 사람 주인.
-const OWNER_SQL: &str = "select o.id::text from agent_config c join account o on o.id = c.owner_account_id \
-      where c.account_id = $1::uuid and o.kind = 'human' and o.deleted_at is null and o.disabled_at is null";
-
-/// TS `listWorkItems` — 주인이 아닌 쪽(에이전트)이라 `actorSeesItemSql` 이 늘 붙는다. 자리표시자는 TS 와 달리 고정이다
-/// ($1 주인 · $2 나 · $3 스레드 · $4 출처, 없으면 null) — 걸러 내는 뜻은 같다. 가시성 술어는 TS 골든 조각.
-fn work_items_sql() -> &'static str {
-    static S: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    S.get_or_init(|| {
-        let f = crate::core::channels::frag;
-        format!(
-            "select w.id::text, w.source, w.external_key, w.url, w.title, w.state, w.thread_root_id::text, w.updated_by::text, \
-               to_char(w.created_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'), \
-               to_char(w.updated_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') \
-               from work_item w \
-               left join message m on m.id = w.thread_root_id \
-               left join channel c on c.id = m.channel_id \
-              where w.owner_account_id = $1::uuid \
-                and (w.thread_root_id is not null and exists ( \
-                  select 1 from message am join channel ac on ac.id = am.channel_id \
-                   where am.id = w.thread_root_id and am.deleted_at is null and {})) \
-                and ($3::uuid is null or w.thread_root_id = $3::uuid) \
-                and ($4::text is null or w.source = $4::text) \
-                and (w.thread_root_id is null or (m.deleted_at is null and {})) \
-              order by w.updated_at desc \
-              limit {MAX_ITEMS_PER_OWNER}",
-            f("channel_visible_ac_p2uuid"),
-            f("channel_visible_c_p1uuid"),
-        )
-    })
-}
 
 /// TS `AGENT_LIST_BODY_CHARS`.
 const AGENT_LIST_BODY_CHARS: usize = 200;
@@ -109,71 +70,6 @@ fn js_preview(s: &str, n: usize) -> Option<String> {
 
 fn s_or_null(v: Option<String>) -> Value {
     v.map_or(Value::Null, Value::from)
-}
-
-async fn workitem_list(pool: &PgPool, me: &Account, args: &Value) -> Option<String> {
-    args.as_object()?;
-    let thread = opt_uuid(args, "threadRootId")?;
-    let source = match args.get("source") {
-        None => None,
-        Some(Value::String(s)) if WORK_ITEM_SOURCES.contains(&s.as_str()) => Some(s.clone()),
-        Some(_) => return None,
-    };
-    let owner: Option<String> = sqlx::query_scalar(OWNER_SQL)
-        .bind(&me.id)
-        .fetch_optional(pool)
-        .await
-        .ok()?;
-    let Some(owner) = owner else {
-        return Some(err("no_owner", NO_OWNER));
-    };
-    // MCP 는 에이전트만 오므로 주인(사람)과 나는 늘 다르다 — 그래도 같으면 모르는 꼴이라 TS 로.
-    if owner == me.id {
-        return None;
-    }
-    type R = (
-        String,
-        String,
-        String,
-        Option<String>,
-        String,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        String,
-        String,
-    );
-    let rows: Vec<R> = sqlx::query_as(work_items_sql())
-        .bind(&owner)
-        .bind(&me.id)
-        .bind(thread)
-        .bind(source)
-        .fetch_all(pool)
-        .await
-        .ok()?;
-    let mut out = String::from("{\"items\":[");
-    for (i, (id, source, key, url, title, state, root, by, created, updated)) in
-        rows.into_iter().enumerate()
-    {
-        if i > 0 {
-            out.push(',');
-        }
-        out.push_str(&format!(
-            "{{\"id\":{},\"source\":{},\"externalKey\":{},\"url\":{},\"title\":{},\"state\":{},\"threadRootId\":{},\"updatedBy\":{},\"createdAt\":{},\"updatedAt\":{}}}",
-            Value::from(id),
-            Value::from(source),
-            Value::from(key),
-            s_or_null(url),
-            Value::from(title),
-            s_or_null(state),
-            s_or_null(root),
-            s_or_null(by),
-            Value::from(created),
-            Value::from(updated),
-        ));
-    }
-    out.push_str("]}");
-    Some(text_result(&out))
 }
 
 async fn automation_list(
@@ -271,7 +167,7 @@ pub(super) async fn answer(
     cause: Option<&str>,
 ) -> Option<String> {
     match tool {
-        "workitem.list" => workitem_list(pool, me, args).await,
+        "workitem.list" => super::workitem::list(args),
         "automation.list" => automation_list(pool, me, args, cause).await,
         _ => None,
     }
