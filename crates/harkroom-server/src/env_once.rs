@@ -35,6 +35,8 @@ env_once! {
     ASK_SELF_SERVE = "HARKROOM_ASK_SELF_SERVE";
     /// 조각 판정 스위치(`piece_verdict::switch_on`).
     PIECE_VERDICT = "HARKROOM_PIECE_VERDICT";
+    /// 판에서 잡기 스위치(`work_claim::switch_on`).
+    WORK_CLAIM = "HARKROOM_WORK_CLAIM";
     /// 하위 결과 모으기 스위치(`split_collect::enabled`).
     SPLIT_COLLECT = "HARKROOM_SPLIT_COLLECT";
     /// 위임장 강제(`lease_read::mandate_switch`).

@@ -192,6 +192,7 @@ pub mod typing;
 pub mod wake_deliver;
 pub mod wake_preempt;
 pub mod work;
+pub mod work_claim;
 pub mod work_shadow;
 pub mod ws;
 
