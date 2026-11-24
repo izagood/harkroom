@@ -169,6 +169,7 @@ async fn get(read: &PgPool, write: &PgPool, me: &Account, args: &Value) -> Optio
         Option<String>,
         Option<String>,
         Option<String>,
+        Option<String>,
     );
     const SQL: &str = concat!(
         "update agent_memory set read_count = read_count + 1, last_read_at = now() \
@@ -177,7 +178,8 @@ async fn get(read: &PgPool, write: &PgPool, me: &Account, args: &Value) -> Optio
         ", description, ",
         iso!("flagged_at"),
         ", flag_reason, ",
-        iso!("archived_at")
+        iso!("archived_at"),
+        ", when_hint"
     );
     // 여기부터 쓰기다(W1).
     let row: Option<R> = match sqlx::query_as(SQL)
@@ -189,7 +191,7 @@ async fn get(read: &PgPool, write: &PgPool, me: &Account, args: &Value) -> Optio
         Ok(r) => r,
         Err(_) => return Some(internal()),
     };
-    let Some((slug, value, updated, description, flagged_at, flag_reason, archived_at)) = row
+    let Some((slug, value, updated, description, flagged_at, flag_reason, archived_at, when)) = row
     else {
         return Some(err("not_found", "memory not found"));
     };
@@ -243,6 +245,9 @@ async fn get(read: &PgPool, write: &PgPool, me: &Account, args: &Value) -> Optio
     );
     if let Some(d) = desc {
         out.push_str(&format!(",\"description\":{}", Value::from(d)));
+    }
+    if let Some(w) = when.filter(|w| !w.is_empty()) {
+        out.push_str(&format!(",\"when\":{}", Value::from(w)));
     }
     if let Some(a) = archived_at {
         out.push_str(&format!(

@@ -36,6 +36,8 @@ pub(crate) const MAX_ITEMS: i64 = 200;
 pub(crate) const MAX_VALUE: usize = 8000;
 pub(crate) const MAX_CORE: usize = 3000;
 pub(crate) const MAX_DESCRIPTION: usize = 200;
+/// 「언제」 문장(192).
+pub(crate) const MAX_WHEN: usize = 200;
 const MAX_JOURNAL: i64 = 60;
 const CORE_WARN: i32 = 2600;
 const ITEMS_WARN: i32 = 180;
@@ -381,6 +383,44 @@ async fn read_description(
     Ok(r.and_then(|x| x.0))
 }
 
+/// 쓰기 역할이 `when_hint` 를 고칠 수 있나(192 의 GRANT).
+async fn can_write_when(write: &PgPool) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        "select has_column_privilege(current_user, 'agent_memory', 'when_hint', 'UPDATE')",
+    )
+    .fetch_one(write)
+    .await
+}
+
+async fn read_when(c: &PgPool, me: &Account, slug: &str) -> Result<Option<String>, sqlx::Error> {
+    let r: Option<(Option<String>,)> = sqlx::query_as(
+        "select when_hint from agent_memory where account_id = $1::uuid and slug = $2",
+    )
+    .bind(&me.id)
+    .bind(slug)
+    .fetch_optional(c)
+    .await?;
+    Ok(r.and_then(|x| x.0))
+}
+
+/// 빈 글자면 지운다(`description` 과 같다). `updated_at` 은 바로 앞 본문 쓰기가 이미 옮겼다.
+async fn write_when(
+    write: &PgPool,
+    me: &Account,
+    slug: &str,
+    when: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "update agent_memory set when_hint = nullif($3, '') where account_id = $1::uuid and slug = $2",
+    )
+    .bind(&me.id)
+    .bind(slug)
+    .bind(when)
+    .execute(write)
+    .await?;
+    Ok(())
+}
+
 /// `datetime({offset:true})` 부분집합 + Postgres 가 읽는지(쓰기 전, 못 읽으면 TS 로).
 async fn date_ok(pool: &PgPool, s: &str) -> Option<()> {
     if !super::mem_writes::datetime_ok(s) {
@@ -447,6 +487,7 @@ async fn set(
         _ => return None,
     };
     let description = opt_str(args, "description", MAX_DESCRIPTION)?;
+    let when = opt_str(args, "when", MAX_WHEN)?;
     let kind = kind_arg(args)?;
     let expect = super::mem_writes::if_updated_at(args)?;
     if let Some(Some(at)) = expect {
@@ -472,7 +513,19 @@ async fn set(
             return Some(r);
         }
     }
-    let flag = value.and_then(|v| scan_write(&[Some(v), description]));
+    // 쓰기 **전에** 칸 권한을 본다 — 본문만 저장되고 「언제」는 거절되는 반쪽 쓰기를 막는다.
+    if when.is_some() && value.is_some() && !can_write_when(write).await.ok()? {
+        return Some(err(
+            "when_unavailable",
+            "이 서버는 아직 `when` 칸을 쓸 수 없다(권한 없음) — when 을 빼고 다시 써라. 아무것도 저장하지 않았다.",
+        ));
+    }
+    // 안 준 「언제」는 있던 것이 남는다 — 남는 글자까지 검사해야 걸린 문장이 본문만 고쳐 풀리지 않는다.
+    let kept = match (when, value) {
+        (None, Some(_)) => read_when(read, me, slug).await.ok()?,
+        _ => None,
+    };
+    let flag = value.and_then(|v| scan_write(&[Some(v), description, when.or(kept.as_deref())]));
     // 여기부터 쓰기다(W1).
     let r = match value {
         None => delete(write, me, turn, slug, expect).await,
@@ -495,6 +548,11 @@ async fn set(
         Ok(r) => r,
         Err(_) => return Some(internal()),
     };
+    if let (SetOutcome::Ok, Some(w), Some(_)) = (&r, when, value)
+        && write_when(write, me, slug, w).await.is_err()
+    {
+        return Some(internal());
+    }
     match r {
         SetOutcome::Conflict(now) => {
             let message = match &now {
