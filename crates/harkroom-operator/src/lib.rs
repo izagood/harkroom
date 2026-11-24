@@ -42,6 +42,7 @@ pub mod codex_hook;
 pub mod codex_login;
 pub mod community;
 pub mod device_capacity;
+pub mod disk_reclaim;
 pub mod doctor;
 pub mod endpoint;
 pub mod file_lock;

@@ -543,6 +543,12 @@ pub fn spawn_server_link(
     state.set_runner_link(std::sync::Arc::clone(&bridge.runner_link));
     // 앱의 `terminal*` 요청이 같은 허브를 쓴다(s21c-4).
     state.set_local_terminal(std::sync::Arc::clone(&bridge.hub));
+    // 디스크 여유가 모자라면 환경 변수에 적힌 폴더를 비운다 — 변수가 비어 있으면 아무것도 하지 않는다.
+    crate::disk_reclaim::start(
+        std::env::var_os(crate::disk_reclaim::ENV_DIRS).as_deref(),
+        std::path::PathBuf::from(&cleanup_home),
+        root.to_path_buf(),
+    );
     // 작업 폴더 청소(s21c5-4, TS run.ts 377·767). 주인 장부는 relay 가로채기 자리에, 서비스는 앱 소켓에 건다. 기동 1분 뒤·1시간마다 돈다.
     state.set_workspace_cleanup(crate::workspace_cleanup::wire::wire(
         crate::workspace_cleanup::wire::WireInputs {
