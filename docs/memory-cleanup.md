@@ -6,11 +6,12 @@
 ## 모양
 
 - 서버 루프 `memory.daily`(`loops/memory_daily.rs`)가 하루 한 번 에이전트마다 `bg_job`(kind `cleanup`)을 넣는다.
-- 시각: 워크스페이스 설정 `GET·PUT /settings/memory-cleanup`(`enabled`·`time`·`tz`, 기본 켬·03:00·Asia/Seoul). 그때부터 2시간 안에서
+- 시각: 워크스페이스 설정 `GET·PUT /settings/memory-cleanup`(`enabled`·`time`·`tz`, 기본 켬·03:00·Asia/Seoul, 틀린 칸은 400 `bad_time`·`bad_tz`). 그때부터 2시간 안에서
   에이전트마다 흩는다. 새로 넣는 것은 설정 시각 뒤 4시간까지다.
 - 꺼져 있던 에이전트: 회차는 24시간 기다린다. 그 사이 접속하면 한 번 집고, 넘기면 닫힌다(쌓이지 않는다).
 - 건너뛰기: 지난 정리 뒤 기억 쓰기가 없고 정리 신호도 없으면 넣지 않는다.
 - 에이전트별 끄기: `GET·PUT /accounts/agents/{id}/memory-cleanup`(기본 켬). 증류·구조 정리의 `bg_enabled` 와 따로다.
+  GET 은 워크스페이스 값(`workspace`: `enabled`·`time`·`tz`)을 읽기 전용으로 함께 싣는다.
 - 결과는 채팅에 쓰지 않는다. 바꾼 것은 `bg_job`·`bg_job_change` 에 남고 되돌릴 수 있다.
 - 러너가 5분마다 `bg.claim` 으로 묻는다. 동시 턴 자리는 한 칸을 사람 턴 몫으로 남기고 잡는다.
 - 지금 회차를 돌리는 하네스는 claude-code 뿐이다. API 키 연결 러너는 돌리지 않는다.

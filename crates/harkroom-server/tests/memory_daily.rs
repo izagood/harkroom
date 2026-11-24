@@ -159,4 +159,19 @@ async fn daily_cleanup_runs_once_and_skips_idle() {
         .await
         .unwrap();
     assert_eq!(produce(&w).await.unwrap(), 0);
+
+    // 설정 저장 — 어느 칸이 틀렸는지 코드로 가른다.
+    use harkroom_server::core::agent_memory_write::schedule_error;
+    for (time, tz, want) in [
+        ("03:00", "Asia/Seoul", None),
+        ("3:00", "Asia/Seoul", Some("bad_time")),
+        ("03:00", "Asia/Seol", Some("bad_tz")),
+        ("24:00", "Asia/Seol", Some("bad_time")),
+    ] {
+        assert_eq!(
+            schedule_error(&p, time, tz).await.unwrap(),
+            want,
+            "{time} {tz}"
+        );
+    }
 }
