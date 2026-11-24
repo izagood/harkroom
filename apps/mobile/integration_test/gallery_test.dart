@@ -139,8 +139,6 @@ void main() {
       await tester.pump(const Duration(milliseconds: 60));
     }
 
-    await tester.tap(find.byKey(const Key('tab-inbox')));
-    await shot(tester, '04-inbox');
     // S5a: DM 탭 · 에이전트 탭(S7 전 빈 자리).
     await tester.tap(find.byKey(const Key('tab-dms')));
     await shot(tester, '04b-dms');
@@ -281,8 +279,6 @@ void main() {
     await pair('a-home');
     await tester.tap(find.byKey(const Key('tab-dms')));
     await pair('b-dms');
-    await tester.tap(find.byKey(const Key('tab-inbox')));
-    await pair('c-inbox');
     await tester.tap(find.byKey(const Key('tab-agents')));
     await pair('d-agents');
   });

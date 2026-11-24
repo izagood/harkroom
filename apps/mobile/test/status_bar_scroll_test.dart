@@ -158,9 +158,9 @@ void main() {
     expect(c.offset, 0);
   }, variant: ios);
 
-  testWidgets('DM·인박스·에이전트 뿌리 목록도 Scaffold 가 굴리는 손잡이를 집는다', (tester) async {
+  testWidgets('DM·에이전트 뿌리 목록도 Scaffold 가 굴리는 손잡이를 집는다', (tester) async {
     await _pump(tester);
-    for (final (i, key) in [(1, 'tab-dms'), (2, 'tab-inbox'), (3, 'tab-agents')]) {
+    for (final (i, key) in [(1, 'tab-dms'), (2, 'tab-agents')]) {
       await tester.tap(find.byKey(Key(key)));
       await tester.pumpAndSettle();
       expect(TabNavigators.active!.scrolls[i].hasClients, isTrue, reason: key);
@@ -196,14 +196,14 @@ void main() {
     expect(feed.offset, 0, reason: '스레드에 덮인 채널 피드');
 
     final before = thread.offset;
-    await tester.tap(find.byKey(const Key('tab-inbox')));
+    await tester.tap(find.byKey(const Key('tab-agents')));
     await tester.pumpAndSettle();
     thread.jumpTo(0);
     await tester.pump();
     await _tapStatusBar(tester);
     await tester.pumpAndSettle();
     expect(before, greaterThan(0));
-    expect(thread.offset, 0, reason: '인박스 탭에 가려진 스레드');
+    expect(thread.offset, 0, reason: '에이전트 탭에 가려진 스레드');
   }, variant: ios);
 
   testWidgets('시트가 떠 있으면 뒤의 피드는 굴리지 않는다', (tester) async {
@@ -288,7 +288,7 @@ void main() {
     c.jumpTo(c.position.maxScrollExtent);
     await tester.pump();
     final held = c.offset;
-    await tester.tap(find.byKey(const Key('tab-inbox')));
+    await tester.tap(find.byKey(const Key('tab-agents')));
     await tester.pumpAndSettle();
     await _tapStatusBar(tester);
     await tester.pumpAndSettle();

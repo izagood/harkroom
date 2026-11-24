@@ -41,6 +41,13 @@ class _Server {
 
   /// `/inbox` 를 망 오류로 끊는다.
   bool failInbox = false;
+  bool failMessages = false;
+
+  /// `/inbox` 가 주는 안 읽은 줄 id → 채널. `POST /inbox/read` 가 지운다.
+  final inboxRows = <int, String>{};
+
+  /// 채우면 `GET /inbox` 는 물은 **그때의** 줄을 이것이 끝난 뒤에 준다(늦은 응답).
+  Future<void>? holdInbox;
 
   /// 옛 서버 흉내 — prefs 를 실으면 400(strict).
   bool strictPrefs = false;
@@ -79,7 +86,26 @@ class _Server {
               return _json({'dms': dms});
             }(),
           _ when path.startsWith('/inbox') && failInbox => throw http.ClientException('망 없음'),
-          _ when path.startsWith('/inbox') => _json({'entries': <Object?>[]}),
+          '/inbox/read' => () {
+              for (final id in (jsonDecode(req.body) as Map)['ids'] as List) {
+                inboxRows.remove(id);
+              }
+              return _json(<String, Object?>{});
+            }(),
+          _ when path.startsWith('/inbox') => await () async {
+              final body = {
+                'entries': [
+                  for (final e in inboxRows.entries)
+                    {
+                      'id': e.key, 'messageId': 'm${e.key}', 'reason': 'mention', 'channelId': e.value, 'authorId': _b,
+                      'body': 'x', 'createdAt': '2026-11-24T00:00:00Z', 'threadRootId': null, 'readAt': null,
+                    },
+                ],
+              };
+              if (holdInbox case final hold?) await hold;
+              return _json(body);
+            }(),
+          _ when path.endsWith('/messages') && failMessages => _json({'error': {'code': 'x', 'message': 'x'}}, 500),
           _ when path.endsWith('/messages') => _json({'messages': <Object?>[], 'hasMore': false}),
           _ when path.endsWith('/auto-mentions') => _json({'autoMentions': <Object?>[]}),
           _ => _json({'error': {'code': 'not_found', 'message': path}}, 404),
@@ -268,6 +294,56 @@ void main() {
       await c.setPreview(false);
       expect(acme.pushCalls.last, 'PUT /push/devices {"token":"ab","platform":"ios","env":"sandbox","prefs":{"preview":false}}');
       expect(acme.pushCalls.where((x) => !x.contains('"prefs"')), isEmpty);
+    });
+
+    test('채널을 열면 앱 아이콘 배지가 그 채널 몫만큼 준다 — 다른 채널 것은 남는다', () async {
+      await boot();
+      acme.inboxRows.addAll({1: _ch, 2: _ch, 3: 'other'});
+      await app.loadInbox();
+      PushCoordinator(app, push);
+      app.notifyListeners();
+      await pumpEventQueue();
+      expect(push.badges.last, 3);
+
+      await app.openChannel(_ch);
+      await pumpEventQueue();
+      expect(push.badges.last, 1);
+      expect(acme.inboxRows.keys, [3], reason: '서버에도 읽음으로 적는다');
+
+      // 이미 받아 둔 채널을 다시 열어도 새로 온 부름이 읽음이 된다.
+      acme.inboxRows[4] = _ch;
+      await app.loadInbox();
+      await pumpEventQueue();
+      expect(push.badges.last, 2);
+      await app.openChannel(_ch);
+      await pumpEventQueue();
+      expect(push.badges.last, 1);
+    });
+
+    test('읽기 전에 물은 인박스 답이 늦게 와도 배지가 되살아나지 않는다', () async {
+      await boot();
+      acme.inboxRows.addAll({1: _ch});
+      await app.loadInbox();
+      final gate = Completer<void>();
+      acme.holdInbox = gate.future;
+      final late = app.loadInbox();
+      await pumpEventQueue();
+      await app.openChannel(_ch);
+      await pumpEventQueue();
+      expect(app.inboxUnread, 0);
+      gate.complete();
+      await late;
+      expect(app.inboxUnread, 0);
+    });
+
+    test('채널을 못 불러왔으면 배지를 줄이지 않는다', () async {
+      await boot();
+      acme.inboxRows.addAll({1: _ch, 2: 'other'});
+      await app.loadInbox();
+      acme.failMessages = true;
+      await app.openChannel(_ch);
+      await pumpEventQueue();
+      expect(app.inboxUnread, 2);
     });
 
     test('다시 앞에 올 때 다시 읽기가 실패해도 던지지 않는다', () async {

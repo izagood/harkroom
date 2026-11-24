@@ -470,7 +470,7 @@ void main() {
   });
 
   group('홈 카드', () {
-    testWidgets('셋째 칸 「저장」에 할 것 개수, 누르면 저장 화면', (tester) async {
+    testWidgets('둘째 칸 「저장」에 할 것 개수, 누르면 저장 화면', (tester) async {
       final server = _Server();
       late AppState app;
       await tester.runAsync(() async => app = await _open(server));
@@ -484,7 +484,7 @@ void main() {
       expect(card, findsOneWidget);
       expect(find.descendant(of: card, matching: find.text('저장')), findsOneWidget);
       expect(find.descendant(of: card, matching: find.text('2')), findsOneWidget);
-      for (final label in ['내 차례', '새로 온 것', '저장']) {
+      for (final label in ['새로 온 것', '저장']) {
         final text = tester.renderObject<RenderParagraph>(find.text(label));
         expect(text.didExceedMaxLines, isFalse, reason: '$label 가 잘렸다');
       }
@@ -492,8 +492,8 @@ void main() {
       final semantics = tester.ensureSemantics();
       expect(tester.getSemantics(card).label, '저장 2');
       expect(tester.getSemantics(find.byKey(const Key('card-new'))).label, '새로 온 것 5');
-      // 묶으면서 탭 동작이 빠지면 안 된다 — 카드 셋 모두(designer #1236).
-      for (final key in ['card-my-turn', 'card-new', 'card-saved']) {
+      // 묶으면서 탭 동작이 빠지면 안 된다 — 카드 둘 모두(designer #1236).
+      for (final key in ['card-new', 'card-saved']) {
         expect(tester.getSemantics(find.byKey(Key(key))).getSemanticsData().hasAction(SemanticsAction.tap), isTrue,
             reason: '$key 에 tap 동작이 없다');
       }

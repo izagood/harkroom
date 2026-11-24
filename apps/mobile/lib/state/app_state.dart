@@ -158,17 +158,20 @@ class AppState extends ChangeNotifier {
   /// 넣은 직후(아직 로그인 전)는 비어 있다.
   String? activeKey;
 
-  /// 홈의 탭(0 채널 · 1 인박스 · 2 나). **홈 위젯이 아니라 여기 둔다** — 커뮤니티를 옮기는 동안
+  /// 홈의 탭(0 홈 · 1 DM · 2 에이전트). **홈 위젯이 아니라 여기 둔다** — 커뮤니티를 옮기는 동안
   /// 부팅 화면이 서면 홈이 통째로 다시 만들어지고, 위젯 안의 탭은 채널로 튄다. 망이 빠르면 안
   /// 튀고 느리면 튀면, 같은 동작이 망 속도에 따라 다르게 보인다(designer #1046).
   int homeTab = 0;
+
+  /// 에이전트 탭의 번호 — 화면 쪽 `TabNavigators.agents` 가 이 값을 쓴다.
+  static const agentsTab = 2;
 
   void selectTab(int tab) {
     if (homeTab == tab) return;
     homeTab = tab;
     notifyListeners();
     // 에이전트 탭은 열 때마다 새로 읽는다 — 도는 턴은 분 단위로 바뀌고 소켓이 알려 주지 않는다.
-    if (tab == 3) unawaited(loadAgents());
+    if (tab == agentsTab) unawaited(loadAgents());
   }
 
   /// 쓰던 글(D8): 커뮤니티 열쇠 → 작성칸 키(채널 id · 스레드 루트 id) → 글.
@@ -231,19 +234,8 @@ class AppState extends ChangeNotifier {
   /// 나를 부른 것들(새것 먼저). 서버가 준 순서를 뒤집지 않는다.
   final List<InboxEntry> inbox = [];
 
-  /// 아직 안 본 부름(멘션·DM·답글 등)의 수 — 앱 아이콘 배지(푸시)가 읽는다. 탭 배지·머리 숫자는 [inboxMentionCount].
+  /// 아직 안 본 부름(멘션·DM·답글 등)의 수 — 앱 아이콘 배지(푸시)가 읽는다.
   int get inboxUnread => inbox.where((e) => e.isUnread).length;
-
-  /// 인박스 탭이 보이는 것 — 안 읽은 **멘션(팀 멘션 포함)·DM** 만. 답글·물음 답 등은 빠진다(소유자 결정).
-  /// 인박스 목록·탭 배지·홈 「내 차례」·머리 숫자가 이것을 읽는다. 앱 아이콘 배지는 그대로 [inboxUnread] 다.
-  List<InboxEntry> get inboxMentions => [
-        for (final e in inbox)
-          if (e.isUnread && (e.reason == InboxReason.mention || e.reason == InboxReason.teamMention || e.reason == InboxReason.dm)) e,
-      ];
-
-  int get inboxMentionCount => inboxMentions.length;
-
-  // 「내 작업」 보드(`GET /inbox/board`)는 걷었다 — 인박스 탭은 [inboxMentions] 를 보이고, 배지는 [inboxMentionCount] 다.
 
   /// 채널 id → 읽음 위치와 안 읽은 수. **서버가 센다** — 클라이언트가 세면 열지 않은
   /// 채널에서 틀린다.
@@ -1574,6 +1566,10 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// inbox 줄 id → 읽은 차례. [loadInbox] 가 제 요청보다 늦게 읽은 줄을 가려낸다.
+  final Map<int, int> _inboxReadAt = {};
+  int _inboxReadTick = 0;
+
   Future<void> loadInbox() async {
     final api = _api;
     if (api == null) return;
@@ -1584,6 +1580,7 @@ class AppState extends ChangeNotifier {
       notifyListeners();
     }
     final gen = _generation;
+    final tick = _inboxReadTick;
     try {
       final entries = await api.inbox();
       // 로그인 직후 로그아웃하고 다른 계정으로 들어왔을 때, 옛 계정의 인박스가 늦게 와서
@@ -1591,7 +1588,10 @@ class AppState extends ChangeNotifier {
       if (gen != _generation) return;
       inbox
         ..clear()
-        ..addAll(entries);
+        // 이 요청을 보낸 **뒤에** 읽은 줄은 응답이 아직 안 읽음이라 해도 읽음으로 둔다 — 안 그러면 채널을
+        // 열어 줄인 배지가 늦은 응답에 되살아난다(알림을 눌러 앱에 돌아올 때가 그렇다).
+        ..addAll(entries.map((e) =>
+            e.isUnread && (_inboxReadAt[e.id] ?? -1) > tick ? e.withReadAt(DateTime.now().toUtc().toIso8601String()) : e));
       inboxLoad = LoadState.loaded;
     } on Object catch (e) {
       if (gen != _generation) return;
@@ -1632,34 +1632,37 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 한 줄을 읽음으로 만든다.
+  /// 이 채널로 온 안 읽은 것을 모두 읽음으로 — **채널을 열었을 때** 부른다(데스크톱 `settleReadPosition` 과 같다).
+  /// 채널 읽음(`PUT /channels/:id/read`)은 서버가 inbox 로 옮겨 적지 않으므로, 이것이 없으면 채널을 열어도
+  /// 앱 아이콘 배지([inboxUnread])가 줄지 않는다.
+  Future<void> markChannelInboxRead(String channelId) => markInboxRead([
+        for (final e in inbox)
+          if (e.isUnread && e.channelId == channelId) e.id,
+      ]);
+
+  /// 여러 줄을 읽음으로 만든다.
   ///
   /// **화면을 먼저 고친다** — 눌렀는데 배지가 그대로면 사람은 안 눌린 줄 알고 다시
   /// 누른다. 실패해도 되돌리지 않는다: 사람은 이미 봤고, 되살아나는 배지가 더 이상하다.
   Future<void> markInboxRead(List<int> ids) async {
     if (ids.isEmpty) return;
+    final api = _api;
+    if (api == null) return;
+    final tick = ++_inboxReadTick;
+    for (final id in ids) {
+      _inboxReadAt[id] = tick;
+    }
     final now = DateTime.now().toUtc().toIso8601String();
     for (var i = 0; i < inbox.length; i += 1) {
       final e = inbox[i];
       if (!ids.contains(e.id) || !e.isUnread) continue;
-      inbox[i] = InboxEntry(
-        id: e.id,
-        messageId: e.messageId,
-        reason: e.reason,
-        channelId: e.channelId,
-        authorId: e.authorId,
-        body: e.body,
-        createdAt: e.createdAt,
-        threadRootId: e.threadRootId,
-        readAt: now,
-        meta: e.meta,
-        system: e.system,
-      );
+      inbox[i] = e.withReadAt(now);
     }
     notifyListeners();
     try {
-      await _api!.markInboxRead(ids);
+      await api.markInboxRead(ids);
     } on Object {
+      ids.forEach(_inboxReadAt.remove);
       // 다음 `loadInbox` 가 서버의 사실로 덮는다.
     }
   }
@@ -1866,6 +1869,7 @@ class AppState extends ChangeNotifier {
     if (channelLoad[channelId] == LoadState.loaded ||
         channelLoad[channelId] == LoadState.loading) {
       notifyListeners();
+      if (channelLoad[channelId] == LoadState.loaded) unawaited(markChannelInboxRead(channelId));
       return;
     }
     channelLoad[channelId] = LoadState.loading;
@@ -1900,6 +1904,8 @@ class AppState extends ChangeNotifier {
       if (!await loadOlder(channelId)) break;
     }
     if (gen != _generation) return;
+    // 응답을 기다리는 사이 다른 채널로 갔으면 한 줄도 못 본 채널이다 — inbox 는 읽음으로 하지 않는다.
+    if (openChannelId == channelId) unawaited(markChannelInboxRead(channelId));
     await markRead(channelId);
   }
 
@@ -2902,6 +2908,7 @@ class AppState extends ChangeNotifier {
   void _resetSession() {
     me = null;
     inbox.clear();
+    _inboxReadAt.clear();
     threadPlans.clear();
     threadPlanDenied.clear();
     threadPlanChecked.clear();

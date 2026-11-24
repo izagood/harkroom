@@ -7,7 +7,7 @@ import '../state/app_state.dart';
 /// 탭마다 자기 화면 쌓기(Navigator)를 둔다 — 하단 탭 바가 채널·스레드 안에서도 남게
 /// (하단 네비 고정 D1·D2, 2026-10-14 소유자 「전부 A」).
 ///
-/// 전에는 채널·스레드·인박스 상세가 **루트** Navigator 에 밀려 들어가 탭 바를 덮었다. 이제 탭 안에서
+/// 전에는 채널·스레드가 **루트** Navigator 에 밀려 들어가 탭 바를 덮었다. 이제 탭 안에서
 /// `Navigator.of(context)` 는 그 탭의 쌓기를 집는다 — 목록 → 채널 → 스레드는 그대로 두면 된다.
 ///
 /// 전체 화면으로 떠야 하는 것은 두 갈래다:
@@ -19,9 +19,10 @@ import '../state/app_state.dart';
 class TabNavigators {
   TabNavigators();
 
-  static const count = 4;
+  static const count = 3;
   static const home = 0;
   static const dms = 1;
+  static const agents = AppState.agentsTab;
 
   /// 지금 떠 있는 홈 화면의 쌓기. 홈 위(PushGate)·루트 화면(설정·미리보기)은 트리에서 이것을 못 찾는다.
   /// 홈이 없으면(로그인 전·시험) null — 그때 [openChannelScreen] 은 건네받은 Navigator 에 민다.
@@ -41,7 +42,7 @@ class TabNavigators {
 
   NavigatorState? navigator(int tab) => keys[tab].currentState;
 
-  /// 탭 쌓기 넷을 모두 뿌리로 — 커뮤니티를 옮기거나 푸시로 들어올 때 앞 화면을 남기지 않는다.
+  /// 탭 쌓기를 모두 뿌리로 — 커뮤니티를 옮기거나 푸시로 들어올 때 앞 화면을 남기지 않는다.
   void popAll() {
     for (final k in keys) {
       k.currentState?.popUntil((r) => r.isFirst);
@@ -127,7 +128,7 @@ void popRootToHome(BuildContext context) =>
 
 /// 채널·스레드 화면을 연다.
 ///
-/// - 탭 **안**에서 부르면 그 탭 쌓기에 민다 — 인박스에서 연 스레드는 인박스 탭에 남는다.
+/// - 탭 **안**에서 부르면 그 탭 쌓기에 민다 — DM 탭에서 연 스레드는 DM 탭에 남는다.
 /// - 탭 **밖**(찾기 화면·푸시·부팅)에서 부르면 루트 위의 것을 걷고, 그 채널이 사는 탭을 골라
 ///   그 쌓기에 민다. [navigator] 를 주면(PushGate 처럼 홈 위에 있는 쪽) 그것을 탭 밖으로 본다.
 Future<void> openChannelScreen(

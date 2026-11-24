@@ -171,13 +171,6 @@ void main() {
       // 다시 찾아가서 본다.
       await _seek(tester, find.byKey(Key('ask-chosen-$_ask')));
 
-      // 탭 막대는 채널 화면 **밖**에만 있다 — 채널은 탭 위로 밀어 넣은 화면이다.
-      await _tap(tester, find.byType(BackButton));
-      await _tap(tester, find.byKey(const Key('tab-inbox')));
-      final entry = find.byWidgetPredicate(_keyStarts('inbox-'));
-      await _until(tester, entry);
-      await _tap(tester, entry.first);
-      await _until(tester, find.byKey(const Key('composer')));
     }
 
     expect(tester.takeException(), isNull);
@@ -186,7 +179,7 @@ void main() {
 
 bool Function(Widget) _keyStarts(String prefix) => (w) {
       final k = w.key;
-      return k is ValueKey<String> && k.value.startsWith(prefix) && k.value != 'inbox-mark-all';
+      return k is ValueKey<String> && k.value.startsWith(prefix);
     };
 
 Future<void> _until(

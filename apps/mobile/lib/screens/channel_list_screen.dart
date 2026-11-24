@@ -384,7 +384,7 @@ class _SectionHeader extends StatelessWidget {
   }
 }
 
-/// 홈 맨 위 바로가기 카드 셋(개정판 3.2, S5c): 「내 차례」 → 인박스 탭, 「새로 온 것」 → 안 읽은 채널만,
+/// 홈 맨 위 바로가기 카드 둘(개정판 3.2, S5c): 「새로 온 것」 → 안 읽은 채널만,
 /// 「저장」 → 저장된 메시지 화면(#219).
 /// 「초안」 은 초안 저장이 생길 때(S8), 「도는 에이전트」 는 S7 에서 더한다.
 class ShortcutCards extends StatelessWidget {
@@ -401,17 +401,6 @@ class ShortcutCards extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(HarkroomSize.gutter, 8, HarkroomSize.gutter, 8),
       child: Row(
         children: [
-          Expanded(
-            child: _ShortcutCard(
-              key: const Key('card-my-turn'),
-              icon: Icons.inbox_outlined,
-              label: t.cardMyTurn,
-              count: app.inboxMentionCount,
-              selected: false,
-              onTap: () => app.selectTab(2),
-            ),
-          ),
-          const SizedBox(width: 8),
           Expanded(
             child: _ShortcutCard(
               key: const Key('card-new'),
