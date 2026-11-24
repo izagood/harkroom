@@ -471,6 +471,102 @@ fn warnings_text(w: &[String]) -> String {
     format!("[{}]", w.join(","))
 }
 
+/// 새 slug 로 쓸 때 알리는 비슷한 기억의 수.
+const SIMILAR_MAX: usize = 3;
+/// 알림 문턱(거절 문턱은 audit 의 비슷한 짝과 같다).
+const SIMILAR_NAME_NOTICE: f64 = 0.3;
+const SIMILAR_DESC_NOTICE: f64 = 0.25;
+
+/// 비슷한 기존 기억 하나.
+#[derive(Debug, PartialEq)]
+struct Similar {
+    slug: String,
+    description: Option<String>,
+    archived: bool,
+    score: f64,
+    /// 많이 겹친다 — `confirmNew` 없이는 거절한다.
+    strong: bool,
+}
+
+impl Similar {
+    fn text(&self) -> String {
+        Obj::default()
+            .v("slug", self.slug.as_str())
+            .v("description", self.description.as_deref())
+            .v("archived", self.archived)
+            .v("similarity", (self.score * 100.0).round() / 100.0)
+            .text()
+    }
+}
+
+/// 이름·요약이 비슷한 것 위 [`SIMILAR_MAX`]개. `rows` 는 (slug, 요약, 보관됨) — 자기 자신과 core 는 없다고 본다.
+fn similar_to(
+    slug: &str,
+    description: Option<&str>,
+    rows: Vec<(String, Option<String>, bool)>,
+) -> Vec<Similar> {
+    use super::mem_audit::{DESC_SIMILARITY, NAME_SIMILARITY, desc_tokens, jaccard, name_tokens};
+    let name = name_tokens(slug);
+    let desc = desc_tokens(description);
+    let mut out: Vec<Similar> = rows
+        .into_iter()
+        .filter_map(|(slug, d, archived)| {
+            let other = name_tokens(&slug);
+            let n = jaccard(&name, &other);
+            let m = jaccard(&desc, &desc_tokens(d.as_deref()));
+            if n < SIMILAR_NAME_NOTICE && m < SIMILAR_DESC_NOTICE {
+                return None;
+            }
+            // 이름 조각 하나만 같은 짝(`mem/a1/x`·`mem/x`)은 거절하지 않는다.
+            let strong = (n >= NAME_SIMILARITY && name.intersection(&other).count() >= 2)
+                || m >= DESC_SIMILARITY;
+            Some(Similar {
+                slug,
+                description: d,
+                archived,
+                score: n.max(m),
+                strong,
+            })
+        })
+        .collect();
+    out.sort_by(|a, b| {
+        b.strong
+            .cmp(&a.strong)
+            .then_with(|| b.score.total_cmp(&a.score))
+            .then_with(|| a.slug.cmp(&b.slug))
+    });
+    out.truncate(SIMILAR_MAX);
+    out
+}
+
+/// 이 slug 가 처음 쓰는 것이면 비슷한 기존 기억(보관 포함), 이미 있으면(보관된 것도) 빈 목록.
+async fn similar_existing(
+    read: &PgPool,
+    me: &Account,
+    slug: &str,
+    description: Option<&str>,
+) -> Result<Vec<Similar>, sqlx::Error> {
+    // 걸린 판의 요약은 어디에도 싣지 않는다(이름만 견준다).
+    let rows: Vec<(String, Option<String>, bool)> = sqlx::query_as(
+        "select slug, case when flagged_at is null then description end, archived_at is not null \
+         from agent_memory where account_id = $1::uuid and slug <> 'core'",
+    )
+    .bind(&me.id)
+    .fetch_all(read)
+    .await?;
+    if rows.iter().any(|r| r.0 == slug) {
+        return Ok(vec![]);
+    }
+    Ok(similar_to(slug, description, rows))
+}
+
+fn similar_text(v: &[Similar]) -> String {
+    format!(
+        "[{}]",
+        v.iter().map(Similar::text).collect::<Vec<_>>().join(",")
+    )
+}
+
 pub async fn answer(
     read: &PgPool,
     write: Option<&PgPool>,
@@ -510,6 +606,10 @@ async fn set(
     let description = opt_str(args, "description", MAX_DESCRIPTION)?;
     let when = opt_str(args, "when", MAX_WHEN)?;
     let kind = kind_arg(args)?;
+    let confirm_new = match args.get("confirmNew") {
+        None => false,
+        Some(v) => v.as_bool()?,
+    };
     let expect = super::mem_writes::if_updated_at(args)?;
     if let Some(Some(at)) = expect {
         date_ok(write, at).await?;
@@ -540,6 +640,18 @@ async fn set(
             "when_unavailable",
             "이 서버는 아직 `when` 칸을 쓸 수 없다(권한 없음) — when 을 빼고 다시 써라. 아무것도 저장하지 않았다.",
         ));
+    }
+    // 새 이름으로 쪼개 쓰는 것을 막는다. 판(ifUpdatedAt 시각)을 준 쓰기는 있는 것을 고치는 것이라 보지 않는다.
+    let similar = if slug != "core" && value.is_some() && !matches!(expect, Some(Some(_))) {
+        similar_existing(read, me, slug, description).await.ok()?
+    } else {
+        vec![]
+    };
+    if !confirm_new && similar.iter().any(|s| s.strong) {
+        return Some(err_obj(&Obj::default()
+            .v("code", "similar_exists")
+            .v("message", "이름이나 요약이 많이 겹치는 기억이 이미 있다(similar). memory.get 으로 읽고 같은 주제면 새로 만들지 말고 그 기억을 고쳐라(보관된 것은 memory.unarchive 뒤에). 정말 다른 주제면 confirmNew: true 로 같은 인자를 다시 보내라.")
+            .raw("similar", similar_text(&similar))));
     }
     // 안 준 「언제」·요약은 있던 것이 남는다 — 남는 글자까지 검사해야 걸린 문장이 본문만 고쳐 풀리지 않는다.
     let (kept_when, kept_description) = if value.is_some() {
@@ -614,6 +726,9 @@ async fn set(
         let mut out = Obj::default().v("ok", true);
         if !warnings.is_empty() {
             out.push_raw("warnings", warnings_text(&warnings));
+        }
+        if !similar.is_empty() {
+            out.push_raw("similar", similar_text(&similar));
         }
         if state_like {
             out.push_v(
