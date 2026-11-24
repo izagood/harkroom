@@ -1,31 +1,108 @@
-//! S5.4 A2a — `workitem.remove`·`workitem.upsert`(TS mcpPlugin.ts 의 그 도구 → services/workItems.ts `removeWorkItem`·`upsertWorkItem`).
+//! `workitem.upsert`·`workitem.list`·`workitem.remove` — 「내 작업」 보드를 걷으며(P4) **저장하지 않는 도구**가 됐다.
 //!
-//! 주인 판정·가시성 술어는 REST `GET·DELETE /work-items`(`writes_misc.rs`)와 같은 것을 쓴다.
-//! - remove: `(source, externalKey)` 로 지운다. 범위 밖(남의 보드·주인이 아닌 쪽이 못 보는 스레드)은 없는 것과 같은 `removed: false` 다.
-//! - upsert: avcs 키·상태 규칙 → 스레드 가시성(주인·쓰는 계정 둘 다) → 주인별 잠금 → 못 보는 기존 항목 덮기 거절 → 상한 → insert/update.
-//!   **`state: done` 이면서 스레드가 붙은 요청은 TS 로 넘긴다** — 같은 트랜잭션에서 위임장을 끝내야 하는데(`endMandatesForDoneThreadTx`)
-//!   그 처리가 아직 Rust 에 없다(REST `PUT /work-items` 가 TS 에 남은 것과 같은 까닭).
-//! - zod 가 거절할 인자는 `None`(TS 가 같은 검증 오류를 낸다). 쓰기 전 DB 오류도 `None`. 쓰기 트랜잭션을 연 뒤의 오류는 `internal`(security W1).
-//! - 바뀌면 같은 트랜잭션에서 주인에게 `inbox.updated` 를 낸다(TS 는 커밋 뒤 `emitEvent` — outbox 라 커밋된 뒤에만 보인다).
-use super::tools::err;
+//! 도구 이름·스키마는 이번 판에 남긴다(지우는 것은 뒤 단계) — 예전 판 지시를 따르는 에이전트가 부르면 예전과 **같은 꼴의 성공**을
+//! 돌려주고 DB 에는 닿지 않는다(표 `work_item` 은 남는다).
+//! - upsert: 인자 검사(zod 와 같은 좁은 꼴 + avcs·상태 규칙)를 지나면 `{"item":{…}}` — 칸 이름·차례는 예전 `json_build_object` 와 같고,
+//!   `id` 는 이번에만 쓰는 새 uuid, `updatedBy` 는 부른 계정, 시각은 지금이다. 스레드 가시성·상한처럼 DB 가 필요한 판정과
+//!   `state: done` 의 위임장 끝내기(`work_done`)는 더 하지 않는다.
+//! - list: `{"items":[]}`.
+//! - remove: `{"removed":false}` — 지운 것이 없다.
+//! - zod 가 거절할 인자는 `None`(앞단이 `unsupported_call` 로 답한다, 예전과 같다).
+use super::respond::text_result;
+use super::tools::{err, opt_uuid};
 use crate::auth::Account;
 use crate::lists::is_zod_uuid;
-use crate::write::emit_event;
-use crate::writes_misc::{NO_OWNER, WORK_ITEM_SOURCES, actor_sees, work_item_owner};
-use serde_json::{Value, json};
-use sqlx::PgPool;
-use std::sync::OnceLock;
+use serde_json::Value;
 
-/// `workitem.remove` 쓰기 역할의 권한. 하나라도 없으면 `main.rs` 가 풀을 비워 TS 가 답한다.
-pub const WORK_ITEM_REMOVE_PRIVILEGES: &[(&str, &str)] = &[
-    ("work_item", "DELETE"),
-    ("work_item", "SELECT"),
-    ("event_outbox", "INSERT"),
-];
-pub const WORK_ITEM_REMOVE_SEQUENCES: &[(&str, &str)] = &[("event_outbox_id_seq", "USAGE")];
+/// 예전 services/workItems.ts `WORK_ITEM_SOURCES`.
+pub(crate) const WORK_ITEM_SOURCES: &[&str] = &["github", "jira", "slack", "other", "avcs"];
+
+/// 인자가 zod 를 못 지나면 `None`. 저장한 것이 없으니 늘 `removed: false`.
+pub fn remove(args: &Value) -> Option<String> {
+    parse_remove(args)?;
+    Some(text_result("{\"removed\":false}"))
+}
+
+/// 인자가 zod 를 못 지나면 `None`. 저장하지 않고 예전과 같은 꼴의 `{item}` 을 돌려준다.
+pub fn upsert(me: &Account, args: &Value) -> Option<String> {
+    let u = parse_upsert(args)?;
+    if let Some(code) = arg_refusal(&u) {
+        return Some(refusal(code));
+    }
+    let now = crate::core::operator_hub::now_iso();
+    let item = item_json(&u, &uuid_v4()?, &me.id, &now);
+    Some(text_result(&format!("{{\"item\":{item}}}")))
+}
+
+/// 인자가 zod 를 못 지나면 `None`. 저장한 것이 없으니 늘 빈 목록.
+pub fn list(args: &Value) -> Option<String> {
+    args.as_object()?;
+    opt_uuid(args, "threadRootId")?;
+    match args.get("source") {
+        None => {}
+        Some(Value::String(s)) if WORK_ITEM_SOURCES.contains(&s.as_str()) => {}
+        Some(_) => return None,
+    }
+    Some(text_result("{\"items\":[]}"))
+}
+
+/// 예전 `upsertWorkItem` 의 판정 가운데 DB 없이 인자만으로 정해지는 것.
+fn arg_refusal(u: &Upsert<'_>) -> Option<&'static str> {
+    if u.source == "avcs" {
+        if !avcs_key_ok(u.key) {
+            return Some("bad_key");
+        }
+        if u.state.is_some() {
+            return Some("state_not_allowed");
+        }
+        if u.thread.is_none() {
+            return Some("thread_required");
+        }
+        None
+    } else if u.state.is_none() {
+        Some("state_required")
+    } else {
+        None
+    }
+}
+
+/// 예전 `insert … returning json_build_object(…)` 와 같은 칸·같은 차례(serde_json 의 `Map` 은 키를 정렬하므로 손으로 잇는다).
+fn item_json(u: &Upsert<'_>, id: &str, by: &str, now: &str) -> String {
+    let j = |v: Option<&str>| v.map_or(Value::Null, Value::from).to_string();
+    format!(
+        "{{\"id\":{},\"source\":{},\"externalKey\":{},\"url\":{},\"title\":{},\"state\":{},\"threadRootId\":{},\"updatedBy\":{},\"createdAt\":{},\"updatedAt\":{}}}",
+        j(Some(id)),
+        j(Some(u.source)),
+        j(Some(u.key)),
+        j(u.url),
+        j(Some(u.title)),
+        j(u.state),
+        j(u.thread),
+        j(Some(by)),
+        j(Some(now)),
+        j(Some(now)),
+    )
+}
+
+/// 소문자 v4 uuid.
+fn uuid_v4() -> Option<String> {
+    let mut b = [0u8; 16];
+    getrandom::fill(&mut b).ok()?;
+    b[6] = (b[6] & 0x0f) | 0x40;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    let h: String = b.iter().map(|x| format!("{x:02x}")).collect();
+    Some(format!(
+        "{}-{}-{}-{}-{}",
+        &h[0..8],
+        &h[8..12],
+        &h[12..16],
+        &h[16..20],
+        &h[20..32]
+    ))
+}
 
 /// zod `externalKey: z.string().trim().min(1).max(300)`. JS `trim` 이 지우는 글자 가운데 Rust `trim` 이 안 지우는 것(U+FEFF)이
-/// 끝에 있으면 같은 값을 낼 수 없으니 `None`(→ TS).
+/// 끝에 있으면 같은 값을 낼 수 없으니 `None`(→ `unsupported_call`).
 pub fn parse_remove(args: &Value) -> Option<(&str, &str)> {
     let source = args.get("source")?.as_str()?;
     if !WORK_ITEM_SOURCES.contains(&source) {
@@ -36,7 +113,7 @@ pub fn parse_remove(args: &Value) -> Option<(&str, &str)> {
 }
 
 /// zod `z.string().trim().min(1).max(max)` — 길이는 UTF-16 단위. JS `trim` 과 Rust `trim` 이 다르게 지우는 글자(U+FEFF 는 JS 만,
-/// U+0085 는 Rust 만)가 들어 있으면 같은 값을 낸다고 장담할 수 없으니 `None`(→ TS).
+/// U+0085 는 Rust 만)가 들어 있으면 같은 값을 낸다고 장담할 수 없으니 `None`(→ `unsupported_call`).
 fn zod_trimmed(v: &Value, max: usize) -> Option<&str> {
     let raw = v.as_str()?;
     if raw.contains(['\u{feff}', '\u{85}']) {
@@ -46,93 +123,6 @@ fn zod_trimmed(v: &Value, max: usize) -> Option<&str> {
     (1..=max).contains(&t.encode_utf16().count()).then_some(t)
 }
 
-fn remove_sql() -> &'static str {
-    static S: OnceLock<String> = OnceLock::new();
-    S.get_or_init(|| {
-        format!(
-            "delete from work_item w where w.owner_account_id = $1::uuid and w.source = $3::text \
-               and w.external_key = $4::text and ($2::uuid = $1::uuid or {})",
-            actor_sees()
-        )
-    })
-}
-
-/// 인자가 zod 를 못 지나면 `None`(TS 가 같은 검증 오류를 낸다). 쓰기 전 DB 오류도 `None`.
-pub async fn remove(read: &PgPool, write: &PgPool, me: &Account, args: &Value) -> Option<String> {
-    let (source, key) = parse_remove(args)?;
-    let owner = match work_item_owner(read, me).await.ok()? {
-        Some(o) => o,
-        None => return Some(err("no_owner", NO_OWNER)),
-    };
-    let mut tx = write.begin().await.ok()?;
-    let done: Result<bool, sqlx::Error> = async {
-        let n = sqlx::query(remove_sql())
-            .bind(&owner)
-            .bind(&me.id)
-            .bind(source)
-            .bind(key)
-            .execute(&mut *tx)
-            .await?
-            .rows_affected();
-        if n > 0 {
-            emit_event(
-                &mut tx,
-                &json!({ "type": "inbox.updated", "accountId": owner }),
-            )
-            .await?;
-        }
-        tx.commit().await?;
-        Ok(n > 0)
-    }
-    .await;
-    Some(match done {
-        Ok(removed) => super::respond::text_result(&format!("{{\"removed\":{removed}}}")),
-        Err(_) => internal(),
-    })
-}
-
-fn internal() -> String {
-    err("internal", "the write failed; it was not retried")
-}
-
-// ── upsert ────────────────────────────────────────────────────────────
-
-/// `workitem.upsert` 쓰기 역할의 권한. 하나라도 없으면 `main.rs` 가 풀을 비워 TS 가 답한다. UPDATE 는 `on conflict do update`
-/// 가 고치는 칸만. 트랜잭션 안에서 읽는 표(기존 항목·가시성·개수)의 SELECT 도 본다.
-pub const WORK_ITEM_UPSERT_PRIVILEGES: &[(&str, &str)] = &[
-    ("work_item", "SELECT"),
-    ("work_item", "INSERT"),
-    ("work_item.url", "UPDATE"),
-    ("work_item.title", "UPDATE"),
-    ("work_item.state", "UPDATE"),
-    ("work_item.thread_root_id", "UPDATE"),
-    ("work_item.updated_by", "UPDATE"),
-    ("work_item.updated_at", "UPDATE"),
-    ("message", "SELECT"),
-    ("channel", "SELECT"),
-    ("channel_member", "SELECT"),
-    ("event_outbox", "INSERT"),
-    // TS `endMandatesForDoneThreadTx`(done + 스레드) — 고르기·잠그기(`for update` 는 칸 UPDATE 하나가 있어야 한다).
-    ("mandate.root_message_id", "SELECT"),
-    ("mandate.owner_account_id", "SELECT"),
-    // `endMandateTx`·`refreshMandateCards`(`perm_card::PERM_CARD_PRIVILEGES` 와 같은 줄들).
-    ("mandate.id", "SELECT"),
-    ("mandate.ended_at", "SELECT"),
-    ("mandate.ended_at", "UPDATE"),
-    ("mandate.end_reason", "UPDATE"),
-    ("mandate_line.mandate_id", "SELECT"),
-    ("mandate_line.revoked_at", "SELECT"),
-    ("mandate_line.revoked_at", "UPDATE"),
-    ("message.id", "SELECT"),
-    ("message.meta", "SELECT"),
-    ("message.meta", "UPDATE"),
-    // 끝낸 위임마다 감사 `mandate.ended`.
-    ("audit_log", "INSERT"),
-];
-pub const WORK_ITEM_UPSERT_SEQUENCES: &[(&str, &str)] = &[("event_outbox_id_seq", "USAGE")];
-
-/// TS `MAX_ITEMS_PER_OWNER`.
-const MAX_ITEMS_PER_OWNER: i64 = 500;
 const STATES: &[&str] = &["mine", "blocked", "active", "done"];
 
 #[derive(Debug, PartialEq)]
@@ -172,7 +162,7 @@ pub fn parse_upsert(args: &Value) -> Option<Upsert<'_>> {
 }
 
 /// zod `z.string().url().max(2000).refine(startsWith('https://'))` 의 **좁은 부분집합**. zod 는 `new URL()` 이 받으면 통과인데, WHATWG
-/// 파서를 그대로 옮기지 않고 확실히 받는 꼴만 Rust 가 답한다 — 여기서 떨어진 값은 TS 가 판정한다(넓게 받으면 TS 와 갈린다).
+/// 파서를 그대로 옮기지 않고 확실히 받는 꼴만 Rust 가 답한다 — 여기서 떨어진 값은 `unsupported_call` 이다.
 /// 받는 꼴: `https://` + 호스트(`[A-Za-z0-9-]+` 마디를 `.` 로 이음, 마지막 마디는 글자로 시작 — 숫자·`0x` 로 끝나면 IPv4 로 읽혀
 /// 실패할 수 있다, `xn--` 마디 없음) + 선택 `:포트`(1~5자리, 65535 이하) + `/`·`?`·`#` 로 시작하는 나머지(보이는 ASCII, 공백·`\\`·꺾쇠 등 없음).
 pub fn safe_https_url(u: &str) -> bool {
@@ -235,236 +225,24 @@ pub fn avcs_key_ok(k: &str) -> bool {
         && last.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
-/// TS `WORK_ITEM_REFUSAL_MESSAGE`.
+/// 예전 TS `WORK_ITEM_REFUSAL_MESSAGE` 의 글자(인자 판정 넷만).
 fn refusal(code: &str) -> String {
     err(code, refusal_message(code))
 }
 
-pub fn refusal_message(code: &str) -> &'static str {
+fn refusal_message(code: &str) -> &'static str {
     match code {
         "bad_key" => "avcs externalKey must be <repo>/<intent oid>",
         "state_not_allowed" => "avcs items carry no state — it is read from the avcs server",
         "state_required" => "state is required for non-avcs items (mine | blocked | active | done)",
-        "thread_required" => "avcs items must be attached to a thread (threadRootId)",
-        "thread_not_found" => "no such message",
-        "thread_forbidden" => "the thread is not visible to the board owner or to you",
-        "not_root" => "threadRootId must be a thread root",
-        _ => "the board already has 500 work items; remove some first",
+        _ => "avcs items must be attached to a thread (threadRootId)",
     }
-}
-
-fn thread_sql() -> &'static str {
-    static S: OnceLock<String> = OnceLock::new();
-    S.get_or_init(|| {
-        let vis = crate::core::channels::frag("channel_visible_c_p1uuid");
-        format!(
-            "select m.thread_root_id is null as is_root, ({}) as owner_sees, ({}) as actor_sees \
-               from message m join channel c on c.id = m.channel_id where m.id = $1::uuid and m.deleted_at is null",
-            vis.replace("$1::uuid", "$2::uuid"),
-            vis.replace("$1::uuid", "$3::uuid"),
-        )
-    })
-}
-
-fn existing_sql() -> &'static str {
-    static S: OnceLock<String> = OnceLock::new();
-    S.get_or_init(|| {
-        format!(
-            "select {} from work_item w where w.owner_account_id = $1::uuid and w.source = $3::text and w.external_key = $4::text",
-            actor_sees()
-        )
-    })
-}
-
-fn insert_sql() -> &'static str {
-    static S: OnceLock<String> = OnceLock::new();
-    S.get_or_init(|| {
-        format!(
-            "insert into work_item as w (owner_account_id, source, external_key, url, title, state, thread_root_id, updated_by) \
-             values ($1::uuid, $2::text, $3::text, $4::text, $5::text, $6::text, $7::uuid, $8::uuid) \
-             on conflict (owner_account_id, source, external_key) do update set \
-               url = excluded.url, title = excluded.title, state = excluded.state, \
-               thread_root_id = excluded.thread_root_id, updated_by = excluded.updated_by, updated_at = now() \
-             returning json_build_object('id', w.id, 'source', w.source, 'externalKey', w.external_key, 'url', w.url, \
-               'title', w.title, 'state', w.state, 'threadRootId', w.thread_root_id, 'updatedBy', w.updated_by, \
-               'createdAt', {}, 'updatedAt', {})::text",
-            crate::iso!("w.created_at"),
-            crate::iso!("w.updated_at"),
-        )
-    })
-}
-
-enum Wrote {
-    Item(String, Vec<String>),
-    Refused(&'static str),
-}
-
-pub async fn upsert(read: &PgPool, write: &PgPool, me: &Account, args: &Value) -> Option<String> {
-    let u = parse_upsert(args)?;
-    Some(match upsert_core(read, write, me, &u).await? {
-        Upserted::Item(item) => {
-            super::respond::text_result(&format!("{{\"item\":{}}}", super::respond::minify(&item)))
-        }
-        Upserted::NoOwner => err("no_owner", NO_OWNER),
-        Upserted::Refused(code) => refusal(code),
-        Upserted::Internal => internal(),
-    })
-}
-
-/// TS `upsertWorkItem` 의 결과 — MCP `workitem.upsert` 와 REST `PUT /work-items` 가 함께 쓴다.
-pub enum Upserted {
-    /// 항목 JSON(직렬화된 글자).
-    Item(String),
-    NoOwner,
-    Refused(&'static str),
-    Internal,
-}
-
-/// TS `END_DONE_SQL` — `endMandatesForDoneThreadTx` 의 고르기.
-const DONE_MANDATES_SQL: &str = "select id::text from mandate where root_message_id = $1::uuid \
-     and owner_account_id = $2::uuid and ended_at is null for update";
-
-/// TS `resolveWorkItemOwner` + `upsertWorkItem`. `None` = 읽기가 실패해 판정 못 함(부른 쪽이 TS 로 넘긴다).
-pub async fn upsert_core(
-    read: &PgPool,
-    write: &PgPool,
-    me: &Account,
-    u: &Upsert<'_>,
-) -> Option<Upserted> {
-    let refusal = |c: &'static str| Upserted::Refused(c);
-    let owner = match work_item_owner(read, me).await.ok()? {
-        Some(o) => o,
-        None => return Some(Upserted::NoOwner),
-    };
-    if u.source == "avcs" {
-        if !avcs_key_ok(u.key) {
-            return Some(refusal("bad_key"));
-        }
-        if u.state.is_some() {
-            return Some(refusal("state_not_allowed"));
-        }
-        if u.thread.is_none() {
-            return Some(refusal("thread_required"));
-        }
-    } else if u.state.is_none() {
-        return Some(refusal("state_required"));
-    }
-    if let Some(root) = u.thread {
-        let row: Option<(bool, bool, bool)> = sqlx::query_as(thread_sql())
-            .bind(root)
-            .bind(&owner)
-            .bind(&me.id)
-            .fetch_optional(read)
-            .await
-            .ok()?;
-        let Some((is_root, owner_sees, actor_sees)) = row else {
-            return Some(refusal("thread_not_found"));
-        };
-        if !owner_sees || !actor_sees {
-            return Some(refusal("thread_forbidden"));
-        }
-        if !is_root {
-            return Some(refusal("not_root"));
-        }
-    }
-    let mut tx = write.begin().await.ok()?;
-    let wrote: Result<Wrote, sqlx::Error> = async {
-        // 주인 단위 상한 — 같은 주인의 동시 쓰기가 상한을 같이 넘지 않게(TS 와 같은 잠금 키).
-        sqlx::query("select pg_advisory_xact_lock(hashtextextended($1::text, 110))")
-            .bind(&owner)
-            .execute(&mut *tx)
-            .await?;
-        let existing: Option<bool> = sqlx::query_scalar(existing_sql())
-            .bind(&owner)
-            .bind(&me.id)
-            .bind(u.source)
-            .bind(u.key)
-            .fetch_optional(&mut *tx)
-            .await?;
-        // 주인이 아닌 쪽은 자기가 못 보는 기존 항목을 덮지 못한다.
-        if existing == Some(false) && me.id != owner {
-            return Ok(Wrote::Refused("thread_forbidden"));
-        }
-        if existing.is_none() {
-            let n: i64 = sqlx::query_scalar(
-                "select count(*) from work_item where owner_account_id = $1::uuid",
-            )
-            .bind(&owner)
-            .fetch_one(&mut *tx)
-            .await?;
-            if n >= MAX_ITEMS_PER_OWNER {
-                return Ok(Wrote::Refused("too_many"));
-            }
-        }
-        let item: String = sqlx::query_scalar(insert_sql())
-            .bind(&owner)
-            .bind(u.source)
-            .bind(u.key)
-            .bind(u.url)
-            .bind(u.title)
-            .bind(u.state)
-            .bind(u.thread)
-            .bind(&me.id)
-            .fetch_one(&mut *tx)
-            .await?;
-        emit_event(
-            &mut tx,
-            &json!({ "type": "inbox.updated", "accountId": owner }),
-        )
-        .await?;
-        // TS `endMandatesForDoneThreadTx` — 그 스레드 머리의 일감이 done 이 되면 그 머리의 위임(주인 소유)을 같은 tx 에서 끝낸다.
-        let mut ended = Vec::new();
-        if let (Some("done"), Some(root)) = (u.state, u.thread) {
-            let ids: Vec<String> = sqlx::query_scalar(DONE_MANDATES_SQL)
-                .bind(root)
-                .bind(&owner)
-                .fetch_all(&mut *tx)
-                .await?;
-            for id in ids {
-                if crate::core::perm_card::end_mandate_tx(&mut tx, &id, "work_done").await? {
-                    ended.push(id);
-                }
-            }
-        }
-        Ok(Wrote::Item(item, ended))
-    }
-    .await;
-    Some(match wrote {
-        Ok(Wrote::Refused(code)) => {
-            // 거절은 아무것도 쓰지 않았다 — 잠금만 풀면 된다.
-            let _ = tx.rollback().await;
-            refusal(code)
-        }
-        Ok(Wrote::Item(item, ended)) => match tx.commit().await {
-            Ok(()) => {
-                if !ended.is_empty() {
-                    crate::core::perm_card::refresh_mandate_cards(write, &ended).await;
-                    for id in &ended {
-                        crate::write::record_audit(
-                            write,
-                            crate::write::AuditEntry {
-                                action: "mandate.ended",
-                                actor_id: Some(&me.id),
-                                actor_handle: None,
-                                target: Some(id),
-                                ip: None,
-                                detail: json!({ "reason": "work_done" }),
-                            },
-                        )
-                        .await;
-                    }
-                }
-                Upserted::Item(item)
-            }
-            Err(_) => Upserted::Internal,
-        },
-        Err(_) => Upserted::Internal,
-    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn parse_upsert_like_zod() {
@@ -572,6 +350,89 @@ mod tests {
         assert!(parse_remove(&json!({"source": "jira", "externalKey": "a".repeat(300)})).is_some());
         assert_eq!(
             parse_remove(&json!({"source": "jira", "externalKey": "\u{feff}a"})),
+            None
+        );
+    }
+
+    fn account() -> Account {
+        Account {
+            id: "22222222-2222-4222-8222-222222222222".into(),
+            handle: "bot".into(),
+            display_name: "bot".into(),
+            kind: "agent".into(),
+            is_admin: false,
+            role: "member".into(),
+            status: "active".into(),
+            status_text: None,
+            avatar_attachment_id: None,
+        }
+    }
+
+    fn text(body: &str) -> String {
+        let v: Value = serde_json::from_str(body).unwrap();
+        v["content"][0]["text"].as_str().unwrap().to_string()
+    }
+
+    /// 예전 `json_build_object` 와 칸 이름·차례·null 표기가 글자까지 같다.
+    #[test]
+    fn item_shape_unchanged() {
+        let a = json!({"source": "github", "externalKey": "acme/x#1", "title": "a \"b\"", "state": "active"});
+        assert_eq!(
+            item_json(&parse_upsert(&a).unwrap(), "I", "B", "T"),
+            r#"{"id":"I","source":"github","externalKey":"acme/x#1","url":null,"title":"a \"b\"","state":"active","threadRootId":null,"updatedBy":"B","createdAt":"T","updatedAt":"T"}"#
+        );
+    }
+
+    #[test]
+    fn noop_answers() {
+        let t = "11111111-1111-4111-8111-111111111111";
+        let a = json!({"source": "github", "externalKey": "k", "title": "t", "state": "done", "threadRootId": t});
+        let me = account();
+        let out: Value = serde_json::from_str(&text(&upsert(&me, &a).unwrap())).unwrap();
+        let item = &out["item"];
+        assert!(is_zod_uuid(item["id"].as_str().unwrap()));
+        assert_eq!(item["updatedBy"], me.id.as_str());
+        assert_eq!(item["state"], "done");
+        assert_eq!(item["threadRootId"], t);
+        assert_eq!(item["createdAt"], item["updatedAt"]);
+        assert!(item["createdAt"].as_str().unwrap().ends_with('Z'));
+        assert_eq!(text(&list(&json!({})).unwrap()), "{\"items\":[]}");
+        assert_eq!(
+            text(&list(&json!({"source": "jira", "threadRootId": t})).unwrap()),
+            "{\"items\":[]}"
+        );
+        assert_eq!(
+            text(&remove(&json!({"source": "jira", "externalKey": "a"})).unwrap()),
+            "{\"removed\":false}"
+        );
+        assert!(list(&json!({"source": "gitlab"})).is_none());
+        assert!(remove(&json!({"source": "gitlab", "externalKey": "a"})).is_none());
+        assert!(upsert(&me, &json!({})).is_none());
+    }
+
+    #[test]
+    fn arg_refusals_kept() {
+        let r = |a: Value| arg_refusal(&parse_upsert(&a).unwrap());
+        let k = "repo/abcdef012345";
+        let t = "11111111-1111-4111-8111-111111111111";
+        assert_eq!(
+            r(json!({"source": "jira", "externalKey": "k", "title": "t"})),
+            Some("state_required")
+        );
+        assert_eq!(
+            r(json!({"source": "avcs", "externalKey": "k", "title": "t"})),
+            Some("bad_key")
+        );
+        assert_eq!(
+            r(json!({"source": "avcs", "externalKey": k, "title": "t", "state": "done"})),
+            Some("state_not_allowed")
+        );
+        assert_eq!(
+            r(json!({"source": "avcs", "externalKey": k, "title": "t"})),
+            Some("thread_required")
+        );
+        assert_eq!(
+            r(json!({"source": "avcs", "externalKey": k, "title": "t", "threadRootId": t})),
             None
         );
     }

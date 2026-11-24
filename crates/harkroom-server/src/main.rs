@@ -191,34 +191,6 @@ async fn main() {
         }
         _ => None,
     };
-    // S5.4 A2a — MCP `workitem.remove`. 쓰기 풀에 work_item 지우기·outbox 권한이 다 있을 때만 — 아니면 TS 에 남는다.
-    let work_item_write = match (&core_mode, &state.write) {
-        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
-            use harkroom_server::core::mcp::workitem as wi;
-            match write::missing_in(
-                w,
-                wi::WORK_ITEM_REMOVE_PRIVILEGES,
-                wi::WORK_ITEM_REMOVE_SEQUENCES,
-            )
-            .await
-            {
-                Ok(m) if m.is_empty() => Some(w.clone()),
-                Ok(m) => {
-                    eprintln!("front: mcp workitem.remove core off — missing privileges {m:?}");
-                    refuse_missing_grants(&m);
-                    None
-                }
-                Err(e) => {
-                    eprintln!(
-                        "front: mcp workitem.remove core off — privilege check failed ({})",
-                        e.as_database_error().map_or("io", |_| "db")
-                    );
-                    None
-                }
-            }
-        }
-        _ => None,
-    };
     // S5.4 MCP 2 — MCP `pr.watch`. 쓰기 풀에 감시 넣기·판정이 읽는 칸이 다 있을 때만 — 아니면 TS 에 남는다.
     let pr_watch_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -322,39 +294,6 @@ async fn main() {
                 Err(e) => {
                     eprintln!(
                         "front: mcp grant.delegate core off — privilege check failed ({})",
-                        e.as_database_error().map_or("io", |_| "db")
-                    );
-                    None
-                }
-            }
-        }
-        _ => None,
-    };
-    // S5.4 A2a — MCP `workitem.upsert`. 쓰기 풀에 work_item 넣기·고칠 칸·outbox 권한이 다 있을 때만 — 아니면 TS 에 남는다.
-    let work_item_upsert_write = match (&core_mode, &state.write) {
-        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
-            use harkroom_server::core::mcp::workitem as wi;
-            match write::missing_in(
-                w,
-                wi::WORK_ITEM_UPSERT_PRIVILEGES,
-                wi::WORK_ITEM_UPSERT_SEQUENCES,
-            )
-            .await
-            {
-                Ok(m) if m.is_empty() => {
-                    // REST `PUT /work-items` 도 같은 권한·같은 코어를 쓴다 — 이때만 Rust 가 답한다.
-                    harkroom_server::writes_misc::WORK_ITEM_UPSERT_READY
-                        .store(true, std::sync::atomic::Ordering::Relaxed);
-                    Some(w.clone())
-                }
-                Ok(m) => {
-                    eprintln!("front: mcp workitem.upsert core off — missing privileges {m:?}");
-                    refuse_missing_grants(&m);
-                    None
-                }
-                Err(e) => {
-                    eprintln!(
-                        "front: mcp workitem.upsert core off — privilege check failed ({})",
                         e.as_database_error().map_or("io", |_| "db")
                     );
                     None
@@ -5415,8 +5354,6 @@ async fn main() {
                     .clone()
                     .filter(|_| plan_auto_ok)
                     .map(std::sync::Arc::new),
-                work_item: work_item_write,
-                work_item_upsert: work_item_upsert_write,
                 pr_watch: pr_watch_write,
                 automation: automation_write,
                 automation_run: automation_run_write,

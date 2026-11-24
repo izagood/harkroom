@@ -41,9 +41,8 @@ pub const SERVED: &[&str] = &[
     "agent.call",
     // S5.4 A3 — 다시 부르기 예약. 글 쓰기 풀에 더해 agent_wake 칸이 있을 때만([`McpWrites::wake`]).
     "turn.wake",
-    // S5.4 A2a — 보드 항목 떼기. 작업 항목 쓰기 풀(`workitem::WORK_ITEM_REMOVE_PRIVILEGES`)이 있을 때만.
+    // 「내 작업」 보드 제거(P4) — 저장하지 않고 예전과 같은 꼴의 성공만 돌려준다([`super::workitem`]). 풀이 필요 없다.
     "workitem.remove",
-    // S5.4 A2a — 보드 항목 걸기. `workitem::WORK_ITEM_UPSERT_PRIVILEGES` 가 있을 때만, `state: done`+스레드는 TS.
     "workitem.upsert",
     // S5.4 A4a — 계획판 읽기(`plan` 인자 없음). 읽기 풀에 `THREAD_PLAN_READ_PRIVILEGES` 가 있을 때만([`McpWrites::plan_read`]).
     // S5.4 A4b2 — 쓰기(`plan` 객체·null)는 [`McpWrites::plan_write`] 가 있을 때만.
@@ -133,10 +132,6 @@ pub struct McpWrites {
     pub delegation: Option<PgPool>,
     /// `grant.revoke`·`permission.revoke` — `grant_writes::GRANT_REVOKE_PRIVILEGES`.
     pub grant: Option<PgPool>,
-    /// `workitem.remove`(S5.4 A2a) — `workitem::WORK_ITEM_REMOVE_PRIVILEGES`.
-    pub work_item: Option<PgPool>,
-    /// `workitem.upsert`(S5.4 A2a) — `workitem::WORK_ITEM_UPSERT_PRIVILEGES`.
-    pub work_item_upsert: Option<PgPool>,
     /// `thread.note`(B2-1) — `note::THREAD_NOTE_PRIVILEGES`.
     pub note: Option<PgPool>,
     /// `thread.plan` 읽기(S5.4 A4a) — 읽기 풀에 `thread_plan_read::THREAD_PLAN_READ_PRIVILEGES` 가 다 있을 때만 참. 쓰기 풀은 쓰지 않는다.
@@ -324,10 +319,7 @@ pub async fn answer(
         );
     }
     if tool == "workitem.remove" {
-        let Some(write) = writes.work_item.as_ref() else {
-            return Some(None);
-        };
-        return Some(super::workitem::remove(read, write, me, args).await);
+        return Some(super::workitem::remove(args));
     }
     if tool == "skill.propose" {
         let Some(st) = writes.skill.as_ref() else {
@@ -369,10 +361,7 @@ pub async fn answer(
         return Some(super::pr_watch::answer(write, me, args).await);
     }
     if tool == "workitem.upsert" {
-        let Some(write) = writes.work_item_upsert.as_ref() else {
-            return Some(None);
-        };
-        return Some(super::workitem::upsert(read, write, me, args).await);
+        return Some(super::workitem::upsert(me, args));
     }
     if tool == "inbox.read" {
         let Some(write) = writes.inbox.as_ref() else {
