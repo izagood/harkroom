@@ -1,6 +1,9 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    # 벡터 검색을 쓰려면 pgvector 가 든 이미지로 바꾼다(HARKROOM_DB_IMAGE=pgvector/pgvector:0.8.7-pg16). **있던 볼륨을 그대로
+    # 갈아 끼우지 않는다** — alpine(musl)과 debian(glibc)은 글 정렬이 달라 색인이 어긋난다. 덤프·복원으로 옮긴다
+    # (docs/operations.md 6-1).
+    image: ${HARKROOM_DB_IMAGE:-postgres:16-alpine}
     environment:
       POSTGRES_USER: harkroom
       POSTGRES_PASSWORD: harkroom
