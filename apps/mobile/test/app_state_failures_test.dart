@@ -220,7 +220,7 @@ void main() {
   });
 
   group('다시 붙으면', () {
-    test('읽어 둔 채널을 마지막 seq 뒤부터 다시 읽는다', () async {
+    test('읽어 둔 채널을 최신 페이지로 다시 읽는다', () async {
       final server = _Server();
       final sockets = <_Socket>[];
       final app = _app(server, sockets: sockets);
@@ -231,7 +231,7 @@ void main() {
       expect(app.connection, SocketState.online);
 
       // 끊긴 사이에 말이 하나 더 왔다.
-      server.channelMessages = [_msg('m2', 2, body: '끊긴 사이의 말')];
+      server.channelMessages = [_msg('m1', 1), _msg('m2', 2, body: '끊긴 사이의 말')];
       server.sinceAsked.clear();
       await sockets.last.close();
       // 백오프(1초)를 지나 다시 붙는다.
@@ -239,7 +239,31 @@ void main() {
       await _tick();
 
       expect(app.connection, SocketState.online);
-      expect(server.sinceAsked, contains('1'));
+      // 마지막 seq 뒤(`since`)가 아니라 최신 페이지를 묻는다 — 이미 실린 줄의 변화도 받아야 한다.
+      expect(server.sinceAsked, [null]);
+      expect(app.messages['c1']!.map((m) => m.id), ['m1', 'm2']);
+    });
+
+    test('끊김 띠의 「다시」로 붙어도 빠진 것을 읽는다', () async {
+      final server = _Server();
+      final sockets = <_Socket>[];
+      final app = _app(server, sockets: sockets);
+      addTearDown(app.dispose);
+      await app.boot();
+      await app.openChannel('c1');
+      await _tick();
+
+      server.channelMessages = [_msg('m1', 1), _msg('m2', 2, body: '끊긴 사이의 말')];
+      server.sinceAsked.clear();
+      await sockets.last.close();
+      await _tick();
+      expect(app.connection, SocketState.reconnecting);
+      // 백오프를 기다리지 않고 사람이 「다시」를 눌렀다 — 상태가 `connecting` 으로 돌아가도 따라잡는다.
+      app.reconnectNow();
+      await _tick();
+
+      expect(app.connection, SocketState.online);
+      expect(server.sinceAsked, [null]);
       expect(app.messages['c1']!.map((m) => m.id), ['m1', 'm2']);
     });
   });
