@@ -313,13 +313,17 @@ impl<L: RunnerLink> HarkroomMcpClient<L> {
     }
 
     /// `memory.recalled` — 앞 5개만. 빈 목록이면 부르지 않는다.
-    pub fn record_recall(&self, keys: &[String]) -> Result<(), HarkroomError> {
+    /// `turn_id` 는 실린 사건(턴·순위)을 적는 데 쓴다 — 옛 서버는 무시한다.
+    pub fn record_recall(&self, keys: &[String], turn_id: &str) -> Result<(), HarkroomError> {
         if keys.is_empty() {
             return Ok(());
         }
         let n = keys.len().min(5);
-        self.call("memory.recalled", json!({"slugs": &keys[..n]}))
-            .map(|_| ())
+        self.call(
+            "memory.recalled",
+            json!({"slugs": &keys[..n], "turnId": turn_id, "trigger": "turn_start"}),
+        )
+        .map(|_| ())
     }
 
     /// `thread.note`. 모양이 틀리면 `None`.

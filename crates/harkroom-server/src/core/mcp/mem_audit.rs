@@ -27,6 +27,8 @@ const LARGEST_CAP: usize = 10;
 const JOURNAL_KEEP: usize = 60 - 5;
 /// 상태 꼴·journal 을 「안 쓰임」으로 보는 날 수 — 정리 본문의 묶어 보관 단계가 읽는다.
 const IDLE_STATE_DAYS: i64 = 60;
+/// 러너 `RECALL_MAX_CHARS` — 자동으로 실을 때 이 길이에서 자른다.
+const RECALL_MAX_CHARS: usize = 1500;
 const DAY_MS: i64 = 86_400_000;
 
 const ROWS_SQL: &str = "select slug, value, description, kind, read_count::bigint, recall_count::bigint, \
@@ -66,7 +68,10 @@ pub(crate) struct Row {
     pub value: String,
     pub description: Option<String>,
     pub kind: String,
-    pub used: i64,
+    /// 직접 연 횟수(`memory.get`).
+    pub reads: i64,
+    /// 러너가 자동으로 실은 횟수.
+    pub recalls: i64,
     /// (ms, ISO) — 읽힘·recall 중 늦은 쪽(같으면 읽힘).
     pub last_used: Option<(i64, String)>,
     pub created_ms: i64,
@@ -286,7 +291,11 @@ pub(crate) fn audit_text_capped(
         if r.flagged {
             flagged.push((r.slug.clone(), r.flag_reason.clone()));
         }
-        if judged && r.used == 0 && now_ms - r.created_ms > NEVER_READ_GRACE_DAYS * DAY_MS {
+        if judged
+            && r.reads == 0
+            && r.recalls == 0
+            && now_ms - r.created_ms > NEVER_READ_GRACE_DAYS * DAY_MS
+        {
             never_read.push(r.slug.clone());
         }
         if judged
@@ -387,6 +396,30 @@ pub(crate) fn audit_text_capped(
             .collect()
     };
 
+    // 쓰임을 두 길로 나눈다: 직접 연 것(reads)과 자동으로 실린 것(recalls). 만든 지 7일 안 된 것은 판정하지 않는다.
+    // 상태 꼴 이름은 recall 이 원래 거르므로 「안 실림」에 넣지 않는다.
+    let aged = |r: &Row| now_ms - r.created_ms > NEVER_READ_GRACE_DAYS * DAY_MS;
+    let pick = |f: &dyn Fn(&Row) -> bool| -> Vec<String> {
+        judged
+            .iter()
+            .filter(|r| f(r))
+            .map(|r| r.slug.clone())
+            .collect()
+    };
+    let mut never_recalled = pick(&|r| {
+        r.recalls == 0 && aged(r) && !crate::core::mem_search::is_thread_state_slug(&r.slug)
+    });
+    let mut recalled_clipped =
+        pick(&|r| r.recalls > 0 && r.reads == 0 && utf16_len(&r.value) > RECALL_MAX_CHARS);
+    let mut unused = never_read.clone();
+    let counts = format!(
+        "{{\"judged\":{},\"neverRecalled\":{},\"recalledClipped\":{},\"unused\":{}}}",
+        judged.len(),
+        never_recalled.len(),
+        recalled_clipped.len(),
+        unused.len()
+    );
+
     let truncated = [
         never_read.len(),
         stale.len(),
@@ -399,6 +432,8 @@ pub(crate) fn audit_text_capped(
         shared.len(),
         old.len(),
         idle_state.len(),
+        never_recalled.len(),
+        recalled_clipped.len(),
     ]
     .iter()
     .any(|&n| n > cap);
@@ -413,6 +448,9 @@ pub(crate) fn audit_text_capped(
     shared.truncate(cap);
     old.truncate(cap);
     idle_state.truncate(cap);
+    never_recalled.truncate(cap);
+    recalled_clipped.truncate(cap);
+    unused.truncate(cap);
 
     let core_text = core.map_or_else(
         || "null".to_owned(),
@@ -504,7 +542,27 @@ pub(crate) fn audit_text_capped(
             s(a)
         ))
     ));
-    out.push_str(&format!(",\"idleState\":{}}}", arr(&idle_state, |x| s(x))));
+    out.push_str(&format!(",\"idleState\":{}", arr(&idle_state, |x| s(x))));
+    out.push_str(&format!(",\"usageCounts\":{counts}"));
+    out.push_str(&format!(
+        ",\"neverRecalled\":{}",
+        arr(&never_recalled, |x| s(x))
+    ));
+    out.push_str(&format!(
+        ",\"recalledClipped\":{}",
+        arr(&recalled_clipped, |x| s(x))
+    ));
+    out.push_str(&format!(",\"unused\":{}", arr(&unused, |x| s(x))));
+    // 항목 수 상한(200)이 있어 자르지 않는다.
+    out.push_str(&format!(
+        ",\"usage\":{}}}",
+        arr(&judged, |r| format!(
+            "{{\"slug\":{},\"reads\":{},\"recalls\":{}}}",
+            s(&r.slug),
+            r.reads,
+            r.recalls
+        ))
+    ));
     out
 }
 
@@ -538,7 +596,8 @@ fn into_row(r: RawRow) -> Row {
         value,
         description,
         kind,
-        used: reads + recalls,
+        reads,
+        recalls,
         last_used,
         created_ms,
         updated_ms,
@@ -591,7 +650,8 @@ mod tests {
             value: value.into(),
             description: Some("d".into()),
             kind: "topic".into(),
-            used: 1,
+            reads: 1,
+            recalls: 1,
             last_used: Some((NOW, "x".into())),
             created_ms: NOW,
             updated_ms: NOW,
@@ -640,7 +700,8 @@ mod tests {
             "see [[mem/nope]] and [[x/alpha-beta]] [[mem/nope]] #123",
         );
         a.description = Some(" \u{feff}".into());
-        a.used = 0;
+        a.reads = 0;
+        a.recalls = 0;
         a.created_ms = NOW - 8 * DAY_MS;
         a.last_used = None;
         let mut b = row("mem/y/alpha-beta", "#123 OldName here");
@@ -653,8 +714,8 @@ mod tests {
         let keys: Vec<&str> = v.as_object().unwrap().keys().map(String::as_str).collect();
         // serde_json 은 키를 정렬할 수 있으니 글자로도 본다.
         let text = audit_text(&[row("core", "x")], 0, &[], NOW).unwrap();
-        assert!(text.starts_with("{\"total\":1,\"core\":{\"length\":1,\"limit\":3000},\"neverRead\":[],\"stale\":[],\"brokenLinks\":[],\"similar\":[],\"outdated\":[],\"undescribed\":[],\"flagged\":[],\"truncated\":false,\"items\":{\"active\":1,\"limit\":200,\"archived\":0},\"expiringJournal\":[],\"similarBody\":[],\"sharedRefs\":[],\"old\":[],\"largest\":[],\"idleState\":[]}"));
-        assert_eq!(keys.len(), 17);
+        assert!(text.starts_with("{\"total\":1,\"core\":{\"length\":1,\"limit\":3000},\"neverRead\":[],\"stale\":[],\"brokenLinks\":[],\"similar\":[],\"outdated\":[],\"undescribed\":[],\"flagged\":[],\"truncated\":false,\"items\":{\"active\":1,\"limit\":200,\"archived\":0},\"expiringJournal\":[],\"similarBody\":[],\"sharedRefs\":[],\"old\":[],\"largest\":[],\"idleState\":[],\"usageCounts\":{\"judged\":0,\"neverRecalled\":0,\"recalledClipped\":0,\"unused\":0},\"neverRecalled\":[],\"recalledClipped\":[],\"unused\":[],\"usage\":[]}"));
+        assert_eq!(keys.len(), 22);
         assert_eq!(v["neverRead"], serde_json::json!(["mem/x/alpha-beta"]));
         assert_eq!(v["undescribed"], serde_json::json!(["mem/x/alpha-beta"]));
         assert_eq!(
@@ -729,6 +790,48 @@ mod tests {
         assert_eq!(
             v["idleState"],
             serde_json::json!(["mem/delegation-x", "mem/j"])
+        );
+    }
+
+    #[test]
+    fn usage_splits_reads_and_recalls() {
+        let mk = |slug: &str, reads, recalls, len: usize, days: i64| {
+            let mut r = row(slug, &"가".repeat(len));
+            r.reads = reads;
+            r.recalls = recalls;
+            r.created_ms = NOW - days * DAY_MS;
+            r
+        };
+        let mut journal = mk("mem/j", 0, 0, 10, 30);
+        journal.kind = "journal".into();
+        let v = audit(
+            &[
+                mk("mem/opened", 3, 0, 10, 30),
+                mk("mem/clipped", 0, 2, 1501, 1),
+                mk("mem/fits", 0, 2, 1500, 30),
+                mk("mem/clipped-opened", 1, 2, 1501, 30),
+                mk("mem/none", 0, 0, 10, 30),
+                mk("mem/fresh", 0, 0, 10, 7),
+                mk("mem/review-1", 0, 0, 10, 30),
+                journal,
+            ],
+            &[],
+        );
+        assert_eq!(
+            v["neverRecalled"],
+            serde_json::json!(["mem/opened", "mem/none"])
+        );
+        assert_eq!(v["recalledClipped"], serde_json::json!(["mem/clipped"]));
+        assert_eq!(v["unused"], serde_json::json!(["mem/none", "mem/review-1"]));
+        assert_eq!(v["neverRead"], v["unused"]);
+        assert_eq!(
+            v["usageCounts"],
+            serde_json::json!({ "judged": 7, "neverRecalled": 2, "recalledClipped": 1, "unused": 2 })
+        );
+        assert_eq!(v["usage"].as_array().unwrap().len(), 7);
+        assert_eq!(
+            v["usage"][0],
+            serde_json::json!({ "slug": "mem/opened", "reads": 3, "recalls": 0 })
         );
     }
 

@@ -251,8 +251,22 @@ fn memory_and_reads() {
     assert_eq!(c.mark_read(&[]).unwrap(), 0);
     assert_eq!(c.mark_read(&[1, 2]).unwrap(), 2);
     assert_eq!(f.tool_calls().len(), 6);
-    c.record_recall(&[]).unwrap();
+    c.record_recall(&[], "t").unwrap();
     assert_eq!(f.tool_calls().len(), 6);
+}
+
+#[test]
+fn record_recall_sends_turn_and_trigger() {
+    let f = Fake::with(vec![ok(json!({"ok": true}))]);
+    let c = HarkroomMcpClient::new(&f, "v");
+    let keys: Vec<String> = (0..6).map(|i| format!("mem/a{i}")).collect();
+    c.record_recall(&keys, "turn-1").unwrap();
+    let calls = f.tool_calls();
+    assert_eq!(calls[0]["name"], "memory.recalled");
+    assert_eq!(
+        calls[0]["arguments"],
+        json!({"slugs": &keys[..5], "turnId": "turn-1", "trigger": "turn_start"})
+    );
 }
 
 #[test]
