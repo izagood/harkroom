@@ -7,6 +7,11 @@
 //! - **잡을 수 있는 작업**: 담당이 있고, 상태가 `open` 이고, 살아 있는 줄이 없고, 앞 작업(`after_work_id`)이 닫혔고, 같은 뿌리에서
 //!   경로가 겹치는 작업을 누가 쥐고 있지 않다. 담당이 빈 작업(누가 돌릴지 정해지지 않은 과제)은 이 단계에서 잡지 않는다.
 //! - **순서**: 사람이 시킨 작업 먼저, 그다음 만든 시각.
+//! - **뿌리마다 한 줄로 선다.** 경로 겹침은 「다른 줄」을 보는 조건이라 행 잠금만으로는 두 쪽이 서로의 아직 안 적힌 줄을 못 본다.
+//!   그래서 후보를 고른 뒤 그 뿌리의 잠금(트랜잭션 advisory lock)을 쥐고, 그 안에서 조건을 다시 보며 적는다.
+//! - **펜싱**: 잡을 때 받은 횟수(`attempts`)가 그 임대의 이름이다. 갱신·놓기·턴 적기는 그 횟수가 지금 줄과 같을 때만 닿는다 —
+//!   임대가 끝난 뒤 같은 기기가 다시 잡았더라도 옛 임대를 쥔 쪽은 새 줄을 건드리지 못한다.
+//! - **갱신도 자격을 다시 본다**: 허용 표·회수·개인 자격증명 규칙이 잡을 때와 같다. 자격을 잃으면 갱신이 끊겨 임대가 끝난다.
 //! - **임대**: 잡을 때 만료 시각을 적고, 오퍼레이터가 자기가 아직 쥔 작업 목록으로 묶어서 갱신한다([`renew`]). 갱신이 끊기면 만료되고
 //!   다음에 잡는 쪽이 같은 줄을 덮어쓴다(`attempts` 가 하나 오른다). 치우는 일꾼은 없다.
 //! - 이 모듈은 `work.state` 를 바꾸지 않고 `work_event` 도 적지 않는다 — 상태를 옮기는 일은 잡는 쪽을 잇는 단계가 정한다.
@@ -128,36 +133,65 @@ macro_rules! live {
     };
 }
 
-/// 잡는 문장. `$1` 오퍼레이터, `$2` 러너 칸 세대, `$3` 임대 길이(초), `$4` 후보를 좁힐 에이전트 목록(null 이면 안 좁힘).
-/// `pick` 이 후보 하나를 고르며 그 작업 행을 잠근다(다른 쪽이 잠근 행은 건너뛴다). `ins` 는 살아 있는 줄이 없을 때만 적는다.
+/// 자격 술어 — 허용 줄 `al`·오퍼레이터 `o`·에이전트 `a`·설정 `cfg` 가 이미 이어져 있다고 본다. 잡기와 갱신이 같이 쓴다.
+macro_rules! entitled {
+    () => {
+        "o.revoked_at is null and a.kind = 'agent' and a.deleted_at is null \
+         and (coalesce(cfg.credential_scope, 'none') <> 'personal' or cfg.owner_account_id = o.owner_account_id)"
+    };
+}
+
+/// 후보 하나를 고르는 몸통(`from` 부터 `limit 1` 까지). `$1` 오퍼레이터, `$2` 후보를 좁힐 에이전트 목록(null 이면 안 좁힘),
+/// `$3` 이 작업 하나로 좁히기(null 이면 안 좁힘).
+macro_rules! candidate {
+    () => {
+        concat!(
+            "from work w \
+             join agent_operator_allow al on al.agent_id = w.assignee_account_id and al.operator_id = $1::uuid \
+             join operator o on o.id = al.operator_id \
+             join account a on a.id = w.assignee_account_id \
+             left join agent_config cfg on cfg.account_id = w.assignee_account_id \
+             left join account rq on rq.id = w.requester_account_id \
+            where w.state = 'open' and w.closed_at is null and ",
+            entitled!(),
+            " and ($2::uuid[] is null or w.assignee_account_id = any($2::uuid[])) \
+              and ($3::uuid is null or w.id = $3::uuid) \
+              and not exists (select 1 from work_claim c where c.work_id = w.id and ",
+            live!("c"),
+            ") \
+              and (w.after_work_id is null or exists ( \
+                     select 1 from work p where p.id = w.after_work_id and p.closed_at is not null)) \
+              and not exists ( \
+                     select 1 from work_claim c2 join work w2 on w2.id = c2.work_id \
+                      where w2.root_id = w.root_id and w2.id <> w.id and w2.paths && w.paths and ",
+            live!("c2"),
+            ") \
+            order by (rq.kind is not distinct from 'human') desc, w.created_at, w.id \
+            limit 1"
+        )
+    };
+}
+
+/// 후보 보기 — 잠그지 않고 「지금 잡을 수 있는 가장 앞 작업」과 그 뿌리를 읽는다. 인자는 [`candidate!`] 의 `$1`~`$3`(`$3` 은 null).
+pub const CANDIDATE_SQL: &str = concat!("select w.id::text, w.root_id::text ", candidate!());
+
+/// 뿌리 잠금 — `$1` 뿌리 작업 id. 트랜잭션이 끝날 때 풀린다. 같은 뿌리의 잡기는 이 줄에서 차례를 기다린다.
+/// 두 번째 인자는 이 잠금만의 이름표다(다른 advisory lock 과 키가 겹치지 않게).
+pub const ROOT_LOCK_SQL: &str =
+    "select pg_advisory_xact_lock(hashtextextended($1::uuid::text, 7230125480327697495))";
+
+/// 잡는 문장 — **뿌리 잠금을 쥔 트랜잭션 안에서** 부른다. `$1`~`$3` 은 [`candidate!`] 그대로(`$3` 은 고른 후보),
+/// `$4` 러너 칸 세대, `$5` 임대 길이(초). 조건을 처음부터 다시 본다(잠금을 기다리는 사이 바뀌었을 수 있다).
+/// `pick` 이 그 작업 행을 잠근다(다른 쪽이 잠근 행은 건너뛴다). `ins` 는 살아 있는 줄이 없을 때만 적는다.
 /// 돌려주는 줄: 고른 작업 + 적혔으면 횟수·만료(안 적혔으면 null — 겹쳐 잡다 진 것).
 pub const CLAIM_SQL: &str = concat!(
     "with pick as ( \
-       select w.id, w.assignee_account_id as agent_id, w.channel_id, w.thread_root_id, w.root_id \
-         from work w \
-         join agent_operator_allow al on al.agent_id = w.assignee_account_id and al.operator_id = $1::uuid \
-         join operator o on o.id = al.operator_id and o.revoked_at is null \
-         join account a on a.id = w.assignee_account_id and a.kind = 'agent' and a.deleted_at is null \
-         left join agent_config cfg on cfg.account_id = w.assignee_account_id \
-         left join account rq on rq.id = w.requester_account_id \
-        where w.state = 'open' and w.closed_at is null \
-          and (coalesce(cfg.credential_scope, 'none') <> 'personal' or cfg.owner_account_id = o.owner_account_id) \
-          and ($4::uuid[] is null or w.assignee_account_id = any($4::uuid[])) \
-          and not exists (select 1 from work_claim c where c.work_id = w.id and ",
-    live!("c"),
-    ") \
-          and (w.after_work_id is null or exists ( \
-                 select 1 from work p where p.id = w.after_work_id and p.closed_at is not null)) \
-          and not exists ( \
-                 select 1 from work_claim c2 join work w2 on w2.id = c2.work_id \
-                  where w2.root_id = w.root_id and w2.id <> w.id and w2.paths && w.paths and ",
-    live!("c2"),
-    ") \
-        order by (rq.kind is not distinct from 'human') desc, w.created_at, w.id \
-        limit 1 for update of w skip locked \
+       select w.id, w.assignee_account_id as agent_id, w.channel_id, w.thread_root_id, w.root_id ",
+    candidate!(),
+    " for update of w skip locked \
      ), ins as ( \
        insert into work_claim (work_id, agent_id, operator_id, slot_generation, mode, lease_expires_at) \
-       select p.id, p.agent_id, $1::uuid, $2::bigint, 'pull', now() + make_interval(secs => $3::int) from pick p \
+       select p.id, p.agent_id, $1::uuid, $4::bigint, 'pull', now() + make_interval(secs => $5::int) from pick p \
        on conflict (work_id) do update \
           set agent_id = excluded.agent_id, operator_id = excluded.operator_id, \
               slot_generation = excluded.slot_generation, mode = excluded.mode, turn_id = null, \
@@ -171,28 +205,44 @@ pub const CLAIM_SQL: &str = concat!(
     " from pick p left join ins i on i.work_id = p.id"
 );
 
-/// 묶어서 갱신 — 이 오퍼레이터(`$1`)가 쥔 살아 있는 줄 가운데 `$3` 에 든 작업만 만료를 민다. 돌려주는 것은 갱신된 작업 id.
-/// 이미 만료됐거나 남이 다시 잡은 줄은 갱신되지 않는다(돌아온 목록에 없으면 잃은 것이다).
+/// 묶어서 갱신 — 이 오퍼레이터(`$1`)가 쥔 살아 있는 줄 가운데 `$3`(작업)·`$4`(그 작업을 잡을 때 받은 횟수) 짝이 맞는 것만
+/// 만료를 민다. 돌려주는 것은 갱신된 작업 id. 이미 만료됐거나, 다시 잡혀 횟수가 달라졌거나, 그 사이 자격(허용 표·회수·개인
+/// 자격증명)을 잃은 줄은 갱신되지 않는다(돌아온 목록에 없으면 잃은 것이다).
 pub const RENEW_SQL: &str = concat!(
     "update work_claim c set renewed_at = now(), lease_expires_at = now() + make_interval(secs => $2::int) \
-      where c.operator_id = $1::uuid and c.work_id = any($3::uuid[]) and ",
+       from unnest($3::uuid[], $4::int[]) as h(work_id, attempts) \
+      where c.work_id = h.work_id and c.attempts = h.attempts and c.operator_id = $1::uuid and ",
     live!("c"),
-    " returning c.work_id::text"
+    " and exists ( \
+            select 1 from agent_operator_allow al \
+              join operator o on o.id = al.operator_id \
+              join account a on a.id = al.agent_id \
+              left join agent_config cfg on cfg.account_id = al.agent_id \
+             where al.agent_id = c.agent_id and al.operator_id = c.operator_id and ",
+    entitled!(),
+    ") returning c.work_id::text"
 );
 
-/// 놓기 — 이 오퍼레이터(`$1`)가 쥔 살아 있는 줄일 때만. `$3` 까닭.
+/// 놓기 — 이 오퍼레이터(`$1`)가 쥔 살아 있는 줄이고 횟수(`$4`)가 같을 때만. `$3` 까닭.
 pub const RELEASE_SQL: &str = concat!(
     "update work_claim c set released_at = now(), release_reason = $3::text \
-      where c.work_id = $2::uuid and c.operator_id = $1::uuid and ",
+      where c.work_id = $2::uuid and c.operator_id = $1::uuid and c.attempts = $4::int and ",
     live!("c")
 );
 
-/// 턴 적기(기록용) — 이 오퍼레이터(`$1`)가 쥔 살아 있는 줄일 때만.
+/// 턴 적기(기록용) — 이 오퍼레이터(`$1`)가 쥔 살아 있는 줄이고 횟수(`$4`)가 같을 때만.
 pub const NOTE_TURN_SQL: &str = concat!(
     "update work_claim c set turn_id = $3::uuid \
-      where c.work_id = $2::uuid and c.operator_id = $1::uuid and ",
+      where c.work_id = $2::uuid and c.operator_id = $1::uuid and c.attempts = $4::int and ",
     live!("c")
 );
+
+/// 쥔 임대 하나를 가리키는 짝 — 작업과, 그 작업을 잡을 때 받은 횟수([`Claimed::attempts`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Held {
+    pub work_id: String,
+    pub attempts: i32,
+}
 
 type ClaimRow = (
     String,
@@ -206,6 +256,13 @@ type ClaimRow = (
 
 fn ids_ok(ids: &[String]) -> bool {
     ids.len() <= IDS_MAX && ids.iter().all(|s| is_uuid_shaped(s))
+}
+
+fn held_ok(held: &[Held]) -> bool {
+    held.len() <= IDS_MAX
+        && held
+            .iter()
+            .all(|h| is_uuid_shaped(&h.work_id) && h.attempts >= 1)
 }
 
 /// 오퍼레이터 `operator_id` 가 판에서 작업 하나를 잡는다. 잡을 것이 없으면 `None`. 스위치는 env 에서 읽는다.
@@ -244,37 +301,52 @@ pub async fn claim_next_with(
         return Ok(Err(Refusal::BadRequest));
     }
     for _ in 0..RACE_RETRIES {
-        let row: Option<ClaimRow> = sqlx::query_as(CLAIM_SQL)
+        // ① 잠그지 않고 후보와 그 뿌리를 본다.
+        let cand: Option<(String, String)> = sqlx::query_as(CANDIDATE_SQL)
             .bind(operator_id)
-            .bind(slot_generation)
-            .bind(lease_secs(lease))
             .bind(agents)
+            .bind(None::<&str>)
             .fetch_optional(pool)
             .await?;
-        match row {
-            None => return Ok(Ok(None)),
-            Some((
+        let Some((cand_id, root_id)) = cand else {
+            return Ok(Ok(None));
+        };
+        // ② 그 뿌리의 줄에 서고 ③ 조건을 다시 보며 적는다. 트랜잭션이 끝나면 잠금이 풀린다.
+        let mut tx = pool.begin().await?;
+        sqlx::query(ROOT_LOCK_SQL)
+            .bind(&root_id)
+            .execute(&mut *tx)
+            .await?;
+        let row: Option<ClaimRow> = sqlx::query_as(CLAIM_SQL)
+            .bind(operator_id)
+            .bind(agents)
+            .bind(&cand_id)
+            .bind(slot_generation)
+            .bind(lease_secs(lease))
+            .fetch_optional(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        if let Some((
+            work_id,
+            agent_id,
+            channel_id,
+            thread_root_id,
+            root_id,
+            Some(attempts),
+            Some(lease_expires_at),
+        )) = row
+        {
+            return Ok(Ok(Some(Claimed {
                 work_id,
                 agent_id,
                 channel_id,
                 thread_root_id,
                 root_id,
-                Some(attempts),
-                Some(lease_expires_at),
-            )) => {
-                return Ok(Ok(Some(Claimed {
-                    work_id,
-                    agent_id,
-                    channel_id,
-                    thread_root_id,
-                    root_id,
-                    attempts,
-                    lease_expires_at,
-                })));
-            }
-            // 고른 행을 다른 쪽이 먼저 적었다 — 다시 고른다.
-            Some(_) => {}
+                attempts,
+                lease_expires_at,
+            })));
         }
+        // 줄을 기다리는 사이 그 후보를 못 잡게 됐다(남이 잡았거나 겹치는 작업이 먼저 잡혔다) — 다시 고른다.
     }
     Ok(Ok(None))
 }
@@ -284,9 +356,9 @@ pub async fn renew(
     pool: &PgPool,
     operator_id: &str,
     lease: Option<i32>,
-    work_ids: &[String],
+    held: &[Held],
 ) -> sqlx::Result<Result<Vec<String>, Refusal>> {
-    renew_with(pool, switch_from_env(), operator_id, lease, work_ids).await
+    renew_with(pool, switch_from_env(), operator_id, lease, held).await
 }
 
 pub async fn renew_with(
@@ -294,53 +366,57 @@ pub async fn renew_with(
     on: bool,
     operator_id: &str,
     lease: Option<i32>,
-    work_ids: &[String],
+    held: &[Held],
 ) -> sqlx::Result<Result<Vec<String>, Refusal>> {
     if !on {
         return Ok(Err(Refusal::Disabled));
     }
-    if !is_uuid_shaped(operator_id) || !ids_ok(work_ids) {
+    if !is_uuid_shaped(operator_id) || !held_ok(held) {
         return Ok(Err(Refusal::BadRequest));
     }
-    if work_ids.is_empty() {
+    if held.is_empty() {
         return Ok(Ok(Vec::new()));
     }
+    let work_ids: Vec<&str> = held.iter().map(|h| h.work_id.as_str()).collect();
+    let attempts: Vec<i32> = held.iter().map(|h| h.attempts).collect();
     let rows: Vec<String> = sqlx::query_scalar(RENEW_SQL)
         .bind(operator_id)
         .bind(lease_secs(lease))
-        .bind(work_ids)
+        .bind(&work_ids)
+        .bind(&attempts)
         .fetch_all(pool)
         .await?;
     Ok(Ok(rows))
 }
 
-/// 놓는다 — 놓았으면 `true`(내 살아 있는 줄이 아니면 `false`).
+/// 놓는다 — 놓았으면 `true`(내 살아 있는 줄이 아니거나 횟수가 다르면 `false`).
 pub async fn release(
     pool: &PgPool,
     operator_id: &str,
-    work_id: &str,
+    held: &Held,
     reason: ReleaseReason,
 ) -> sqlx::Result<Result<bool, Refusal>> {
-    release_with(pool, switch_from_env(), operator_id, work_id, reason).await
+    release_with(pool, switch_from_env(), operator_id, held, reason).await
 }
 
 pub async fn release_with(
     pool: &PgPool,
     on: bool,
     operator_id: &str,
-    work_id: &str,
+    held: &Held,
     reason: ReleaseReason,
 ) -> sqlx::Result<Result<bool, Refusal>> {
     if !on {
         return Ok(Err(Refusal::Disabled));
     }
-    if !is_uuid_shaped(operator_id) || !is_uuid_shaped(work_id) {
+    if !is_uuid_shaped(operator_id) || !held_ok(std::slice::from_ref(held)) {
         return Ok(Err(Refusal::BadRequest));
     }
     let n = sqlx::query(RELEASE_SQL)
         .bind(operator_id)
-        .bind(work_id)
+        .bind(&held.work_id)
         .bind(reason.as_str())
+        .bind(held.attempts)
         .execute(pool)
         .await?
         .rows_affected();
@@ -352,19 +428,23 @@ pub async fn note_turn_with(
     pool: &PgPool,
     on: bool,
     operator_id: &str,
-    work_id: &str,
+    held: &Held,
     turn_id: &str,
 ) -> sqlx::Result<Result<bool, Refusal>> {
     if !on {
         return Ok(Err(Refusal::Disabled));
     }
-    if !is_uuid_shaped(operator_id) || !is_uuid_shaped(work_id) || !is_uuid_shaped(turn_id) {
+    if !is_uuid_shaped(operator_id)
+        || !held_ok(std::slice::from_ref(held))
+        || !is_uuid_shaped(turn_id)
+    {
         return Ok(Err(Refusal::BadRequest));
     }
     let n = sqlx::query(NOTE_TURN_SQL)
         .bind(operator_id)
-        .bind(work_id)
+        .bind(&held.work_id)
         .bind(turn_id)
+        .bind(held.attempts)
         .execute(pool)
         .await?
         .rows_affected();
@@ -413,11 +493,42 @@ mod tests {
                 "{sql}"
             );
         }
-        // 잡는 문장은 허용 표·회수·개인 자격증명 규칙을 스스로 본다.
+        // 펜싱: 갱신·놓기·턴 적기는 잡을 때 받은 횟수가 같을 때만 닿는다.
+        assert!(RENEW_SQL.contains("c.attempts = h.attempts"));
+        for sql in [RELEASE_SQL, NOTE_TURN_SQL] {
+            assert!(sql.contains("c.attempts = $4::int"), "{sql}");
+        }
+        // 잡는 문장과 갱신은 허용 표·회수·개인 자격증명 규칙을 스스로 본다.
         assert!(CLAIM_SQL.contains("al.operator_id = $1::uuid"));
-        assert!(CLAIM_SQL.contains("o.revoked_at is null"));
-        assert!(CLAIM_SQL.contains("cfg.owner_account_id = o.owner_account_id"));
+        assert!(RENEW_SQL.contains("al.agent_id = c.agent_id and al.operator_id = c.operator_id"));
+        for sql in [CANDIDATE_SQL, CLAIM_SQL, RENEW_SQL] {
+            assert!(sql.contains("o.revoked_at is null"), "{sql}");
+            assert!(sql.contains("a.deleted_at is null"), "{sql}");
+            assert!(
+                sql.contains("cfg.owner_account_id = o.owner_account_id"),
+                "{sql}"
+            );
+        }
         assert!(CLAIM_SQL.contains("skip locked"));
+        // 후보 보기는 아무것도 잠그지 않고, 뿌리 잠금은 트랜잭션과 함께 풀린다.
+        assert!(!CANDIDATE_SQL.contains("for update"));
+        assert!(ROOT_LOCK_SQL.contains("pg_advisory_xact_lock"));
+    }
+
+    #[test]
+    fn held_pairs_are_checked_before_the_database() {
+        let id = "00000000-0000-4000-8000-000000000001".to_string();
+        let held = |attempts| Held {
+            work_id: id.clone(),
+            attempts,
+        };
+        assert!(held_ok(&[held(1)]));
+        assert!(!held_ok(&[held(0)]));
+        assert!(!held_ok(&[Held {
+            work_id: "nope".into(),
+            attempts: 1
+        }]));
+        assert!(!held_ok(&vec![held(1); IDS_MAX + 1]));
     }
 
     #[test]
