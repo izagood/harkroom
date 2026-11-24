@@ -200,6 +200,34 @@ export class Controller {
     }
     this.coverage.set(channelId, (this.coverage.get(channelId) ?? []).map((r) => (r.hi === Infinity ? { lo: r.lo, hi: cursor } : r)));
   }
+
+  /**
+   * 끊긴 사이를 지난 채널 가운데 **아직 최신 페이지를 다시 받지 않은 것**. 소켓이 다시 붙을 때(`reconcile`)
+   * 보고 있지 않던 채널을 여기에 적어 두고, 그 채널을 다시 열 때 한 번 받는다(`pullSinceOpened`).
+   */
+  private staleSinceReconnect = new Set<string>();
+
+  /**
+   * **채널의 최신 페이지를 다시 받아 손에 든 줄을 갈아 끼운다**(재연결 뒤). 증분(`pullSince`)은 끊긴 사이의
+   * **새 줄**만 준다 — 이미 받아 둔 줄에 그 사이 붙은 반응·답글 수·고침은 seq 가 그 아래라 오지 않고, 그
+   * 이벤트는 끊긴 소켓과 함께 지나갔다. 열린 스레드(`refreshOpenThread`)와 같은 까닭이다.
+   * 늦게 온 페이지가 그 뒤 실시간으로 바뀐 줄을 덮지 않는 것은 `asOf` 가 지킨다. `hasMore` 는 건드리지
+   * 않는다 — 과거의 끝은 처음 연 때의 응답과 뒤채움이 이미 말했다.
+   */
+  private async refreshLatestPage(channelId: string): Promise<void> {
+    const page = await this.messagesPage(channelId, { since: 0, limit: Controller.SINCE_PAGE_LIMIT });
+    if (this.stopped) return;
+    this.staleSinceReconnect.delete(channelId);
+    // 이 페이지는 「가장 오래된 줄부터 최신까지」를 말한다(첫 페이지와 같다).
+    if (page.messages.length) this.addCoverage(channelId, Math.min(...page.messages.map((m) => m.seq)), Infinity);
+    this.store.getState().upsertMessages(channelId, page.messages, page.asOf);
+  }
+
+  /** 이미 연 채널을 다시 열 때의 증분. 끊긴 사이를 지난 채널이면 최신 페이지도 한 번 다시 받는다. */
+  private async pullSinceOpened(channelId: string, since: number): Promise<void> {
+    await this.pullSince(channelId, since);
+    if (this.staleSinceReconnect.has(channelId)) await this.refreshLatestPage(channelId);
+  }
   /** 이미 알린 inbox 항목. 같은 항목을 두 번 알리면 알림이 쓸모없어진다. */
   private announced = new Set<number>();
   /**
@@ -707,14 +735,16 @@ export class Controller {
   private onLinkUp(): void {
     this.clearOfflineTimer();
     const shown = this.store.getState().link !== 'online';
+    // 이 세션의 첫 연결이면 끊긴 사이가 없다 — 방금 받은 첫 페이지를 다시 묻지 않는다(`reconcile`).
+    const again = this.everConnected;
     this.everConnected = true;
-    if (!shown) { this.swallow(this.reconcile()); return; }
+    if (!shown) { this.swallow(this.reconcile(again)); return; }
     this.runResync();
   }
 
   private runResync(): void {
     this.store.getState().set({ link: 'resyncing' });
-    void this.reconcile().then(
+    void this.reconcile(true).then(
       () => { if (this.store.getState().link === 'resyncing') this.store.getState().set({ link: 'online', offlineSince: null }); },
       () => { if (this.store.getState().link === 'resyncing') this.store.getState().set({ link: 'resyncFailed' }); },
     );
@@ -1061,7 +1091,7 @@ export class Controller {
     store.set({ reads: { ...store.reads, [channelId]: { ...cur, unread: cur.unread + 1 } } });
   }
 
-  private async reconcile(): Promise<void> {
+  private async reconcile(reconnected: boolean): Promise<void> {
     const { activeChannelId, messages } = this.store.getState();
     // 첫 페이지가 아직 오지 않은 채널은 건너뛴다 — 그 응답이 최신 창을 덮는다. 여기서 since=0 으로
     // 따로 받으면 기동 직후(복원 채널의 미리 받기보다 소켓이 먼저 열릴 때) 같은 채널에 200행 요청이
@@ -1075,7 +1105,11 @@ export class Controller {
       const maxSeq = Math.max(0, ...(messages[activeChannelId] ?? []).map((m) => m.seq));
       // 끊긴 사이의 글을 **끝까지** 받는다 — 한 페이지로 자르면 받은 구간이 틈을 품는다(`pullSince`).
       await this.pullSince(activeChannelId, maxSeq);
+      // 증분은 새 줄만 준다 — 끊긴 사이 **이미 있던 줄**에 붙은 반응·답글 수는 최신 페이지를 다시 받아야 온다.
+      if (reconnected) await this.refreshLatestPage(activeChannelId);
     }
+    // 보고 있지 않던 채널도 같은 사이를 지났다 — 다시 열 때 받는다(지금 다 받으면 붙자마자 채널 수만큼 묻는다).
+    if (reconnected) for (const id of this.loadedChannels) if (id !== activeChannelId) this.staleSinceReconnect.add(id);
     // **열려 있는 스레드는 통째로 다시 받는다** (2026-10-12). 위 증분은 끊긴 사이의 **새** 답글만
     // 준다 — 끊긴 동안 연 스레드에서 받지 못했던 옛 답글(뿌리만 손에 있던 경우)과 끊긴 사이 고치거나
     // 지운 줄은 seq 가 그 아래라 오지 않는다. 그 스레드는 사람이 지금 보고 있는 것이므로 기다리지
@@ -1460,7 +1494,7 @@ export class Controller {
     // 그때 글을 보내면 접두가 안 붙는다 — 채널이 안 열리는 것보다 낫다.
     this.swallow(this.loadChannelAutoMentions(channelId));
     // 이미 연 채널이면 증분을 **끝까지** 받는다(`pullSince`) — 한 페이지로 자르면 틈이 남는다.
-    if (since > 0) { await this.pullSince(channelId, since); this.settleReadPosition(channelId); return; }
+    if (since > 0) { await this.pullSinceOpened(channelId, since); this.settleReadPosition(channelId); return; }
     const page = await this.firstPage(channelId);
     this.loadedChannels.add(channelId);
     // 첫 페이지는 "가장 오래된 줄부터 최신까지"를 말한다 — 그 뒤 소켓으로 오는 새 글도 이 안이다.
@@ -1889,6 +1923,7 @@ export class Controller {
     const page = await this.messagesPage(channelId, { since, limit: since === 0 ? INITIAL_HISTORY_LIMIT : undefined });
     this.loadedChannels.add(channelId);
     this.store.getState().upsertMessages(channelId, page.messages, page.asOf);
+    if (since > 0 && this.staleSinceReconnect.has(channelId)) await this.refreshLatestPage(channelId);
     // 증분 응답은 `hasMore` 를 말할 자격이 없다 — 근거는 `openChannel` 의 같은 자리.
     if (since === 0) {
       this.store.getState().set({ hasMore: { ...this.store.getState().hasMore, [channelId]: page.hasMore } });
@@ -3412,7 +3447,7 @@ export class Controller {
     this.swallow(this.loadChannelAutoMentions(channelId));
     // 읽음 처리(`settleReadPosition`)는 **두 갈래 모두** 거친다 — 증분 갈래에서 빠뜨리면 뒤로·앞으로
     // 간 채널의 배지가 남는다(security F1, 2026-10-06).
-    if (since > 0) { await this.pullSince(channelId, since); this.settleReadPosition(channelId); return; }
+    if (since > 0) { await this.pullSinceOpened(channelId, since); this.settleReadPosition(channelId); return; }
     const page = await this.firstPage(channelId);
     this.loadedChannels.add(channelId);
     if (page.messages.length) this.addCoverage(channelId, Math.min(...page.messages.map((m) => m.seq)), Infinity);
