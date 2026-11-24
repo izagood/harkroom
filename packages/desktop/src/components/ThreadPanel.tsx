@@ -33,7 +33,7 @@ import type { SectionId } from './settings/sections';
 import type { AgentWakeView } from '@harkroom/shared';
 import { useLocale, useT } from '../i18n/useT';
 import { stampLabel } from '../lib/day';
-import { isIdle, threadProgress, type ThreadTurn } from '../lib/threadProgress';
+import { hasLiveWork, isIdle, threadProgress, type ThreadTurn } from '../lib/threadProgress';
 import { useThreadRead, useThreadTurns } from '../lib/threadTurns';
 import { threadTitle, useAgentWakes } from '../lib/agentTurns';
 import { firstMyTurnMessageId, flattenWork, threadWorkItems, type WorkRow } from '../lib/threadWork';
@@ -233,10 +233,19 @@ export function ThreadPanel({ onOpenProfile, onOpenSettings, reserveLeft = MIN_C
   const stripIdle = isIdle(progress);
   // 서랍을 열어 둘지는 이 기기의 선택이다. 띠가 비면(일이 없으면) 서랍은 스스로 물러난다 — 선택은 그대로 남는다.
   const [drawerOpen, setDrawer] = useState(() => paneStorage.loadWorkDrawerOpen());
+  /*
+    「오늘 끝」만 남은 스레드에서도 서랍은 물러난다 — 볼 일이 없는데 글 칸을 좁히지 않는다. 다만 그 상태에서 사람이
+    여닫이를 눌러 직접 연 것은 그대로 둔다(이 스레드를 보는 동안만 — 기기의 선택과 따로 든다).
+  */
+  const [drawerHeld, setDrawerHeld] = useState(false);
+  useEffect(() => { setDrawerHeld(false); }, [threadRootId]);
+  const liveWork = hasLiveWork(progress);
+  const drawerShown = drawerOpen && !stripIdle && (liveWork || drawerHeld);
   const setDrawerOpen = useCallback((open: boolean) => {
     setDrawer(open);
+    setDrawerHeld(open && !liveWork);
     paneStorage.saveWorkDrawerOpen(open);
-  }, []);
+  }, [liveWork]);
   const openWorkMessage = useCallback(
     (id: string) => { void getController().openMessage(id).catch(() => {}); },
     [],
@@ -251,7 +260,8 @@ export function ThreadPanel({ onOpenProfile, onOpenSettings, reserveLeft = MIN_C
     messages: thread,
     myAccountId: me?.id ?? null,
     live,
-  }), [thread, me, live]);
+    handleOf: (id) => accounts[id]?.handle,
+  }), [thread, me, live, accounts]);
 
   /**
    * **스레드를 열면 마지막 답글이 보여야 한다**(소유자 보고, 2026-09-09): 스레드는 계속
@@ -567,7 +577,7 @@ export function ThreadPanel({ onOpenProfile, onOpenSettings, reserveLeft = MIN_C
           progress={progress}
           plan={planShown && planProgress ? { done: planProgress.done, total: planProgress.total } : null}
           onMyTurn={myTurnMessageId ? () => openWorkMessage(myTurnMessageId) : undefined}
-          drawer={{ open: drawerOpen, onToggle: () => setDrawerOpen(!drawerOpen) }}
+          drawer={{ open: drawerShown, onToggle: () => setDrawerOpen(!drawerShown) }}
         />
       )}
       {/* 「맡긴 일」 칩 줄(위임 재설계 v1 P6) — 머리 바로 아래. 위임이 없으면 줄이 없다. */}
@@ -689,7 +699,7 @@ export function ThreadPanel({ onOpenProfile, onOpenSettings, reserveLeft = MIN_C
         />
       )}
       </div>
-      {stripShown && drawerOpen && !stripIdle && (
+      {stripShown && drawerShown && (
         <ThreadWorkDrawer
           items={workItems}
           work={workRead.kind === 'off' ? 'off' : workRead.kind === 'unknown' ? 'unknown' : 'ok'}

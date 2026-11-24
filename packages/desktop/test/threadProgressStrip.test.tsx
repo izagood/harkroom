@@ -84,4 +84,20 @@ describe('ThreadProgressStrip', () => {
     render(<ThreadProgressStrip progress={ZERO} plan={null} drawer={{ open: true, onToggle }} />);
     expect(screen.queryByTestId('thread-work-toggle')).toBeNull();
   });
+  it('기다림 수 자체를 모르면 「기다림 모름」 칸이 선다 — 「도는 중 모름」 문구로 새거나 빠지지 않는다', () => {
+    for (const waitingUnknown of [true, false]) {
+      const { unmount } = render(
+        <ThreadProgressStrip progress={{ ...ZERO, waiting: null as unknown as number, waitingUnknown }} plan={null} />,
+      );
+      const cell = screen.getByTestId('thread-progress-waitingUnknown');
+      expect(cell.hasAttribute('data-unknown')).toBe(true);
+      expect(screen.queryByTestId('thread-progress-waiting')).toBeNull();
+      unmount();
+    }
+  });
+
+  it('「내 차례」 버튼은 키보드 포커스 표시를 갖는다', () => {
+    render(<ThreadProgressStrip progress={{ ...ZERO, myTurn: 1 }} plan={null} onMyTurn={() => {}} />);
+    expect(screen.getByTestId('thread-progress-myTurn').className).toContain('focus-visible:outline-accent');
+  });
 });

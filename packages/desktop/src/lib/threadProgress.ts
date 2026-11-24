@@ -114,6 +114,14 @@ export function isIdle(p: ThreadProgress): boolean {
   return p.myTurn === 0 && p.blocked === 0 && p.running === 0 && p.waiting === 0 && !p.waitingUnknown && p.doneToday === 0;
 }
 
+/**
+ * 사람이 지금 볼 일이 남았는가 — 내 차례·막힘·도는 중·기다림 가운데 하나라도 서는가(「모름」도 선 것으로 친다).
+ * 「오늘 끝」만 남은 스레드는 띠는 서지만 작업 서랍은 스스로 물러난다.
+ */
+export function hasLiveWork(p: ThreadProgress): boolean {
+  return p.myTurn > 0 || p.blocked > 0 || p.running !== 0 || p.waiting !== 0 || p.waitingUnknown;
+}
+
 function startOfDay(now: number): number {
   const d = new Date(now);
   d.setHours(0, 0, 0, 0);

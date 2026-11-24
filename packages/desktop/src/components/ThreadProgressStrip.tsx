@@ -85,6 +85,19 @@ export function ThreadProgressStrip({ progress, plan, onMyTurn, drawer }: {
           </span>
         );
         if (n === 0) return waitingUnknown || null;
+        // 기다림 수 자체를 모른다 — 「도는 중 모름」 문구로 새지 않게 여기서 「기다림 모름」 칸을 세운다.
+        if (n === null && slot === 'waiting') {
+          return waitingUnknown || (
+            <span
+              key="waitingUnknown"
+              data-testid="thread-progress-waitingUnknown"
+              data-unknown
+              className="inline-flex items-center gap-1 rounded-row border border-dashed border-border px-1.5 text-fg-subtle"
+            >
+              {t('thread.progress.waitingUnknown')}
+            </span>
+          );
+        }
         if (n === null) {
           return (
             <span
@@ -115,7 +128,7 @@ export function ThreadProgressStrip({ progress, plan, onMyTurn, drawer }: {
               data-count={n}
               title={t('thread.progress.myTurnJump')}
               onClick={onMyTurn}
-              className={`${tone} hover:underline`}
+              className={`${tone} hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-solid focus-visible:outline-accent`}
             >
               {cell}
             </button>

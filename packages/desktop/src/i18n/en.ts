@@ -2474,6 +2474,8 @@ export const en = {
    * 그것을 되살릴 방법이 없다.** 그래서 원본이 갈라 둔다.
    */
   'waitChain.linkAnyone': '{waiter} is waiting for someone to answer',
+  // 사슬 줄 끝의 **기다린 시간**. 도는 턴의 시간이 아니라서 `time.running`(`running 4h`)을 쓰지 않는다.
+  'waitChain.waited': 'waiting {duration}',
 
   'waitChain.deadlock': 'Deadlock',
   'waitChain.deadlockCycle': '{names} are waiting on each other — only a human can break this',

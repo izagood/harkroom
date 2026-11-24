@@ -1,6 +1,6 @@
 import { useActiveStore } from '../state/communities';
 import { elapsedMs } from '../lib/progressGroup';
-import { runningLabel } from '../lib/time';
+import { durationLabel } from '../lib/time';
 import { useT, useLocale } from '../i18n/useT';
 import {
   chainSentences, deadlockSentence, unblocksSentence, type WaitChain as Chain,
@@ -36,10 +36,9 @@ export function WaitChainLine({ chain }: { chain: Chain }) {
   const head = chain.links[0]!;
   // **`askedAt` 을 쓴다** — 집계로 만든 사슬에는 메시지가 없다(#488 A3-b). 채널 목록은
   // 답글을 싣지 않으므로 서버가 두 계정과 시각만 준다.
-  // 기다림은 **아직 도는 중**이라 `runningLabel` 이다 — `3분` 이 아니라 `3분째` 여야
-  // 이 줄이 말하는 사실("지금 멈춰 있다")이 온다(`lib/time.ts` 의 상[aspect] 주석).
+  // **기다린 시간**이다 — 도는 턴의 시간이 아니므로 `runningLabel`(`running 4h`)을 쓰지 않는다. `4시간째 기다림`.
   const waitedMs = elapsedMs(head.askedAt, Date.now());
-  const elapsed = waitedMs === null ? null : runningLabel(waitedMs, locale, t);
+  const elapsed = waitedMs === null ? null : t('waitChain.waited', { duration: durationLabel(waitedMs, locale, 'coarse') });
 
   if (chain.end === 'deadlock') {
     return (
