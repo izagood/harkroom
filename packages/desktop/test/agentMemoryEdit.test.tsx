@@ -33,6 +33,8 @@ const fakeController = (memories: MemoryEntry[], revisions: MemoryRevision[] = [
     // 「할 수 있는 일」 절(스레드 3deac356)이 상세를 열며 부른다 — 빈 목록이면 절은 '없음'만 그린다.
     listGrants: vi.fn(async () => []),
     agentDefaults: vi.fn(async (): Promise<AgentDefaults> => ({ harness: 'claude-code', model: null, effort: null })),
+    agentMemoryCleanup: vi.fn(async () => ({ enabled: true })),
+    agentBackground: vi.fn(async () => ({ enabled: false, paused: [], serverEnabled: true, runs: [] })),
     agentMemory: vi.fn(async () => memories),
     deleteAgentMemory: vi.fn(async (): Promise<void> => undefined),
     putAgentMemory: vi.fn(async (): Promise<{ ok: true }> => ({ ok: true })),

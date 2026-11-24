@@ -3,11 +3,13 @@
   "DELETE /channel-sections/:p": "0.4.140",
   "DELETE /invites/:p": "0.4.276",
   "DELETE /mandates/:p/lines/:p": "0.4.200",
+  "GET /accounts/agents/:p/memory-cleanup": "0.5.87",
   "GET /accounts/login-ids": "0.4.184",
   "GET /agents/:p/decide-check": "0.4.315",
   "GET /agents/:p/merge-accounts": "0.4.170",
   "GET /auth/password-reset-notices": "0.4.122",
   "GET /invites": "0.4.276",
+  "GET /settings/memory-cleanup": "0.5.87",
   "GET /threads/:p/plan": "0.4.373",
   "GET /threads/:p/turns": "0.5.6",
   "GET /threads/:p/work": "0.5.38",
@@ -19,5 +21,7 @@
   "POST /channel-sections": "0.4.140",
   "POST /invites/:p/resend": "0.4.278",
   "POST /secrets/:p/grants/:p/reapprove": "0.4.202",
-  "PUT /channel-sections/order": "0.4.140"
+  "PUT /accounts/agents/:p/memory-cleanup": "0.5.87",
+  "PUT /channel-sections/order": "0.4.140",
+  "PUT /settings/memory-cleanup": "0.5.87"
 }

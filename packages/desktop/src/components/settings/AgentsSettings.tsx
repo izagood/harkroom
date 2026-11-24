@@ -47,6 +47,7 @@ import { AgentGrantsSection, liveMergeCount, type MergeCount } from './AgentGran
 import { AgentPickableSection } from './AgentPickableSection';
 import { kindLabel, MemoryDetail } from './MemoryDetail';
 import { MemoryBody } from './MemoryBody';
+import { AgentMemoryCleanup } from './AgentMemoryCleanup';
 import { openWindow } from '../../lib/windowActions';
 import { canSeeAgentConfig } from '../../lib/agentConfigGate';
 // 팀 묶음(`docs/desktop-agent-cards.html` 4단계). 카드가 `AgentGrid` 를 재사용하지 않은
@@ -3288,6 +3289,14 @@ export function AgentsSettings({ targetId, onOpenSection }: { targetId?: string;
                       </div>
                     )}
                   </div>
+                  <AgentMemoryCleanup
+                    key={selected.id}
+                    agentId={selected.id}
+                    harness={selected.harness}
+                    apiKey={providerLane.present && providerLane.lane !== null}
+                    archived={memoryParts?.archived.length ?? 0}
+                    onReverted={() => loadMemories(selected, true)}
+                  />
                   {/* 읽기·삭제만이다. 편집을 넣지 않는 이유(#139): 사람이 고쳐도 에이전트가
                       다음 턴에 덮어쓰면 **사람은 자기 수정이 왜 사라졌는지 알 수 없다.** */}
                   <div className="mt-2 space-y-2">
