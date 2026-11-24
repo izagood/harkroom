@@ -4,6 +4,9 @@
 use harkroom_server::core::piece_verdict::{Decided, Refusal, Verdict, decide_with};
 use sqlx::PgPool;
 
+/// (조각, 판정, 재시도 수, 판정한 계정, 판정한 작업)
+type Row = (String, String, i32, Option<String>, Option<String>);
+
 async fn account(pool: &PgPool, handle: &str, kind: &str) -> String {
     sqlx::query_scalar(
         "insert into account(handle, display_name, kind, login_id, role, is_admin) \
@@ -39,8 +42,8 @@ async fn piece(
     sqlx::query_scalar(
         "insert into work (channel_id, thread_root_id, parent_id, root_id, assignee_account_id, requester_account_id, \
                            delegation_id, state, closed_at) \
-         values ($1::uuid, $2::uuid, $3::uuid, $3::uuid, $4::uuid, $5::uuid, $6::uuid, $7, \
-                 case when $7 in ('done', 'failed', 'canceled') then now() end) returning id::text",
+         values ($1::uuid, $2::uuid, $3::uuid, $3::uuid, $4::uuid, $5::uuid, $6::uuid, $7::text, \
+                 case when $7::text in ('done', 'failed', 'canceled') then now() end) returning id::text",
     )
     .bind(channel)
     .bind(root_msg)
@@ -196,7 +199,7 @@ async fn leader_judges_closed_pieces_within_limits() {
         Err(Refusal::AlreadyDecided)
     );
 
-    let got: Vec<(String, String, i32, Option<String>, Option<String>)> = sqlx::query_as(
+    let got: Vec<Row> = sqlx::query_as(
         "select work_id::text, verdict, retry_count, decided_by_account_id::text, decided_by_work_id::text \
            from work_verdict order by created_at, work_id",
     )

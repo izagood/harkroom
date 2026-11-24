@@ -124,7 +124,7 @@ pub fn check(verdict: Verdict, prior: Option<(Verdict, i32)>) -> Result<(), Refu
 /// 한 문장으로 적는다 — 넘긴 쪽·닫힘·재판정 규칙을 문장이 스스로 지킨다(겹쳐 와도 한쪽만 적힌다).
 /// `$1` 조각 작업 id, `$2` 판정하는 계정, `$3` 판정, `$4` 판정한 작업(없을 수 있다).
 const DECIDE_SQL: &str = "insert into work_verdict (work_id, verdict, decided_by_account_id, decided_by_work_id, retry_count) \
-     select w.id, $3, $2::uuid, $4::uuid, case when $3 = 'retry' then 1 else 0 end \
+     select w.id, $3::text, $2::uuid, $4::uuid, case when $3::text = 'retry' then 1 else 0 end \
        from work w join team_delegation d on d.id = w.delegation_id \
       where w.id = $1::uuid and d.lead_account_id = $2::uuid and w.closed_at is not null \
      on conflict (work_id) do update \
