@@ -80,6 +80,7 @@ pub mod runners;
 pub mod serve;
 pub mod server_link;
 pub mod socket;
+pub mod status_beat;
 pub mod tool_rules;
 pub mod turn_api;
 pub mod turn_command;

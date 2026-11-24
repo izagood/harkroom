@@ -5461,6 +5461,8 @@ async fn main() {
         if let Some(write) = operator_write {
             // C2a — 오퍼레이터 소켓·REST. 허브는 프로세스에 하나이고 C2b~C5 의 소비자가 같은 것을 받는다.
             let op_hub = harkroom_server::core::operator_hub::OperatorHub::new();
+            // 라우터 밖 루프(「집을 러너 없음」 글)가 박동의 디스크 여유를 읽는다.
+            harkroom_server::core::operator_hub::set_process_hub(op_hub.clone());
             let operators = harkroom_server::core::operator::OperatorCore::new(
                 state.pool.clone(),
                 write.clone(),

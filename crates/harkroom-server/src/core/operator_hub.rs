@@ -188,6 +188,19 @@ fn fingerprint_ok(s: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
+/// 이 프로세스의 허브 — 소켓을 여는 쪽이 한 번 걸어 두면, 라우터 밖에서 도는 루프(`loops::stale`)가 박동을 읽는다.
+/// 걸리지 않았으면(오퍼레이터 소켓이 꺼진 프로세스) `None` — 읽는 쪽은 「모름」으로 다룬다.
+static PROCESS_HUB: std::sync::OnceLock<OperatorHub> = std::sync::OnceLock::new();
+
+/// 프로세스 허브를 건다. 두 번째부터는 무시한다(허브는 프로세스에 하나다).
+pub fn set_process_hub(hub: OperatorHub) {
+    let _ = PROCESS_HUB.set(hub);
+}
+
+pub fn process_hub() -> Option<OperatorHub> {
+    PROCESS_HUB.get().cloned()
+}
+
 /// 박동 본문을 허용한 칸만 골라 새 객체로 만든다. 필수는 `turns.running` 하나, 나머지는 틀리면 그 칸만 뗀다.
 pub fn parse_operator_status(value: &Value) -> Option<Value> {
     let v = value.as_object()?;

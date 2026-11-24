@@ -196,22 +196,30 @@ fn memory() -> (Option<u64>, Option<u64>) {
     (None, None)
 }
 
+/// 그 자리가 놓인 디스크의 (전체, 여유) 바이트 — 박동([`crate::status_beat`])이 싣는다. 못 읽으면 `None`.
 #[cfg(unix)]
-fn disk_free(path: &Path) -> Option<u64> {
+pub fn disk_usage(path: &Path) -> Option<(u64, u64)> {
     use std::os::unix::ffi::OsStrExt;
     let c = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
     let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
     if unsafe { libc::statvfs(c.as_ptr(), &mut st) } != 0 {
         return None;
     }
-    // 두 칸의 폭이 OS 마다 다르다(u32/u64) — u64 로 올려 곱한다.
+    // 칸의 폭이 OS 마다 다르다(u32/u64) — u64 로 올려 곱한다.
     #[allow(clippy::unnecessary_cast)]
-    (st.f_bavail as u64).checked_mul(st.f_frsize as u64)
+    let total = (st.f_blocks as u64).checked_mul(st.f_frsize as u64)?;
+    #[allow(clippy::unnecessary_cast)]
+    let free = (st.f_bavail as u64).checked_mul(st.f_frsize as u64)?;
+    Some((total, free))
 }
 
 #[cfg(not(unix))]
-fn disk_free(_path: &Path) -> Option<u64> {
+pub fn disk_usage(_path: &Path) -> Option<(u64, u64)> {
     None
+}
+
+fn disk_free(path: &Path) -> Option<u64> {
+    disk_usage(path).map(|(_, free)| free)
 }
 
 /// 지금 값을 잰다. 디스크는 `disk_paths` 중 처음 읽히는 자리의 여유다(턴이 쓰는 자리 → 홈 순으로 준다).

@@ -8,6 +8,9 @@
 //! - 한 묶음(에이전트 × 스레드)마다: 표시 트랜잭션(`update … where stale_notified_at is null … returning`)이 경합 진 쪽을 거르고,
 //!   글은 [`msg_post::post_tx`](자기 트랜잭션·재시도 키 `stale:<최소 id>`·`message.created`/`inbox.updated` outbox)로 낸 뒤 표시를 커밋한다.
 //!   TS 와 같은 순서다 — 글 뒤 커밋 전에 죽으면 표시가 되돌아가고, 다음 sweep 은 같은 키로 새 글을 만들지 않는다.
+//! - 디스크 사유(TS 에 없는 덧붙임): 그 에이전트가 배정된 오퍼레이터가 붙어 있고 박동(`status.disk.freeBytes`)이 [`DISK_LOW_BYTES`] 밑이면
+//!   본문과 `failure.reason` 에 「디스크가 가득 찼다(남은 N GB)」를 적는다. 허브·배정·박동 중 하나라도 못 읽으면 옛 문장 그대로다.
+//!   실리는 것은 남은 용량 하나다 — 경로·기기 이름은 박동에 칸이 없다.
 //! - 한 번에 `STALE_SWEEP_BATCH` 묶음. 한 묶음의 실패는 기록만 하고 나머지를 계속한다.
 use super::{GateResult, Side, run_gated};
 use crate::core::audience::audience_for;
@@ -81,14 +84,51 @@ struct Candidate {
     root: String,
 }
 
-/// TS `failureFor` — 러너가 스스로 남기는 실패 통지와 같은 어휘.
-fn failure_meta(handle: &str) -> Map<String, Value> {
+/// 박동의 디스크 여유가 이 밑이면 「러너 없음」의 까닭을 디스크로 적는다. 러너가 턴 준비를 못 하는 선(512MB)보다 넉넉히 잡는다.
+pub const DISK_LOW_BYTES: u64 = 1024 * 1024 * 1024;
+
+/// 박동 본문에서 디스크가 바닥인지 — 바닥이면 남은 바이트. 칸이 없거나 넉넉하면 `None`(옛 문장 그대로).
+pub fn disk_low(status: &Value) -> Option<u64> {
+    let free = status.get("disk")?.get("freeBytes")?.as_u64()?;
+    (free < DISK_LOW_BYTES).then_some(free)
+}
+
+fn gb(bytes: u64) -> String {
+    format!("{:.1}GB", bytes as f64 / DISK_LOW_BYTES as f64)
+}
+
+/// 이 에이전트가 배정된 오퍼레이터가 지금 붙어 있고 그 박동의 디스크가 바닥이면 남은 바이트.
+/// 허브가 없거나(소켓이 꺼진 프로세스) 배정을 못 읽거나 박동이 없으면 `None` — 통지는 옛 문장으로 나간다.
+async fn disk_low_for(st: &PostState, account: &str) -> Option<u64> {
+    let hub = crate::core::operator_hub::process_hub()?;
+    let op: Option<String> = sqlx::query_scalar(
+        "select operator_id::text from agent_assignment where agent_id = $1::uuid",
+    )
+    .bind(account)
+    .fetch_optional(&st.read)
+    .await
+    .ok()?;
+    disk_low(&hub.status(&op?)?)
+}
+
+/// TS `failureFor` — 러너가 스스로 남기는 실패 통지와 같은 어휘. 디스크가 바닥이면(`disk_free`) 그 까닭을 적는다.
+fn failure_meta(handle: &str, disk_free: Option<u64>) -> Map<String, Value> {
+    let reason = match disk_free {
+        Some(free) => format!(
+            "오퍼레이터 기기의 디스크가 가득 찼다(남은 {}, 서버가 박동으로 관측했다) — 자리를 비운 뒤 러너를 다시 띄우면 이 요청부터 다시 집는다",
+            gb(free)
+        ),
+        None => {
+            "러너가 폴을 멈춘 상태다(서버가 관측했다) — 러너를 다시 띄우면 이 요청부터 다시 집는다"
+                .to_owned()
+        }
+    };
     let v = json!({
         "kind": "failure",
         "failure": {
             "retryable": true,
             "what": format!("@{handle} 의 러너가 붙어 있지 않아 이 요청이 처리되지 않았다"),
-            "reason": "러너가 폴을 멈춘 상태다(서버가 관측했다) — 러너를 다시 띄우면 이 요청부터 다시 집는다",
+            "reason": reason,
         },
     });
     match v {
@@ -99,6 +139,17 @@ fn failure_meta(handle: &str) -> Map<String, Value> {
 
 /// TS 통지 본문.
 pub const STALE_BODY: &str = "(이 요청을 집을 러너가 없습니다 — 운영자 확인이 필요합니다)";
+
+/// 통지 본문 — 디스크가 바닥이면 그 까닭을 덧붙인다. 아니면 [`STALE_BODY`] 그대로.
+pub fn stale_body(disk_free: Option<u64>) -> String {
+    match disk_free {
+        Some(free) => format!(
+            "(이 요청을 집을 러너가 없습니다 — 오퍼레이터 기기의 디스크가 가득 찼습니다(남은 {}). 자리를 비운 뒤 러너를 다시 띄워야 합니다)",
+            gb(free)
+        ),
+        None => STALE_BODY.to_owned(),
+    }
+}
 
 fn ms(d: Duration) -> i32 {
     i32::try_from(d.as_millis()).unwrap_or(i32::MAX)
@@ -111,6 +162,7 @@ async fn post_one(st: &PostState, group: &[Candidate]) -> Result<bool, sqlx::Err
     // 표시 트랜잭션을 열기 전에 읽는다 — 작은 풀에서 연결을 쥔 채 또 빌리지 않게.
     let audience = audience_for(&st.read, &head.channel).await?.to_json();
     let is_dm = msg_post::channel_is_dm(&st.read, &head.channel).await?;
+    let disk_free = disk_low_for(st, &head.account).await;
     let mut tx = st.write.begin().await?;
     let marked: Vec<i64> = sqlx::query_scalar(MARK_SQL)
         .bind(&ids)
@@ -121,14 +173,14 @@ async fn post_one(st: &PostState, group: &[Candidate]) -> Result<bool, sqlx::Err
         return Ok(false);
     }
     let post = PostBody {
-        body: STALE_BODY.to_owned(),
+        body: stale_body(disk_free),
         attachment_ids: Vec::new(),
         thread_root: Some(head.root.clone()),
         also_in_channel: false,
     };
     // 서버가 에이전트 이름으로 세운 알림 줄이다 — 그 에이전트의 결과가 아니므로 회신권·위임 의무를 건드리지 않는다.
     let origin = Origin {
-        meta: failure_meta(&head.handle),
+        meta: failure_meta(&head.handle, disk_free),
         server_notice: true,
         ..Origin::default()
     };
@@ -220,4 +272,51 @@ pub fn spawn(gate: PgPool, st: PostState) -> tokio::task::JoinHandle<()> {
             }
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn disk_low_only_below_the_line() {
+        assert_eq!(
+            disk_low(&json!({ "disk": { "totalBytes": 10, "freeBytes": 5 } })),
+            Some(5)
+        );
+        let roomy =
+            json!({ "disk": { "totalBytes": DISK_LOW_BYTES * 4, "freeBytes": DISK_LOW_BYTES } });
+        assert_eq!(disk_low(&roomy), None);
+        // 칸이 없거나 꼴이 다르면 모름 — 옛 문장으로 간다.
+        assert_eq!(disk_low(&json!({ "turns": { "running": 0 } })), None);
+        assert_eq!(disk_low(&json!({ "disk": { "freeBytes": "0" } })), None);
+    }
+
+    #[test]
+    fn wording_is_unchanged_without_a_disk_reason() {
+        assert_eq!(stale_body(None), STALE_BODY);
+        let m = failure_meta("a", None);
+        assert_eq!(
+            m["failure"]["reason"],
+            "러너가 폴을 멈춘 상태다(서버가 관측했다) — 러너를 다시 띄우면 이 요청부터 다시 집는다"
+        );
+    }
+
+    #[test]
+    fn disk_reason_carries_only_the_free_size() {
+        let free = DISK_LOW_BYTES / 4;
+        let body = stale_body(Some(free));
+        assert!(
+            body.contains("디스크가 가득 찼습니다(남은 0.2GB)"),
+            "{body}"
+        );
+        let m = failure_meta("a", Some(free));
+        let reason = m["failure"]["reason"].as_str().unwrap();
+        assert!(reason.contains("남은 0.2GB"), "{reason}");
+        assert_eq!(m["failure"]["retryable"], true);
+        assert_eq!(
+            m["failure"]["what"],
+            "@a 의 러너가 붙어 있지 않아 이 요청이 처리되지 않았다"
+        );
+    }
 }
