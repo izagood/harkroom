@@ -403,22 +403,41 @@ async fn read_when(c: &PgPool, me: &Account, slug: &str) -> Result<Option<String
     Ok(r.and_then(|x| x.0))
 }
 
-/// 빈 글자면 지운다(`description` 과 같다). `updated_at` 은 바로 앞 본문 쓰기가 이미 옮겼다.
-async fn write_when(
-    write: &PgPool,
+/// 쓰기 트랜잭션 안에서, 방금 쓴 행에 **남은** 「언제」까지 넣어 다시 검사한다. 걸리면 표시한다.
+///
+/// `set` 밖의 길(merge·restore·사람의 고침)은 이 칸을 건드리지 않아 있던 글자가 남는다. 그 글자를 빼고 검사하면
+/// 걸려 있던 문장이 본문만 바꿔도 풀린다. 행은 앞 쓰기가 잠갔으니 그 사이 다른 턴이 바꿀 수 없다.
+async fn flag_kept_when(
+    c: &mut sqlx::PgConnection,
     me: &Account,
     slug: &str,
-    when: &str,
-) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "update agent_memory set when_hint = nullif($3, '') where account_id = $1::uuid and slug = $2",
+    parts: &[Option<&str>],
+) -> Result<Option<ScanHit>, sqlx::Error> {
+    let when: Option<Option<String>> = sqlx::query_scalar(
+        "select when_hint from agent_memory where account_id = $1::uuid and slug = $2",
     )
     .bind(&me.id)
     .bind(slug)
-    .bind(when)
-    .execute(write)
+    .fetch_optional(&mut *c)
     .await?;
-    Ok(())
+    let Some(when) = when.flatten() else {
+        return Ok(None);
+    };
+    let mut all = parts.to_vec();
+    all.push(Some(when.as_str()));
+    let hit = scan_write(&all);
+    if let Some(h) = &hit {
+        sqlx::query(
+            "update agent_memory set flagged_at = now(), flag_reason = $3 \
+             where account_id = $1::uuid and slug = $2 and flagged_at is null",
+        )
+        .bind(&me.id)
+        .bind(slug)
+        .bind(&h.reason)
+        .execute(&mut *c)
+        .await?;
+    }
+    Ok(hit)
 }
 
 /// `datetime({offset:true})` 부분집합 + Postgres 가 읽는지(쓰기 전, 못 읽으면 TS 로).
@@ -540,6 +559,7 @@ async fn set(
                 kind,
                 expect,
                 flag.as_ref(),
+                when,
             )
             .await
         }
@@ -548,11 +568,6 @@ async fn set(
         Ok(r) => r,
         Err(_) => return Some(internal()),
     };
-    if let (SetOutcome::Ok, Some(w), Some(_)) = (&r, when, value)
-        && write_when(write, me, slug, w).await.is_err()
-    {
-        return Some(internal());
-    }
     match r {
         SetOutcome::Conflict(now) => {
             let message = match &now {
@@ -709,7 +724,9 @@ pub(crate) async fn upsert(
     kind: Option<&str>,
     expect: Option<Option<&str>>,
     flag: Option<&ScanHit>,
+    when: Option<&str>,
 ) -> Result<SetOutcome, sqlx::Error> {
+    let mut tx = write.begin().await?;
     let mode = match expect {
         None => "none",
         Some(None) => "absent",
@@ -753,9 +770,10 @@ pub(crate) async fn upsert(
     .bind(flag.map(|f| f.reason.as_str()))
     .bind(turn.turn)
 .bind(turn.run)
-    .fetch_one(write)
+    .fetch_one(&mut *tx)
     .await?;
     if n == 0 {
+        tx.rollback().await?;
         if let Some(e) = expect {
             let now = current(write, me, slug, e).await?;
             let matches = match (e, &now) {
@@ -769,6 +787,20 @@ pub(crate) async fn upsert(
         }
         return Ok(SetOutcome::TooMany);
     }
+    // 본문과 「언제」는 한 트랜잭션이다 — 새 본문에 옛 「언제」가 붙은 채 보이는 순간이 없다. 빈 글자면 지운다.
+    if let Some(w) = when {
+        sqlx::query(
+            "update agent_memory set when_hint = nullif($3, '') where account_id = $1::uuid and slug = $2",
+        )
+        .bind(&me.id)
+        .bind(slug)
+        .bind(w)
+        .execute(&mut *tx)
+        .await?;
+    }
+    // 사람이 고친 본문은 검사하지 않지만(TS 와 같다) 화면에 없는 「언제」는 사람이 보지 못한 글자다.
+    flag_kept_when(&mut tx, me, slug, &[]).await?;
+    tx.commit().await?;
     prune_revisions(write, me, slug).await?;
     // `pruneJournal`.
     sqlx::query(
@@ -862,7 +894,6 @@ async fn merge(
     if let Some(r) = thread_state_refusal(read, me, into).await.ok()? {
         return Some(r);
     }
-    let flag = scan_write(&[Some(value), description]);
     let mut from: Vec<&str> = vec![];
     for s in &from_in {
         if *s != into && !from.contains(s) {
@@ -879,7 +910,6 @@ async fn merge(
         description,
         kind,
         expect.as_deref(),
-        flag.as_ref(),
     )
     .await;
     let r = match r {
@@ -888,7 +918,7 @@ async fn merge(
         Ok(None) => return None,
         Err(_) => return Some(internal()),
     };
-    match r {
+    let flag = match r {
         MergeOutcome::TooMany => {
             return Some(err(
                 "too_many",
@@ -904,8 +934,8 @@ async fn merge(
             ));
         }
         MergeOutcome::Conflict(slug, at) => return Some(slug_conflict(&slug, at.as_deref())),
-        MergeOutcome::Ok => {}
-    }
+        MergeOutcome::Ok(flag) => flag,
+    };
     let tail: Result<String, sqlx::Error> = async {
         prune_revisions(write, me, into).await?;
         let warnings = memory_warnings(write, me).await?;
@@ -937,7 +967,8 @@ async fn merge(
 }
 
 enum MergeOutcome {
-    Ok,
+    /// 쓰기 검사 결과.
+    Ok(Option<ScanHit>),
     TooMany,
     NotFound(Vec<String>),
     Conflict(String, Option<String>),
@@ -1028,8 +1059,8 @@ async fn merge_tx(
     description: Option<&str>,
     kind: Option<&str>,
     expect: Option<&[(String, Option<String>)]>,
-    flag: Option<&ScanHit>,
 ) -> Result<Option<MergeOutcome>, sqlx::Error> {
+    let mut flag = scan_write(&[Some(value), description]);
     let mut tx = write.begin().await?;
     let mut all = vec![into];
     all.extend_from_slice(from);
@@ -1090,10 +1121,13 @@ async fn merge_tx(
     .bind(value)
     .bind(description)
     .bind(kind)
-    .bind(flag.map(|f| f.reason.as_str()))
+    .bind(flag.as_ref().map(|f| f.reason.as_str()))
     .bind(description.is_some())
     .execute(&mut *tx)
     .await?;
+    if let Some(h) = flag_kept_when(&mut tx, me, into, &[Some(value), description]).await? {
+        flag = Some(h);
+    }
     let detail = json!({ "from": from, "created": prev.is_none() }).to_string();
     // into 가 새 slug 면 판 시각은 지금(TS `new Date()`). 걸림은 지금 검사 결과(security F1).
     let (rv, rd, rflag, rkind, rat) = match prev {
@@ -1140,7 +1174,7 @@ async fn merge_tx(
         prune_archived(&mut tx, me).await?;
     }
     tx.commit().await?;
-    Ok(Some(MergeOutcome::Ok))
+    Ok(Some(MergeOutcome::Ok(flag)))
 }
 
 /// [`restore_one`] 의 결말 — TS `restoreMemory` 의 `'ok' | 'not_found' | 'too_many'`.
@@ -1219,6 +1253,7 @@ pub(crate) async fn restore_one(
     .bind(flag_reason.as_deref())
     .execute(&mut *tx)
     .await?;
+    flag_kept_when(&mut tx, me, slug, &[Some(&value), description.as_deref()]).await?;
     tx.commit().await?;
     prune_revisions(write, me, slug).await?;
     Ok(Restored::Ok)

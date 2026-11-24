@@ -7,10 +7,12 @@
 //! - 쓰기는 MCP 와 **같은 함수**를 탄다 — `memory.set` 의 [`upsert`]·[`delete`](상한·판 비교·이전 판·journal 자르기),
 //!   `memory.archive`·`unarchive` 의 [`archive_one`]·[`unarchive_one`]. 사람 경로라 턴·회차가 없고(`run_id`·`turn_id` null),
 //!   쓰기 검사(`scanWrite`)도 하지 않는다 — TS 가 `setMemory` 에 `flagReason` 을 주지 않는 것과 같다(사람이 고친 판은 표시가 풀린다).
+//!   다만 사람 화면에 아직 없는 「언제」(`when_hint`)가 걸린 기억은 고침·확인으로 풀리지 않는다.
 //! - 감사는 slug 만 남긴다(본문 없음).
 //! - `POST …/background/runs/:runId/revert`(S5.5) 는 TS `revertBgRun` 을 옮긴 [`revert`] 다 — 쓰기 풀에
 //!   [`BG_REVERT_PRIVILEGES`] 가 다 있을 때만 줄을 단다(없으면 TS).
 use super::agent_memory_read::{access, agent_target, bad, max_param_length};
+use super::content_scan::scan_write;
 use super::mcp::mem_body::{
     MAX_CORE, MAX_DESCRIPTION, MAX_ITEMS, MAX_VALUE, Restored, SetOutcome, delete, js_len,
     restore_one, upsert,
@@ -78,6 +80,17 @@ fn owner(id: &str) -> Account {
         status_text: None,
         avatar_attachment_id: None,
     }
+}
+
+/// 「언제」가 그것만으로, 또는 보이는 글과 합쳐서 새로 걸리는 규칙이 있나.
+fn when_adds_hit(shown: &[Option<&str>], when: Option<&str>) -> bool {
+    if scan_write(&[when]).is_some() {
+        return true;
+    }
+    let base = scan_write(shown).map(|h| h.rules).unwrap_or_default();
+    let mut all = shown.to_vec();
+    all.push(when);
+    scan_write(&all).is_some_and(|h| h.rules.iter().any(|r| !base.contains(r)))
 }
 
 fn unprocessable(code: &str, message: &str) -> Response {
@@ -218,6 +231,7 @@ pub async fn put(
         b.kind.as_deref(),
         expect,
         None,
+        None,
     )
     .await;
     match r {
@@ -250,6 +264,49 @@ pub async fn put(
     json_ok("{\"ok\":true}".to_owned())
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum Cleared {
+    Ok,
+    NotFlagged,
+    WhenFlagged,
+}
+
+/// 사람의 확인으로 표시를 푼다. 화면에 「언제」 칸이 없는 동안, 그 글자 때문에 걸린 기억은 풀지 않는다 — 보지 못한 문장이 풀린다.
+pub async fn clear_flag(write: &PgPool, id: &str, slug: &str) -> Result<Cleared, sqlx::Error> {
+    let seen: Option<(String, Option<String>, Option<String>)> = sqlx::query_as(
+        "select value, description, when_hint from agent_memory \
+         where account_id = $1::uuid and slug = $2 and flagged_at is not null",
+    )
+    .bind(id)
+    .bind(slug)
+    .fetch_optional(write)
+    .await?;
+    let Some((value, description, when)) = seen else {
+        return Ok(Cleared::NotFlagged);
+    };
+    let shown = [Some(value.as_str()), description.as_deref()];
+    if when.is_some() && when_adds_hit(&shown, when.as_deref()) {
+        return Ok(Cleared::WhenFlagged);
+    }
+    // 판정한 글자가 그 사이 바뀌었으면 풀지 않는다.
+    let n = sqlx::query(
+        "update agent_memory set flagged_at = null, flag_reason = null \
+         where account_id = $1::uuid and slug = $2 and flagged_at is not null \
+           and when_hint is not distinct from $3::text",
+    )
+    .bind(id)
+    .bind(slug)
+    .bind(when.as_deref())
+    .execute(write)
+    .await?
+    .rows_affected();
+    Ok(if n > 0 {
+        Cleared::Ok
+    } else {
+        Cleared::NotFlagged
+    })
+}
+
 /// `POST /accounts/agents/{id}/memory/{slug}/confirm` — 쓰기 검사에 걸린 판을 **사람이** 확인한다.
 pub async fn confirm(
     State(st): State<Arc<MemoryWriteState>>,
@@ -279,21 +336,20 @@ pub async fn confirm(
     if let Err(r) = agent_target(&st.write, &id, false).await {
         return r;
     }
-    let n = sqlx::query(
-        "update agent_memory set flagged_at = null, flag_reason = null \
-         where account_id = $1::uuid and slug = $2 and flagged_at is not null",
-    )
-    .bind(&id)
-    .bind(&slug)
-    .execute(&st.write)
-    .await;
-    match n {
-        Ok(r) if r.rows_affected() > 0 => {}
-        Ok(_) => {
+    match clear_flag(&st.write, &id, &slug).await {
+        Ok(Cleared::Ok) => {}
+        Ok(Cleared::NotFlagged) => {
             return json_err(
                 StatusCode::NOT_FOUND,
                 "not_flagged",
                 "memory is not flagged",
+            );
+        }
+        Ok(Cleared::WhenFlagged) => {
+            return json_err(
+                StatusCode::CONFLICT,
+                "when_flagged",
+                "the `when` text of this memory is flagged; ask the agent to rewrite or clear it",
             );
         }
         Err(e) => return internal(e),
