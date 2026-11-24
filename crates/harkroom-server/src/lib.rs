@@ -10,6 +10,7 @@ pub mod claim_seed;
 pub mod core;
 pub mod cors;
 pub mod directory;
+pub mod embed;
 pub mod env_once;
 pub mod health;
 pub mod http_metrics;

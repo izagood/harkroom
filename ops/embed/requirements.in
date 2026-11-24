@@ -1,0 +1,6 @@
+flatbuffers
+numpy
+onnxruntime
+packaging
+protobuf
+tokenizers

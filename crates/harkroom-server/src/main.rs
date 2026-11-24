@@ -98,6 +98,7 @@ async fn main() {
     if write.is_some() {
         spawn_loops().await;
     }
+    spawn_embed();
     // `HARKROOM_FRONT_TS_ROUTES`(옮긴 줄을 TS 로 되돌림)는 더 읽지 않는다 — 되돌릴 TS 가 없어(11-21) 되돌린 줄은 404 가 될 뿐이다.
     if std::env::var_os("HARKROOM_FRONT_TS_ROUTES").is_some() {
         eprintln!("front: HARKROOM_FRONT_TS_ROUTES is ignored (TS server removed)");
@@ -5774,6 +5775,19 @@ async fn enable_work_route(pool: &sqlx::PgPool) {
             "front: work route off — privilege check failed ({})",
             e.as_database_error().map_or("io", |_| "db")
         ),
+    }
+}
+
+/// 임베딩 서비스(기억 벡터 검색)의 준비 상태를 지켜본다. 설정이 없거나 틀리면 낱말 검색만 쓴다 — 기동은 막지 않는다.
+fn spawn_embed() {
+    use harkroom_server::embed::{EmbedConfig, Embedder, spawn_health};
+    match EmbedConfig::from_env(|k| std::env::var(k).ok()) {
+        Ok(None) => eprintln!("front: embed off — HARKROOM_EMBED_URL unset"),
+        Ok(Some(cfg)) => {
+            eprintln!("front: embed on (model={} dim={})", cfg.model, cfg.dim);
+            spawn_health(std::sync::Arc::new(Embedder::new(cfg)));
+        }
+        Err(e) => eprintln!("front: embed off — {e}"),
     }
 }
 

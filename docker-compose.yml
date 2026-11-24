@@ -51,6 +51,8 @@ services:
       # 첨부 저장소. 이 경로는 이미지가 uid 65532(nonroot) 소유로 만들어 둔다 — 볼륨이 그 소유를 물려받는다.
       ATTACHMENT_ROOT: /var/lib/harkroom/attachments
       ATTACHMENT_MAX_BYTES: ${ATTACHMENT_MAX_BYTES:-26214400}
+      # 기억 벡터 검색의 임베딩 서비스. 비우면(기본) 낱말 검색만 쓴다. 켜려면 아래 `embed` 절을 본다.
+      HARKROOM_EMBED_URL: ${HARKROOM_EMBED_URL:-}
     volumes:
       # 첨부 파일. 백업은 **이 볼륨을 먼저** 뜬 다음 DB 를 떠야 한다 — 반대 순서면 행이 가리키는 파일이 백업에
       # 없어 복구 후 '깨진 첨부'가 된다. 볼륨을 먼저 뜨면 그 사이 생긴 파일이 DB 에 없을 뿐이다(고아 파일, 무해).
@@ -62,12 +64,38 @@ services:
       # 안 넘기면 업로드가 실패한다(읽기는 된다 — 그래서 늦게 드러난다). 이 명령은 **볼륨 전체**의 소유자를 바꾼다 —
       # 그 볼륨을 다른 서비스와 같이 쓴다면 첨부 폴더만 바꾼다(README 「Deployment notes」).
       - attachments:/var/lib/harkroom/attachments
+    networks: [default, embed]
     ports:
       - "3400:3400"
     depends_on:
       postgres:
         condition: service_healthy
     restart: unless-stopped
+  # 기억 벡터 검색의 임베딩 서비스(bge-m3 int8). 이미지가 크고 메모리를 1~1.5GB 쓰므로 **기본으로는 뜨지 않는다**:
+  #   HARKROOM_EMBED_URL=http://embed:8080 docker compose --profile embed up -d
+  # 운영에서는 태그를 고정한다(`HARKROOM_EMBED_TAG=sha-<7자>`) — `latest` 는 바뀐다.
+  # 포트를 밖으로 열지 않는다 — 인증이 없고 기억 본문이 오간다. 준비 전·장애 중에는 서버가 낱말 검색만 쓴다.
+  embed:
+    profiles: ["embed"]
+    image: ghcr.io/izagood/harkroom-embed:${HARKROOM_EMBED_TAG:-latest}
+    build:
+      context: .
+      dockerfile: ops/embed/Dockerfile
+    environment:
+      EMBED_THREADS: "4"
+    cpus: 4
+    mem_limit: 2g
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: [/tmp]
+    # DB 에도 밖에도 닿지 않는다 — server 만 이 네트워크에 같이 있다.
+    networks: [embed]
+    restart: unless-stopped
+networks:
+  default:
+  embed:
+    internal: true
 volumes:
   pgdata:
   attachments:
