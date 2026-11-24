@@ -8,7 +8,8 @@ use sqlx::PgPool;
 
 /// TS `memory.list` = `listMemoryIndex` · `memoryRev` · `bgCleanupOn`(services/memory.ts · bgJobs.ts) 의 문장 그대로.
 /// `bgCleanup` 은 매일 기억 정리가 **실제로 돌고 있을 때**(지난 3일 안에 끝난 정리 회차) 참이다 — 러너가 목록의 정리 신호를 싣지 않는다.
-const MEMORY_LIST_SQL: &str = "with e as (select slug, case when flagged_at is null then description end as description, kind, char_length(value) as chars \
+const MEMORY_LIST_SQL: &str = "with e as (select slug, case when flagged_at is null then description end as description, kind, char_length(value) as chars, \
+         case when flagged_at is null then when_hint end as \"when\" \
        from agent_memory where account_id = $1::uuid and archived_at is null order by slug) \
      select json_build_object( \
        'slugs', coalesce((select json_agg(e.slug) from e), '[]'::json), \

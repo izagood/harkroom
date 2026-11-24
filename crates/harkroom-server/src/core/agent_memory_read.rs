@@ -166,7 +166,7 @@ macro_rules! iso {
     };
 }
 
-/// TS `listMemoryEntries` — `ENTRY_COLUMNS` 와 같은 칸·같은 순서, slug 순.
+/// TS `listMemoryEntries` — `ENTRY_COLUMNS` 와 같은 칸·같은 순서, slug 순. `when` 은 192 에서 더했다(걸린 글자도 소유자에게는 보인다).
 const ENTRIES_SQL: &str = concat!(
     "select coalesce(json_agg(json_build_object(",
     "'slug', slug, 'value', value, 'updatedAt', ",
@@ -179,7 +179,7 @@ const ENTRIES_SQL: &str = concat!(
     iso!("last_recalled_at"),
     ", 'flaggedAt', ",
     iso!("flagged_at"),
-    ", 'flagReason', flag_reason, 'archivedAt', ",
+    ", 'flagReason', flag_reason, 'when', when_hint, 'archivedAt', ",
     iso!("archived_at"),
     ") order by slug), '[]'::json)::text from agent_memory where account_id = $1::uuid"
 );

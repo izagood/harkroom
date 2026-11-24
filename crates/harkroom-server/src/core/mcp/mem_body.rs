@@ -36,6 +36,8 @@ pub(crate) const MAX_ITEMS: i64 = 200;
 pub(crate) const MAX_VALUE: usize = 8000;
 pub(crate) const MAX_CORE: usize = 3000;
 pub(crate) const MAX_DESCRIPTION: usize = 200;
+/// 「언제」 문장(192).
+pub(crate) const MAX_WHEN: usize = 200;
 const MAX_JOURNAL: i64 = 60;
 const CORE_WARN: i32 = 2600;
 const ITEMS_WARN: i32 = 180;
@@ -381,6 +383,63 @@ async fn read_description(
     Ok(r.and_then(|x| x.0))
 }
 
+/// 쓰기 역할이 `when_hint` 를 고칠 수 있나(192 의 GRANT).
+async fn can_write_when(write: &PgPool) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        "select has_column_privilege(current_user, 'agent_memory', 'when_hint', 'UPDATE')",
+    )
+    .fetch_one(write)
+    .await
+}
+
+async fn read_when(c: &PgPool, me: &Account, slug: &str) -> Result<Option<String>, sqlx::Error> {
+    let r: Option<(Option<String>,)> = sqlx::query_as(
+        "select when_hint from agent_memory where account_id = $1::uuid and slug = $2",
+    )
+    .bind(&me.id)
+    .bind(slug)
+    .fetch_optional(c)
+    .await?;
+    Ok(r.and_then(|x| x.0))
+}
+
+/// 쓰기 트랜잭션 안에서, 방금 쓴 행에 **남은** 「언제」까지 넣어 다시 검사한다. 걸리면 표시한다.
+///
+/// `set` 밖의 길(merge·restore·사람의 고침)은 이 칸을 건드리지 않아 있던 글자가 남는다. 그 글자를 빼고 검사하면
+/// 걸려 있던 문장이 본문만 바꿔도 풀린다. 행은 앞 쓰기가 잠갔으니 그 사이 다른 턴이 바꿀 수 없다.
+async fn flag_kept_when(
+    c: &mut sqlx::PgConnection,
+    me: &Account,
+    slug: &str,
+    parts: &[Option<&str>],
+) -> Result<Option<ScanHit>, sqlx::Error> {
+    let when: Option<Option<String>> = sqlx::query_scalar(
+        "select when_hint from agent_memory where account_id = $1::uuid and slug = $2",
+    )
+    .bind(&me.id)
+    .bind(slug)
+    .fetch_optional(&mut *c)
+    .await?;
+    let Some(when) = when.flatten() else {
+        return Ok(None);
+    };
+    let mut all = parts.to_vec();
+    all.push(Some(when.as_str()));
+    let hit = scan_write(&all);
+    if let Some(h) = &hit {
+        sqlx::query(
+            "update agent_memory set flagged_at = now(), flag_reason = $3 \
+             where account_id = $1::uuid and slug = $2 and flagged_at is null",
+        )
+        .bind(&me.id)
+        .bind(slug)
+        .bind(&h.reason)
+        .execute(&mut *c)
+        .await?;
+    }
+    Ok(hit)
+}
+
 /// `datetime({offset:true})` 부분집합 + Postgres 가 읽는지(쓰기 전, 못 읽으면 TS 로).
 async fn date_ok(pool: &PgPool, s: &str) -> Option<()> {
     if !super::mem_writes::datetime_ok(s) {
@@ -447,6 +506,7 @@ async fn set(
         _ => return None,
     };
     let description = opt_str(args, "description", MAX_DESCRIPTION)?;
+    let when = opt_str(args, "when", MAX_WHEN)?;
     let kind = kind_arg(args)?;
     let expect = super::mem_writes::if_updated_at(args)?;
     if let Some(Some(at)) = expect {
@@ -472,7 +532,19 @@ async fn set(
             return Some(r);
         }
     }
-    let flag = value.and_then(|v| scan_write(&[Some(v), description]));
+    // 쓰기 **전에** 칸 권한을 본다 — 본문만 저장되고 「언제」는 거절되는 반쪽 쓰기를 막는다.
+    if when.is_some() && value.is_some() && !can_write_when(write).await.ok()? {
+        return Some(err(
+            "when_unavailable",
+            "이 서버는 아직 `when` 칸을 쓸 수 없다(권한 없음) — when 을 빼고 다시 써라. 아무것도 저장하지 않았다.",
+        ));
+    }
+    // 안 준 「언제」는 있던 것이 남는다 — 남는 글자까지 검사해야 걸린 문장이 본문만 고쳐 풀리지 않는다.
+    let kept = match (when, value) {
+        (None, Some(_)) => read_when(read, me, slug).await.ok()?,
+        _ => None,
+    };
+    let flag = value.and_then(|v| scan_write(&[Some(v), description, when.or(kept.as_deref())]));
     // 여기부터 쓰기다(W1).
     let r = match value {
         None => delete(write, me, turn, slug, expect).await,
@@ -487,6 +559,7 @@ async fn set(
                 kind,
                 expect,
                 flag.as_ref(),
+                when,
             )
             .await
         }
@@ -651,7 +724,9 @@ pub(crate) async fn upsert(
     kind: Option<&str>,
     expect: Option<Option<&str>>,
     flag: Option<&ScanHit>,
+    when: Option<&str>,
 ) -> Result<SetOutcome, sqlx::Error> {
+    let mut tx = write.begin().await?;
     let mode = match expect {
         None => "none",
         Some(None) => "absent",
@@ -695,9 +770,10 @@ pub(crate) async fn upsert(
     .bind(flag.map(|f| f.reason.as_str()))
     .bind(turn.turn)
 .bind(turn.run)
-    .fetch_one(write)
+    .fetch_one(&mut *tx)
     .await?;
     if n == 0 {
+        tx.rollback().await?;
         if let Some(e) = expect {
             let now = current(write, me, slug, e).await?;
             let matches = match (e, &now) {
@@ -711,6 +787,20 @@ pub(crate) async fn upsert(
         }
         return Ok(SetOutcome::TooMany);
     }
+    // 본문과 「언제」는 한 트랜잭션이다 — 새 본문에 옛 「언제」가 붙은 채 보이는 순간이 없다. 빈 글자면 지운다.
+    if let Some(w) = when {
+        sqlx::query(
+            "update agent_memory set when_hint = nullif($3, '') where account_id = $1::uuid and slug = $2",
+        )
+        .bind(&me.id)
+        .bind(slug)
+        .bind(w)
+        .execute(&mut *tx)
+        .await?;
+    }
+    // 사람이 고친 본문은 검사하지 않지만(TS 와 같다) 화면에 없는 「언제」는 사람이 보지 못한 글자다.
+    flag_kept_when(&mut tx, me, slug, &[]).await?;
+    tx.commit().await?;
     prune_revisions(write, me, slug).await?;
     // `pruneJournal`.
     sqlx::query(
@@ -804,7 +894,6 @@ async fn merge(
     if let Some(r) = thread_state_refusal(read, me, into).await.ok()? {
         return Some(r);
     }
-    let flag = scan_write(&[Some(value), description]);
     let mut from: Vec<&str> = vec![];
     for s in &from_in {
         if *s != into && !from.contains(s) {
@@ -821,7 +910,6 @@ async fn merge(
         description,
         kind,
         expect.as_deref(),
-        flag.as_ref(),
     )
     .await;
     let r = match r {
@@ -830,7 +918,7 @@ async fn merge(
         Ok(None) => return None,
         Err(_) => return Some(internal()),
     };
-    match r {
+    let flag = match r {
         MergeOutcome::TooMany => {
             return Some(err(
                 "too_many",
@@ -846,8 +934,8 @@ async fn merge(
             ));
         }
         MergeOutcome::Conflict(slug, at) => return Some(slug_conflict(&slug, at.as_deref())),
-        MergeOutcome::Ok => {}
-    }
+        MergeOutcome::Ok(flag) => flag,
+    };
     let tail: Result<String, sqlx::Error> = async {
         prune_revisions(write, me, into).await?;
         let warnings = memory_warnings(write, me).await?;
@@ -879,7 +967,8 @@ async fn merge(
 }
 
 enum MergeOutcome {
-    Ok,
+    /// 쓰기 검사 결과.
+    Ok(Option<ScanHit>),
     TooMany,
     NotFound(Vec<String>),
     Conflict(String, Option<String>),
@@ -970,8 +1059,8 @@ async fn merge_tx(
     description: Option<&str>,
     kind: Option<&str>,
     expect: Option<&[(String, Option<String>)]>,
-    flag: Option<&ScanHit>,
 ) -> Result<Option<MergeOutcome>, sqlx::Error> {
+    let mut flag = scan_write(&[Some(value), description]);
     let mut tx = write.begin().await?;
     let mut all = vec![into];
     all.extend_from_slice(from);
@@ -1032,10 +1121,13 @@ async fn merge_tx(
     .bind(value)
     .bind(description)
     .bind(kind)
-    .bind(flag.map(|f| f.reason.as_str()))
+    .bind(flag.as_ref().map(|f| f.reason.as_str()))
     .bind(description.is_some())
     .execute(&mut *tx)
     .await?;
+    if let Some(h) = flag_kept_when(&mut tx, me, into, &[Some(value), description]).await? {
+        flag = Some(h);
+    }
     let detail = json!({ "from": from, "created": prev.is_none() }).to_string();
     // into 가 새 slug 면 판 시각은 지금(TS `new Date()`). 걸림은 지금 검사 결과(security F1).
     let (rv, rd, rflag, rkind, rat) = match prev {
@@ -1082,7 +1174,7 @@ async fn merge_tx(
         prune_archived(&mut tx, me).await?;
     }
     tx.commit().await?;
-    Ok(Some(MergeOutcome::Ok))
+    Ok(Some(MergeOutcome::Ok(flag)))
 }
 
 /// [`restore_one`] 의 결말 — TS `restoreMemory` 의 `'ok' | 'not_found' | 'too_many'`.
@@ -1161,6 +1253,7 @@ pub(crate) async fn restore_one(
     .bind(flag_reason.as_deref())
     .execute(&mut *tx)
     .await?;
+    flag_kept_when(&mut tx, me, slug, &[Some(&value), description.as_deref()]).await?;
     tx.commit().await?;
     prune_revisions(write, me, slug).await?;
     Ok(Restored::Ok)
