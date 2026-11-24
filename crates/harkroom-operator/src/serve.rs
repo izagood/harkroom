@@ -323,14 +323,32 @@ fn pool_shadow_if_on() -> Option<std::sync::Arc<std::sync::Mutex<crate::runner_p
         }
         let pool: Shared = Default::default();
         let seen = std::sync::Arc::clone(&pool);
+        // 칸 통지는 칸 잠금을 쥔 채 불린다 — 거기서는 채널에 넣기만 하고, 장부 잠금·로그는 이 스레드가 잠금 밖에서 한다.
+        let (tx, rx) = std::sync::mpsc::channel::<(String, usize)>();
+        let spawned = std::thread::Builder::new()
+            .name("runner-pool".into())
+            .spawn(move || {
+                for (runner, held) in rx {
+                    let now = now_ms();
+                    let line = {
+                        let mut p = seen.lock().unwrap_or_else(|p| p.into_inner());
+                        p.on_slots(&runner, held, now);
+                        p.summary_if_due(now)
+                    };
+                    if let Some(line) = line {
+                        eprintln!("러너 풀(그림자): {line}");
+                    }
+                }
+            });
+        if spawned.is_err() {
+            eprintln!("러너 풀 그림자: 장부 스레드를 띄우지 못했다 — 켜지 않는다");
+            return None;
+        }
         crate::turn_slots::TurnSlots::process()
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .set_observer(Box::new(move |runner, held| {
-                let mut p = seen.lock().unwrap_or_else(|p| p.into_inner());
-                if p.on_slots(runner, held, now_ms()) {
-                    eprintln!("러너 풀(그림자): 반납 — {}", p.describe());
-                }
+                let _ = tx.send((runner.to_string(), held));
             }));
         eprintln!(
             "러너 풀 그림자 켜짐({}=shadow) — 세기만 하고 러너는 그대로 상주한다",
@@ -917,9 +935,20 @@ pub fn spawn_server_link(
                     (s.in_use(), s.max())
                 };
                 let runner = wake_runners.current_incarnation(agent_id);
-                let mut p = pool.lock().unwrap_or_else(|p| p.into_inner());
-                let d = p.on_wake(agent_id, runner.as_deref(), in_use, max, now_ms());
-                eprintln!("러너 풀(그림자): {wake_id} → {d:?} — {}", p.describe());
+                let now = now_ms();
+                // 깨움마다 찍지 않는다 — 수치가 바뀌었을 때 간격을 두고 한 줄(장부 잠금을 놓은 뒤에 찍는다).
+                let line = {
+                    let mut p = pool.lock().unwrap_or_else(|p| p.into_inner());
+                    p.on_wake(agent_id, runner.as_deref(), in_use, max, now);
+                    p.summary_if_due(now)
+                };
+                if let Some(line) = line {
+                    eprintln!("러너 풀(그림자): {line}");
+                }
+            }
+            // I1b — 러너를 반납한 풀 에이전트(로컬 설정 `runnerPool: true`)면 빌려 띄운다. 풀 에이전트가 아니면 아무 일도 없다.
+            if let harkroom_proto::p2::ServerToOperatorFrame::Wake { agent_id, .. } = &frame {
+                frames.on_wake(agent_id);
             }
             return;
         }

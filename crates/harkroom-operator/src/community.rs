@@ -92,6 +92,7 @@ pub fn local_agent_of(entry: &Value) -> LocalAgent {
         claude_pool: s("claudePool"),
         provider_lane: entry.get("providerLane").cloned(),
         runner: crate::local_agents::runner_kind_of(Some(entry)),
+        pool: crate::local_agents::runner_pool_of(Some(entry)),
     }
 }
 
@@ -188,6 +189,21 @@ impl AssignmentDeps for SystemDeps {
         )
         .into()
     }
+    fn pool_room(&self, idle_pool_runners: &[String]) -> bool {
+        let slots = crate::turn_slots::TurnSlots::process();
+        let s = slots.lock().unwrap_or_else(|p| p.into_inner());
+        let Some(max) = s.max() else {
+            return true;
+        };
+        // 떠 있지만 아직 턴 칸을 안 잡은 풀 러너도 쓴 칸으로 친다.
+        let by = s.by_runner();
+        let idle = idle_pool_runners
+            .iter()
+            .filter(|r| by.get(r.as_str()).copied().unwrap_or(0) == 0)
+            .count();
+        s.in_use() + idle < max as usize
+    }
+
     fn is_alive(&self, agent_id: &str) -> bool {
         self.runners
             .records()
@@ -330,6 +346,8 @@ enum Job {
     Assign(Box<AgentDefinition>, LocalAgent),
     Unassign(String, bool),
     Restart(String),
+    /// 깨움(I1b) — 반납된 풀 에이전트면 러너를 빌려 띄운다.
+    Wake(String),
     /// 앞에 넣은 일이 다 끝났다는 신호(시험·종료 정리용).
     Flush(Sender<()>),
 }
@@ -452,6 +470,21 @@ impl AssignmentFrames {
                         Job::Flush(done) => {
                             let _ = done.send(());
                         }
+                        Job::Wake(agent_id) => {
+                            use crate::assignments::PoolWake;
+                            match worker_rec.on_wake(&agent_id) {
+                                PoolWake::Borrowed => {
+                                    eprintln!(
+                                        "러너 풀: 깨움으로 러너를 빌려 띄웠다: agent={agent_id}"
+                                    )
+                                }
+                                PoolWake::WaitFull => {
+                                    eprintln!("러너 풀: 턴 칸이 차서 기다린다: agent={agent_id}")
+                                }
+                                // 못 띄운 사유는 조정기가 적는다. 나머지(풀 아님·이미 떠 있음)는 조용히 둔다.
+                                _ => {}
+                            }
+                        }
                         Job::Restart(agent_id) => {
                             if !worker_rec.restart(&agent_id) {
                                 eprintln!("재시작 무시: agent={agent_id} — 배정·러너가 없다");
@@ -551,6 +584,13 @@ impl AssignmentFrames {
                 true
             }
             _ => false,
+        }
+    }
+
+    /// 깨움 프레임(I1b) — 이 커뮤니티의 배정이면 조정기에 넘긴다(작업 스레드에서 차례로). 풀 에이전트가 아니면 거기서 아무 일도 없다.
+    pub fn on_wake(&self, agent_id: &str) {
+        if lock(&self.assigned).contains(agent_id) {
+            self.push(Job::Wake(agent_id.to_string()));
         }
     }
 

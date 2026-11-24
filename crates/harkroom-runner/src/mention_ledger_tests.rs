@@ -292,3 +292,31 @@ fn settle_clears_accounts() {
     assert!(l.attempt(1).is_none());
     assert!(l.gate_requeue_of(1).is_none());
 }
+
+#[test]
+fn quiet_is_false_while_this_runner_alone_remembers_something() {
+    let mut l = Ledger::default();
+    assert!(l.quiet());
+    // 도는 턴.
+    let tried = l.start(&[1], "c/r");
+    assert!(!l.quiet());
+    // 재시도 대기(백오프) — 러너가 끝나면 사라지는 기억이다.
+    l.release(1, "c/r");
+    assert!(l.retry_later(1, tried, 1_000));
+    assert!(!l.quiet());
+    l.settle(1);
+    assert!(l.quiet());
+    // 임대 대기.
+    assert!(l.lease_wait(2, 1, 0));
+    assert!(!l.quiet());
+    l.lease_settled(2);
+    l.settle(2);
+    assert!(l.quiet());
+    // 끝냈지만 읽음을 못 적은 항목 — 적히면 빈다(최근 끝남 표는 세지 않는다).
+    l.mark_read_result(&[3], false, 10);
+    assert!(!l.quiet());
+    l.mark_read_result(&[3], true, 20);
+    assert!(l.quiet());
+    // 앞 세대가 넘긴 읽음 남음도 같다.
+    assert!(!Ledger::new(&[7], 0).quiet());
+}

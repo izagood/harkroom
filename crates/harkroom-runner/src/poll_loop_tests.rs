@@ -582,3 +582,132 @@ fn batch_ids_collects_channels_and_authors() {
     assert_eq!(ids, HashSet::from(["c1".to_string(), "a".to_string()]));
     assert!(batch_ids(&json!({})).is_empty());
 }
+
+// ---- 「작업 하나」 러너(I1b) ----
+
+/// 빈 폴만 주는 서버. `stop_at` 번째 폴부터는 종료 요청을 싣는다(상주 러너 시험을 끝내려고).
+struct EmptyServer {
+    polls: Cell<usize>,
+    stop_at: usize,
+    on_poll: Box<dyn Fn(usize)>,
+}
+
+impl PollSource for EmptyServer {
+    fn poll(&self, _: &[i64]) -> Result<Value, HarkroomError> {
+        let n = self.polls.get() + 1;
+        self.polls.set(n);
+        (self.on_poll)(n);
+        let stop = if n >= self.stop_at {
+            json!("2025-11-11T22:27:00.000Z")
+        } else {
+            Value::Null
+        };
+        Ok(json!({"entries": [], "messages": [], "stopRequestedAt": stop}))
+    }
+    fn definition(&self) -> Result<Value, HarkroomError> {
+        unreachable!()
+    }
+    fn channels(&self) -> Result<Vec<(String, String)>, HarkroomError> {
+        unreachable!()
+    }
+    fn accounts(&self) -> Result<Vec<Value>, HarkroomError> {
+        unreachable!()
+    }
+    fn reset(&self) {}
+}
+
+struct IdleScheduler {
+    idle: std::rc::Rc<Cell<bool>>,
+    asked: Cell<usize>,
+    drained: Cell<bool>,
+}
+
+impl Scheduler for IdleScheduler {
+    fn admit(&self, _: &Value, _: &BatchContext) -> Result<AdmitOutcome, HarkroomError> {
+        unreachable!()
+    }
+    fn holding_entries(&self) -> Vec<i64> {
+        vec![]
+    }
+    fn done_entries(&self) -> Vec<i64> {
+        vec![]
+    }
+    fn drain(&self) {
+        self.drained.set(true);
+    }
+    fn idle(&self) -> bool {
+        self.asked.set(self.asked.get() + 1);
+        self.idle.get()
+    }
+}
+
+fn run_empty(lp: &PollLoop, src: &EmptyServer, sched: &IdleScheduler) {
+    let note = |_: Option<&str>| {};
+    let exit = |_: &HarkroomError| {};
+    let stopped = |_: &[i64], _: &[i64]| {};
+    lp.run(
+        src,
+        sched,
+        &LoopHooks {
+            note_memory_rev: &note,
+            exit_if_unrecoverable: &exit,
+            notify_poll_stopped: &stopped,
+        },
+    );
+}
+
+fn me() -> Me {
+    Me {
+        id: "me".into(),
+        handle: "me".into(),
+    }
+}
+
+#[test]
+fn one_job_runner_retreats_on_empty_poll_only_when_scheduler_is_idle_and_nothing_is_open() {
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+    let busy = Arc::new(AtomicBool::new(true));
+    let b = Arc::clone(&busy);
+    let lp = PollLoop::new(me(), START).with_one_job(Box::new(move || b.load(Ordering::SeqCst)));
+    let idle = std::rc::Rc::new(Cell::new(false));
+    let (set_idle, set_busy) = (idle.clone(), Arc::clone(&busy));
+    let src = EmptyServer {
+        polls: Cell::new(0),
+        stop_at: usize::MAX,
+        // 1번째 폴: 스케줄러가 아직 일을 쥠 · 2번째: 스케줄러는 비었지만 터미널이 열림 · 3번째: 둘 다 빔.
+        on_poll: Box::new(move |n| {
+            set_idle.set(n >= 2);
+            set_busy.store(n < 3, Ordering::SeqCst);
+        }),
+    };
+    let sched = IdleScheduler {
+        idle,
+        asked: Cell::new(0),
+        drained: Cell::new(false),
+    };
+    run_empty(&lp, &src, &sched);
+    assert_eq!(src.polls.get(), 3);
+    assert!(!lp.running());
+    // 물러나는 순서는 평소와 같다(알림 → drain).
+    assert!(sched.drained.get());
+}
+
+#[test]
+fn resident_runner_never_retreats_on_empty_polls() {
+    let lp = PollLoop::new(me(), START);
+    let src = EmptyServer {
+        polls: Cell::new(0),
+        stop_at: 5,
+        on_poll: Box::new(|_| {}),
+    };
+    let sched = IdleScheduler {
+        idle: std::rc::Rc::new(Cell::new(true)),
+        asked: Cell::new(0),
+        drained: Cell::new(false),
+    };
+    run_empty(&lp, &src, &sched);
+    // 종료 요청이 올 때까지 돈다 — 스케줄러가 비었는지는 묻지도 않는다.
+    assert_eq!(src.polls.get(), 5);
+    assert_eq!(sched.asked.get(), 0);
+}

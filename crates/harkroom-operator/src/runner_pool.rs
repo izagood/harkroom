@@ -19,6 +19,8 @@ pub const RUNNER_POOL_ENV: &str = "HARKROOM_RUNNER_POOL";
 pub const EMPTY_AFTER_MS: u64 = 120_000;
 /// 장부가 드는 열린 빌림 수 상한 — 넘으면 가장 오래된 것을 빈 빌림으로 닫는다(프레임이 장부를 끝없이 키우지 못하게).
 pub const OPEN_CAP: usize = 512;
+/// 요약 줄을 찍는 최소 간격 — 깨움·칸 통지마다 찍지 않는다.
+pub const SUMMARY_EVERY_MS: u64 = 60_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PoolMode {
@@ -75,6 +77,9 @@ struct Lease {
 pub struct PoolShadow {
     open: HashMap<String, Lease>,
     counts: Counts,
+    /// 마지막으로 요약을 찍은 때와 그때의 수치.
+    summary_at: Option<u64>,
+    summary_counts: Counts,
 }
 
 impl PoolShadow {
@@ -174,6 +179,22 @@ impl PoolShadow {
             }
             _ => false,
         }
+    }
+
+    /// 요약 줄을 찍을 때인가 — 수치가 바뀌었고 마지막 줄에서 [`SUMMARY_EVERY_MS`] 가 지났을 때만 한 줄을 돌려준다(첫 변화는 바로).
+    pub fn summary_if_due(&mut self, now: u64) -> Option<String> {
+        if self.counts == self.summary_counts {
+            return None;
+        }
+        if self
+            .summary_at
+            .is_some_and(|at| now.saturating_sub(at) < SUMMARY_EVERY_MS)
+        {
+            return None;
+        }
+        self.summary_at = Some(now);
+        self.summary_counts = self.counts;
+        Some(self.describe())
     }
 
     /// 로그 한 줄 — 수치뿐이다.
@@ -322,6 +343,22 @@ mod tests {
         }
         assert_eq!(p.open_len(), OPEN_CAP);
         assert_eq!(p.counts().empty, 3);
+    }
+
+    #[test]
+    fn summary_is_spaced_and_only_on_change() {
+        let mut p = PoolShadow::new();
+        assert_eq!(p.summary_if_due(0), None, "바뀐 것이 없으면 찍지 않는다");
+        p.on_wake("a1", Some("r1"), 0, None, 10);
+        assert!(p.summary_if_due(10).is_some(), "첫 변화는 바로");
+        p.on_wake("a1", Some("r1"), 0, None, 20);
+        p.on_wake("a1", Some("r1"), 0, None, 30);
+        assert_eq!(p.summary_if_due(30), None, "간격 안에서는 모은다");
+        let line = p
+            .summary_if_due(10 + SUMMARY_EVERY_MS)
+            .expect("간격 뒤 한 줄");
+        assert!(line.contains("이어 씀 2"), "{line}");
+        assert_eq!(p.summary_if_due(10 + SUMMARY_EVERY_MS * 3), None);
     }
 
     #[test]

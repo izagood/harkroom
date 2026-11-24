@@ -210,6 +210,10 @@ impl Scheduler for RunnerScheduler {
     fn done_entries(&self) -> Vec<i64> {
         self.ledger().done_entries()
     }
+    fn idle(&self) -> bool {
+        // 도는 턴 수를 먼저 본다 — 띄우는 중인 턴은 장부보다 여기에 먼저 잡힌다.
+        self.running.count() == 0 && self.ledger().quiet()
+    }
     fn drain(&self) {
         let left = self.running.wait_idle_for(self.drain_limit);
         if left > 0 {

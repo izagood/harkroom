@@ -380,6 +380,10 @@ impl LocalAgents {
             if let Some(k) = runner_kind_of(agents.get(agent_id)) {
                 entry.insert("runner".into(), Value::String(k.as_str().into()));
             }
+            // runnerPool 도 이 길로 바뀌지 않는다(I1b) — 켜 둔 것을 옮겨 적는다.
+            if runner_pool_of(agents.get(agent_id)) {
+                entry.insert("runnerPool".into(), Value::Bool(true));
+            }
             agents.insert(agent_id.to_string(), Value::Object(entry));
             Ok(true)
         })
@@ -508,6 +512,11 @@ pub fn runner_kind_of(entry: Option<&Value>) -> Option<RunnerKind> {
         );
         RunnerKind::Node
     }))
+}
+
+/// 로컬 설정의 `runnerPool` 칸(I1b) — **정확히 `true`** 일 때만 켠다. 문자열 `"true"`·`1`·없음은 꺼짐이다(오타가 새 길을 켜지 않게).
+pub fn runner_pool_of(entry: Option<&Value>) -> bool {
+    entry.and_then(|e| e.get("runnerPool")) == Some(&Value::Bool(true))
 }
 
 /// TS `knownRunner` — 파일에 이미 적힌 `runner` 중 옮겨 적을 값(아는 두 값만).
@@ -815,6 +824,21 @@ mod tests {
     }
 
     #[test]
+    fn runner_pool_is_on_only_for_exact_true() {
+        assert!(runner_pool_of(Some(&json!({"runnerPool": true}))));
+        for v in [
+            json!({}),
+            json!({"runnerPool": false}),
+            json!({"runnerPool": "true"}),
+            json!({"runnerPool": 1}),
+            json!({"runnerPool": null}),
+        ] {
+            assert!(!runner_pool_of(Some(&v)), "{v}");
+        }
+        assert!(!runner_pool_of(None));
+    }
+
+    #[test]
     fn runner_kind_is_some_only_for_exact_values() {
         assert_eq!(
             runner_kind_of(Some(&json!({"runner":"rust"}))),
@@ -894,6 +918,22 @@ mod tests {
         assert_eq!(la.list().unwrap()["communities"][0]["registered"], true);
         la.remove(URL, "a1").unwrap();
         assert_eq!(read(&la)["communities"][URL]["agents"], json!({}));
+        // 손으로 켠 runnerPool 은 `set` 이 옮겨 적는다(정확히 true 일 때만).
+        for (was, kept) in [(json!(true), true), (json!("true"), false)] {
+            let mut cfg = read(&la);
+            cfg["communities"][URL]["agents"]["p1"] = json!({"runnerPool": was});
+            fs::write(la.config_path(), cfg.to_string()).unwrap();
+            la.set(URL, "p1", &AgentSetConfig::default()).unwrap();
+            assert_eq!(
+                read(&la)["communities"][URL]["agents"]["p1"],
+                if kept {
+                    json!({"runnerPool": true})
+                } else {
+                    json!({})
+                }
+            );
+        }
+        la.remove(URL, "p1").unwrap();
         // 없는 것을 빼면 쓰지 않는다.
         let before = fs::metadata(la.config_path()).unwrap().modified().unwrap();
         la.remove(URL, "nope").unwrap();
