@@ -15,8 +15,10 @@
 //! - **임대**: 잡을 때 만료 시각을 적고, 오퍼레이터가 자기가 아직 쥔 작업 목록으로 묶어서 갱신한다([`renew`]). 갱신이 끊기면 만료되고
 //!   다음에 잡는 쪽이 같은 줄을 덮어쓴다(`attempts` 가 하나 오른다). 치우는 일꾼은 없다.
 //! - 이 모듈은 `work.state` 를 바꾸지 않고 `work_event` 도 적지 않는다 — 상태를 옮기는 일은 잡는 쪽을 잇는 단계가 정한다.
-//! - 스위치 `HARKROOM_WORK_CLAIM`(`on`·`1`·`true` 만 켬, 기본 꺼짐). **이 단계에서는 어떤 프레임·경로도 이 모듈을 부르지 않는다** —
-//!   오퍼레이터 쪽 배선은 다음 단계다.
+//! - **잡은 줄은 기록이다.** `work_claim` 을 권한·순서·머지 같은 판정의 근거로 읽는 코드를 두지 않는다 — 누가 무엇을 할 수 있는지는
+//!   지금처럼 허용 표와 각 길의 문지기가 정한다. 작업 상태가 정본이 되기 전에는 이 줄이 「그 일이 돌고 있다」는 뜻도 아니다.
+//! - 스위치 `HARKROOM_WORK_CLAIM`(`on`·`1`·`true` 만 켬, 기본 꺼짐). 부르는 곳은 오퍼레이터 프레임 처리기
+//!   ([`super::work_claim_frames`]) 하나다.
 use super::wake_deliver::is_uuid_shaped;
 use sqlx::PgPool;
 
@@ -51,7 +53,7 @@ pub fn switch_on(raw: Option<&str>) -> bool {
     )
 }
 
-fn switch_from_env() -> bool {
+pub(crate) fn switch_from_env() -> bool {
     switch_on(crate::env_once::get(&crate::env_once::WORK_CLAIM))
 }
 
@@ -142,7 +144,8 @@ macro_rules! entitled {
 }
 
 /// 후보 하나를 고르는 몸통(`from` 부터 `limit 1` 까지). `$1` 오퍼레이터, `$2` 후보를 좁힐 에이전트 목록(null 이면 안 좁힘),
-/// `$3` 이 작업 하나로 좁히기(null 이면 안 좁힘).
+/// `$3` 이 작업 하나로 좁히기(null 이면 안 좁힘), `$4` 이 스레드의 작업으로 좁히기(null 이면 안 좁힘). 좁히기는 후보를 줄이기만
+/// 한다 — 자격 술어는 그대로 붙는다.
 macro_rules! candidate {
     () => {
         concat!(
@@ -156,6 +159,7 @@ macro_rules! candidate {
             entitled!(),
             " and ($2::uuid[] is null or w.assignee_account_id = any($2::uuid[])) \
               and ($3::uuid is null or w.id = $3::uuid) \
+              and ($4::uuid is null or w.thread_root_id = $4::uuid) \
               and not exists (select 1 from work_claim c where c.work_id = w.id and ",
             live!("c"),
             ") \
@@ -172,7 +176,7 @@ macro_rules! candidate {
     };
 }
 
-/// 후보 보기 — 잠그지 않고 「지금 잡을 수 있는 가장 앞 작업」과 그 뿌리를 읽는다. 인자는 [`candidate!`] 의 `$1`~`$3`(`$3` 은 null).
+/// 후보 보기 — 잠그지 않고 「지금 잡을 수 있는 가장 앞 작업」과 그 뿌리를 읽는다. 인자는 [`candidate!`] 의 `$1`~`$4`(`$3` 은 null).
 pub const CANDIDATE_SQL: &str = concat!("select w.id::text, w.root_id::text ", candidate!());
 
 /// 뿌리 잠금 — `$1` 뿌리 작업 id. 트랜잭션이 끝날 때 풀린다. 같은 뿌리의 잡기는 이 줄에서 차례를 기다린다.
@@ -180,8 +184,8 @@ pub const CANDIDATE_SQL: &str = concat!("select w.id::text, w.root_id::text ", c
 pub const ROOT_LOCK_SQL: &str =
     "select pg_advisory_xact_lock(hashtextextended($1::uuid::text, 7230125480327697495))";
 
-/// 잡는 문장 — **뿌리 잠금을 쥔 트랜잭션 안에서** 부른다. `$1`~`$3` 은 [`candidate!`] 그대로(`$3` 은 고른 후보),
-/// `$4` 러너 칸 세대, `$5` 임대 길이(초). 조건을 처음부터 다시 본다(잠금을 기다리는 사이 바뀌었을 수 있다).
+/// 잡는 문장 — **뿌리 잠금을 쥔 트랜잭션 안에서** 부른다. `$1`~`$4` 는 [`candidate!`] 그대로(`$3` 은 고른 후보),
+/// `$5` 러너 칸 세대, `$6` 임대 길이(초). 조건을 처음부터 다시 본다(잠금을 기다리는 사이 바뀌었을 수 있다).
 /// `pick` 이 그 작업 행을 잠근다(다른 쪽이 잠근 행은 건너뛴다). `ins` 는 살아 있는 줄이 없을 때만 적는다.
 /// 돌려주는 줄: 고른 작업 + 적혔으면 횟수·만료(안 적혔으면 null — 겹쳐 잡다 진 것).
 pub const CLAIM_SQL: &str = concat!(
@@ -191,7 +195,7 @@ pub const CLAIM_SQL: &str = concat!(
     " for update of w skip locked \
      ), ins as ( \
        insert into work_claim (work_id, agent_id, operator_id, slot_generation, mode, lease_expires_at) \
-       select p.id, p.agent_id, $1::uuid, $4::bigint, 'pull', now() + make_interval(secs => $5::int) from pick p \
+       select p.id, p.agent_id, $1::uuid, $5::bigint, 'pull', now() + make_interval(secs => $6::int) from pick p \
        on conflict (work_id) do update \
           set agent_id = excluded.agent_id, operator_id = excluded.operator_id, \
               slot_generation = excluded.slot_generation, mode = excluded.mode, turn_id = null, \
@@ -294,10 +298,48 @@ pub async fn claim_next_with(
     lease: Option<i32>,
     agents: Option<&[String]>,
 ) -> sqlx::Result<Result<Option<Claimed>, Refusal>> {
+    claim_narrowed_with(pool, on, operator_id, slot_generation, lease, agents, None).await
+}
+
+/// [`claim_next`] 에 스레드 좁히기를 더한 것 — `thread_root_id` 가 있으면 그 스레드의 작업만 후보다. 스위치는 env 에서 읽는다.
+pub async fn claim_narrowed(
+    pool: &PgPool,
+    operator_id: &str,
+    slot_generation: i64,
+    lease: Option<i32>,
+    agents: Option<&[String]>,
+    thread_root_id: Option<&str>,
+) -> sqlx::Result<Result<Option<Claimed>, Refusal>> {
+    claim_narrowed_with(
+        pool,
+        switch_from_env(),
+        operator_id,
+        slot_generation,
+        lease,
+        agents,
+        thread_root_id,
+    )
+    .await
+}
+
+/// [`claim_narrowed`] 의 몸통 — 스위치를 인자로 받는다(시험).
+pub async fn claim_narrowed_with(
+    pool: &PgPool,
+    on: bool,
+    operator_id: &str,
+    slot_generation: i64,
+    lease: Option<i32>,
+    agents: Option<&[String]>,
+    thread_root_id: Option<&str>,
+) -> sqlx::Result<Result<Option<Claimed>, Refusal>> {
     if !on {
         return Ok(Err(Refusal::Disabled));
     }
-    if !is_uuid_shaped(operator_id) || slot_generation < 0 || !agents.is_none_or(ids_ok) {
+    if !is_uuid_shaped(operator_id)
+        || slot_generation < 0
+        || !agents.is_none_or(ids_ok)
+        || !thread_root_id.is_none_or(is_uuid_shaped)
+    {
         return Ok(Err(Refusal::BadRequest));
     }
     for _ in 0..RACE_RETRIES {
@@ -306,6 +348,7 @@ pub async fn claim_next_with(
             .bind(operator_id)
             .bind(agents)
             .bind(None::<&str>)
+            .bind(thread_root_id)
             .fetch_optional(pool)
             .await?;
         let Some((cand_id, root_id)) = cand else {
@@ -321,6 +364,7 @@ pub async fn claim_next_with(
             .bind(operator_id)
             .bind(agents)
             .bind(&cand_id)
+            .bind(thread_root_id)
             .bind(slot_generation)
             .bind(lease_secs(lease))
             .fetch_optional(&mut *tx)
@@ -510,6 +554,13 @@ mod tests {
             );
         }
         assert!(CLAIM_SQL.contains("skip locked"));
+        // 스레드 좁히기는 후보를 줄이기만 한다 — 자격 술어와 `and` 로 붙는다.
+        for sql in [CANDIDATE_SQL, CLAIM_SQL] {
+            assert!(
+                sql.contains("and ($4::uuid is null or w.thread_root_id = $4::uuid)"),
+                "{sql}"
+            );
+        }
         // 후보 보기는 아무것도 잠그지 않고, 뿌리 잠금은 트랜잭션과 함께 풀린다.
         assert!(!CANDIDATE_SQL.contains("for update"));
         assert!(ROOT_LOCK_SQL.contains("pg_advisory_xact_lock"));

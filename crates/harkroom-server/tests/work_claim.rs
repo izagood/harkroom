@@ -701,3 +701,141 @@ async fn overlapping_paths_are_never_claimed_together() {
         .unwrap();
     }
 }
+
+fn frame(v: serde_json::Value) -> serde_json::Map<String, serde_json::Value> {
+    v.as_object().unwrap().clone()
+}
+
+/// I2b 프레임 처리기 — 스레드 좁히기는 후보만 줄이고, 횟수는 받은 값 그대로 돌아가 펜싱에 쓰인다.
+#[tokio::test]
+async fn frames_narrow_by_thread_and_pass_attempts_through() {
+    use harkroom_server::core::work_claim_frames::handle;
+    use serde_json::json;
+    let Some(db) = db().await else { return };
+    let a = &db.admin;
+    let owner = account(a, "human", "wc7-owner").await;
+    let agent = account(a, "agent", "wc7-agent").await;
+    let op = operator(a, &owner, "wc7-op").await;
+    let other_op = operator(a, &owner, "wc7-other").await;
+    allow(a, &agent, &op).await;
+    let t1 = thread(a, &owner, "wc7-ch1").await;
+    let t2 = thread(a, &owner, "wc7-ch2").await;
+    let old = work(a, &t1, Some(&agent), Some(&owner), "open", 30).await;
+    let new = work(a, &t2, Some(&agent), Some(&owner), "open", 5).await;
+
+    // 꺼져 있으면 답만 하고 아무것도 적지 않는다.
+    let claim_t2 = frame(json!({
+        "type": "work.claim", "requestId": "q1", "slotGeneration": 4, "leaseSecs": 60,
+        "agents": [agent], "threadRootId": t2.1,
+    }));
+    let off = handle(&db.w, false, &op, &claim_t2).await.unwrap();
+    assert_eq!(off["error"], "work_claim_disabled");
+    assert_eq!(off["requestId"], "q1");
+    assert_eq!(claim_rows(a, &t2).await, 0);
+    let off = handle(
+        &db.w,
+        false,
+        &op,
+        &frame(json!({"type": "work.renew", "requestId": "q0", "held": []})),
+    )
+    .await
+    .unwrap();
+    assert_eq!(off["error"], "work_claim_disabled");
+
+    // 좁히기는 자격을 넓히지 않는다 — 허용 표에 없는 오퍼레이터는 그 스레드를 대도 못 잡는다.
+    let none = handle(&db.w, true, &other_op, &claim_t2).await.unwrap();
+    assert!(
+        none.get("work").is_none() && none.get("error").is_none(),
+        "{none}"
+    );
+    // 프레임 안에 다른 오퍼레이터를 적어도 읽지 않는다(연결의 값만 쓴다).
+    let mut forged = claim_t2.clone();
+    forged.insert("operatorId".into(), json!(op));
+    let none = handle(&db.w, true, &other_op, &forged).await.unwrap();
+    assert!(none.get("work").is_none(), "{none}");
+    assert_eq!(claim_rows(a, &t2).await, 0);
+
+    // 그 스레드로 좁히면 더 오래된 다른 스레드의 작업을 건너뛴다.
+    let got = handle(&db.w, true, &op, &claim_t2).await.unwrap();
+    assert_eq!(got["type"], "work.claimed");
+    assert_eq!(got["work"]["workId"], new);
+    assert_eq!(got["work"]["threadRootId"], t2.1);
+    assert_eq!(got["work"]["attempts"], 1);
+    assert!(got["work"]["leaseExpiresAt"].is_string());
+    // 잡아도 작업 상태는 그대로다.
+    let state: String = sqlx::query_scalar("select state from work where id = $1::uuid")
+        .bind(&new)
+        .fetch_one(a)
+        .await
+        .unwrap();
+    assert_eq!(state, "open");
+    // 같은 스레드에 더 잡을 것은 없다(오래된 작업은 다른 스레드다).
+    let none = handle(&db.w, true, &op, &claim_t2).await.unwrap();
+    assert!(
+        none.get("work").is_none() && none.get("error").is_none(),
+        "{none}"
+    );
+
+    // 갱신: 횟수가 다르면 닿지 않는다.
+    let renew = |attempts: i32| {
+        frame(
+            json!({"type": "work.renew", "requestId": "q2", "held": [{"workId": new, "attempts": attempts}]}),
+        )
+    };
+    let stale = handle(&db.w, true, &op, &renew(2)).await.unwrap();
+    assert_eq!(stale["workIds"], json!([]));
+    let kept = handle(&db.w, true, &op, &renew(1)).await.unwrap();
+    assert_eq!(kept["workIds"], json!([new]));
+    assert_eq!(kept["leaseSecs"], 90);
+    // 다른 연결은 같은 짝을 대도 갱신·놓기가 안 된다.
+    let foreign = handle(&db.w, true, &other_op, &renew(1)).await.unwrap();
+    assert_eq!(foreign["workIds"], json!([]));
+    let release = |attempts: i32| {
+        frame(
+            json!({"type": "work.release", "workId": new, "attempts": attempts, "reason": "released"}),
+        )
+    };
+    assert!(handle(&db.w, true, &other_op, &release(1)).await.is_none());
+    assert!(handle(&db.w, true, &op, &release(2)).await.is_none());
+    let live: i64 = sqlx::query_scalar(
+        "select count(*) from work_claim where work_id = $1::uuid and released_at is null",
+    )
+    .bind(&new)
+    .fetch_one(a)
+    .await
+    .unwrap();
+    assert_eq!(live, 1);
+
+    // 놓기: 답은 없고 줄이 놓인다. 다시 잡으면 횟수가 오른다.
+    assert!(handle(&db.w, true, &op, &release(1)).await.is_none());
+    let reason: Option<String> =
+        sqlx::query_scalar("select release_reason from work_claim where work_id = $1::uuid")
+            .bind(&new)
+            .fetch_one(a)
+            .await
+            .unwrap();
+    assert_eq!(reason.as_deref(), Some("released"));
+    let again = handle(&db.w, true, &op, &claim_t2).await.unwrap();
+    assert_eq!(again["work"]["attempts"], 2);
+
+    // 틀린 모양은 DB 에 닿기 전에 거절한다.
+    let bad = handle(
+        &db.w,
+        true,
+        &op,
+        &frame(json!({"type": "work.claim", "requestId": "q9", "slotGeneration": 0, "threadRootId": "nope"})),
+    )
+    .await
+    .unwrap();
+    assert_eq!(bad["error"], "invalid_request");
+    // 좁히지 않으면 지금처럼 가장 오래된 것부터다.
+    let oldest = handle(
+        &db.w,
+        true,
+        &op,
+        &frame(json!({"type": "work.claim", "requestId": "q10", "slotGeneration": 0, "agents": [agent]})),
+    )
+    .await
+    .unwrap();
+    assert_eq!(oldest["work"]["workId"], old);
+}

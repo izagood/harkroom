@@ -382,6 +382,43 @@
     "wakeId": "w-00000000-0000-4000-8000-000000000001"
    },
    {
+    "type": "work.claim",
+    "requestId": "q1",
+    "slotGeneration": 0
+   },
+   {
+    "type": "work.claim",
+    "requestId": "q2",
+    "slotGeneration": 3,
+    "leaseSecs": 120,
+    "agents": [
+     "00000000-aaaa-4bbb-8ccc-000000000001"
+    ],
+    "threadRootId": "00000000-aaaa-4bbb-8ccc-000000000001"
+   },
+   {
+    "type": "work.renew",
+    "requestId": "q3",
+    "held": [
+     {
+      "workId": "00000000-aaaa-4bbb-8ccc-000000000001",
+      "attempts": 2
+     }
+    ]
+   },
+   {
+    "type": "work.renew",
+    "requestId": "q4",
+    "leaseSecs": 60,
+    "held": []
+   },
+   {
+    "type": "work.release",
+    "workId": "00000000-aaaa-4bbb-8ccc-000000000001",
+    "attempts": 2,
+    "reason": "released"
+   },
+   {
     "type": "runner.announce",
     "runnerId": "r-00000000-0000-4000-8000-000000000002",
     "sessions": [
@@ -593,6 +630,42 @@
     "threadRootId": "m1",
     "workId": "k1",
     "reason": "reply"
+   },
+   {
+    "type": "work.claimed",
+    "requestId": "q1"
+   },
+   {
+    "type": "work.claimed",
+    "requestId": "q1",
+    "error": "work_claim_disabled"
+   },
+   {
+    "type": "work.claimed",
+    "requestId": "q2",
+    "work": {
+     "workId": "00000000-aaaa-4bbb-8ccc-000000000001",
+     "agentId": "00000000-aaaa-4bbb-8ccc-000000000001",
+     "channelId": "00000000-aaaa-4bbb-8ccc-000000000001",
+     "threadRootId": "00000000-aaaa-4bbb-8ccc-000000000001",
+     "rootId": "00000000-aaaa-4bbb-8ccc-000000000001",
+     "attempts": 2,
+     "leaseExpiresAt": "2026-01-01T00:00:00.000Z"
+    }
+   },
+   {
+    "type": "work.renewed",
+    "requestId": "q3",
+    "workIds": [
+     "00000000-aaaa-4bbb-8ccc-000000000001"
+    ],
+    "leaseSecs": 90
+   },
+   {
+    "type": "work.renewed",
+    "requestId": "q4",
+    "workIds": [],
+    "error": "work_claim_disabled"
    }
   ]
  },

@@ -132,6 +132,8 @@ impl OperatorCore {
             core.hub.clone(),
             super::wake_deliver::WAKE_DELIVER_INTERVAL,
         );
+        // I2b — 잡기 프레임. 스위치가 꺼져 있으면 `work_claim_disabled` 로만 답한다.
+        super::work_claim_frames::spawn(core.write.clone(), core.hub.clone());
         super::operator_frames::spawn(
             core.clone(),
             super::operator_frames::machine_id_key_from_env(
