@@ -1026,15 +1026,16 @@ class AppState extends ChangeNotifier {
       getTicket: () => _api!.wsTicket(),
       connect: _connector,
       onOpen: () {
-        final wasDown = connection == SocketState.reconnecting;
         connection = SocketState.online;
         notifyListeners();
         // **다시 붙으면 빠진 것을 읽는다.** 끊긴 사이의 이벤트는 서버가 다시 보내 주지
         // 않는다 — 안 읽으면 그 사이의 말이 영영 화면에 없다. 처음 붙을 때는 방금 읽었으므로
-        // 하지 않는다.
-        if (wasDown) unawaited(catchUp());
+        // 하지 않는다. 끊긴 적이 있는지는 [connection] 이 아니라 [_missedEvents] 로 본다 — 띠의
+        // 「다시」([reconnectNow])는 상태를 `connecting` 으로 되돌리므로, 상태로 보면 그 길만 따라잡기를 건너뛴다.
+        if (_missedEvents) unawaited(catchUp());
       },
       onDown: (reason) {
+        _missedEvents = true;
         connection =
             reason == WsDownReason.network ? SocketState.reconnecting : SocketState.dead;
         notifyListeners();
@@ -1051,8 +1052,8 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 끊긴 사이에 빠진 것을 다시 읽는다: 읽어 둔 채널은 마지막 `seq` 뒤부터, 열어 둔
-  /// 스레드는 통째로, 그리고 안 읽은 수와 인박스.
+  /// 끊긴 사이에 빠진 것을 다시 읽는다: 읽어 둔 채널과 열어 둔 스레드는 최신 페이지로 다시,
+  /// 그리고 안 읽은 수와 인박스.
   ///
   /// 하나가 실패해도 나머지는 읽는다 — 한 채널 때문에 인박스가 낡은 채로 남으면 안 된다.
   Future<void> catchUp() async {
@@ -1063,20 +1064,23 @@ class AppState extends ChangeNotifier {
     // N+M+2 왕복이 직렬로 쌓였다 — 왕복 하나가 130~300ms(Cloudflare 해외 PoP 경로)라 열어 둔 것이
     // 열 개면 다시 붙은 뒤 화면이 맞기까지 1.5~3초였다. 각 조회는 서로 다른 자리(채널·스레드·
     // reads)에 쓰므로 어느 것이 먼저 끝나도 결과가 같다. 동시 요청 수는 [catchUpConcurrency] 로 묶는다.
+    _missedEvents = false;
+    // 못 읽은 채널·스레드. 한 번 더 묻고, 그래도 안 되면 다음에 다시 붙을 때 읽게 표시를 남긴다 —
+    // 소켓은 붙어 있어 그 뒤로는 아무도 이 틈을 메우지 않는다.
+    final failed = <Future<void> Function()>[];
+    Future<void> Function() retried(Future<void> Function() job) => () async {
+          try {
+            await job();
+          } on Object {
+            failed.add(job);
+          }
+        };
     final jobs = <Future<void> Function()>[
-      for (final entry in messages.entries.toList())
-        if (entry.value.isNotEmpty)
-          () async {
-            final mark = _liveSeq;
-            final page = await api.messages(entry.key, since: entry.value.last.seq, limit: 200);
-            if (gen != _generation) return;
-            for (final m in page.messages) {
-              _upsertMessage(m, asOf: mark);
-            }
-          },
+      for (final channelId in messages.keys.toList())
+        if (channelLoad[channelId] == LoadState.loaded) retried(() => _resyncChannel(api, channelId, gen)),
       for (final rootId in threads.keys.toList())
         if (_channelOfThread(rootId) case final channelId?)
-          () async {
+          retried(() async {
             final mark = _liveSeq;
             final page = await api.messages(channelId, thread: rootId, limit: 100);
             if (gen != _generation) return;
@@ -1084,7 +1088,7 @@ class AppState extends ChangeNotifier {
             // 다시 밀면 받게 한다 — 남겨 두면 끊긴 사이 지워진 옛 답글이 화면에 남는다(security #1051).
             _storeThreadPage(rootId, page.messages, mark);
             threadHasMore[rootId] = page.hasMore;
-          },
+          }),
       () async {
         final fresh = await api.reads();
         if (gen != _generation) return;
@@ -1097,7 +1101,58 @@ class AppState extends ChangeNotifier {
     ];
     await runLimited(jobs, catchUpConcurrency);
     if (gen != _generation) return;
+    if (failed.isNotEmpty) {
+      final again = failed.toList();
+      failed.clear();
+      await runLimited([for (final job in again) retried(job)], catchUpConcurrency);
+      if (gen != _generation) return;
+      if (failed.isNotEmpty) _missedEvents = true;
+    }
     notifyListeners();
+  }
+
+  /// 소켓이 끊긴 적이 있고 그 뒤 따라잡기를 아직 끝내지 못했다. 다음에 붙을 때 [catchUp] 이 돈다.
+  bool _missedEvents = false;
+
+  /// 다시 붙은 뒤 채널 하나를 맞춘다 — **최신 페이지를 다시 받아 손에 든 줄을 갈아 끼운다.**
+  ///
+  /// 전에는 손에 든 마지막 줄 뒤(`since`)만 물었다. 그러면 (1) 이미 실린 줄에 끊긴 사이 붙은 반응·
+  /// 스레드 상태·답글 수는 영영 오지 않고, (2) 따라잡기보다 먼저 더 새 줄이 실리면(내 글의 응답·다시 붙은
+  /// 소켓의 첫 이벤트) 커서가 그 줄로 건너뛰어 사이의 답글까지 빠진다 — 채널 화면에 「답글 n개」 줄과
+  /// 이모지가 안 섰다(2026-11-24). 열어 둔 스레드를 통째로 다시 받는 것과 같은 규칙이다.
+  ///
+  /// 페이지보다 오래된 줄(위로 밀어 받아 둔 것)은 페이지와 맞닿아 있을 때만 남긴다. 사이가 떴으면 버리고
+  /// `hasMore` 를 다시 세운다 — 남기면 그 틈을 받았다고 거짓말하게 된다. 페이지가 채널의 전부면(`hasMore`
+  /// 거짓) 그보다 오래된 줄은 서버에 없는 줄이다.
+  Future<void> _resyncChannel(ApiClient api, String channelId, int gen) async {
+    final mark = _liveSeq;
+    final page = await api.messages(channelId, limit: channelPageSize);
+    if (gen != _generation) return;
+    final held = messages[channelId];
+    if (held == null || channelLoad[channelId] != LoadState.loaded) return;
+    final rows = _pageRows(page.messages, mark);
+    final ids = {for (final m in page.messages) m.id};
+    final live = _liveAfter(mark, ids, (m) => m.channelId == channelId).toList();
+    rows.addAll(live);
+    // 페이지를 보낸 뒤 실시간으로 온 답글은 페이지의 루트 답글 수에 없다 — 실시간 쪽이 올려 둔 수를 페이지가
+    // 되돌리지 않게 다시 센다. 루트가 그 뒤 실시간으로 바뀌었으면 손에 든 줄을 쓰므로 이미 세어져 있다.
+    for (final reply in live) {
+      final rootId = reply.threadRootId;
+      if (rootId == null || reply.kind == MessageKind.progress || reply.kind == MessageKind.wake) continue;
+      if ((_liveTouched[rootId] ?? 0) > mark) continue;
+      final at = rows.indexWhere((m) => m.id == rootId);
+      if (at >= 0) rows[at] = rows[at].withReplyCount((rows[at].replyCount ?? 0) + 1);
+    }
+    final pageMin = page.messages.isEmpty ? null : page.messages.map((m) => m.seq).reduce(min);
+    final touches = pageMin != null && page.hasMore && held.any((m) => m.seq >= pageMin);
+    if (touches) {
+      final have = {for (final m in rows) m.id};
+      rows.addAll(held.where((m) => m.seq < pageMin && !have.contains(m.id)));
+    } else {
+      channelHasMore[channelId] = page.hasMore;
+      olderFailed.remove(channelId);
+    }
+    messages[channelId] = rows..sort((a, b) => a.seq.compareTo(b.seq));
   }
 
   /// 다시 붙은 뒤 따라잡기에서 동시에 내보내는 요청 수 상한. 브라우저의 호스트당 연결 수(6~8)와

@@ -34,10 +34,13 @@ class _Server {
   int maxInFlight = 0;
   final failing = <String>{};
 
+  /// 참이면 채널 조회가 「끊긴 사이에 온 글」까지 준다(따라잡기는 최신 페이지를 다시 읽는다).
+  bool reconnected = false;
+
   MockClient get client => MockClient((req) async {
         final path = req.url.path;
-        final q = req.url.queryParameters;
-        final catchingUp = q.containsKey('since') || path == '/reads' || path.startsWith('/inbox');
+        final catchingUp =
+            (reconnected && path.endsWith('/messages')) || path == '/reads' || path.startsWith('/inbox');
         if (catchingUp && gate != null) {
           inFlight++;
           if (inFlight > maxInFlight) maxInFlight = inFlight;
@@ -59,10 +62,10 @@ class _Server {
         final m = RegExp(r'^/channels/([^/]+)/messages$').firstMatch(path);
         if (m != null) {
           final c = m.group(1)!;
-          if (q.containsKey('since')) {
+          if (reconnected) {
             if (failing.contains(c)) return _json({'error': {'code': 'internal', 'message': 'boom'}}, 500);
             // 끊긴 사이에 온 글 하나.
-            return _json({'messages': [_row(c, 2)], 'hasMore': false});
+            return _json({'messages': [_row(c, 1), _row(c, 2)], 'hasMore': false});
           }
           return _json({'messages': [_row(c, 1)], 'hasMore': false});
         }
@@ -88,6 +91,7 @@ Future<AppState> _open(_Server server) async {
   for (final c in _channels) {
     await app.openChannel(c);
   }
+  server.reconnected = true;
   return app;
 }
 
