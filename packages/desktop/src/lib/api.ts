@@ -668,6 +668,17 @@ export class ApiClient {
   }
 
   /**
+   * 이 스레드의 안 끝난 작업 나무(B1). 읽기 권한이 없는 서버는 이 길이 없다(404) —
+   * 부르는 쪽이 그것을 「작업 기록이 꺼져 있음」으로 가른다. 칸은 서랍(`lib/threadWork`)이 골라 읽는다.
+   */
+  async threadWork(rootId: string): Promise<unknown> {
+    const res = await this.req<{ works?: unknown }>(
+      'GET', `/threads/${encodeURIComponent(rootId)}/work?state=open,running,waiting`,
+    );
+    return res.works ?? [];
+  }
+
+  /**
    * 세션 하나에 attach 한다. 인가는 **여기서** 끝난다 — 돌려받는 티켓은 그 세션 하나에만
    * 쓸 수 있는 1회용이고, WS 핸드셰이크는 그 티켓만 소모한다.
    *

@@ -30,12 +30,20 @@ import { JumpToLatestPill } from './JumpToLatestPill';
 import { distanceFromBottom, isNearBottom } from '../lib/stickyBottom';
 import { appendedFromHere } from '../lib/ownSends';
 import type { SectionId } from './settings/sections';
+import type { AgentWakeView } from '@harkroom/shared';
 import { useLocale, useT } from '../i18n/useT';
 import { stampLabel } from '../lib/day';
-import { threadProgress } from '../lib/threadProgress';
-import { useThreadTurns } from '../lib/threadTurns';
-import { useAgentWakes } from '../lib/agentTurns';
+import { isIdle, threadProgress, type ThreadTurn } from '../lib/threadProgress';
+import { useThreadRead, useThreadTurns } from '../lib/threadTurns';
+import { threadTitle, useAgentWakes } from '../lib/agentTurns';
+import { firstMyTurnMessageId, flattenWork, threadWorkItems, type WorkRow } from '../lib/threadWork';
+import { ThreadWorkDrawer } from './ThreadWorkDrawer';
 import { ThreadProgressStrip } from './ThreadProgressStrip';
+
+// 빈 재료는 같은 배열을 돌려쓴다 — 그릴 때마다 새 배열이면 서랍의 줄을 매번 다시 고른다.
+const NO_WORK: WorkRow[] = [];
+const NO_TURNS: ThreadTurn[] = [];
+const NO_WAKES: AgentWakeView[] = [];
 
 export function ThreadPanel({ onOpenProfile, onOpenSettings, reserveLeft = MIN_CHANNEL_WIDTH }: {
   /** 멘션 이동(#279). 스레드의 멘션도 대화의 멘션과 같게 동작해야 한다. */
@@ -172,22 +180,68 @@ export function ThreadPanel({ onOpenProfile, onOpenSettings, reserveLeft = MIN_C
     async (root: string) => getCommunityController(communityId).api.threadTurns(root),
     [communityId],
   );
-  const turns = useThreadTurns(stale || communityId == null || !threadRootId ? null : askTurns, threadRootId ?? '');
-  const wakesSnapshot = useAgentWakes(!stale);
-  const wakesHere = wakesSnapshot.kind === 'known'
-    ? wakesSnapshot.wakes.filter((w) => w.threadRootId === threadRootId).length
-    : 0;
+  const canAsk = !stale && communityId != null && !!threadRootId;
+  const turns = useThreadTurns(canAsk ? askTurns : null, threadRootId ?? '');
+  // 예약 목록은 **이 패널의 커뮤니티**에 묻는다 — 지금 보고 있는 커뮤니티가 아니다(스레드 창은 자기 커뮤니티가 따로 있다).
+  const wakesSnapshot = useAgentWakes(!stale, communityId);
+  const wakesHere = useMemo(
+    () => (wakesSnapshot.kind === 'known' ? wakesSnapshot.wakes.filter((w) => w.threadRootId === threadRootId) : null),
+    [wakesSnapshot, threadRootId],
+  );
+  // 작업 행(B1). 읽는 길이 없는 서버(`off`)·못 읽음(`unknown`)이어도 서랍은 턴·카드·예약으로 선다.
+  const askWork = useCallback(
+    async (root: string): Promise<WorkRow[]> => flattenWork(await getCommunityController(communityId).api.threadWork(root)),
+    [communityId],
+  );
+  const workRead = useThreadRead(canAsk ? askWork : null, threadRootId ?? '');
+  const workRows = workRead.kind === 'known' ? workRead.value : NO_WORK;
+  const now = Date.now();
   const progress = useMemo(() => threadProgress({
     messages: thread,
     myAccountId: me?.id ?? null,
     turns,
-    wakes: wakesHere,
+    // 첫 답 전(`checking`)은 0 으로 센다 — 「모름」 칸이 섰다 사라지는 깜박임을 없앤다. 못 읽었을 때만 모름이다.
+    wakes: wakesSnapshot.kind === 'unknown' ? null : (wakesHere?.length ?? 0),
+    workWaiting: workRows.filter((w) => w.state === 'waiting').length,
     plan: planProgress,
     legacyRunning: state === 'running',
-    now: Date.now(),
-  }), [thread, me, turns, wakesHere, planProgress, state]);
+    now,
+  // `now` 는 날이 바뀌는 경계에만 뜻이 있다 — 재료가 바뀔 때 다시 세면 충분하다.
+  }), [thread, me, turns, wakesSnapshot.kind, wakesHere, workRows, planProgress, state]);
+  const groups = useActiveStore((s) => s.groups);
+  const teams = useActiveStore((s) => s.teams);
+  const workItems = useMemo(() => threadWorkItems({
+    messages: thread,
+    myAccountId: me?.id ?? null,
+    turns: turns.kind === 'known' ? turns.turns : turns.kind === 'unknown' ? null : NO_TURNS,
+    wakes: wakesSnapshot.kind === 'unknown' ? null : (wakesHere ?? NO_WAKES),
+    work: workRows,
+    planBlocked: planProgress?.blocked ?? 0,
+    titleOf: (row) => threadTitle(row, accounts, groups, teams ?? undefined),
+    now,
+  }), [thread, me, turns, wakesSnapshot.kind, wakesHere, workRows, planProgress, accounts, groups, teams]);
+  /*
+    에이전트가 낀 적 없는 스레드에는 띠를 세우지 않는다 — 사람끼리의 대화에 「진행 중인 일 없음」을 세우면
+    없는 일을 말하는 셈이다. 그때는 머리에 옛 배지가 그대로 선다.
+  */
+  const agentInvolved = useMemo(
+    () => thread.some((m) => accounts[m.authorId]?.kind === 'agent') || (turns.kind === 'known' && turns.turns.length > 0),
+    [thread, accounts, turns],
+  );
   // 첫 답 전(`checking`)에는 옛 판정(`legacyRunning`)으로 센다 — 띠가 늦게 서며 머리가 한 번 바뀌는 깜박임을 없앤다.
-  const stripShown = !stale && !unfetchedEmpty && thread.length > 0;
+  const stripShown = !stale && !unfetchedEmpty && thread.length > 0 && agentInvolved;
+  const stripIdle = isIdle(progress);
+  // 서랍을 열어 둘지는 이 기기의 선택이다. 띠가 비면(일이 없으면) 서랍은 스스로 물러난다 — 선택은 그대로 남는다.
+  const [drawerOpen, setDrawer] = useState(() => paneStorage.loadWorkDrawerOpen());
+  const setDrawerOpen = useCallback((open: boolean) => {
+    setDrawer(open);
+    paneStorage.saveWorkDrawerOpen(open);
+  }, []);
+  const openWorkMessage = useCallback(
+    (id: string) => { void getController().openMessage(id).catch(() => {}); },
+    [],
+  );
+  const myTurnMessageId = firstMyTurnMessageId(workItems);
 
   /**
    * 대기 사슬(Task 7). 상태 배지가 "무엇인가"를 말한다면 이 줄은 **"왜"** 를 말한다 —
@@ -320,8 +374,7 @@ export function ThreadPanel({ onOpenProfile, onOpenSettings, reserveLeft = MIN_C
       setNewCount((c) => c + added);
       setJumpVisible(true);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [thread.length]);
+    }, [thread.length]);
   useEffect(() => { lastReplyIdRef.current = thread[thread.length - 1]?.id ?? null; });
   // 점프 표식은 **그 커밋 한 번**만 산다 — 남겨 두면 다음에 내가 보낸 답글까지 안 따라간다.
   useEffect(() => { jumpedThisCommitRef.current = false; });
@@ -360,8 +413,7 @@ export function ThreadPanel({ onOpenProfile, onOpenSettings, reserveLeft = MIN_C
     );
     io.observe(marker);
     return () => io.disconnect();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [threadRootId]);
+    }, [threadRootId]);
 
   /**
    * **입력창이 자라 목록 상자가 줄어도 바닥에 남는다**(#1427). 상자가 줄면 `scrollTop` 은 그대로라 마지막 답글이
@@ -376,8 +428,7 @@ export function ThreadPanel({ onOpenProfile, onOpenSettings, reserveLeft = MIN_C
     });
     ro.observe(el);
     return () => ro.disconnect();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [threadRootId]);
+    }, [threadRootId]);
 
   /**
    * 바닥 여부를 ref 에 담는 이유도 채널과 같다: 이 값은 그리는 데 쓰이지 않으므로 상태로
@@ -459,7 +510,7 @@ export function ThreadPanel({ onOpenProfile, onOpenSettings, reserveLeft = MIN_C
       /* `ChannelPane` 과 같은 이유로 붙은 손잡이다(그 파일의 주석) — 인박스가 자리가 되면서
          한 줄의 형제가 셋이 되었고, 그 순서를 재는 회귀선이 생겼다. */
       data-testid="thread-pane"
-      className={`relative flex flex-col bg-surface-raised ${fill ? 'min-h-0 min-w-0 flex-1' : 'border-l border-border'}`}
+      className={`@container relative flex flex-col bg-surface-raised ${fill ? 'min-h-0 min-w-0 flex-1' : 'border-l border-border'}`}
       /* 상한은 `paneMaxWidth` 가 적는다(그 함수의 주석) — 터미널과 **같은 결함**을 여기서도
          막는다: 넓은 창에서 고른 폭이 좁은 창에서 그대로 서면 대화가 폭 0 으로 밀린다. */
       style={fill ? undefined : { width: paneWidth, minWidth: paneMin, maxWidth: paneMaxWidth(paneMin, paneReserve) }}
@@ -515,6 +566,8 @@ export function ThreadPanel({ onOpenProfile, onOpenSettings, reserveLeft = MIN_C
         <ThreadProgressStrip
           progress={progress}
           plan={planShown && planProgress ? { done: planProgress.done, total: planProgress.total } : null}
+          onMyTurn={myTurnMessageId ? () => openWorkMessage(myTurnMessageId) : undefined}
+          drawer={{ open: drawerOpen, onToggle: () => setDrawerOpen(!drawerOpen) }}
         />
       )}
       {/* 「맡긴 일」 칩 줄(위임 재설계 v1 P6) — 머리 바로 아래. 위임이 없으면 줄이 없다. */}
@@ -528,9 +581,13 @@ export function ThreadPanel({ onOpenProfile, onOpenSettings, reserveLeft = MIN_C
       {activeChannelId && (
         <ThreadModelRow channelId={activeChannelId} rootId={threadRootId} thread={thread} expanded={modelsOpen} />
       )}
-      <WaitChainLine chain={chain} />
+      {/* 띠가 서는 동안 「…의 답을 기다린다」 줄은 뺀다 — 같은 사실을 띠의 내 차례·기다림 칸이 말하고, 누구를 기다리는지는
+          서랍의 줄이 말한다. 교착만은 남긴다: 사람만 풀 수 있고 띠에는 그 칸이 없다. */}
+      {(!stripShown || chain.end === 'deadlock') && <WaitChainLine chain={chain} />}
+      {/* 글 목록과 작업 서랍이 나란히 선다(R2-b). 서랍은 넓은 폭에서만 보인다 — 좁으면 이 줄은 글 목록 하나다. */}
+      <div className="flex min-h-0 flex-1">
       {/* 알약이 목록 위에 뜨려면 목록을 감싸는 기준 상자가 필요하다 — 작성창 위 오른쪽(시안 #5). */}
-      <div className="relative flex min-h-0 flex-1 flex-col">
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
       <div
         ref={listRef}
         onScroll={onListScroll}
@@ -629,6 +686,15 @@ export function ThreadPanel({ onOpenProfile, onOpenSettings, reserveLeft = MIN_C
           count={newCount}
           loading={jumpLoading}
           onClick={() => { void jumpToLatest(); }}
+        />
+      )}
+      </div>
+      {stripShown && drawerOpen && !stripIdle && (
+        <ThreadWorkDrawer
+          items={workItems}
+          work={workRead.kind === 'off' ? 'off' : workRead.kind === 'unknown' ? 'unknown' : 'ok'}
+          onOpenMessage={openWorkMessage}
+          onClose={() => setDrawerOpen(false)}
         />
       )}
       </div>

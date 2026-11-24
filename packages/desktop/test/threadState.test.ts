@@ -223,6 +223,14 @@ describe('threadStateFromFacts — 채널 요약의 판정', () => {
   const from = (row: ReturnType<typeof facts>, live: Liveness = new Set([FORGE, CODEX])) =>
     threadStateFromFacts({ row, myAccountId: ME, isAgent, live });
 
+  it('계획에 막힌 단계가 있으면 끝남이 아니라 막힘이다 — 스레드 머리의 띠와 같은 판정', () => {
+    const plan = (blocked: number) => ({ done: 1, total: 3, blocked }) as never;
+    expect(from(facts({ planProgress: plan(1) }))).toBe('stuck');
+    expect(from(facts({ planProgress: plan(0) }))).toBe('done');
+    // 내 차례가 여전히 먼저다.
+    expect(from(facts({ planProgress: plan(1), openAskHumanCount: 1 }))).toBe('my-turn');
+  });
+
   it('재료가 없으면 null 이다 — 모르는 것을 끝남이라 하지 않는다', () => {
     // 답글 행이거나 옛 서버다. '끝남'으로 떨어뜨리는 것이 바로 그 거짓말이다.
     expect(threadStateFromFacts({
