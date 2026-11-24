@@ -5,8 +5,7 @@
 //! - 쓰기 **전** 판정·DB 오류는 `None`(TS 가 처음부터 돈다). 쓰기를 시작한 뒤의 오류는 고정 문장의 `internal`(security W1).
 //! - 쓰기 검사는 TS `scanWrite` 와 같은 [`crate::core::content_scan::scan_write`]. 걸려도 저장하고 표시한다.
 //! - 쓰기 출처(`writeOrigin`): 턴 id 는 `x-harkroom-turn-id`(UUID 꼴만, TS 와 같다)를 이전 판 `turn_id` 에 싣는다. 회차 id(run_id)는
-//!   늘 null 이다 — 백그라운드 회차의 set·merge 는 `/mcp/admit` 이 받지 않고(`ADMIT_REFUSED`), restore 는 회차 허용 목록 밖이라
-//!   입장에서 거절된다. 회차 안 호출은 여기까지 오지 않는다.
+//!   백그라운드 회차의 set·merge([`super::bg_write`])만 싣는다. restore 는 회차 허용 목록 밖이라 입장에서 거절된다.
 //! - 쓰기 풀은 [`MEMORY_BODY_PRIVILEGES`] 가 다 있을 때만 있다(`main.rs`). 없으면 이 셋은 TS 가 답한다(B1a 다섯은 그대로).
 use super::mem_writes::{SLUG_HINT, conflict as slug_conflict, internal};
 use super::reads2::valid_slug;
@@ -51,6 +50,19 @@ const MAX_ARCHIVED: i64 = 300;
 const THREAD_NOTE_HINT: &str = "한 스레드의 진행 상태(맡긴 일·검토 대기·PR 번호·head·다음 할 일)라면 기억이 아니라 `thread.note`(threadRootId·body)에 써라 — 그 스레드의 다음 턴에 자동으로 실린다.";
 /// `memory.ts::THREAD_STATE_SLUG_REFUSAL.message`.
 const THREAD_STATE_MSG: &str = "`delegation-*`·`review-*` 꼴의 새 기억은 만들지 않는다 — 한 스레드·PR 하나의 진행 상태는 그 스레드의 `thread.note` 에 쓰고, 스레드를 넘는 대장(열린 위임·검토 대기)은 `thread.note.list` 로 본다. 여러 번 쓸 판정·교훈이면 분야 topic(예: `mem/<분야>/<기능>`)에 덧붙여라. 이미 있는 기억을 고치거나 보관하는 것은 된다.";
+
+/// 쓰기 출처 — 이전 판의 `turn_id`·`run_id`.
+#[derive(Clone, Copy, Default)]
+pub struct Origin<'a> {
+    pub turn: Option<&'a str>,
+    pub run: Option<&'a str>,
+}
+
+impl<'a> From<Option<&'a str>> for Origin<'a> {
+    fn from(turn: Option<&'a str>) -> Self {
+        Self { turn, run: None }
+    }
+}
 
 macro_rules! iso {
     ($c:literal) => {
@@ -402,7 +414,7 @@ pub async fn answer(
     read: &PgPool,
     write: Option<&PgPool>,
     me: &Account,
-    turn: Option<&str>,
+    turn: Origin<'_>,
     tool: &str,
     args: &Value,
 ) -> Option<Option<String>> {
@@ -425,7 +437,7 @@ async fn set(
     read: &PgPool,
     write: &PgPool,
     me: &Account,
-    turn: Option<&str>,
+    turn: Origin<'_>,
     args: &Value,
 ) -> Option<String> {
     let slug = args.get("slug")?.as_str().filter(|s| !s.is_empty())?;
@@ -574,7 +586,7 @@ async fn current(
 pub(crate) async fn delete(
     write: &PgPool,
     me: &Account,
-    turn: Option<&str>,
+    turn: Origin<'_>,
     slug: &str,
     expect: Option<Option<&str>>,
 ) -> Result<SetOutcome, sqlx::Error> {
@@ -590,12 +602,13 @@ pub(crate) async fn delete(
                      and date_trunc('milliseconds', updated_at) = date_trunc('milliseconds', $3::timestamptz) \
                    returning slug, value, description, updated_at, flagged_at, kind) \
                  insert into agent_memory_revision (account_id, slug, value, description, updated_at, flagged, kind, run_id, turn_id) \
-                 select $1::uuid, slug, value, description, updated_at, flagged_at is not null, kind, null, $4::uuid from d",
+                 select $1::uuid, slug, value, description, updated_at, flagged_at is not null, kind, $5::uuid, $4::uuid from d",
             )
             .bind(&me.id)
             .bind(slug)
             .bind(at)
-            .bind(turn)
+            .bind(turn.turn)
+.bind(turn.run)
             .execute(write)
             .await?
             .rows_affected();
@@ -612,11 +625,12 @@ pub(crate) async fn delete(
                    delete from agent_memory where account_id = $1::uuid and slug = $2 \
                    returning slug, value, description, updated_at, flagged_at, kind) \
                  insert into agent_memory_revision (account_id, slug, value, description, updated_at, flagged, kind, run_id, turn_id) \
-                 select $1::uuid, slug, value, description, updated_at, flagged_at is not null, kind, null, $3::uuid from d",
+                 select $1::uuid, slug, value, description, updated_at, flagged_at is not null, kind, $4::uuid, $3::uuid from d",
             )
             .bind(&me.id)
             .bind(slug)
-            .bind(turn)
+            .bind(turn.turn)
+.bind(turn.run)
             .execute(write)
             .await?;
             prune_revisions(write, me, slug).await?;
@@ -630,7 +644,7 @@ pub(crate) async fn delete(
 pub(crate) async fn upsert(
     write: &PgPool,
     me: &Account,
-    turn: Option<&str>,
+    turn: Origin<'_>,
     slug: &str,
     value: &str,
     description: Option<&str>,
@@ -665,7 +679,7 @@ pub(crate) async fn upsert(
            returning 1), \
          rev as ( \
            insert into agent_memory_revision (account_id, slug, value, description, updated_at, flagged, kind, run_id, turn_id) \
-           select $1::uuid, slug, value, description, updated_at, flagged_at is not null, kind, null, $11::uuid from prev where exists (select 1 from ins) \
+           select $1::uuid, slug, value, description, updated_at, flagged_at is not null, kind, $12::uuid, $11::uuid from prev where exists (select 1 from ins) \
            returning 1) \
          select (select count(*) from ins)::int",
     )
@@ -679,7 +693,8 @@ pub(crate) async fn upsert(
     .bind(mode)
     .bind(expect.flatten())
     .bind(flag.map(|f| f.reason.as_str()))
-    .bind(turn)
+    .bind(turn.turn)
+.bind(turn.run)
     .fetch_one(write)
     .await?;
     if n == 0 {
@@ -743,7 +758,7 @@ async fn merge(
     read: &PgPool,
     write: &PgPool,
     me: &Account,
-    turn: Option<&str>,
+    turn: Origin<'_>,
     args: &Value,
 ) -> Option<String> {
     let into = args.get("into")?.as_str().filter(|s| !s.is_empty())?;
@@ -948,7 +963,7 @@ async fn epoch_ms(c: &mut sqlx::PgConnection, at: &str) -> Result<i64, sqlx::Err
 async fn merge_tx(
     write: &PgPool,
     me: &Account,
-    turn: Option<&str>,
+    turn: Origin<'_>,
     into: &str,
     from: &[&str],
     value: &str,
@@ -1041,7 +1056,7 @@ async fn merge_tx(
     };
     sqlx::query(
         "insert into agent_memory_revision (account_id, slug, value, description, updated_at, flagged, reason, detail, kind, run_id, turn_id) \
-         values ($1::uuid, $2, $3, $4, coalesce($5::timestamptz, now()), $6, 'merge', $7::jsonb, $8, null, $9::uuid)",
+         values ($1::uuid, $2, $3, $4, coalesce($5::timestamptz, now()), $6, 'merge', $7::jsonb, $8, $10::uuid, $9::uuid)",
     )
     .bind(&me.id)
     .bind(into)
@@ -1051,7 +1066,8 @@ async fn merge_tx(
     .bind(rflag)
     .bind(&detail)
     .bind(rkind)
-    .bind(turn)
+    .bind(turn.turn)
+.bind(turn.run)
     .execute(&mut *tx)
     .await?;
     if !from.is_empty() {
@@ -1082,7 +1098,7 @@ pub(crate) async fn restore_one(
     me: &Account,
     slug: &str,
     revision: Option<i64>,
-    turn: Option<&str>,
+    turn: Origin<'_>,
 ) -> Result<Restored, sqlx::Error> {
     let mut tx = write.begin().await?;
     type RevRow = (i64, String, Option<String>, bool, Option<String>);
@@ -1113,13 +1129,14 @@ pub(crate) async fn restore_one(
     if let Some(c) = &cur {
         sqlx::query(
             "insert into agent_memory_revision (account_id, slug, value, description, updated_at, flagged, reason, detail, kind, run_id, turn_id) \
-             select $1::uuid, slug, value, description, updated_at, flagged_at is not null, 'restore', $3::jsonb, kind, null, $4::uuid \
+             select $1::uuid, slug, value, description, updated_at, flagged_at is not null, 'restore', $3::jsonb, kind, $5::uuid, $4::uuid \
              from agent_memory where account_id = $1::uuid and slug = $2",
         )
         .bind(&me.id)
         .bind(slug)
         .bind(json!({ "revisionId": id }).to_string())
-        .bind(turn)
+        .bind(turn.turn)
+.bind(turn.run)
         .execute(&mut *tx)
         .await?;
         let _ = c;
@@ -1150,7 +1167,7 @@ pub(crate) async fn restore_one(
 }
 
 /// `memory.restore`.
-async fn restore(write: &PgPool, me: &Account, turn: Option<&str>, args: &Value) -> Option<String> {
+async fn restore(write: &PgPool, me: &Account, turn: Origin<'_>, args: &Value) -> Option<String> {
     let slug = args.get("slug")?.as_str().filter(|s| !s.is_empty())?;
     let revision = match args.get("revisionId") {
         None => None,

@@ -82,6 +82,11 @@ MANDATE_IDLE_GRANTS=(
 )
 BG_GRANTS=('update (status, error, finished_at) on bg_job')
 BG_PRODUCE_GRANTS=('insert (account_id, kind, day, input) on bg_job')
+BG_WRITE_GRANTS=(
+  'update (writes) on bg_job'
+  'insert on bg_job_change'
+  'usage on sequence bg_job_change_id_seq'
+)
 TURN_LEASE_GRANTS=(
   'insert on secret_turn_lease'
   'update (ended_at, expires_at, last_renewed_at) on secret_turn_lease'
@@ -134,6 +139,7 @@ grants_for() {
     permission_expire) echo PERMISSION_EXPIRE_GRANTS ;;
     bg) echo BG_GRANTS ;;
     bg_produce) echo BG_PRODUCE_GRANTS ;;
+    bg_write) echo BG_WRITE_GRANTS ;;
     outbox_prune) echo OUTBOX_PRUNE_GRANTS ;;
     measure) echo MEASURE_GRANTS ;;
     work_route) echo WORK_GRANTS ;;
@@ -151,7 +157,7 @@ grants_for() {
   esac
 }
 
-TESTS=(auth perm operator loops wake outbox_listener retention mandate_idle permission_expire bg bg_produce outbox_prune push_loop work_shadow
+TESTS=(auth perm operator loops wake outbox_listener retention mandate_idle permission_expire bg bg_produce bg_write outbox_prune push_loop work_shadow
   turn_lease inbox_list decide_core_db card_state_db relay_live turn_settle turn_cancel health scheduled stale migrate delegation_deadline
   automation_grant claim_seed automation_sweep hook_debounce thread_status thread_plan db_retry deny_accounts invoke_gate deny_channels deny_reset work measure device_allow wake_mirror
   work_route team_route_gate self_split agent_call_team agent_call_expect self_serve piece_verdict exec_combo implicit_mention_obligation split_collect)

@@ -280,6 +280,17 @@ pub fn input_text(threads: &Option<Vec<String>>, digests: Option<&[(String, Vec<
     format!("{{{}}}", parts.join(","))
 }
 
+/// 정리·구조 정리의 입력 — 서버 생산자가 넣은 고정 칸(`reasons`·`changes`)만 싣는다.
+fn plain_input(input: &serde_json::Value) -> String {
+    let mut o = serde_json::Map::new();
+    for k in ["reasons", "changes"] {
+        if let Some(v) = input.get(k) {
+            o.insert(k.to_owned(), v.clone());
+        }
+    }
+    serde_json::Value::Object(o).to_string()
+}
+
 /// TS `bg.claim` 의 러너 뒤 본체(`claimBgJob` + `bgClaimPayload`). `None` 이면 TS 가 답한다 — 집기(update)와 입력 확인·요약
 /// 만들기를 한 트랜잭션에 묶어, 그 사이 어디서 막혀도 되돌린 뒤 넘긴다(TS 가 같은 일감을 다시 집는다). 되돌릴 수 없는 것은
 /// commit 실패뿐이다 — 그때는 집혔는지 모르니 넘기지 않고 `internal` 로 답한다(security W1).
@@ -305,8 +316,8 @@ pub async fn claim(
         return Some(text_result("{\"job\":null,\"reason\":\"none\"}"));
     };
     let input: serde_json::Value = serde_json::from_str(&input).ok()?;
-    let threads = input_threads(&input)?; // None 이면 tx 가 떨어지며 되돌려진다
-    let digests = if kind == "distill" {
+    let input_json = if kind == "distill" {
+        let threads = input_threads(&input)?; // None 이면 tx 가 떨어지며 되돌려진다
         let mut d = vec![];
         for t in threads.iter().flatten() {
             // 글자는 골든 조각과 상수뿐이다(사용자 값은 자리표로만).
@@ -322,16 +333,16 @@ pub async fn claim(
                 .collect::<Option<Vec<_>>>()?;
             d.push((t.clone(), assemble(rows)));
         }
-        Some(d)
+        input_text(&threads, Some(&d))
     } else {
-        None
+        plain_input(&input)
     };
     let job = format!(
         "{{\"job\":{{\"id\":{},\"kind\":{},\"day\":{},\"input\":{}}}}}",
         serde_json::Value::from(id),
         serde_json::Value::from(kind),
         serde_json::Value::from(day),
-        input_text(&threads, digests.as_deref()),
+        input_json,
     );
     if tx.commit().await.is_err() {
         return Some(super::tools::err(
@@ -434,6 +445,16 @@ mod tests {
         let mut h = HeaderMap::new();
         h.insert("x-harkroom-turn-id", HeaderValue::from_static(""));
         assert!(!runner(true, &h));
+    }
+
+    #[test]
+    fn plain_input_keeps_known_keys() {
+        use serde_json::json;
+        assert_eq!(
+            plain_input(&json!({"reasons":["weekly"],"digests":{"x":1}})),
+            r#"{"reasons":["weekly"]}"#
+        );
+        assert_eq!(plain_input(&json!({"changes":60})), r#"{"changes":60}"#);
     }
 
     #[test]
