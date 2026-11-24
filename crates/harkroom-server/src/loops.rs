@@ -16,6 +16,7 @@ pub mod delegation_deadline;
 pub mod mandate_idle;
 pub mod outbox_prune;
 pub mod permission_expire;
+pub mod plan_progress;
 pub mod projection;
 pub mod push;
 pub mod retention;
@@ -37,7 +38,7 @@ pub const DEFAULT_OWNER: &str = "rust";
 pub const LOOP_LOCK_CLASS: i32 = 0x4c4f_4f50;
 
 /// 루프 이름 — TS `LOOP_NAMES` 와 같아야 한다(`server_loop.name` 의 키).
-pub const LOOP_NAMES: [&str; 16] = [
+pub const LOOP_NAMES: [&str; 17] = [
     "wake",
     "delegation.deadline",
     "automation",
@@ -57,6 +58,8 @@ pub const LOOP_NAMES: [&str; 16] = [
     "projection",
     // 깨움 거울(E1, `loops::wake_mirror`) — 그림자: inbox 를 `wake` 표로 베낄 뿐이다.
     "wake.mirror",
+    // 계획 진행(K1, `loops::plan_progress`) — 그림자: 판정의 갈래와 수만 기록한다. 스위치가 꺼져 있으면 뜨지 않는다.
+    "plan.progress",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

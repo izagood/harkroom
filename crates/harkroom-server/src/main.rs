@@ -5778,7 +5778,7 @@ async fn enable_work_route(pool: &sqlx::PgPool) {
 async fn spawn_loops() {
     use harkroom_server::loops::{
         bg, bg_produce, delegation_deadline, mandate_idle, outbox_prune, permission_expire,
-        retention, scheduled, wake, wake_mirror,
+        plan_progress, retention, scheduled, wake, wake_mirror,
     };
     let Some(url) = std::env::var("DATABASE_WRITE_URL")
         .ok()
@@ -5816,6 +5816,17 @@ async fn spawn_loops() {
         }
         Ok(m) => eprintln!("front: loop wake.mirror off — missing privileges {m:?}"),
         Err(e) => eprintln!("front: loop wake.mirror off — privilege check failed: {e}"),
+    }
+    // K1 — 계획 진행(그림자). 스위치가 꺼져 있으면(기본) 권한도 보지 않고 띄우지 않는다.
+    if plan_progress::shadow_enabled(std::env::var(plan_progress::SWITCH_ENV).ok().as_deref()) {
+        match write::missing_in(&pool, plan_progress::PLAN_PROGRESS_PRIVILEGES, &[]).await {
+            Ok(m) if m.is_empty() => {
+                eprintln!("front: loop plan.progress on (shadow — records counts only)");
+                plan_progress::spawn(gate.clone(), pool.clone());
+            }
+            Ok(m) => eprintln!("front: loop plan.progress off — missing privileges {m:?}"),
+            Err(e) => eprintln!("front: loop plan.progress off — privilege check failed: {e}"),
+        }
     }
     // C5c — 보존 기간 정리.
     match write::missing_in(&pool, retention::RETENTION_PRIVILEGES, &[]).await {
@@ -6118,10 +6129,10 @@ async fn push_sweeper(
 }
 
 /// Rust 로 옮긴 루프 수(wake·retention·mandate.idle·permission.expire·delegation.deadline·outbox.prune·projection·scheduled·
-/// automation·bg·push·stale·thread.status·thread.plan·bg.produce·wake.mirror = 16, `spawn_loops` 가 띄우는 순서) — 문지기 풀 크기. 한 루프는
+/// automation·bg·push·stale·thread.status·thread.plan·bg.produce·wake.mirror·plan.progress = 17, `spawn_loops` 가 띄우는 순서) — 문지기 풀 크기. 한 루프는
 /// tick 동안 잠금 연결 하나를 쥐고(`projection` 은 저장소마다 long-poll 이라 오래 쥔다), 쉬는 연결은 [`LOOP_POOL_IDLE`] 뒤 닫힌다.
 /// 루프를 더하면 같이 올린다.
-const LOOP_GATE_CONNECTIONS: u32 = 16;
+const LOOP_GATE_CONNECTIONS: u32 = 17;
 /// sweep 풀 크기.
 const LOOP_SWEEP_CONNECTIONS: u32 = 3;
 /// 루프 풀에서 쉬는 연결을 닫기까지 — 가장 긴 루프 주기(retention 1시간)보다 길게 둔다. 짧으면(옛 30초) 주기가 그보다 긴
@@ -6194,6 +6205,7 @@ mod loop_pool_tests {
         for every in [
             wake::WAKE_SWEEP_INTERVAL,
             wake_mirror::WAKE_MIRROR_INTERVAL,
+            plan_progress::PLAN_PROGRESS_INTERVAL,
             retention::RETENTION_SWEEP_INTERVAL,
             retention::RETENTION_FIRST_DELAY,
             mandate_idle::MANDATE_IDLE_SWEEP_INTERVAL,

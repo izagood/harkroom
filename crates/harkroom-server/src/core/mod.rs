@@ -150,6 +150,7 @@ pub mod permission_card;
 pub mod permission_command;
 pub mod pickable_models;
 pub mod plan_graph;
+pub mod plan_progress;
 pub mod pr_status_checks;
 pub mod pr_watch_due;
 pub mod pr_watch_status;
