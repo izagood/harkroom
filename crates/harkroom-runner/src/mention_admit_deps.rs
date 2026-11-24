@@ -249,6 +249,29 @@ impl<'a, L: RunnerLink + 'static, M: MentionLauncher> LinkAdmitDeps<'a, L, M> {
 }
 
 impl<L: RunnerLink + 'static, M: MentionLauncher> LinkAdmitDeps<'_, L, M> {
+    /// 잡힌 임대에 칸을 묶는다 — 칸 표에 올리고, 놓이면 제 칸을 빼는 손잡이로 감싼다. 안 잡힌 답은 그대로 돌려준다.
+    fn with_cell(
+        &self,
+        channel_id: &str,
+        anchor: &str,
+        cell: FenceCell,
+        hold: ClaimHold,
+    ) -> ClaimHold {
+        match hold {
+            ClaimHold::Held(inner) => {
+                let key = (channel_id.to_string(), anchor.to_string());
+                cells_lock(&self.cells).insert(key.clone(), cell.clone());
+                ClaimHold::Held(Box::new(CellClaim {
+                    inner,
+                    cells: Arc::clone(&self.cells),
+                    key,
+                    cell,
+                }))
+            }
+            other => other,
+        }
+    }
+
     /// 남은 칸 수(진단·시험용).
     pub fn cell_count(&self) -> usize {
         cells_lock(&self.cells).len()
@@ -337,19 +360,54 @@ impl<L: RunnerLink + 'static, M: MentionLauncher> AdmitDeps for LinkAdmitDeps<'_
     }
     fn hold_claim(&mut self, channel_id: &str, anchor: &str) -> ClaimHold {
         let cell = FenceCell::new(self.slots.clone());
-        match self.claims.hold(channel_id, anchor, Some(cell.on_lost())) {
-            ClaimHold::Held(inner) => {
-                let key = (channel_id.to_string(), anchor.to_string());
-                cells_lock(&self.cells).insert(key.clone(), cell.clone());
-                ClaimHold::Held(Box::new(CellClaim {
-                    inner,
-                    cells: Arc::clone(&self.cells),
-                    key,
-                    cell,
-                }))
-            }
-            other => other,
-        }
+        let hold = self.claims.hold(channel_id, anchor, Some(cell.on_lost()));
+        self.with_cell(channel_id, anchor, cell, hold)
+    }
+    /// 한꺼번에 — 스레드마다 곁 스레드 하나에서 잡고 모두 기다린다(오퍼레이터는 요청마다 따로 처리하고 링크는 요청 id 로
+    /// 답을 가린다). 칸은 부르기 전에 짓고, 잡힌 것만 답이 다 온 뒤 이 스레드에서 칸 표에 올린다.
+    fn hold_claims(&mut self, wants: &[(String, String)]) -> Vec<ClaimHold> {
+        let cells: Vec<FenceCell> = wants
+            .iter()
+            .map(|_| FenceCell::new(self.slots.clone()))
+            .collect();
+        let claims = self.claims;
+        let (holds, ms) = crate::call_timing::measured(|| {
+            std::thread::scope(|s| {
+                let running: Vec<_> = wants
+                    .iter()
+                    .zip(&cells)
+                    .map(|((channel, anchor), cell)| {
+                        let on_lost = cell.on_lost();
+                        s.spawn(move || claims.hold(channel, anchor, Some(on_lost)))
+                    })
+                    .collect();
+                // 모두 거둔 뒤에 패닉을 올린다 — 먼저 올리면 잡힌 임대의 손잡이를 받지 못한 채 풀린다.
+                let joined: Vec<_> = running.into_iter().map(|h| h.join()).collect();
+                let mut holds = Vec::with_capacity(joined.len());
+                let mut panic = None;
+                for j in joined {
+                    match j {
+                        Ok(h) => holds.push(h),
+                        Err(p) => panic = Some(p),
+                    }
+                }
+                if let Some(p) = panic {
+                    drop(holds); // 잡힌 것은 놓는다(손잡이 Drop).
+                    std::panic::resume_unwind(p);
+                }
+                holds
+            })
+        });
+        eprintln!(
+            "{}",
+            crate::call_timing::counted_line("스레드 선점(동시)", wants.len(), ms)
+        );
+        wants
+            .iter()
+            .zip(cells)
+            .zip(holds)
+            .map(|(((channel, anchor), cell), hold)| self.with_cell(channel, anchor, cell, hold))
+            .collect()
     }
     fn acquire_slot(&mut self, key: &str) -> Option<SlotOutcome> {
         Some(self.clients.rest().acquire_turn_slot(key, None))
