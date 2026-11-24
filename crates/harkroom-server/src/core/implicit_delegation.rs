@@ -4,7 +4,10 @@
 //!
 //! - 모드는 TS 와 같은 낱말로 읽는다. 값이 없으면 글 쓰기([`super::msg_post`])는 TS 기본값으로 맡는다([`mode_or_default`]).
 //! - 문장은 전부 TS 상수를 골든(`implicit_*`·`delegation_insert`·`delegation_item_insert`)으로 받는다.
+//! - U4: 켜짐에서 세우는 의무 행은 `agent.call` 과 같은 쓰기([`delegate_write::insert_row`])로 적고 닫는 조건은 `reply` 다
+//!   (그 앞에는 `report` 라 담당의 보통 답글로는 닫히지 않았다). 판정·스위치·판정 기록은 그대로다.
 //! - 암묵 위임은 앞 위임을 대체하지 않고(`supersedePrevious` 없음) 담당의 `mention` inbox 도 바꾸지 않는다 — TS 와 같다.
+use super::delegate_write;
 use super::mention_parse::head_mention_run_end;
 use regex::Regex;
 use serde_json::Value;
@@ -142,7 +145,6 @@ struct Sql {
     plan: String,
     verdict: String,
     log: String,
-    deleg: String,
     item: String,
 }
 
@@ -162,7 +164,6 @@ fn sql() -> &'static Sql {
             plan: frag("implicit_plan"),
             verdict: frag("implicit_verdict"),
             log: frag("implicit_log_insert"),
-            deleg: frag("delegation_insert"),
             item: frag("delegation_item_insert"),
         }
     })
@@ -178,7 +179,8 @@ pub struct Post<'a> {
 }
 
 /// TS `postMessage` 의 암묵 위임 갈래 — `called` 는 부른 순서의 계정들(작성자·inbox 가 안 간 계정은 호출하는 쪽이 이미 뺐다).
-/// 그중 에이전트만 판정한다. 돌려주는 것은 적은 판정 수.
+/// 그중 에이전트만 판정한다. 돌려주는 것은 **세운 의무의 id 들**(켜짐이고 판정이 `open` 일 때만 — 꺼짐·그림자에서는 언제나 빈다).
+/// 호출하는 쪽이 커밋 뒤 하위 작업 그림자([`super::work_shadow::delegation_created`])를 부르는 데 쓴다.
 pub async fn record(
     conn: &mut sqlx::PgConnection,
     mode: Mode,
@@ -186,9 +188,9 @@ pub async fn record(
     called: &[&String],
     now_ms: i64,
     iso_ms: fn(i64) -> String,
-) -> Result<usize, sqlx::Error> {
+) -> Result<Vec<String>, sqlx::Error> {
     if mode == Mode::Off || called.is_empty() {
-        return Ok(0);
+        return Ok(Vec::new());
     }
     let s = sql();
     let agents: HashSet<String> = sqlx::query_scalar::<_, String>(s.callees.as_str())
@@ -205,7 +207,7 @@ pub async fn record(
         .filter(|c| agents.contains(*c) && *c != p.author_id && seen.insert(*c))
         .collect();
     if targets.is_empty() {
-        return Ok(0);
+        return Ok(Vec::new());
     }
     let (body_chars, short_question) = body_facts(p.normalized_body);
     sqlx::query(s.lock.as_str())
@@ -216,7 +218,7 @@ pub async fn record(
         .bind(p.thread_root_id)
         .fetch_optional(&mut *conn)
         .await?;
-    let mut n = 0;
+    let mut created = Vec::new();
     for to in targets {
         let dirs: Vec<String> = sqlx::query_scalar(s.verdict.as_str())
             .bind(p.thread_root_id)
@@ -237,22 +239,28 @@ pub async fn record(
             .and_then(|d| plan_step_for(d, p.thread_root_id, to, p.normalized_body));
         let mut delegation: Option<String> = None;
         if mode == Mode::On && verdict == "open" {
-            let id: String = sqlx::query_scalar(s.deleg.as_str())
-                .bind(p.message_id)
-                .bind(None::<String>)
-                .bind(p.author_id)
-                .bind(p.channel_id)
-                .bind(p.thread_root_id)
-                .bind(iso_ms(now_ms + DELEGATION_DEADLINE_DEFAULT_SEC * 1000))
-                .bind("mention")
-                .bind(step.as_deref())
-                .fetch_one(&mut *conn)
-                .await?;
+            // U4: 의무 행은 `agent.call` 과 같은 쓰기([`delegate_write::insert_row`])로 적는다 — 닫는 조건은 `reply`
+            // (`agent.call(expect: "reply")` 와 같은 의무: 담당의 첫 답글로 닫힌다). 생김새(`kind`)는 그대로 `mention`.
+            let deadline = iso_ms(now_ms + DELEGATION_DEADLINE_DEFAULT_SEC * 1000);
+            let id = delegate_write::insert_row(
+                conn,
+                p.message_id,
+                None,
+                p.author_id,
+                p.channel_id,
+                p.thread_root_id,
+                &deadline,
+                "mention",
+                step.as_deref(),
+                delegate_write::CloseOn::Reply,
+            )
+            .await?;
             sqlx::query(s.item.as_str())
                 .bind(&id)
                 .bind(to)
                 .execute(&mut *conn)
                 .await?;
+            created.push(id.clone());
             delegation = Some(id);
         }
         sqlx::query(s.log.as_str())
@@ -269,9 +277,8 @@ pub async fn record(
             .bind(delegation.as_deref())
             .execute(&mut *conn)
             .await?;
-        n += 1;
     }
-    Ok(n)
+    Ok(created)
 }
 
 #[cfg(test)]
