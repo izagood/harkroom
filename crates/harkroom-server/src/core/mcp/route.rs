@@ -337,6 +337,12 @@ pub async fn handle(
                 )
                 .await;
             }
+            // 회차의 정리 임대는 회차 시한까지만.
+            let args = if bg_job.is_some() && tool == "memory.lease" {
+                super::bg_write::lease_args(args)
+            } else {
+                args
+            };
             if let Some(r) =
                 super::mem_writes::answer(&pool, writes.memory.as_ref(), &me, tool, &args).await
             {

@@ -1,4 +1,4 @@
-//! 정본 `packages/agent/test/bgExecutor.test.ts` 의 순수 절반(argv·MCP 설정·프롬프트·창). 틱 루프 시험은 B3e-5b.
+//! 정본 `packages/agent/test/bgExecutor.test.ts` 의 순수 절반(argv·MCP 설정·프롬프트). 틱 루프 시험은 B3e-5b.
 
 use super::*;
 use serde_json::json;
@@ -343,19 +343,6 @@ fn organize_prompt_asks_structure_and_forbids_delete_and_core() {
     assert!(p.contains("**한 줄 답 안에** `옛 → 새`"));
     assert!(p.contains("core 는 쓰지 못하고, 기억을 지우지 않는다"));
     assert!(!p.contains("할 일 — 정리"));
-}
-
-#[test]
-fn window_is_03_to_07_kst() {
-    // 2026-10-20T19:00:00Z = 04:00 KST, 2026-10-21T03:00:00Z = 12:00 KST.
-    assert!(in_bg_window(1_792_522_800_000));
-    assert!(!in_bg_window(1_792_551_600_000));
-    // 경계: 02:59:59.999 KST 밖, 03:00 안, 06:59:59.999 안, 07:00 밖(2026-10-20T18:00Z = 03:00 KST).
-    let three = 1_792_519_200_000;
-    assert!(!in_bg_window(three - 1));
-    assert!(in_bg_window(three));
-    assert!(in_bg_window(three + 4 * HOUR_MS - 1));
-    assert!(!in_bg_window(three + 4 * HOUR_MS));
 }
 
 #[test]

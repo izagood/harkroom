@@ -10,7 +10,7 @@
 //!   프롬프트로 돌렸다. `id` 는 작업 폴더 이름이 되므로 uuid 꼴만 받는다. 둘 다 아니면 띄우지 않고 skipped 로 닫는다.
 //! ③ 자식은 자기 프로세스 그룹(`process_group(0)`)으로 띄우고 env 를 비운 뒤 plan env 만 준다(security). 시한에는
 //!   `killpg(SIGKILL)` 로 그룹째 죽이고 거둔다 — claude 가 띄운 MCP 브릿지 자식이 남지 않는다.
-//! ④ `bg.complete` 의 `error` 는 고정 코드만(timeout·quota·max_turns·exit N·runner·unknown_kind·bad_job), 요약은 하네스의
+//! ④ `bg.complete` 의 `error` 는 고정 코드만(timeout·stopped·quota·max_turns·exit N·runner·unknown_kind·bad_job), 요약은 하네스의
 //!   마지막 답 첫 줄에서 상태 디렉터리·HOME 경로를 가린다(security: 행에 경로·키가 남지 않게). 러너 오류 본문은 로그에만.
 
 use std::fs;
@@ -21,15 +21,13 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use regex::Regex;
 use serde::Serialize;
 
 use crate::adapter::AgentHarness;
-use crate::bg_executor::{
-    BG_SLOT_KEY, BG_TIMEOUT, BgJob, bg_executor_args, bg_prompt, in_bg_window,
-};
+use crate::bg_executor::{BG_SLOT_KEY, BG_TIMEOUT, BgJob, bg_executor_args, bg_prompt};
 use crate::link::random_uuid;
 use crate::review_fork::{ForkChild, ForkSpawn, parse_fork_result};
 
@@ -116,7 +114,6 @@ pub struct BgPlan {
 pub type BgHarnessFn = dyn Fn() -> Result<AgentHarness, String> + Send + Sync;
 pub type BgBuildPlan = dyn Fn(&BgJob, &str, &Path) -> Result<BgPlan, String> + Send + Sync;
 pub type BgLog = dyn Fn(&str) + Send + Sync;
-pub type BgNow = dyn Fn() -> i64 + Send + Sync;
 
 /// 정본 `BgExecutorDeps`.
 pub struct BgExecutorDeps {
@@ -131,8 +128,6 @@ pub struct BgExecutorDeps {
     pub slots: Box<dyn BgSlots>,
     pub state_dir: PathBuf,
     pub spawn: Option<Box<ForkSpawn>>,
-    /// 유닉스 밀리초.
-    pub now_ms: Option<Box<BgNow>>,
     pub timeout: Option<Duration>,
     pub log: Option<Box<BgLog>>,
 }
@@ -142,16 +137,16 @@ pub struct BgExecutorDeps {
 pub enum BgTickResult {
     NotClaude,
     Busy,
-    OutsideWindow,
     NoSlot,
     None,
     Ran,
 }
 
-/// 러너 하나에 하나. `tick` 을 주기적으로 부른다 — 창 안·빈 칸이 있으면 일감 하나를 끝까지 돈다.
+/// 러너 하나에 하나. `tick` 을 주기적으로 부른다 — 빈 칸이 있으면 일감 하나를 끝까지 돈다.
 pub struct BgExecutor {
     deps: BgExecutorDeps,
     in_flight: AtomicBool,
+    stop: AtomicBool,
 }
 
 /// 틱이 끝나면(어느 길로든) 도는 표시를 내린다.
@@ -168,12 +163,22 @@ impl BgExecutor {
         Self {
             deps,
             in_flight: AtomicBool::new(false),
+            stop: AtomicBool::new(false),
         }
     }
 
     /// 지금 틱(회차)이 도는가.
     pub fn running(&self) -> bool {
         self.in_flight.load(Ordering::SeqCst)
+    }
+
+    /// 러너가 물러난다 — 도는 회차를 죽이고 새로 집지 않는다.
+    pub fn stop(&self) {
+        self.stop.store(true, Ordering::SeqCst);
+    }
+
+    fn stopped(&self) -> bool {
+        self.stop.load(Ordering::SeqCst)
     }
 
     pub fn tick(&self) -> BgTickResult {
@@ -186,8 +191,8 @@ impl BgExecutor {
             return BgTickResult::Busy;
         }
         let _flight = InFlight(&self.in_flight);
-        if !in_bg_window(self.now_ms()) {
-            return BgTickResult::OutsideWindow;
+        if self.stopped() {
+            return BgTickResult::Busy;
         }
         if (self.deps.harness)().ok() != Some(AgentHarness::ClaudeCode) {
             return BgTickResult::NotClaude;
@@ -294,6 +299,15 @@ impl BgExecutor {
                     break None;
                 }
             }
+            if self.stopped() {
+                child.kill();
+                return Ok(BgOutcome::fail(
+                    BgStatus::Failed,
+                    "stopped",
+                    None,
+                    elapsed_ms(started),
+                ));
+            }
             if started.elapsed() >= timeout {
                 timed_out = true;
                 child.kill();
@@ -342,15 +356,6 @@ impl BgExecutor {
         }
         v.retain(|(p, _)| p.len() > 1);
         v
-    }
-
-    fn now_ms(&self) -> i64 {
-        match &self.deps.now_ms {
-            Some(f) => f(),
-            None => SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_or(0, |d| d.as_millis() as i64),
-        }
     }
 
     fn log(&self, line: &str) {

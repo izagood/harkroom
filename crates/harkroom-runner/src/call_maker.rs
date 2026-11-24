@@ -241,6 +241,14 @@ impl<L: AgentLink> RunnerMaker<L> {
         self.cfg.codex = Some(codex);
     }
 
+    /// 백그라운드 회차가 쓸 계정 폴더 — 지금 축의 첫 계정(정본 `liveLane.current().lane[0]`). 없으면 기본 로그인.
+    pub fn bg_account_dir(&self) -> Option<PathBuf> {
+        let lane = match self.accounts.as_ref() {
+            Some(hub) => hub.current_lane(),
+            None => crate::account_lane::fallback_lane(&self.cfg.runner_env, &self.cfg.state_dir),
+        };
+        lane.into_iter().next().flatten().map(|a| a.config_dir)
+    }
     pub fn config(&self) -> &MakerConfig {
         &self.cfg
     }

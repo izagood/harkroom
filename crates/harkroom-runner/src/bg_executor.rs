@@ -1,4 +1,4 @@
-//! 정본 `bgExecutor.ts` 의 순수 절반 — 백그라운드 회차(G1 · BG2)의 상수·창 판정·argv·지시문·MCP 설정·프롬프트(B3e-5a).
+//! 정본 `bgExecutor.ts` 의 순수 절반 — 백그라운드 회차(G1 · BG2)의 상수·argv·지시문·MCP 설정·프롬프트(B3e-5a).
 //!
 //! 백그라운드 회차는 앵커(메시지) 없이, 채팅에 글도 쓰지 않는 턴이다. 리뷰 포크와 같은 틀: 헤드리스 `-p`,
 //! `--permission-mode dontAsk` + `--allowedTools`, 자체 시한. 서버가 넣은 일감(`bg_job`)을 러너가 `bg.claim` 으로 집고,
@@ -7,7 +7,7 @@
 //! 이 조각은 판정·조립만 한다. 틱 루프(자리 잡기·claim·spawn·시한·결과 분류·complete)는 B3e-5b 다 — 결과 분류가
 //! `review_fork::parse_fork_result`(B3e-4)를 쓰므로 그 PR 뒤에 붙인다.
 //!
-//! 정본과 다른 점: ① 창 판정은 `Date` 대신 유닉스 밀리초를 받는다 ② MCP 설정 파일은 `write_private`(0600·임시 파일 →
+//! 정본과 다른 점: ① 밤 창을 러너가 보지 않는다(매일 기억 정리의 시각은 서버 설정이다) ② MCP 설정 파일은 `write_private`(0600·임시 파일 →
 //! rename)로 쓴다(정본은 `writeFile` mode 0600) ③ 일감 입력은 `serde_json::Value` 로 받고, 꼴이 다른 값(배열이 아닌
 //! `threadIds`·문자열이 아닌 원소)은 정본이 던지거나 문자열로 바꾸는 대신 버린다.
 
@@ -28,9 +28,7 @@ use crate::turn_rules::READONLY_RULES;
 /// 하드 시한(설계 3절). 넘으면 죽이고 failed(timeout).
 pub const BG_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 pub const BG_MAX_TURNS: u32 = 40;
-/// 창(KST 시, [시작, 끝)) — 서버 `bgJobs.ts::BG_WINDOW_KST` 와 같아야 한다. 서버가 정본이고 이것은 헛걸음을 줄인다.
-pub const BG_WINDOW_KST: (u32, u32) = (3, 7);
-/// 창 안에서 일감을 물어보는 간격.
+/// 일감을 물어보는 간격. 줄 때인지는 서버가 정한다(`bg.claim`).
 pub const BG_POLL_INTERVAL: Duration = Duration::from_secs(5 * 60);
 /// 러너당 백그라운드 자리 키 — 한 번에 하나.
 pub const BG_SLOT_KEY: &str = "bg";
@@ -94,15 +92,6 @@ pub const BG_DISALLOWED_TOOLS: &[&str] = &[
     "mcp__harkroom__bg_claim",
     "mcp__harkroom__thread_plan_item",
 ];
-
-const KST_OFFSET_MS: i64 = 9 * 60 * 60 * 1000;
-const HOUR_MS: i64 = 60 * 60 * 1000;
-
-/// 정본 `inBgWindow` — 유닉스 밀리초가 KST 03~07시([시작, 끝)) 안인가.
-pub fn in_bg_window(unix_ms: i64) -> bool {
-    let h = (unix_ms + KST_OFFSET_MS).div_euclid(HOUR_MS).rem_euclid(24) as u32;
-    h >= BG_WINDOW_KST.0 && h < BG_WINDOW_KST.1
-}
 
 /// 서버 `bg.claim` 이 준 일감. `input` 은 `{ threadIds?, digests?, reasons?, … }` 객체다.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
