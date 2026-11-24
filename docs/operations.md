@@ -336,6 +336,17 @@ AVCS_BASE_URL=https://your-avcs-server.example.com
 이것은 이 저장소 밖(avcs 브리지)의 일이라 여기서 고치지 않는다 — 위 표시가 그때
 `stalled` 로 보이게 하는 것이 harkroom 쪽의 몫이다.
 
+## 6-1. 임베딩 서비스 (기억 벡터 검색)
+
+`docker-compose.yml` 의 `embed` 는 `--profile embed` 로만 뜨고 `HARKROOM_EMBED_URL` 을 줘야 서버가 쓴다. 준비 전·장애 중에는
+낱말 검색만 쓴다. 운영에서는 `HARKROOM_EMBED_TAG=sha-<7자>` 로 태그를 고정한다(`latest` 는 바뀐다). 켜기 전에 **그 호스트에서**
+지연을 잰다 — CPU 에 따라 몇 배 다르다. 500자 질의 p95 가 300ms 를 넘으면 긴 질의는 낱말로만 답한다:
+
+```bash
+docker compose --profile embed up -d embed
+docker compose exec -T embed python - < ops/embed/bench.py
+```
+
 ## 7. 관측 지점
 
 문제가 났을 때 먼저 볼 곳:

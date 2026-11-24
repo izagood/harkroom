@@ -1,0 +1,131 @@
+# 임베딩 서비스 이미지(`ops/embed`)를 굽는다. `image.yml`(서버)과 나눈 이유: 이 빌드는 2GB 모델을 내려받으므로 실패하거나 느려도
+# 서버 이미지·릴리즈를 막지 않아야 한다(`image.yml` 의 `merge` 는 매트릭스 전체를 기다린다). 바뀔 때만 굽는다.
+#
+# - PR: 굽고 컨테이너를 띄워 헬스·지연을 잰다. **밀지 않는다**(packages 권한 없음).
+# - main: 두 아키텍처를 ghcr 에 `:sha-<7자>` 와 `:latest` 로 민다.
+name: 임베딩 이미지
+
+on:
+  pull_request:
+    paths: ["ops/embed/**", ".github/workflows/embed-image.yml"]
+  push:
+    branches: [main]
+    paths: ["ops/embed/**", ".github/workflows/embed-image.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: embed-image-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - run: docker build -f ops/embed/Dockerfile -t harkroom-embed:check .
+      - name: 운영과 같은 제한으로 띄운다
+        run: |
+          set -euo pipefail
+          docker run -d --name embed --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges:true \
+            --cpus 4 --memory 2g -p 127.0.0.1:8080:8080 harkroom-embed:check
+          for _ in $(seq 60); do
+            curl -sf http://127.0.0.1:8080/health && break
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:8080/health
+      # 러너 CPU 는 운영 호스트가 아니다 — 수치를 남기기만 하고 300ms 판정으로 막지 않는다.
+      - name: 지연을 잰다
+        run: |
+          set -euo pipefail
+          lscpu | grep -E 'Model name|^CPU\(s\)'
+          rc=0; python3 ops/embed/bench.py http://127.0.0.1:8080 || rc=$?
+          [ "$rc" -eq 0 ] || echo "::warning::500자 질의 p95 가 300ms 를 넘었다(러너 기준)"
+          docker stats --no-stream embed
+          [ "$(docker inspect -f '{{.State.OOMKilled}} {{.State.Running}}' embed)" = "false true" ]
+      - if: failure()
+        run: docker logs embed
+
+  build:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    name: build ${{ matrix.arch.platform }}
+    runs-on: ${{ matrix.arch.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        arch:
+          - { platform: linux/amd64, runner: ubuntu-latest, slug: amd64 }
+          - { platform: linux/arm64, runner: ubuntu-24.04-arm, slug: arm64 }
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/harkroom-embed
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: ops/embed/Dockerfile
+          platforms: ${{ matrix.arch.platform }}
+          provenance: false
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+      - env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/digests
+          touch "/tmp/digests/${DIGEST#sha256:}"
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: digests-embed-${{ matrix.arch.slug }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/harkroom-embed
+    steps:
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          path: /tmp/digests
+          pattern: digests-embed-*
+          merge-multiple: true
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: 두 아키텍처를 하나로 묶어 민다
+        working-directory: /tmp/digests
+        run: |
+          set -euo pipefail
+          [ "$(find . -type f | wc -l)" -eq 2 ]
+          # 다이제스트 파일 이름들이 인자 여러 개로 갈라지는 것이 의도다.
+          # shellcheck disable=SC2046
+          docker buildx imagetools create \
+            --tag "${IMAGE}:sha-${GITHUB_SHA::7}" --tag "${IMAGE}:latest" \
+            $(printf "${IMAGE}@sha256:%s " *)
