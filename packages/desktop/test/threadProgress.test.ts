@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { MessageRow } from '@harkroom/shared';
-import { isIdle, threadProgress, type ThreadTurnsSnapshot } from '../src/lib/threadProgress';
+import { hasLiveWork, isIdle, threadProgress, type ThreadTurnsSnapshot } from '../src/lib/threadProgress';
 
 const NOW = new Date(2026, 10, 24, 10, 0, 0).getTime();
 const TODAY = new Date(2026, 10, 24, 9, 0, 0).toISOString();
@@ -91,5 +91,14 @@ describe('threadProgress', () => {
     expect(p.lastDoneAt).toBe(YESTERDAY);
     expect(p.lastReplyAt).toBe(TODAY);
     expect(p.doneToday).toBe(0);
+  });
+
+  it('「오늘 끝」만 남으면 볼 일이 없다 — 모름은 볼 일로 친다', () => {
+    const base = count([report(TODAY)]);
+    expect(base.doneToday).toBe(1);
+    expect(hasLiveWork(base)).toBe(false);
+    expect(hasLiveWork({ ...base, waiting: 1 })).toBe(true);
+    expect(hasLiveWork({ ...base, running: null })).toBe(true);
+    expect(hasLiveWork({ ...base, waitingUnknown: true })).toBe(true);
   });
 });

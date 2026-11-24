@@ -172,7 +172,8 @@ export function ThreadWorkDrawer({ items, work, onOpenMessage, onClose }: {
                   {stamp && <span className="shrink-0 tabular-nums text-fg-subtle">{stamp}</span>}
                 </>
               );
-              const cls = `flex w-full items-start gap-2 border-l-2 px-3 py-1.5 text-left ${unknown ? 'border-dashed border-border' : EDGE[group]}`;
+              // 모름 줄의 점선 막대는 서랍 경계선에 붙으면 실선에 묻힌다 — 한 칸 안으로 들인다.
+              const cls = `flex w-full items-start gap-2 border-l-2 px-3 py-1.5 text-left ${unknown ? 'ml-1 border-dashed border-border' : EDGE[group]}`;
               return item.messageId !== null ? (
                 <button
                   key={item.key}

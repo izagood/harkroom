@@ -439,3 +439,80 @@ describe('waitChain — 갈래가 여럿일 때의 판정', () => {
     expect(sentences[0]).toContain('외 1명');
   });
 });
+
+/**
+ * 닫힌 위임은 마디가 아니다(R2 띠·서랍 후속). `meta.delegation.open` 은 올릴 때 적힌 값으로 남을 수 있다 —
+ * 그 뒤의 글이 그 의무를 닫았으면 사슬에서 뺀다. 안 빼면 닫힌 위임이 「외 N명」을 부풀리고 가짜 교착을 세운다.
+ */
+describe('waitChain — 닫힌 위임은 뺀다', () => {
+  const said = (id: string, seq: number, author: string, meta?: Record<string, unknown>, kind?: string): MessageRow =>
+    msg(id, 'c1', seq, '말', author, { ...(meta ? { meta } : {}), ...(kind ? { kind } : {}) } as never);
+  const report = { kind: 'report', report: { checks: ['봤다'] } };
+  const failure = { kind: 'failure', failure: { retryable: true } };
+
+  it('담당이 그 뒤에 완료 보고를 올렸으면 그 마디는 없다', () => {
+    const c = chain([delegate('d1', 1, FORGE, [CODEX, LINT]), said('r1', 2, CODEX, report)]);
+    expect(c.links.map((l) => l.blockedBy)).toEqual([LINT]);
+    expect(c.links[0]!.siblings).toBeUndefined();
+  });
+
+  it('담당이 실패로 끝냈어도 닫힌 것이다', () => {
+    expect(chain([delegate('d1', 1, FORGE, [CODEX]), said('f1', 2, CODEX, failure)]).end).toBe('none');
+  });
+
+  it('위임보다 앞선 보고나 보통 답글·진행 줄은 닫지 않는다', () => {
+    const c = chain([
+      said('r0', 1, CODEX, report), delegate('d1', 2, FORGE, [CODEX]),
+      said('p1', 3, CODEX), said('p2', 4, CODEX, undefined, 'progress'),
+    ]);
+    expect(c.links.map((l) => l.blockedBy)).toEqual([CODEX]);
+  });
+
+  it('닫는 조건이 답글인 부름은 담당의 보통 답글로 닫힌다 — 진행 줄로는 아니다', () => {
+    const call = delegate('d1', 1, FORGE, [CODEX]);
+    (call.meta!.delegation as Record<string, unknown>).closeOn = 'reply';
+    expect(chain([call, said('p1', 2, CODEX, undefined, 'progress')]).links).toHaveLength(1);
+    expect(chain([call, said('p1', 2, CODEX)]).end).toBe('none');
+  });
+
+  it('같은 담당에게 다시 넘기면 앞 위임은 대체된 것이다 — handle 을 풀 수 있을 때만 판정한다', () => {
+    const messages = [delegate('d1', 1, FORGE, [CODEX, LINT]), delegate('d2', 2, FORGE, [CODEX])];
+    // helper 는 `to` 에 계정 id 를 그대로 넣는다 — handle 이 곧 id 인 풀이를 준다.
+    const c = waitChain({ messages, myAccountId: ME, live: ALIVE, handleOf: (id) => id });
+    expect(c.links[0]!.siblings).toBe(1);
+    expect(chain(messages).links[0]!.siblings).toBe(2);
+  });
+
+  it('닫힌 위임의 죽은 담당으로 교착을 세우지 않는다', () => {
+    const live = new Set([FORGE, CODEX]);
+    expect(chain([delegate('d1', 1, FORGE, [LINT])], live).end).toBe('deadlock');
+    expect(chain([delegate('d1', 1, FORGE, [LINT]), said('r1', 2, LINT, report)], live).end).toBe('none');
+  });
+});
+
+describe('WaitChainLine — 줄 끝의 시간은 기다린 시간이다', () => {
+  beforeEach(() => {
+    useAppStore.getState().reset();
+    useAppStore.getState().set({ accounts: { [FORGE]: acc(FORGE, 'forge', 'agent') } });
+  });
+  afterEach(() => { cleanup(); usePrefsStore.getState().setLocale('system'); });
+  const old = (): MessageRow => {
+    const m = ask('a1', 1, FORGE, null);
+    return { ...m, createdAt: new Date(Date.now() - 4 * 3600_000 - 60_000).toISOString() };
+  };
+
+  it('한국어: 「4시간째 기다림」', () => {
+    usePrefsStore.getState().setLocale('ko');
+    render(<WaitChainLine chain={chain([old()])} />);
+    expect(screen.getByTestId('wait-chain').textContent).toContain('4시간째 기다림');
+  });
+
+  it('영어: running 이라 하지 않는다', () => {
+    usePrefsStore.getState().setLocale('en');
+    render(<WaitChainLine chain={chain([old()])} />);
+    const text = screen.getByTestId('wait-chain').textContent ?? '';
+    expect(text).toContain('waiting 4h');
+    expect(text).not.toContain('running');
+  });
+});
+

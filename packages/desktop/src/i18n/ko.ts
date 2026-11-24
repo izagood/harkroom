@@ -1527,6 +1527,7 @@ export const ko = {
   'waitChain.linkMany': '{waiter:이가} {blockedBy} 외 {count}명의 답을 기다린다',
   'waitChain.link': '{waiter:이가} {blockedBy}의 답을 기다린다',
   'waitChain.linkAnyone': '{waiter:이가} 사람의 답을 기다린다',
+  'waitChain.waited': '{duration}째 기다림',
 
   'waitChain.deadlock': '교착',
   'waitChain.deadlockCycle': '{names} 가 서로를 기다린다 — 사람만이 풀 수 있다',

@@ -1,4 +1,6 @@
-import { isAskOpen, readAskMeta, readDelegationMeta, type MessageRow, type OpenAskLink } from '@harkroom/shared';
+import {
+  isAskOpen, readAskMeta, readDelegationMeta, readFailureMeta, readReportMeta, type MessageRow, type OpenAskLink,
+} from '@harkroom/shared';
 import type { Liveness } from './threadState';
 import type { Translate } from '../i18n';
 
@@ -58,6 +60,41 @@ export interface WaitChainInput {
   myAccountId: string | null;
   /** 지금 살아 있는 에이전트들. `null` 은 '모른다' — `threadState` 와 같은 규약이다. */
   live: Liveness;
+  /**
+   * 계정 id → handle. 주면 **같은 사람이 같은 담당에게 다시 넘긴 앞 위임**(서버가 「대체」로 닫는다)을 마디에서 뺀다 —
+   * 위임 글의 `to` 는 handle 이라 이 풀이 없이는 누구에게 다시 넘겼는지 알 수 없다. 안 주면 그 판정만 건너뛴다.
+   */
+  handleOf?: (accountId: string) => string | undefined;
+}
+
+/**
+ * 위임 글 `at` 의 담당 `delegate` 가 **이 스레드의 글로 보아** 이미 닫혔는가.
+ *
+ * `meta.delegation.open` 은 서버가 의무를 닫을 때 줄이는 값이지만, 그것만 믿으면 닫힌 위임이 마디로 남는다:
+ * 그 고침은 화면에 따로 알려지지 않아 열어 둔 스레드는 올릴 때 적힌 값을 그대로 들고 있고, 대체로 닫힌 의무는
+ * 값이 줄지 않는다. 그래서 스레드에 이미 와 있는 글로 한 번 더 거른다 — 서버가 의무를 닫는 조건과 같은 것만 본다.
+ *
+ * - 담당이 그 뒤에 완료 보고나 실패를 올렸다
+ * - 닫는 조건이 답글(`closeOn: 'reply'`)이고 담당이 그 뒤에 보통 답글을 올렸다
+ * - 넘긴 쪽이 그 뒤에 같은 담당에게 다시 넘겼다(앞 것은 대체된다)
+ *
+ * 넘긴 쪽이 손으로 닫은 것과 나이로 닫힌 것은 스레드에 글이 남지 않아 여기서 알 수 없다.
+ */
+function delegateClosed(
+  messages: readonly MessageRow[], at: number, delegate: string, handleOf: WaitChainInput['handleOf'],
+): boolean {
+  const from = messages[at]!;
+  const replyCloses = (from.meta?.delegation as { closeOn?: unknown } | undefined)?.closeOn === 'reply';
+  const handle = handleOf?.(delegate);
+  for (let i = at + 1; i < messages.length; i += 1) {
+    const m = messages[i]!;
+    if (m.authorId === delegate) {
+      if (readReportMeta(m.meta) != null || readFailureMeta(m.meta) != null) return true;
+      if (replyCloses && m.kind !== 'progress' && m.kind !== 'wake' && m.kind !== 'system') return true;
+    }
+    if (handle !== undefined && m.authorId === from.authorId && readDelegationMeta(m.meta)?.to.includes(handle)) return true;
+  }
+  return false;
 }
 
 /**
@@ -87,7 +124,7 @@ export function waitChain(input: WaitChainInput): WaitChain {
   const { messages, myAccountId, live } = input;
   const links: WaitLink[] = [];
 
-  for (const m of messages) {
+  for (const [at, m] of messages.entries()) {
     const ask = readAskMeta(m.meta);
     if (ask && isAskOpen(ask)) {
       links.push({
@@ -117,6 +154,8 @@ export function waitChain(input: WaitChainInput): WaitChain {
     const delegation = readDelegationMeta(m.meta);
     if (delegation) {
       for (const blockedBy of delegation.open) {
+        // 올릴 때 적힌 값만 믿지 않는다 — 그 뒤의 글로 닫힌 것은 뺀다(`delegateClosed`).
+        if (delegateClosed(messages, at, blockedBy, input.handleOf)) continue;
         links.push({ waiter: m.authorId, blockedBy, message: m, askedAt: m.createdAt });
       }
     }

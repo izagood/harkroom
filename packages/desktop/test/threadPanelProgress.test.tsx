@@ -108,6 +108,21 @@ describe('스레드 머리의 진행 띠 (R2)', () => {
     expect(screen.queryByTestId('thread-work-toggle')).toBeNull();
   });
 
+  it('「오늘 끝」만 남으면 서랍은 물러나고 여닫이는 남는다 — 사람이 직접 열면 그대로 둔다', () => {
+    const done = msg('m4', 'c1', 4, 'done', 'u2', {
+      threadRootId: 'm1', createdAt: new Date().toISOString(), meta: { kind: 'report', report: { checks: ['ok'] } },
+    } as never);
+    useAppStore.getState().set({ messages: { c1: [root, reply, done] } });
+    render(<ThreadPanel />);
+    expect(screen.getByTestId('thread-progress-doneToday')).toBeTruthy();
+    expect(screen.queryByTestId('thread-work-drawer')).toBeNull();
+    const toggle = screen.getByTestId('thread-work-toggle');
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(toggle);
+    expect(screen.getByTestId('thread-work-drawer')).toBeTruthy();
+    expect(screen.getByTestId('thread-work-toggle').getAttribute('aria-expanded')).toBe('true');
+  });
+
   it('예약을 못 읽으면 띠에 「기다림 모름」이 서고 서랍에도 모름 줄이 선다', async () => {
     api.agentWakes.mockRejectedValue(new Error('net'));
     render(<ThreadPanel />);
