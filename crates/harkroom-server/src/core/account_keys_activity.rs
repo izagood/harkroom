@@ -108,7 +108,7 @@ const TOUCH: &str = concat!(
 
 /// `POST /agent/activity`.
 pub async fn post_activity(State(st): State<Arc<KeysActivityState>>, req: Request) -> Response {
-    let (_body, RequireAccount(me, _), _parts) =
+    let (body, RequireAccount(me, _), _parts) =
         match crate::writes_settings::body_then::<RequireAccount>(req).await {
             Ok(v) => v,
             Err(r) => return r,
@@ -125,7 +125,13 @@ pub async fn post_activity(State(st): State<Arc<KeysActivityState>>, req: Reques
         .fetch_one(&st.write)
         .await
     {
-        Ok(at) => json_ok(json!({ "lastTurnAt": at }).to_string()),
+        Ok(at) => {
+            // PX0 — 본문의 선택 칸 `tokens`(턴 토큰)를 측정 한 줄로. 기록만 하고 답은 그대로다(없거나 틀려도 같다).
+            if let crate::write::Body::Json(v) = &body {
+                super::measure::turn_tokens(&me.id, Some(v));
+            }
+            json_ok(json!({ "lastTurnAt": at }).to_string())
+        }
         Err(e) => internal(e),
     }
 }

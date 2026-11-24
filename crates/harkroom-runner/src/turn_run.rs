@@ -82,6 +82,11 @@ pub fn run_attempt<'a, L: RunnerLink>(
     let source = std::rc::Rc::new(secrets);
     let src = std::rc::Rc::clone(&source);
     let started = std::time::Instant::now();
+    // 턴 토큰(PX0)이 「이 시도 뒤 레코드만」 세는 기준 — 벽시계.
+    let started_at_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|d| i64::try_from(d.as_millis()).ok());
     let client = input.client;
     input.after_run = Some(Box::new(move |out: &PtyOut| {
         if let Some(line) = turn_end_line(scrub.key, started.elapsed().as_millis(), out) {
@@ -108,7 +113,16 @@ pub fn run_attempt<'a, L: RunnerLink>(
         // 만들지 않고 로그만 — 화면의 활동이 왜 멈췄는지 답할 자리가 이 줄뿐이다.
         // **기록 가리기 뒤에 둔다** — 링크 요청은 답을 시한 없이 기다리므로, 앞에 두면 느린 서버·종료 SIGKILL 동안
         // 기록에 마운트한 비밀이 가려지지 않은 채 남는다(임대 끝 전이라는 점은 그대로다).
-        if let Err(e) = client.report_activity() {
+        // PX0 — 이 시도의 토큰 합계를 같은 보고에 싣는다(측정만). 읽지 못하면 본문 없이 — 예전과 같은 요청이다.
+        let tokens = started_at_ms
+            .and_then(|since| {
+                crate::turn_tokens::read_turn_tokens(harness, transcript.as_deref(), since)
+            })
+            .map(|t| {
+                let ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+                crate::turn_tokens::activity_body(harness, &t, ms)
+            });
+        if let Err(e) = client.report_activity_with(tokens.as_ref()) {
             eprintln!(
                 "[mentionTurn] {}: 활동 보고 실패(턴은 계속한다) — {e}",
                 scrub.key
