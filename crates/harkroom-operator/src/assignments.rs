@@ -13,7 +13,7 @@
 use crate::runner_pick::RunnerPick;
 use harkroom_proto::p2::{AgentDefinition, CredentialScope};
 use serde_json::Value;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex, Weak};
 
 /// shared `EX_CONFIG`.
@@ -227,6 +227,11 @@ struct State {
     current_runner: HashMap<String, String>,
     /// 러너를 반납한 풀 에이전트 → 반납 시각(ms). 여기 있는 것만 깨움·훑기가 다시 띄운다.
     parked: HashMap<String, u64>,
+    /// 풀 러너가 떠 있는 동안 깨움이 온 에이전트. 그 러너가 이미 빈 폴을 보고 물러나는 중이었다면 그 깨움은 아무도 못 본다 —
+    /// 코드 0 으로 끝났을 때 이 표지가 있으면 반납하지 않고 바로 다시 띄운다. 러너를 띄울 때 지운다.
+    woke: HashSet<String>,
+    /// 사람의 [재시작]·설정 변경으로 SIGTERM 을 보낸 풀 에이전트. 그 뒤의 코드 0 은 반납이 아니라 재기동이다.
+    restarting: HashSet<String>,
 }
 
 pub struct AssignmentReconciler {
@@ -331,6 +336,8 @@ impl AssignmentReconciler {
             );
             // 띄우는 길에 들어섰다 — 반납 표지를 지운다(실패하면 풀 길이 다시 적는다).
             st.parked.remove(&agent_id);
+            st.woke.remove(&agent_id);
+            st.restarting.remove(&agent_id);
             (
                 take_and_cancel(&mut st.respawns, &agent_id),
                 // 회수 중이던 에이전트가 다시 배정됐다 — 예약된 SIGKILL 을 놓는다.
@@ -536,6 +543,8 @@ impl AssignmentReconciler {
             let mut st = self.st();
             st.assigned.remove(agent_id);
             st.parked.remove(agent_id);
+            st.woke.remove(agent_id);
+            st.restarting.remove(agent_id);
             st.respawns.remove(agent_id)
         };
         if let Some(c) = respawn {
@@ -594,6 +603,7 @@ impl AssignmentReconciler {
             }
             st.backoff.remove(agent_id);
             st.last_spawn_at.remove(agent_id);
+            st.restarting.insert(agent_id.to_string());
             h
         };
         self.deps.log(&format!(
@@ -650,6 +660,7 @@ impl AssignmentReconciler {
             let mut st = self.st();
             st.backoff.remove(agent_id);
             st.last_spawn_at.remove(agent_id);
+            st.restarting.insert(agent_id.to_string());
         }
         self.deps.signal(agent_id, Sig::Term);
         "restarting"
@@ -717,6 +728,27 @@ impl AssignmentReconciler {
             };
             // 회수 중이면 죽는 것이 맞다 — 다시 띄우면 unassign 이 무의미해진다.
             if st.reclaims.contains_key(agent_id) {
+                return;
+            }
+            // 표지는 이 끝남에만 쓴다 — 어느 갈래로 가든 걷는다.
+            let restarting = st.restarting.remove(agent_id);
+            let woke = st.woke.remove(agent_id);
+            // 풀 에이전트가 코드 0 으로 끝났지만 반납이 아니다: 사람이 재시작을 눌렀거나 설정이 바뀌어 물러났거나(재기동이 맞다),
+            // 떠 있는 동안 깨움이 왔다(물러나던 러너가 못 봤을 수 있다). 기다리지 않고 바로 다시 띄운다.
+            // 풀이 꺼진 에이전트는 이 갈래에 오지 않는다 — 예전 재기동 길 그대로다.
+            if pool_on(entry.local.as_ref()) && code == Some(0) && (restarting || woke) {
+                st.backoff.remove(agent_id);
+                drop(st);
+                self.deps.log(&format!(
+                    "러너가 물러났다: agent={} — {}, 바로 다시 띄운다",
+                    entry.definition.handle,
+                    if restarting {
+                        "재시작"
+                    } else {
+                        "떠 있는 동안 깨움이 왔다"
+                    }
+                ));
+                self.schedule_reassign(agent_id, 0);
                 return;
             }
             // 풀 에이전트가 할 일을 마치고 스스로 끝났다(코드 0) — 죽음이 아니라 반납이다. 다시 띄우지 않고 다음 깨움·훑기를 기다린다.
@@ -790,7 +822,7 @@ impl AssignmentReconciler {
     fn pool_borrow(&self, agent_id: &str) -> PoolWake {
         let now = self.deps.now_ms();
         let (cur, parked_at, others) = {
-            let st = self.st();
+            let mut st = self.st();
             let Some(cur) = st.assigned.get(agent_id).cloned() else {
                 return PoolWake::NotMine;
             };
@@ -799,6 +831,8 @@ impl AssignmentReconciler {
             }
             // 반납 표지가 없으면 러너가 떠 있거나 재기동·회수 길에 있다 — 그 길을 앞지르지 않는다(백오프를 건너뛰지 않게).
             let Some(at) = st.parked.get(agent_id).copied() else {
+                // 그 러너가 이미 빈 폴을 보고 물러나는 중일 수 있다 — 표지를 남겨, 코드 0 으로 끝나면 바로 다시 띄우게 한다.
+                st.woke.insert(agent_id.to_string());
                 return PoolWake::Running;
             };
             let others: Vec<String> = st
@@ -1798,10 +1832,118 @@ mod tests {
             .unwrap();
         assert_eq!(r.set_local("a1", Some(pool())), "restarting");
         assert_eq!(f.signals.lock().unwrap().last().unwrap().1, Sig::Term);
-        // 물러난 러너(코드 0)는 이제 풀 에이전트라 반납으로 친다 — 깨움이 풀 러너를 띄운다.
+        // 설정 변경으로 물러난 것(코드 0)은 반납이 아니라 재기동이다 — 깨움을 기다리지 않고 풀 러너가 바로 뜬다.
         f.kill("a1");
         r.on_runner_exit("a1", Some(0), None);
-        assert_eq!(r.on_wake("a1"), PoolWake::Borrowed);
+        f.advance(0);
+        assert_eq!(spawn_count(&f), 2);
         assert_eq!(f.spawns.lock().unwrap()[1].1[RUNNER_ONE_JOB_ENV], "1");
+        // 그 풀 러너가 할 일 없이 끝나면 그때는 반납이다.
+        f.kill("a1");
+        r.on_runner_exit("a1", Some(0), None);
+        f.advance(60_000);
+        assert_eq!(spawn_count(&f), 2);
+        assert_eq!(r.on_wake("a1"), PoolWake::Borrowed);
+    }
+
+    /// 깨움으로 빌린 풀 러너가 떠 있는 자리.
+    fn borrowed() -> (Arc<Fake>, Arc<AssignmentReconciler>) {
+        let (f, r) = parked();
+        assert_eq!(r.on_wake("a1"), PoolWake::Borrowed);
+        assert_eq!(spawn_count(&f), 2);
+        (f, r)
+    }
+
+    #[test]
+    fn wake_during_a_running_pool_runner_reborrows_right_after_it_returns() {
+        let (f, r) = borrowed();
+        // 러너가 떠 있는 동안 온 깨움 — 그 러너가 이미 물러나는 중이면 못 본다.
+        assert_eq!(r.on_wake("a1"), PoolWake::Running);
+        f.kill("a1");
+        r.on_runner_exit("a1", Some(0), None);
+        f.advance(0);
+        assert_eq!(spawn_count(&f), 3, "5분 훑기를 기다리지 않는다");
+        assert!(
+            f.logs
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|l| l.contains("떠 있는 동안 깨움이 왔다"))
+        );
+        // 표지는 한 번만 쓴다 — 다시 뜬 러너가 조용히 끝나면 반납이다(되풀이 띄움 없음).
+        f.kill("a1");
+        r.on_runner_exit("a1", Some(0), None);
+        f.advance(60_000);
+        assert_eq!(spawn_count(&f), 3);
+    }
+
+    #[test]
+    fn wake_mark_does_not_outlive_a_crash_or_jump_its_backoff() {
+        let (f, r) = borrowed();
+        assert_eq!(r.on_wake("a1"), PoolWake::Running);
+        // 죽음(코드 0 아님)은 평소 백오프 길이다 — 표지가 그것을 앞지르지 않는다.
+        f.kill("a1");
+        r.on_runner_exit("a1", Some(1), None);
+        f.advance(0);
+        assert_eq!(spawn_count(&f), 2);
+        f.advance(1_000);
+        assert_eq!(spawn_count(&f), 3);
+        // 다시 뜬 러너가 조용히 끝나면 반납이다 — 옛 표지가 남아 또 띄우지 않는다.
+        f.kill("a1");
+        r.on_runner_exit("a1", Some(0), None);
+        f.advance(60_000);
+        assert_eq!(spawn_count(&f), 3);
+    }
+
+    #[test]
+    fn restart_of_a_pool_runner_respawns_instead_of_parking() {
+        let (f, r) = borrowed();
+        assert!(r.restart("a1"));
+        assert_eq!(f.signals.lock().unwrap().last().unwrap().1, Sig::Term);
+        // SIGTERM 으로 물러나면 코드 0 이다 — 반납으로 치지 않고 바로 다시 띄운다.
+        f.kill("a1");
+        r.on_runner_exit("a1", Some(0), None);
+        f.advance(0);
+        assert_eq!(spawn_count(&f), 3);
+        assert_eq!(f.spawns.lock().unwrap()[2].1[RUNNER_ONE_JOB_ENV], "1");
+        assert!(
+            !f.logs
+                .lock()
+                .unwrap()
+                .iter()
+                .rev()
+                .take(2)
+                .any(|l| l.contains("러너 반납(풀)"))
+        );
+        // 재시작 표지도 한 번만 쓴다.
+        f.kill("a1");
+        r.on_runner_exit("a1", Some(0), None);
+        f.advance(60_000);
+        assert_eq!(spawn_count(&f), 3);
+    }
+
+    #[test]
+    fn lane_change_on_a_pool_runner_respawns_instead_of_parking() {
+        let (f, r) = borrowed();
+        let mut l = lane();
+        l.pool = true;
+        assert_eq!(r.set_local("a1", Some(l)), "restarting");
+        f.kill("a1");
+        r.on_runner_exit("a1", Some(0), None);
+        f.advance(0);
+        assert_eq!(spawn_count(&f), 3);
+        assert_eq!(f.spawns.lock().unwrap()[2].1["HARKROOM_PROVIDER_LANE"], "1");
+    }
+
+    #[test]
+    fn marks_are_dropped_with_the_assignment() {
+        let (f, r) = borrowed();
+        assert_eq!(r.on_wake("a1"), PoolWake::Running);
+        assert!(r.restart("a1"));
+        r.on_unassign("https://srv", "a1", false);
+        f.kill("a1");
+        r.on_runner_exit("a1", Some(0), None);
+        f.advance(60_000);
+        assert_eq!(spawn_count(&f), 2);
     }
 }

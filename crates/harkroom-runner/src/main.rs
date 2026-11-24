@@ -483,8 +483,12 @@ fn main() {
         // 폴더 정리 박동(30분)까지 살지 않는다 — 뜰 때 한 번 훑는다.
         harkroom_runner::cleanup_report::tick_now();
         // 터미널·중계 세션이 열려 있으면 물러나지 않는다(사람이 보고 있다).
-        let busy_relay = Arc::clone(&relay);
-        poll.with_one_job(Box::new(move || !busy_relay.is_empty()))
+        // 둘 다 비었으면 그 자리에서 새 터미널 턴 받기를 닫는다 — 물러나기로 정한 뒤에 열린 턴이 곧바로 회수되지 않게.
+        // 이 물음은 물러남 판정의 맨 끝에서만 불린다(빈 폴·빈 스케줄러를 본 뒤) — 닫았으면 반드시 물러난다.
+        let (busy_relay, busy_maker) = (Arc::clone(&relay), Arc::clone(&maker));
+        poll.with_one_job(Box::new(move || {
+            !busy_relay.is_empty() || !busy_maker.close_interactive_if_idle()
+        }))
     } else {
         poll
     });
@@ -603,6 +607,10 @@ fn main() {
         if book.release(&cause) {
             LeaseHandoff::lease_ended(&*link, &cause);
         }
+    }
+    // 「작업 하나」 러너는 뜰 때 건 폴더 훑기가 끝난 뒤에 끝난다(링크가 살아 있는 동안 — 보고가 나간다).
+    if one_job && !harkroom_runner::cleanup_report::flush(SHUTDOWN_GRACE) {
+        eprintln!("[shutdown] 폴더 정리가 유예 안에 끝나지 않았다");
     }
     link.stop();
     println!("종료");
