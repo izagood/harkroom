@@ -148,6 +148,11 @@ struct Sql {
     item: String,
 }
 
+/// 그 스레드의 계획 문서를 읽는 문장(`$1` 스레드 뿌리) — 검사에 걸린 판은 읽지 않는다. `agent.call` 의 단계 잇기도 이것을 쓴다.
+pub(crate) fn plan_doc_sql() -> &'static str {
+    sql().plan.as_str()
+}
+
 fn sql() -> &'static Sql {
     static S: OnceLock<Sql> = OnceLock::new();
     S.get_or_init(|| {

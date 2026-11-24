@@ -1293,6 +1293,8 @@ async fn post_full(
             unreachable: o.unreachable,
             deadline_at: o.deadline_at,
             close_on: o.close_on,
+            plan_step: o.plan_step,
+            plan_doc: o.plan_doc,
         }),
         // C2 — `agent.call` 이 `to` 로 지은 머리 멘션은 도구가 만든 호출이다.
         tool_call: call.is_some(),
@@ -1649,6 +1651,10 @@ struct CallOblige<'a> {
     close_on: delegate_write::CloseOn,
     /// (부모 계획 스레드, 그룹 id).
     plan: Option<(&'a str, &'a str)>,
+    /// `planStepId` — 이 스레드 계획에 있는 단계(확인을 지난 것).
+    plan_step: Option<&'a str>,
+    /// 이 스레드의 계획 문서 — 없으면 단계를 잇지 않는다.
+    plan_doc: Option<&'a Value>,
 }
 
 /// zod 가 받는 `agent.call` 인자.
@@ -1660,6 +1666,7 @@ struct CallArgs {
     picks: Vec<Pick>,
     plan_root: Option<String>,
     plan_group: Option<String>,
+    plan_step: Option<String>,
 }
 
 /// zod 가 받는 `agent.call` 인자. 틀린 꼴은 `None`.
@@ -1708,6 +1715,14 @@ fn parse_call(args: &Value) -> Option<CallArgs> {
                 .to_owned(),
         ),
     };
+    let plan_step = match o.get("planStepId") {
+        None => None,
+        Some(v) => Some(
+            v.as_str()
+                .filter(|_| super::message_ask::plan_step_ok(v))?
+                .to_owned(),
+        ),
+    };
     let picks = match o.get("agentModels") {
         None => Vec::new(),
         Some(v) => parse_picks(v)?,
@@ -1727,12 +1742,18 @@ fn parse_call(args: &Value) -> Option<CallArgs> {
         picks,
         plan_root,
         plan_group,
+        plan_step,
     })
 }
 
 /// 의무 없는 부름(`expect: "none"`)에 실을 수 없는 칸.
 const CALL_NEEDS_EXPECT_MSG: &str =
-    "deadlineSec·planRootId·planGroupId 는 expect 가 report 나 reply 일 때만 준다";
+    "deadlineSec·planRootId·planGroupId·planStepId 는 expect 가 report 나 reply 일 때만 준다";
+/// `planStepId` 인데 그 스레드에 계획이 없다.
+const CALL_STEP_NO_PLAN_MSG: &str = "planStepId 를 줬지만 이 스레드에 계획이 없다 — planStepId 를 빼거나 thread.plan 으로 먼저 세운다";
+/// `planStepId` 가 그 스레드 계획에 없는 단계다.
+const CALL_STEP_UNKNOWN_MSG: &str =
+    "planStepId 가 이 스레드 계획에 없는 단계다 — thread.plan 으로 단계 id 를 확인한다";
 /// 의무 있는 부름은 스레드 안에서만 선다 — 결말이 돌아올 자리가 그 스레드다.
 const CALL_NEEDS_THREAD_MSG: &str = "expect 가 report 나 reply 면 threadRootId 를 준다";
 
@@ -1762,12 +1783,13 @@ pub async fn answer_call(
         picks,
         plan_root,
         plan_group,
+        plan_step,
     } = parse_call(args)?;
     if me.kind != "agent" {
         return Some(err("agent_only", "agent.call is for agents"));
     }
     let plan = match (expect, &plan_root, &plan_group) {
-        (Expect::None, None, None) if deadline_sec.is_none() => None,
+        (Expect::None, None, None) if deadline_sec.is_none() && plan_step.is_none() => None,
         (Expect::None, _, _) => return Some(err("bad_request", CALL_NEEDS_EXPECT_MSG)),
         (_, None, None) => None,
         (_, Some(r), Some(g)) => Some((r.as_str(), g.as_str())),
@@ -1910,6 +1932,33 @@ pub async fn answer_call(
             ));
         }
     }
+    // 의무가 걸릴 계획 단계 — 이 스레드의 계획 문서를 읽기로 한 번 본다. 인자(`planStepId`)가 있으면 그 계획에 있는 단계여야 하고
+    // (없으면 아무것도 쓰지 않고 거절한다 — 틀린 단계에 잇지 않는다), 없으면 글 tx 가 담당으로 미루어 잡는다. 인자 없는 부름은
+    // 계획을 못 읽어도 막지 않는다(단계만 비운다).
+    let plan_doc: Option<Value> = match (expect, root.as_deref()) {
+        (Expect::None, _) | (_, None) => None,
+        (_, Some(r)) => {
+            let read: Result<Option<Value>, _> =
+                sqlx::query_scalar(crate::core::implicit_delegation::plan_doc_sql())
+                    .bind(r)
+                    .fetch_optional(&mut *conn)
+                    .await;
+            match (read, plan_step.as_deref()) {
+                (Ok(doc), None) => doc,
+                (Err(_), None) => None,
+                (Err(_), Some(_)) => return None,
+                (Ok(None), Some(_)) => {
+                    return Some(err("no_plan", CALL_STEP_NO_PLAN_MSG));
+                }
+                (Ok(Some(doc)), Some(step)) => {
+                    if !delegate_write::plan_has_step(&doc, step) {
+                        return Some(err("unknown_item", CALL_STEP_UNKNOWN_MSG));
+                    }
+                    Some(doc)
+                }
+            }
+        }
+    };
     // 모두 막힐 부름은 글을 세우기 전에 거절한다 — 멘션과 같은 게이트를 읽기로 한 번 본다. 글을 세울 때 옛 경로가 다시 판정하므로
     // 이 앞 판정은 거절을 앞당길 뿐 누구도 더 열어 주지 않는다.
     let agent_ids: Vec<String> = targets.agents.iter().map(|(id, _)| id.clone()).collect();
@@ -2002,6 +2051,8 @@ pub async fn answer_call(
                 delegate_write::CloseOn::Report
             },
             plan,
+            plan_step: plan_step.as_deref(),
+            plan_doc: plan_doc.as_ref(),
         }),
     };
     post_full(
@@ -2470,6 +2521,21 @@ mod tests {
         assert_eq!(c.plan_root.as_deref(), Some(ch));
         assert_eq!(c.plan_group.as_deref(), Some("g1"));
         assert_eq!(c.picks.len(), 1);
+        assert!(c.plan_step.is_none());
+        // 계획 단계 칸 — `message.report`·`message.ask` 와 같은 꼴.
+        let step = json!({"channelId": ch, "threadRootId": ch, "to": ["a"], "body": "x", "expect": "report", "planStepId": "s12"});
+        assert_eq!(parse_call(&step).unwrap().plan_step.as_deref(), Some("s12"));
+        for bad in ["s0", "s12345", "g1", "S1", ""] {
+            let v = json!({"channelId": ch, "to": ["a"], "body": "x", "planStepId": bad});
+            assert!(parse_call(&v).is_none(), "{v}");
+        }
+        let v = json!({"channelId": ch, "to": ["a"], "body": "x", "planStepId": 1});
+        assert!(parse_call(&v).is_none());
+        // 등록된 스키마(zod 관문)도 같은 꼴을 받고 거른다.
+        use crate::core::mcp::zod_gate::{Verdict, check};
+        assert_eq!(check("agent.call", &step), Verdict::Pass);
+        let v = json!({"channelId": ch, "to": ["a"], "body": "x", "planStepId": "s0"});
+        assert!(matches!(check("agent.call", &v), Verdict::Reject(_)));
         let report = json!({"channelId": ch, "to": ["a"], "body": "x", "expect": "report"});
         assert_eq!(parse_call(&report).unwrap().expect, Expect::Report);
         let none = json!({"channelId": ch, "to": ["a"], "body": "x", "expect": "none"});
