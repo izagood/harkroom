@@ -39,6 +39,7 @@ export function memoryCleanupBody(handle: string): string {
     '3. 후보마다 `memory.get` 으로 **읽고** 판단한다. 이름만 보고 고치지 않는다.',
     '   - 같은 주제 여럿 → `memory.merge` 한 번(into·from·value·kind·ifUpdatedAt). 경위는 버리고 되풀이할 사실만 남긴다.',
     '   - 끝난 일·안 쓰는 것 → 지우지 말고 `memory.archive`.',
+    '   - 60일 넘게 안 쓰인 상태 꼴(`delegation-`·`review-`)·journal(audit 의 `idleState`) → 되풀이할 교훈이 있으면 먼저 topic·procedure 로 증류하고, 나머지는 `memory.archive` 로 묶어 보관한다. 보관은 300개까지다 — `items.archived` 와 더해 300을 넘으면 오래된 보관부터 지워지니 넘지 않는 만큼만 하고 남은 수를 보고한다.',
     '   - 곧 밀려날 journal(`expiringJournal`) → 되풀이할 교훈만 topic·procedure 로 증류한다.',
     '   - 요약 없는 것 → "언제 열어 볼지" 한 줄을 `description` 으로 채운다(`memory.set` — kind 도 같이 준다, 본문은 그대로).',
     '   - core 가 길면 한 주제 절을 `mem/*` 로 내리고 포인터만 남긴다.',

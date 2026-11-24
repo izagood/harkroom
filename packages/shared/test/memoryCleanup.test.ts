@@ -42,6 +42,14 @@ describe('memoryCleanupBody', () => {
     expect(at('release')).toBeLessThan(at('`message.post`'));
   });
 
+  it('60일 안 쓰인 상태 꼴·journal 을 묶어 보관하는 단계가 있고, audit 이 그 목록을 낸다', () => {
+    const audit = readFileSync(path.join(root, 'crates/harkroom-server/src/core/mcp/mem_audit.rs'), 'utf8');
+    expect(body).toContain('`idleState`');
+    expect(audit).toContain('\\"idleState\\"');
+    expect(audit).toContain('IDLE_STATE_DAYS: i64 = 60');
+    expect(body).toContain('300');
+  });
+
   it('발화 상한 안이고, 이름은 automation 이름 상한(100) 안이다', () => {
     expect(body.length).toBeLessThan(8000);
     expect(MEMORY_CLEANUP_NAME('a'.repeat(64)).length).toBeLessThanOrEqual(100);
