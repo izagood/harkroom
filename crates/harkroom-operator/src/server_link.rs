@@ -381,6 +381,7 @@ mod tests {
             install_kind: None,
             update_channel: None,
             wake_frames: None,
+            work_claim: None,
         }
     }
 

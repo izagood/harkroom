@@ -309,6 +309,12 @@ fn now_ms() -> u64 {
 }
 
 /// 러너 풀 그림자 장부 — 프로세스 하나에 하나(턴 칸이 프로세스 하나에 하나라서). 스위치가 꺼져 있으면 `None` 이고 칸 통지도 걸지 않는다.
+fn lock_claims(
+    c: &std::sync::Mutex<crate::work_claims::WorkClaims>,
+) -> std::sync::MutexGuard<'_, crate::work_claims::WorkClaims> {
+    c.lock().unwrap_or_else(|p| p.into_inner())
+}
+
 fn pool_shadow_if_on() -> Option<std::sync::Arc<std::sync::Mutex<crate::runner_pool::PoolShadow>>> {
     type Shared = std::sync::Arc<std::sync::Mutex<crate::runner_pool::PoolShadow>>;
     static POOL: std::sync::OnceLock<Option<Shared>> = std::sync::OnceLock::new();
@@ -733,13 +739,23 @@ pub fn spawn_server_link(
             cfg: lane_cfg,
         }));
     }
+    // I2b — 잡기 장부. 깨움 때만 잡고 옆에 적는다(러너 빌림·순서 판정에 쓰지 않는다).
+    let work_claims = std::sync::Arc::new(std::sync::Mutex::new(
+        crate::work_claims::WorkClaims::default(),
+    ));
     // 러너 종료 → 다중화기 잊기 · 서버에 `runner.exited` · 배정이면 조정기가 다시 띄울지 판단(TS run.ts onExit).
     {
         let frames = std::sync::Arc::clone(&frames);
         let exit_link = link.clone();
         let exit_mux = std::sync::Arc::clone(&mux);
         let exit_runner_link = std::sync::Arc::clone(&bridge.runner_link);
+        let exit_claims = std::sync::Arc::clone(&work_claims);
         state.set_on_runner_exit(Box::new(move |exit: &crate::runners::RunnerExit| {
+            // I2b — 그 에이전트로 쥔 줄을 전부 놓는다(코드 0 = released, 그 밖 = failed). 쥔 줄이 없으면 아무것도 안 보낸다.
+            let releases = lock_claims(&exit_claims).on_runner_exit(&exit.agent_id, exit.code);
+            for f in &releases {
+                let _ = exit_link.send(f);
+            }
             exit_mux.forget(&exit.incarnation_id);
             // 러너 종료 때 그 러너의 턴 열쇠를 거둔다(runner id = incarnation id).
             exit_runner_link.on_runner_exited(&exit.incarnation_id);
@@ -908,6 +924,43 @@ pub fn spawn_server_link(
     );
     // I1a(스위치 `HARKROOM_RUNNER_POOL=shadow`, 기본 꺼짐) — 풀이 정본이었다면 빌렸을·반납했을 수를 세기만 한다.
     let pool_shadow = pool_shadow_if_on();
+    let (frame_claims, open_claims) = (
+        std::sync::Arc::clone(&work_claims),
+        std::sync::Arc::clone(&work_claims),
+    );
+    // 잡기 장부의 주기 일(답 기한·러너 없는 줄 놓기·갱신·비율 로그). 장부가 비어 있으면 아무것도 보내지 않는다. 프로세스와 함께 산다.
+    {
+        let (claims, tick_link, tick_runners) = (
+            std::sync::Arc::clone(&work_claims),
+            link.clone(),
+            std::sync::Arc::clone(&state.runners),
+        );
+        let _ = std::thread::Builder::new()
+            .name("work-claims".into())
+            .spawn(move || {
+                loop {
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                    // 러너 표는 장부 잠금 밖에서 읽는다 — 종료 통지(표 쪽 → 장부)와 잠금 순서가 엇갈리지 않게.
+                    let agents = lock_claims(&claims).held_agents();
+                    let alive: std::collections::HashSet<String> = agents
+                        .into_iter()
+                        .filter(|a| tick_runners.current_incarnation(a).is_some())
+                        .collect();
+                    let t = lock_claims(&claims).tick(now_ms(), &|a| alive.contains(a));
+                    for f in &t.frames {
+                        let _ = tick_link.send(f);
+                    }
+                    if t.off.is_some() {
+                        eprintln!(
+                            "잡기(I2b): 답이 없다(잡기 프레임을 모르는 서버) — 이 연결에서는 묻지 않는다"
+                        );
+                    }
+                    if let Some(line) = t.log {
+                        eprintln!("잡기(I2b): {line}");
+                    }
+                }
+            });
+    }
     let on_frame = Box::new(move |frame: harkroom_proto::p2::ServerToOperatorFrame| {
         // E2a(그림자) — 깨움 프레임은 적어 두고 받았다고만 답한다. 턴을 열지 않고 다른 동작도 바꾸지 않는다(글 내용은 오지 않는다).
         if let harkroom_proto::p2::ServerToOperatorFrame::Wake { wake_id, .. } = &frame {
@@ -947,10 +1000,86 @@ pub fn spawn_server_link(
                 }
             }
             // I1b — 러너를 반납한 풀 에이전트(로컬 설정 `runnerPool: true`)면 빌려 띄운다. 풀 에이전트가 아니면 아무 일도 없다.
-            if let harkroom_proto::p2::ServerToOperatorFrame::Wake { agent_id, .. } = &frame {
+            if let harkroom_proto::p2::ServerToOperatorFrame::Wake {
+                agent_id,
+                thread_root_id,
+                ..
+            } = &frame
+            {
                 frames.on_wake(agent_id);
+                // I2b — 풀 에이전트의 깨움이면 그 (에이전트, 스레드)로 좁혀 잡으러 간다. 위의 빌림을 막지도 기다리지도 않는다.
+                let claim = lock_claims(&frame_claims).on_wake(
+                    agent_id,
+                    thread_root_id,
+                    frames.is_pool(agent_id),
+                    now_ms(),
+                );
+                if let Some(f) = claim {
+                    let _ = wake_link.send(&f);
+                }
             }
             return;
+        }
+        // I2b — 잡기·갱신의 답. 장부에만 적는다.
+        match &frame {
+            harkroom_proto::p2::ServerToOperatorFrame::WorkClaimed {
+                request_id,
+                work,
+                error,
+            } => {
+                use crate::work_claims::Claimed;
+                let out = lock_claims(&frame_claims).on_claimed(
+                    request_id,
+                    work.as_ref(),
+                    error.as_deref(),
+                    now_ms(),
+                );
+                match out {
+                    Claimed::Retry {
+                        agent_id,
+                        thread_root_id,
+                    } => {
+                        let (claims, link) =
+                            (std::sync::Arc::clone(&frame_claims), wake_link.clone());
+                        let _ = crate::community::schedule_thread(
+                            Box::new(move || {
+                                let f = lock_claims(&claims).retry(
+                                    &agent_id,
+                                    &thread_root_id,
+                                    now_ms(),
+                                );
+                                if let Some(f) = f {
+                                    let _ = link.send(&f);
+                                }
+                            }),
+                            crate::work_claims::RETRY_AFTER_MS,
+                        );
+                    }
+                    Claimed::Mismatch(release) => {
+                        let _ = wake_link.send(&release);
+                    }
+                    Claimed::Off(_) => eprintln!(
+                        "잡기(I2b): 서버 스위치가 꺼져 있다 — 이 연결에서는 묻지 않는다(깨움으로 빌리는 길 그대로)"
+                    ),
+                    _ => {}
+                }
+                return;
+            }
+            harkroom_proto::p2::ServerToOperatorFrame::WorkRenewed {
+                request_id,
+                work_ids,
+                error,
+                ..
+            } => {
+                if lock_claims(&frame_claims)
+                    .on_renewed(request_id, work_ids, error.as_deref())
+                    .is_some()
+                {
+                    eprintln!("잡기(I2b): 서버 스위치가 꺼졌다 — 이 연결에서는 묻지 않는다");
+                }
+                return;
+            }
+            _ => {}
         }
         // 배정 프레임은 조정기로(작업 스레드에서 차례로 처리한다).
         if frames.on_frame(&frame, &*local_of) {
@@ -1012,6 +1141,7 @@ pub fn spawn_server_link(
     opts.on_open = Some(Box::new(move || {
         eprintln!("서버에 붙었다: {url_open}");
         open_frames.reset_synced();
+        lock_claims(&open_claims).on_open();
         // 소유자는 붙을 때마다 새로 읽는다(TS selfOwner) — 그 사이 온 personal assign 은 답을 기다린다.
         owner.begin();
         let (owner, u, t) = (

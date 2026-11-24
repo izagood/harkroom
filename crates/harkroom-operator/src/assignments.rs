@@ -682,6 +682,14 @@ impl AssignmentReconciler {
         }
     }
 
+    /// 배정된 풀 에이전트(`runnerPool: true`)인가 — 잡기(I2b)가 묻는다.
+    pub fn is_pool(&self, agent_id: &str) -> bool {
+        self.st()
+            .assigned
+            .get(agent_id)
+            .is_some_and(|e| pool_on(e.local.as_ref()))
+    }
+
     pub fn lane_mismatch(&self, runner_id: &str, agent_id: &str) -> bool {
         Self::lane_mismatch_in(&self.st(), runner_id, agent_id)
     }

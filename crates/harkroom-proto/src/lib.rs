@@ -344,6 +344,9 @@ pub mod p2 {
                 skip_serializing_if = "Option::is_none"
             )]
             wake_frames: Option<bool>,
+            /// 잡기 프레임(`work.claim`·`work.renew`·`work.release`)을 보낼 줄 안다(I2b). 서버는 이 칸으로 무엇도 판정하지 않는다 — 알림일 뿐이다.
+            #[serde(default, rename = "workClaim", skip_serializing_if = "Option::is_none")]
+            work_claim: Option<bool>,
         },
         #[serde(rename = "runner.started", rename_all = "camelCase")]
         RunnerStarted { agent_id: String, runner_id: String },

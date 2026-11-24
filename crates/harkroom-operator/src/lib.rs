@@ -98,6 +98,7 @@ pub mod update;
 pub mod usage_meter;
 pub mod wake_forward;
 pub mod wipe;
+pub mod work_claims;
 pub mod workspace_cleanup;
 pub mod ws_dialer;
 
