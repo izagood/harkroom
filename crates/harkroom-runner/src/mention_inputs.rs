@@ -39,31 +39,78 @@ pub struct MentionReads {
 pub struct DefinitionUnreadable;
 
 /// 멘션 하나의 서버 읽기 — 묶음 손님으로만. 정의만 필수이고 나머지는 정본처럼 실패하면 빈 값.
+///
+/// 일곱 읽기는 서로 기대지 않는다(스레드 모델 **읽기**도 정의가 필요 없다 — 정의 값과 합치는 것만 뒤에 한다). 그래서
+/// 한꺼번에 부른다: 차례로 부르면 서버 왕복 일곱 번이 그대로 턴 시작 앞에 선다. 정의를 못 읽으면 나머지 답은 버린다.
+/// 읽기 하나가 패닉하면 그 패닉을 그대로 올린다(부르는 쪽 `run_body` 의 지킴이 받는다 — 차례로 부를 때와 같다).
 pub fn read_mention<L: AgentLink>(
     clients: &AgentClients<L>,
     target: &MentionTarget,
 ) -> Result<MentionReads, DefinitionUnreadable> {
-    let rest = clients.rest();
-    let def = rest.definition().map_err(|e| {
+    use crate::call_timing::measured;
+    let (rest, mcp) = (clients.rest(), clients.mcp());
+    let anchor = target.thread_root_id.as_str();
+    let (channel, mention) = (target.channel_id.as_str(), target.mention_id.as_str());
+    fn join<T>(h: std::thread::ScopedJoinHandle<'_, T>) -> T {
+        h.join().unwrap_or_else(|p| std::panic::resume_unwind(p))
+    }
+    let ((def, guide, model, merge, api, secret_create, rules), total) = measured(|| {
+        std::thread::scope(|s| {
+            let guide = s.spawn(|| measured(|| mcp.guide(None).unwrap_or_default()));
+            // 앵커가 비면 정본처럼 읽지 않는다(`resolve_turn_model` 이 정의 값으로 돈다).
+            let model =
+                s.spawn(|| measured(|| (!anchor.is_empty()).then(|| rest.thread_model(anchor))));
+            let merge = s.spawn(|| measured(|| rest.merge_grant_info()));
+            let api = s.spawn(|| measured(|| rest.api_grant_info()));
+            let secret_create = s.spawn(|| measured(|| rest.secret_create_granted()));
+            let rules = s.spawn(|| measured(|| rest.tool_rule_sets(channel, Some(mention))));
+            let def = measured(|| rest.definition());
+            (
+                def,
+                join(guide),
+                join(model),
+                join(merge),
+                join(api),
+                join(secret_create),
+                join(rules),
+            )
+        })
+    });
+    eprintln!(
+        "{}",
+        crate::call_timing::joined_line(
+            "멘션 읽기(동시)",
+            total,
+            &[
+                ("config", def.1),
+                ("guide", guide.1),
+                ("thread-model", model.1),
+                ("merge-grants", merge.1),
+                ("api-grants", api.1),
+                ("secret-create", secret_create.1),
+                ("tool-allows", rules.1),
+            ],
+        )
+    );
+    let def = def.0.map_err(|e| {
         eprintln!("[mentionTurn] 정의 읽기 실패 — {e}");
         DefinitionUnreadable
     })?;
-    let guide = clients.mcp().guide(None).unwrap_or_default();
-    let anchor = target.thread_root_id.as_str();
     let s = |k: &str| def.get(k).and_then(Value::as_str);
+    // 스레드 모델은 이미 읽었다 — 합치기만 한다(읽기 실패·모양 검사는 `resolve_turn_model` 이 그대로 한다).
     let turn_model = resolve_turn_model(
-        Some(|id: &str| rest.thread_model(id)),
+        model.0.map(|got| move |_id: &str| got),
         s("model"),
         s("effort"),
         Some(anchor),
         &mut |line| eprintln!("[mentionTurn] {line}"),
     );
     Ok(MentionReads {
-        guide,
-        merge: rest.merge_grant_info(),
-        api: rest.api_grant_info(),
-        secret_create: rest.secret_create_granted(),
-        rules: rest.tool_rule_sets(&target.channel_id, Some(&target.mention_id)),
+        guide: guide.0,
+        merge: merge.0,
+        api: api.0,
+        secret_create: secret_create.0,
+        rules: rules.0,
         turn_model,
         def,
     })

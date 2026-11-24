@@ -140,9 +140,33 @@ pub struct BaseInputs<'a> {
     pub lane: Option<&'a dyn crate::turn_lane_first::LaneSource>,
 }
 
-/// 멘션 하나를 돌린다.
+/// 멘션 하나를 돌린다. 👀·💬 달기가 곁 스레드에서 돌 수 있게 범위 하나를 열고 그 안에서 몸통을 돌린다 — 범위는 몸통이
+/// 끝나고(가드가 💬 를 뗀 뒤) 닫힌다.
 #[allow(clippy::too_many_arguments, clippy::result_large_err)]
 pub fn run_mention_call<'a, L, S, H>(
+    ledger: &Mutex<Ledger>,
+    slots: &MentionSlots,
+    book: &'a LeaseBook,
+    clients: &'a AgentClients<L>,
+    launch: Launch,
+    sched: H,
+    i: CallInputs<'a, L, S>,
+    open_relay: impl FnOnce(&LiveSlot) -> Option<Arc<SessionHandle>>,
+) where
+    L: AgentLink + 'a,
+    S: PtyTurnSink + 'a,
+    H: SchedulerHooks,
+{
+    std::thread::scope(|reactions| {
+        run_mention_call_in(
+            reactions, ledger, slots, book, clients, launch, sched, i, open_relay,
+        )
+    });
+}
+
+#[allow(clippy::too_many_arguments, clippy::result_large_err)]
+fn run_mention_call_in<'scope, 'a: 'scope, L, S, H>(
+    reactions: &'scope std::thread::Scope<'scope, '_>,
     ledger: &Mutex<Ledger>,
     slots: &MentionSlots,
     book: &'a LeaseBook,
@@ -164,10 +188,10 @@ pub fn run_mention_call<'a, L, S, H>(
     );
     let note_cause = target.mention_id.clone();
     let log = i.log;
-    // 👀(받음): 멘션을 집은 **즉시** — 아래 준비(워크스페이스 해석)는 초 단위로 걸릴 수 있다(정본 `runMentionTurn` 머리).
-    crate::turn_reactions::mark_received(clients.mcp(), &target, log);
-    // 💬(진행 중): 이 함수가 끝날 때(정상·실패·패닉) 가드가 뗀다(정본 `finally` 의 removeReaction).
-    let _working = crate::turn_reactions::WorkingReaction::start(clients.mcp(), &target, log);
+    // 👀(받음)·💬(진행 중): 멘션을 집은 **즉시** 곁 스레드에 맡긴다 — 턴 임대·준비는 그 왕복을 기다리지 않는다.
+    // 가드는 이 함수가 끝날 때(정상·실패·패닉) 달기를 기다린 뒤 💬 를 뗀다(정본 `finally` 의 removeReaction).
+    let _working =
+        crate::turn_reactions::TurnReactions::start(reactions, clients.mcp(), &target, log);
     let hooks = LinkHooks::new(
         clients.operator(),
         book,

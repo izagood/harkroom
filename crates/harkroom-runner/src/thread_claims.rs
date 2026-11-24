@@ -97,10 +97,10 @@ impl<C: ClaimClient + 'static> ThreadClaims<C> {
         if !lock(&self.held).insert(key.clone()) {
             return ClaimHold::Busy;
         }
-        let outcome = match self
-            .client
-            .claim(channel_id, root, &self.holder, self.ttl_sec)
-        {
+        let outcome = match crate::call_timing::timed("POST /agent/thread-claims", || {
+            self.client
+                .claim(channel_id, root, &self.holder, self.ttl_sec)
+        }) {
             Ok(o) => o,
             Err(e) => {
                 lock(&self.held).remove(&key);
