@@ -392,39 +392,41 @@ async fn can_write_when(write: &PgPool) -> Result<bool, sqlx::Error> {
     .await
 }
 
-async fn read_when(c: &PgPool, me: &Account, slug: &str) -> Result<Option<String>, sqlx::Error> {
-    let r: Option<(Option<String>,)> = sqlx::query_as(
-        "select when_hint from agent_memory where account_id = $1::uuid and slug = $2",
+/// 지금 저장된 `(「언제」, 요약)`.
+async fn read_kept(
+    c: impl sqlx::PgExecutor<'_>,
+    me: &Account,
+    slug: &str,
+) -> Result<(Option<String>, Option<String>), sqlx::Error> {
+    let r: Option<(Option<String>, Option<String>)> = sqlx::query_as(
+        "select when_hint, description from agent_memory where account_id = $1::uuid and slug = $2",
     )
     .bind(&me.id)
     .bind(slug)
     .fetch_optional(c)
     .await?;
-    Ok(r.and_then(|x| x.0))
+    Ok(r.unwrap_or_default())
 }
 
-/// 쓰기 트랜잭션 안에서, 방금 쓴 행에 **남은** 「언제」까지 넣어 다시 검사한다. 걸리면 표시한다.
+/// 쓰기 트랜잭션 안에서, 방금 쓴 행에 **남은** 칸(「언제」, 그리고 `description` 을 안 준 쓰기면 요약)까지 넣어 다시
+/// 검사한다. 걸리면 표시한다.
 ///
-/// `set` 밖의 길(merge·restore·사람의 고침)은 이 칸을 건드리지 않아 있던 글자가 남는다. 그 글자를 빼고 검사하면
+/// 안 준 칸은 있던 글자가 남는다 — `set` 밖의 길(merge·restore·사람의 고침)은 「언제」를 건드리지 않아 있던 글자가 남는다. 그 글자를 빼고 검사하면
 /// 걸려 있던 문장이 본문만 바꿔도 풀린다. 행은 앞 쓰기가 잠갔으니 그 사이 다른 턴이 바꿀 수 없다.
-async fn flag_kept_when(
+async fn flag_kept(
     c: &mut sqlx::PgConnection,
     me: &Account,
     slug: &str,
     parts: &[Option<&str>],
+    description_kept: bool,
 ) -> Result<Option<ScanHit>, sqlx::Error> {
-    let when: Option<Option<String>> = sqlx::query_scalar(
-        "select when_hint from agent_memory where account_id = $1::uuid and slug = $2",
-    )
-    .bind(&me.id)
-    .bind(slug)
-    .fetch_optional(&mut *c)
-    .await?;
-    let Some(when) = when.flatten() else {
+    let (when, description) = read_kept(&mut *c, me, slug).await?;
+    let description = description.filter(|_| description_kept);
+    if when.is_none() && description.is_none() {
         return Ok(None);
-    };
+    }
     let mut all = parts.to_vec();
-    all.push(Some(when.as_str()));
+    all.extend([description.as_deref(), when.as_deref()]);
     let hit = scan_write(&all);
     if let Some(h) = &hit {
         sqlx::query(
@@ -539,12 +541,19 @@ async fn set(
             "이 서버는 아직 `when` 칸을 쓸 수 없다(권한 없음) — when 을 빼고 다시 써라. 아무것도 저장하지 않았다.",
         ));
     }
-    // 안 준 「언제」는 있던 것이 남는다 — 남는 글자까지 검사해야 걸린 문장이 본문만 고쳐 풀리지 않는다.
-    let kept = match (when, value) {
-        (None, Some(_)) => read_when(read, me, slug).await.ok()?,
-        _ => None,
+    // 안 준 「언제」·요약은 있던 것이 남는다 — 남는 글자까지 검사해야 걸린 문장이 본문만 고쳐 풀리지 않는다.
+    let (kept_when, kept_description) = if value.is_some() {
+        read_kept(read, me, slug).await.ok()?
+    } else {
+        (None, None)
     };
-    let flag = value.and_then(|v| scan_write(&[Some(v), description, when.or(kept.as_deref())]));
+    let flag = value.and_then(|v| {
+        scan_write(&[
+            Some(v),
+            description.or(kept_description.as_deref()),
+            when.or(kept_when.as_deref()),
+        ])
+    });
     // 여기부터 쓰기다(W1).
     let r = match value {
         None => delete(write, me, turn, slug, expect).await,
@@ -798,8 +807,8 @@ pub(crate) async fn upsert(
         .execute(&mut *tx)
         .await?;
     }
-    // 사람이 고친 본문은 검사하지 않지만(TS 와 같다) 화면에 없는 「언제」는 사람이 보지 못한 글자다.
-    flag_kept_when(&mut tx, me, slug, &[]).await?;
+    // 사람이 고친 본문은 검사하지 않지만(TS 와 같다) 화면에 없는 「언제」와 안 준 요약은 그 고침이 쓴 글자가 아니다.
+    flag_kept(&mut tx, me, slug, &[], description.is_none()).await?;
     tx.commit().await?;
     prune_revisions(write, me, slug).await?;
     // `pruneJournal`.
@@ -1125,7 +1134,15 @@ async fn merge_tx(
     .bind(description.is_some())
     .execute(&mut *tx)
     .await?;
-    if let Some(h) = flag_kept_when(&mut tx, me, into, &[Some(value), description]).await? {
+    if let Some(h) = flag_kept(
+        &mut tx,
+        me,
+        into,
+        &[Some(value), description],
+        description.is_none(),
+    )
+    .await?
+    {
         flag = Some(h);
     }
     let detail = json!({ "from": from, "created": prev.is_none() }).to_string();
@@ -1253,7 +1270,14 @@ pub(crate) async fn restore_one(
     .bind(flag_reason.as_deref())
     .execute(&mut *tx)
     .await?;
-    flag_kept_when(&mut tx, me, slug, &[Some(&value), description.as_deref()]).await?;
+    flag_kept(
+        &mut tx,
+        me,
+        slug,
+        &[Some(&value), description.as_deref()],
+        false,
+    )
+    .await?;
     tx.commit().await?;
     prune_revisions(write, me, slug).await?;
     Ok(Restored::Ok)
