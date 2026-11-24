@@ -97,6 +97,44 @@ fn sql() -> &'static Sql {
     })
 }
 
+/// 의무 행(`team_delegation`) 하나를 적는다 — 의무를 세우는 모든 문(`message.delegate`·`agent.call`·맨 앞 멘션)이 이 한 곳을 지난다(U4).
+/// `kind` 는 생김새(`delegate`·`mention`), `close_on` 은 닫는 조건. 돌려주는 것은 위임 id.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn insert_row(
+    conn: &mut PgConnection,
+    message_id: &str,
+    team_id: Option<&str>,
+    lead_id: &str,
+    channel_id: &str,
+    thread_root_id: &str,
+    deadline_at: &str,
+    kind: &str,
+    plan_step_id: Option<&str>,
+    close_on: CloseOn,
+) -> Result<String, sqlx::Error> {
+    let s = sql();
+    // 닫는 조건이 기본(`report`)이면 옛 문장 그대로다 — 새 칸(183)이 아직 없는 DB 에서도 `message.delegate` 는 돈다.
+    let q = match close_on {
+        CloseOn::Report => sqlx::query_scalar(s.insert.as_str()),
+        CloseOn::Reply => sqlx::query_scalar(s.insert_close_on.as_str()),
+    };
+    let q = q
+        .bind(message_id)
+        .bind(team_id)
+        .bind(lead_id)
+        .bind(channel_id)
+        .bind(thread_root_id)
+        .bind(deadline_at)
+        .bind(kind)
+        .bind(plan_step_id);
+    match close_on {
+        CloseOn::Report => q,
+        CloseOn::Reply => q.bind(close_on.as_str()),
+    }
+    .fetch_one(&mut *conn)
+    .await
+}
+
 /// TS `createDelegation`(`teamId = plan.team_id`, `kind = 'delegate'`). `v2` 는 위임 스위치(알 때만 이 갈래가 돈다). 돌려주는 것은 위임 id.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn create(
@@ -109,25 +147,18 @@ pub(crate) async fn create(
     plan: &Plan<'_>,
 ) -> Result<String, sqlx::Error> {
     let s = sql();
-    // 닫는 조건이 기본(`report`)이면 옛 문장 그대로다 — 새 칸(183)이 아직 없는 DB 에서도 `message.delegate` 는 돈다.
-    let q = match plan.close_on {
-        CloseOn::Report => sqlx::query_scalar(s.insert.as_str()),
-        CloseOn::Reply => sqlx::query_scalar(s.insert_close_on.as_str()),
-    };
-    let q = q
-        .bind(message_id)
-        .bind(plan.team_id)
-        .bind(lead_id)
-        .bind(channel_id)
-        .bind(thread_root_id)
-        .bind(plan.deadline_at)
-        .bind("delegate")
-        .bind(None::<String>);
-    let id: String = match plan.close_on {
-        CloseOn::Report => q,
-        CloseOn::Reply => q.bind(plan.close_on.as_str()),
-    }
-    .fetch_one(&mut *conn)
+    let id = insert_row(
+        conn,
+        message_id,
+        plan.team_id,
+        lead_id,
+        channel_id,
+        thread_root_id,
+        plan.deadline_at,
+        "delegate",
+        None,
+        plan.close_on,
+    )
     .await?;
     for d in plan.delegate_ids {
         // TS `supersedePrevious` — v1 에서 같은 스레드·같은 담당의 앞 의무(열린·보고된)는 대체된다. 깨우지 않는다.

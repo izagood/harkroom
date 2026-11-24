@@ -961,7 +961,7 @@ pub(crate) async fn post_tx(
     let delegation_meta = call_open.is_some()
         || origin.meta.get("kind").and_then(Value::as_str) == Some("delegation");
     // TS `input.kind !== 'system'` — 시스템 줄은 부름이 있어도 암묵 위임으로 보지 않는다.
-    if let (true, true, false, false, mode) = (
+    let implicit_ids = if let (true, true, false, false, mode) = (
         author_is_agent,
         is_result,
         delegation_meta,
@@ -987,8 +987,10 @@ pub(crate) async fn post_tx(
             now_ms(),
             iso_ms,
         )
-        .await?;
-    }
+        .await?
+    } else {
+        Vec::new()
+    };
     // TS `deletedRoot` — 머리가 지워져 있었으면 커밋 뒤 목록에 다시 물어 `message.updated` 로 되돌린다(아래).
     // TS `input.threadRootId && isReply` — 진행 줄은 머리 주인에게 가지 않고 지워진 머리도 되돌리지 않는다.
     let deleted_root = match (is_reply, root) {
@@ -1271,6 +1273,10 @@ pub(crate) async fn post_tx(
     tx.commit().await?;
     // D1 그림자 — 위임마다 하위 작업 행. 커밋 뒤에만 부른다(작업 행의 FK 가 글·위임 행을 본다). 기록만.
     if let Some(d) = &delegation_id {
+        super::work_shadow::delegation_created(d);
+    }
+    // U4: 맨 앞 멘션이 세운 의무(암묵 위임 켜짐)에도 같은 그림자.
+    for d in &implicit_ids {
         super::work_shadow::delegation_created(d);
     }
     Ok(Outcome::Posted {
