@@ -107,6 +107,7 @@ pub mod invoke_gate;
 pub mod join_page;
 pub mod leak_guard;
 pub mod lease_read;
+pub mod ledger_mandate;
 pub mod link_preview_fetch;
 pub mod link_preview_read;
 pub mod mandate_card_thread;
