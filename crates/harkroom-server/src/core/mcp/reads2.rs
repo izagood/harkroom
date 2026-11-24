@@ -10,7 +10,7 @@ use sqlx::PgPool;
 /// `bgCleanup` 은 서버 env(`HARKROOM_BACKGROUND_ENABLED`)에 걸려 있다 — 앞단이 그 env 를 받았으면(`AdmitSwitches.background`)
 /// Rust 가 TS 와 같은 판정으로 붙인다. 앞단에 값이 없고 그 값이 참일 **수 있는** 에이전트(설정이 켜졌고 하네스가 claude-code)만
 /// TS 로 넘긴다([`memory_list_text`]). 나머지는 env 와 상관없이 거짓이다.
-const MEMORY_LIST_SQL: &str = "with e as (select slug, case when flagged_at is null then description end as description, kind \
+const MEMORY_LIST_SQL: &str = "with e as (select slug, case when flagged_at is null then description end as description, kind, char_length(value) as chars \
        from agent_memory where account_id = $1::uuid and archived_at is null order by slug) \
      select json_build_object( \
        'slugs', coalesce((select json_agg(e.slug) from e), '[]'::json), \

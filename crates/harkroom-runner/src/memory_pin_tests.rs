@@ -717,7 +717,7 @@ fn c2_signals_thresholds_and_bg_cleanup() {
     assert!(
         !turn(&d, mem_owned(Some("C"), many(178)), true, Some(SID))
             .1
-            .contains("정리 신호")
+            .contains("- 기억 179/200개")
     );
     let (_, t) = turn(&d, mem_owned(Some("C"), many(179)), true, Some(SID));
     assert!(t.contains("- 기억 180/200개"));
@@ -764,6 +764,30 @@ fn c2_signals_thresholds_and_bg_cleanup() {
     );
     m.kinds = Some(kinds);
     assert!(!turn(&d, m, true, Some(SID)).1.contains("- journal"));
+}
+
+#[test]
+fn f3_signals_large_undescribed_similar() {
+    let s = |v: &[&str]| v.iter().map(|x| (*x).to_string()).collect::<Vec<_>>();
+    let codes = |j: &[String], d: Option<&BTreeMap<String, String>>, l: &[String]| {
+        memory_signals(Some("C"), 10, 0, j, d, l).0
+    };
+    let four = s(&["mem/aa", "mem/bb", "mem/cc", "mem/dd"]);
+    assert!(codes(&four, None, &[]).is_empty());
+    // 목록에 안 보이는 것(journal·상태 꼴)은 길어도 세지 않는다.
+    assert!(codes(&four, None, &s(&["mem/hidden"])).is_empty());
+    assert_eq!(codes(&four, None, &s(&["mem/bb"])), ["large_items"]);
+    let five = s(&["mem/aa", "mem/bb", "mem/cc", "mem/dd", "mem/ee"]);
+    assert_eq!(codes(&five, None, &[]), ["undescribed_items"]);
+    let mut d: BTreeMap<String, String> = five.iter().map(|x| (x.clone(), "요약".into())).collect();
+    assert!(codes(&five, Some(&d), &[]).is_empty());
+    d.insert("mem/aa".into(), "  ".into());
+    assert!(codes(&five, Some(&d), &[]).is_empty());
+    // 이름이 같은 조각인 다섯 = 10쌍(문턱), 넷 = 6쌍.
+    let same: Vec<String> = (1..=5).map(|i| format!("mem/deploy-{i}")).collect();
+    let dd: BTreeMap<String, String> = same.iter().map(|x| (x.clone(), "요약".into())).collect();
+    assert!(codes(&same[..4], Some(&dd), &[]).is_empty());
+    assert_eq!(codes(&same, Some(&dd), &[]), ["similar_pairs"]);
 }
 
 #[test]

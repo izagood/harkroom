@@ -32,6 +32,12 @@ pub const MAX_JOURNAL_MEMORIES_PER_ACCOUNT: usize = 60;
 pub const MEMORY_CORE_WARN_CHARS: usize = 2600;
 pub const MEMORY_ITEMS_WARN_COUNT: usize = 180;
 pub const JOURNAL_EXPIRING_WINDOW: usize = 5;
+/// 요약 없는 기억이 이만큼이면 신호(목록·recall 은 이름·요약으로 찾는다).
+pub const UNDESCRIBED_SIGNAL_COUNT: usize = 5;
+/// 비슷한 짝이 이만큼이면 신호.
+pub const SIMILAR_SIGNAL_PAIRS: usize = 10;
+/// 서버 `memory.audit` 의 이름 겹침 문턱과 같은 값.
+const NAME_SIMILARITY: f64 = 0.6;
 
 /// 자동 주입 기준(옛 서버는 점수로만 거른다).
 pub const RECALL_MIN_SCORE: f64 = 3.0;
@@ -144,10 +150,15 @@ fn num(n: usize) -> String {
 }
 
 /// 정본 `memorySignals` — 지금 기억에서 켜진 정리 신호(코드)와 그 줄.
+///
+/// `judged` 는 core·journal·상태 꼴 이름을 뺀 `mem/*`(목록에 보이는 것)다.
 pub fn memory_signals(
     core: Option<&str>,
     total: usize,
     journal_count: usize,
+    judged: &[String],
+    descriptions: Option<&BTreeMap<String, String>>,
+    large: &[String],
 ) -> (Vec<String>, Vec<String>) {
     let mut codes = Vec::new();
     let mut lines = Vec::new();
@@ -171,6 +182,36 @@ pub fn memory_signals(
             "- journal {journal_count}/{MAX_JOURNAL_MEMORIES_PER_ACCOUNT}개 — 넘치면 오래된 것부터 밀려난다. 되풀이할 교훈이 남은 것은 topic 으로 증류하라(`memory.audit` 의 `expiringJournal`)."
         ));
     }
+    let large_n = judged.iter().filter(|s| large.contains(s)).count();
+    if large_n > 0 {
+        codes.push("large_items".to_owned());
+        lines.push(format!(
+            "- {}자 넘는 기억 {large_n}개 — recall 은 앞 {}자만 싣는다. `memory.audit` 의 `largest` 를 읽고 되풀이할 규칙만 남겨 줄이거나 주제로 나눠라.",
+            num(crate::memory_cache::LARGE_MEMORY_CHARS as usize),
+            num(RECALL_MAX_CHARS)
+        ));
+    }
+    let undescribed = judged
+        .iter()
+        .filter(|s| {
+            descriptions
+                .and_then(|d| d.get(*s))
+                .is_none_or(|d| d.trim().is_empty())
+        })
+        .count();
+    if undescribed >= UNDESCRIBED_SIGNAL_COUNT {
+        codes.push("undescribed_items".to_owned());
+        lines.push(format!(
+            "- 요약 없는 기억 {undescribed}개 — 목록·recall 이 요약으로 찾는다. 읽고 \"언제 열어 볼지\" 한 줄을 `description` 으로 채워라(`memory.audit` 의 `undescribed`)."
+        ));
+    }
+    let pairs = similar_pairs(judged);
+    if pairs >= SIMILAR_SIGNAL_PAIRS {
+        codes.push("similar_pairs".to_owned());
+        lines.push(format!(
+            "- 이름이 비슷한 짝 {pairs}개 — `memory.audit` 의 `similar`·`similarBody` 를 읽고 같은 주제는 `memory.merge` 로 합쳐라."
+        ));
+    }
     if !lines.is_empty() {
         lines.insert(
             0,
@@ -178,6 +219,32 @@ pub fn memory_signals(
         );
     }
     (codes, lines)
+}
+
+/// 서버 `mem_audit::name_tokens` 와 같은 이름 조각.
+fn name_tokens(slug: &str) -> HashSet<&str> {
+    slug.strip_prefix("mem/")
+        .unwrap_or(slug)
+        .split(['/', '_', '-'])
+        .filter(|t| utf16_len(t) > 1 && !t.bytes().all(|b| b.is_ascii_digit()))
+        .collect()
+}
+
+/// 이름이 거의 같은 짝의 수(서버 `memory.audit` 의 이름 판정과 같다).
+fn similar_pairs(slugs: &[String]) -> usize {
+    let named: Vec<HashSet<&str>> = slugs.iter().map(|s| name_tokens(s)).collect();
+    let mut n = 0;
+    for (i, a) in named.iter().enumerate() {
+        for b in &named[i + 1..] {
+            let inter = a.intersection(b).count();
+            let union = a.len() + b.len() - inter;
+            #[allow(clippy::cast_precision_loss)]
+            if inter > 0 && inter as f64 / union as f64 >= NAME_SIMILARITY {
+                n += 1;
+            }
+        }
+    }
+    n
 }
 
 /// 앞 글자와 한 묶음으로 붙는 글자인가(결합 부호·이음표·변이 선택자·피부색·태그·한글 중·종성).
@@ -490,7 +557,14 @@ pub fn plan_memory(
     let (signal_codes, signal_lines) = if memory.bg_cleanup {
         (vec![], vec![])
     } else {
-        memory_signals(memory.core.as_deref(), total, journal_count)
+        memory_signals(
+            memory.core.as_deref(),
+            total,
+            journal_count,
+            &visible,
+            memory.descriptions.as_ref(),
+            &memory.large,
+        )
     };
 
     let pin = if is_first_turn { None } else { load_pin(&file) };

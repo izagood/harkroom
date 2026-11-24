@@ -25,6 +25,8 @@ const LIST_CAP: usize = 30;
 const LARGEST_CAP: usize = 10;
 /// shared `MAX_JOURNAL_MEMORIES_PER_ACCOUNT - JOURNAL_EXPIRING_WINDOW`.
 const JOURNAL_KEEP: usize = 60 - 5;
+/// 상태 꼴·journal 을 「안 쓰임」으로 보는 날 수 — 정리 본문의 묶어 보관 단계가 읽는다.
+const IDLE_STATE_DAYS: i64 = 60;
 const DAY_MS: i64 = 86_400_000;
 
 const ROWS_SQL: &str = "select slug, value, description, kind, read_count::bigint, recall_count::bigint, \
@@ -267,7 +269,19 @@ pub(crate) fn audit_text_capped(
     let mut undescribed: Vec<String> = vec![];
     let mut flagged: Vec<(String, Option<String>)> = vec![];
     let mut old: Vec<(String, String)> = vec![];
+    let mut idle_state: Vec<String> = vec![];
     for r in rows {
+        // 고친 것도 쓴 것이다 — 마지막으로 읽히거나 실리거나 고친 때부터 센다.
+        let touched = r
+            .last_used
+            .as_ref()
+            .map_or(r.updated_ms, |(ms, _)| (*ms).max(r.updated_ms));
+        if r.slug != "core"
+            && (r.kind == "journal" || crate::core::mem_search::is_thread_state_slug(&r.slug))
+            && now_ms - touched > IDLE_STATE_DAYS * DAY_MS
+        {
+            idle_state.push(r.slug.clone());
+        }
         let judged = r.slug != "core" && r.kind != "journal";
         if r.flagged {
             flagged.push((r.slug.clone(), r.flag_reason.clone()));
@@ -384,6 +398,7 @@ pub(crate) fn audit_text_capped(
         similar_body.len(),
         shared.len(),
         old.len(),
+        idle_state.len(),
     ]
     .iter()
     .any(|&n| n > cap);
@@ -397,6 +412,7 @@ pub(crate) fn audit_text_capped(
     similar_body.truncate(cap);
     shared.truncate(cap);
     old.truncate(cap);
+    idle_state.truncate(cap);
 
     let core_text = core.map_or_else(
         || "null".to_owned(),
@@ -482,12 +498,13 @@ pub(crate) fn audit_text_capped(
         ))
     ));
     out.push_str(&format!(
-        ",\"largest\":{}}}",
+        ",\"largest\":{}",
         arr(&largest, |(a, n)| format!(
             "{{\"slug\":{},\"chars\":{n}}}",
             s(a)
         ))
     ));
+    out.push_str(&format!(",\"idleState\":{}}}", arr(&idle_state, |x| s(x))));
     out
 }
 
@@ -636,8 +653,8 @@ mod tests {
         let keys: Vec<&str> = v.as_object().unwrap().keys().map(String::as_str).collect();
         // serde_json 은 키를 정렬할 수 있으니 글자로도 본다.
         let text = audit_text(&[row("core", "x")], 0, &[], NOW).unwrap();
-        assert!(text.starts_with("{\"total\":1,\"core\":{\"length\":1,\"limit\":3000},\"neverRead\":[],\"stale\":[],\"brokenLinks\":[],\"similar\":[],\"outdated\":[],\"undescribed\":[],\"flagged\":[],\"truncated\":false,\"items\":{\"active\":1,\"limit\":200,\"archived\":0},\"expiringJournal\":[],\"similarBody\":[],\"sharedRefs\":[],\"old\":[],\"largest\":[]}"));
-        assert_eq!(keys.len(), 16);
+        assert!(text.starts_with("{\"total\":1,\"core\":{\"length\":1,\"limit\":3000},\"neverRead\":[],\"stale\":[],\"brokenLinks\":[],\"similar\":[],\"outdated\":[],\"undescribed\":[],\"flagged\":[],\"truncated\":false,\"items\":{\"active\":1,\"limit\":200,\"archived\":0},\"expiringJournal\":[],\"similarBody\":[],\"sharedRefs\":[],\"old\":[],\"largest\":[],\"idleState\":[]}"));
+        assert_eq!(keys.len(), 17);
         assert_eq!(v["neverRead"], serde_json::json!(["mem/x/alpha-beta"]));
         assert_eq!(v["undescribed"], serde_json::json!(["mem/x/alpha-beta"]));
         assert_eq!(
@@ -686,6 +703,33 @@ mod tests {
         assert_eq!(v["truncated"], true);
         assert_eq!(v["undescribed"].as_array().unwrap().len(), 30);
         assert_eq!(v["largest"].as_array().unwrap().len(), 10);
+    }
+
+    #[test]
+    fn idle_state_lists_old_state_and_journal_only() {
+        let aged = |slug: &str, kind: &str, days: i64| {
+            let mut r = row(slug, "v");
+            r.kind = kind.into();
+            r.last_used = None;
+            r.updated_ms = NOW - days * DAY_MS;
+            r
+        };
+        let mut used = aged("mem/review-used", "topic", 90);
+        used.last_used = Some((NOW - DAY_MS, "x".into()));
+        let v = audit(
+            &[
+                aged("mem/delegation-x", "topic", 61),
+                aged("mem/j", "journal", 61),
+                aged("mem/review-new", "topic", 60),
+                aged("mem/plain", "topic", 200),
+                used,
+            ],
+            &[],
+        );
+        assert_eq!(
+            v["idleState"],
+            serde_json::json!(["mem/delegation-x", "mem/j"])
+        );
     }
 
     #[test]

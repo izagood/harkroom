@@ -26,6 +26,8 @@ use crate::turn_files::write_private;
 
 /// 배치 판본을 믿는 시간(ms). 폴 응답 직후 뜨는 턴만 왕복 0회로 간다 — 그 뒤는 `memory.list` 하나.
 pub const HINT_TTL_MS: u128 = 5_000;
+/// 「긴 기억」 문턱(정리 신호). recall 은 앞 1,500자만 싣는다 — 이보다 길면 뒤쪽은 열어야만 읽힌다.
+pub const LARGE_MEMORY_CHARS: u64 = 5000;
 /// 사본 파일 이름. 에이전트 state 디렉터리 바로 아래다(지시문 파일과 같은 자리).
 pub const MEMORY_CACHE_FILE: &str = "memory-cache.json";
 
@@ -41,6 +43,9 @@ pub struct MemorySnapshot {
     pub descriptions: Option<BTreeMap<String, String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kinds: Option<BTreeMap<String, String>>,
+    /// 본문이 [`LARGE_MEMORY_CHARS`] 이상인 `mem/*`(서버가 `chars` 를 줄 때만 — 옛 서버면 비어 있다).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub large: Vec<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub bg_cleanup: bool,
     /// 서버에서 받아 온 시각(ISO).
@@ -54,6 +59,8 @@ pub struct MemoryRead {
     pub slugs: Vec<String>,
     pub descriptions: Option<BTreeMap<String, String>>,
     pub kinds: Option<BTreeMap<String, String>>,
+    /// 본문이 [`LARGE_MEMORY_CHARS`] 이상인 `mem/*`.
+    pub large: Vec<String>,
     /// 서버가 이 에이전트의 정리를 백그라운드 회차로 맡았다(BG5).
     pub bg_cleanup: bool,
     /// 서버를 못 읽어 사본으로 돈다 — 그 사본을 받은 시각.
@@ -84,6 +91,7 @@ fn view(s: &MemorySnapshot) -> MemoryRead {
         slugs: s.slugs.clone(),
         descriptions: s.descriptions.clone(),
         kinds: s.kinds.clone(),
+        large: s.large.clone(),
         bg_cleanup: s.bg_cleanup,
         stale: None,
     }
@@ -145,6 +153,16 @@ fn parse_snapshot(text: &str) -> Option<MemorySnapshot> {
             .collect(),
         descriptions: str_map(v.get("descriptions")),
         kinds: str_map(v.get("kinds")),
+        large: v
+            .get("large")
+            .and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default(),
         bg_cleanup: v.get("bgCleanup") == Some(&Value::Bool(true)),
         fetched_at,
     })
@@ -280,12 +298,21 @@ impl MemoryCache {
                     .collect();
                 (!m.is_empty()).then_some(m)
             };
+            let large: Vec<String> = entries
+                .iter()
+                .filter_map(|e| {
+                    let slug = e.get("slug")?.as_str()?;
+                    let chars = e.get("chars")?.as_u64()?;
+                    (slug != "core" && chars >= LARGE_MEMORY_CHARS).then(|| slug.to_owned())
+                })
+                .collect();
             let next = MemorySnapshot {
                 rev,
                 core,
                 slugs: all.into_iter().filter(|s| s != "core").collect(),
                 descriptions: pick("description", &|_| true),
                 kinds: pick("kind", &|k| k != "topic"),
+                large,
                 bg_cleanup,
                 fetched_at: iso_utc((self.now_ms)()),
             };

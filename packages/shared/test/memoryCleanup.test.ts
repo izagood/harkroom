@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { MEMORY_CLEANUP_NAME, MEMORY_CLEANUP_TOOLS, memoryCleanupBody, memoryCleanupTrigger } from '../src/memoryCleanup.js';
 
-// 메모리 C3 — 주간 정리 자동화 본문. 서버·러너를 읽어 본문이 실제로 있는 도구·절차를 부르는지 고정한다.
+// 메모리 C3 — 매일 정리 자동화 본문. 서버·러너를 읽어 본문이 실제로 있는 도구·절차를 부르는지 고정한다.
 // 서버·러너는 Rust 다(TS 백엔드는 11-21 지웠다) — 도구 표는 `core/mcp/mod.rs` 의 `t("이름", …)`, 지시문은 러너 `prompt_system.rs`.
 const root = path.resolve(__dirname, '../../..');
 const mcp = readFileSync(path.join(root, 'crates/harkroom-server/src/core/mcp/mod.rs'), 'utf8');
@@ -42,14 +42,22 @@ describe('memoryCleanupBody', () => {
     expect(at('release')).toBeLessThan(at('`message.post`'));
   });
 
+  it('60일 안 쓰인 상태 꼴·journal 을 묶어 보관하는 단계가 있고, audit 이 그 목록을 낸다', () => {
+    const audit = readFileSync(path.join(root, 'crates/harkroom-server/src/core/mcp/mem_audit.rs'), 'utf8');
+    expect(body).toContain('`idleState`');
+    expect(audit).toContain('\\"idleState\\"');
+    expect(audit).toContain('IDLE_STATE_DAYS: i64 = 60');
+    expect(body).toContain('300');
+  });
+
   it('발화 상한 안이고, 이름은 automation 이름 상한(100) 안이다', () => {
     expect(body.length).toBeLessThan(8000);
     expect(MEMORY_CLEANUP_NAME('a'.repeat(64)).length).toBeLessThanOrEqual(100);
   });
 
-  it('트리거는 automation.propose 의 주간 schedule 모양이다', () => {
+  it('트리거는 automation.propose 의 매일 schedule 모양이다', () => {
     // 시간대는 부르는 쪽이 준다 — 한 설치의 시간대를 기본값으로 박지 않는다.
-    expect(memoryCleanupTrigger('Europe/Berlin')).toEqual({ kind: 'schedule', freq: 'weekly', weekdays: [1], time: '09:00', tz: 'Europe/Berlin' });
+    expect(memoryCleanupTrigger('Europe/Berlin')).toEqual({ kind: 'schedule', freq: 'daily', time: '09:00', tz: 'Europe/Berlin' });
     expect(memoryCleanupTrigger('UTC').tz).toBe('UTC');
     expect(mcp).toContain('t("automation.propose",');
   });
