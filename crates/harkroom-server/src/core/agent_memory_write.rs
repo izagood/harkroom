@@ -524,7 +524,8 @@ pub const MEMORY_CLEANUP_PRIVILEGES: &[(&str, &str)] = &[
     ("workspace_profile.memory_cleanup_tz", "UPDATE"),
 ];
 
-/// `GET /accounts/agents/{id}/memory-cleanup` — 이 에이전트의 매일 정리 켜짐.
+/// `GET /accounts/agents/{id}/memory-cleanup` — 이 에이전트의 매일 정리 켜짐과, 읽기만 하는 워크스페이스 값.
+/// admin 이 아닌 소유자도 「워크스페이스에서 꺼짐」과 도는 시각을 알아야 해서 함께 싣는다(고치기는 admin 줄뿐이다).
 pub async fn cleanup_get(
     State(st): State<Arc<MemoryWriteState>>,
     crate::auth::RequireAccount(me, _): crate::auth::RequireAccount,
@@ -533,14 +534,18 @@ pub async fn cleanup_get(
     if let Err(r) = access(&st.read, &me, &id, None).await {
         return r;
     }
-    match sqlx::query_scalar::<_, bool>(
+    let on = match sqlx::query_scalar::<_, bool>(
         "select memory_cleanup_on from agent_config where account_id = $1::uuid",
     )
     .bind(&id)
     .fetch_optional(&st.write)
     .await
     {
-        Ok(v) => json_ok(json!({ "enabled": v.unwrap_or(true) }).to_string()),
+        Ok(v) => v.unwrap_or(true),
+        Err(e) => return internal(e),
+    };
+    match workspace_cleanup(&st.write).await {
+        Ok(w) => json_ok(json!({ "enabled": on, "workspace": workspace_value(&w) }).to_string()),
         Err(e) => internal(e),
     }
 }
@@ -612,8 +617,12 @@ async fn workspace_cleanup(pool: &PgPool) -> Result<Workspace, sqlx::Error> {
     .await
 }
 
-fn workspace_json((enabled, time, tz): Workspace) -> Response {
-    json_ok(json!({ "enabled": enabled, "time": time, "tz": tz }).to_string())
+fn workspace_value((enabled, time, tz): &Workspace) -> Value {
+    json!({ "enabled": enabled, "time": time, "tz": tz })
+}
+
+fn workspace_json(w: &Workspace) -> Response {
+    json_ok(workspace_value(w).to_string())
 }
 
 /// `GET /settings/memory-cleanup` — 워크스페이스의 매일 정리 켜짐·시각·시간대(admin).
@@ -622,9 +631,30 @@ pub async fn workspace_get(
     crate::auth::RequireAdmin(_me): crate::auth::RequireAdmin,
 ) -> Response {
     match workspace_cleanup(&st.write).await {
-        Ok(w) => workspace_json(w),
+        Ok(w) => workspace_json(&w),
         Err(e) => internal(e),
     }
+}
+
+/// 저장할 수 없는 시각·시간대의 오류 코드 — 어느 칸이 틀렸는지 화면이 말할 수 있게 가른다.
+/// 모르는 시간대를 저장하면 넣기 질의가 매번 실패한다 — Postgres 가 아는 이름만.
+pub async fn schedule_error(
+    pool: &PgPool,
+    time: &str,
+    tz: &str,
+) -> Result<Option<&'static str>, sqlx::Error> {
+    if !valid_time(time) {
+        return Ok(Some("bad_time"));
+    }
+    if tz.len() > 64 {
+        return Ok(Some("bad_tz"));
+    }
+    let known: bool =
+        sqlx::query_scalar("select exists(select 1 from pg_timezone_names where name = $1)")
+            .bind(tz)
+            .fetch_one(pool)
+            .await?;
+    Ok((!known).then_some("bad_tz"))
 }
 
 /// `PUT /settings/memory-cleanup` — `{ enabled, time: "HH:MM", tz }`(admin).
@@ -644,19 +674,11 @@ pub async fn workspace_put(State(st): State<Arc<MemoryWriteState>>, req: Request
     ) else {
         return bad("body");
     };
-    if !valid_time(time) || tz.len() > 64 {
-        return bad("body");
-    }
-    // 모르는 시간대를 저장하면 넣기 질의가 매번 실패한다 — Postgres 가 아는 이름만.
-    match sqlx::query_scalar::<_, bool>(
-        "select exists(select 1 from pg_timezone_names where name = $1)",
-    )
-    .bind(tz)
-    .fetch_one(&st.write)
-    .await
-    {
-        Ok(true) => {}
-        Ok(false) => return bad("body"),
+    match schedule_error(&st.write, time, tz).await {
+        Ok(None) => {}
+        Ok(Some(code)) => {
+            return json_err(StatusCode::BAD_REQUEST, code, &format!("{code}: invalid"));
+        }
         Err(e) => return internal(e),
     }
     if let Err(e) = sqlx::query(
@@ -681,7 +703,7 @@ pub async fn workspace_put(State(st): State<Arc<MemoryWriteState>>, req: Request
         detail,
     )
     .await;
-    workspace_json((*enabled, time.to_owned(), tz.to_owned()))
+    workspace_json(&(*enabled, time.to_owned(), tz.to_owned()))
 }
 
 /// TS `revertBgRun` 의 결말.
