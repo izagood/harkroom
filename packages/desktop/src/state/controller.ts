@@ -32,6 +32,7 @@ import { communityLabel, getActiveController, getActiveStore, useCommunityRegist
 import { usePrefsStore } from './prefsStore';
 import { detectLocale, isLocale, translator, type MessageKey, type Translate } from '../i18n';
 import { errorText } from '../lib/errorText';
+import { notifyThreadTurnsChanged } from '../lib/threadTurns';
 
 /**
  * 채널을 **처음** 열 때 받아 오는 히스토리 창(행 수).
@@ -1010,6 +1011,10 @@ export class Controller {
       case 'handle_group.changed':
         // 집합 목록과 구성원 수를 갱신한다(#300).
         this.swallow(this.refreshAccounts({ force: true }));
+        break;
+      case 'thread.turns.changed':
+        // R1 — 값 없는 신호다. 그 스레드를 보고 있는 띠만 다시 읽는다(`useThreadTurns`).
+        notifyThreadTurnsChanged(e.rootId);
         break;
       case 'thread.agent_model.changed':
         this.applyThreadAgentModel(e.threadRootId, e.agentId, e.row);

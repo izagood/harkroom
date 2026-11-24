@@ -657,6 +657,17 @@ export class ApiClient {
   }
 
   /**
+   * 이 스레드에서 지금 도는 턴(R1). 에이전트 id 와 시작 시각만 온다. 이 길을 안 띄운 서버는 404 다 —
+   * 부르는 쪽(`useThreadTurns`)이 그것을 「읽는 길 없음」으로 가른다.
+   */
+  async threadTurns(rootId: string): Promise<{ agentAccountId: string; startedAt: string | null }[]> {
+    const res = await this.req<{ turns: { agentAccountId: string; startedAt: string | null }[] }>(
+      'GET', `/threads/${encodeURIComponent(rootId)}/turns`,
+    );
+    return res.turns;
+  }
+
+  /**
    * 세션 하나에 attach 한다. 인가는 **여기서** 끝난다 — 돌려받는 티켓은 그 세션 하나에만
    * 쓸 수 있는 1회용이고, WS 핸드셰이크는 그 티켓만 소모한다.
    *
