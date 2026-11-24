@@ -1815,6 +1815,22 @@ async fn record_shadow(
     used_line: Option<&super::mandate_line_match::FoundLine>,
     via_approval: Option<&str>,
 ) {
+    // G1 그림자 — 뿌리 작업의 위임장으로 찾은 결과와 나란히 대조만 한다(요청 밖, 판정은 그대로).
+    super::ledger_mandate::merge_shadow(|| {
+        let a = merge_action(o);
+        super::ledger_mandate::MergeFacts {
+            agent: agent.to_string(),
+            channel: lease.channel_id.clone(),
+            thread: lease.thread_root_id.clone(),
+            lease_mandate: lease.mandate_id.clone(),
+            allowed: chain_verdict == "allowed",
+            used_line: used_line.is_some(),
+            repo: a.repo.to_string(),
+            pr: a.pr,
+            head: a.head.map(str::to_string),
+            gh_user: a.gh_user.map(str::to_string),
+        }
+    });
     if super::lease_read::mandate_enforced_env() == Some(true) {
         let origin = shadow_origin(pool, lease)
             .await

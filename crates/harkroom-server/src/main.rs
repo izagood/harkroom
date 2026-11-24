@@ -5673,6 +5673,7 @@ async fn open_write_pool() -> Option<sqlx::PgPool> {
             enable_work_shadow(&pool).await;
             enable_device_allow(&pool).await;
             enable_work_route(&pool).await;
+            enable_ledger_mandate(&pool).await;
             Some(pool)
         }
         Ok(m) => {
@@ -5747,6 +5748,27 @@ async fn enable_device_allow(pool: &sqlx::PgPool) {
         Ok(m) => eprintln!("front: device allow off — missing privileges {m:?}"),
         Err(e) => eprintln!(
             "front: device allow off — privilege check failed ({})",
+            e.as_database_error().map_or("io", |_| "db")
+        ),
+    }
+}
+
+/// G1 원장 위임장 그림자. `HARKROOM_LEDGER_MANDATE` 가 `shadow`·`on` 이 아니거나 권한이 모자라면 켜지 않는다 — 머지 판정은 그대로 돈다.
+async fn enable_ledger_mandate(pool: &sqlx::PgPool) {
+    use harkroom_server::core::{ledger_mandate, mandate_line_match};
+    if ledger_mandate::switch_from_env() == ledger_mandate::Switch::Off {
+        return;
+    }
+    let mut need = ledger_mandate::LEDGER_MANDATE_PRIVILEGES.to_vec();
+    need.extend_from_slice(mandate_line_match::MERGE_CHECKS_MANDATE_PRIVILEGES);
+    match write::missing_in(pool, &need, &[]).await {
+        Ok(m) if m.is_empty() => {
+            eprintln!("front: ledger mandate shadow on");
+            ledger_mandate::enable(pool.clone());
+        }
+        Ok(m) => eprintln!("front: ledger mandate shadow off — missing privileges {m:?}"),
+        Err(e) => eprintln!(
+            "front: ledger mandate shadow off — privilege check failed ({})",
             e.as_database_error().map_or("io", |_| "db")
         ),
     }

@@ -23,6 +23,10 @@ pub const KIND_TURN_TOKENS: &str = "turn.tokens";
 /// `detail.branch` 는 `gate_would_pass`·`gate_would_block`·`unknown`(판정 못 함). `message.delegate` 게이트.
 pub const KIND_TEAM_ROUTE: &str = "team.route";
 
+/// 머지 판정 한 건의 원장 위임장 대조(G1, 그림자) — `detail.branch`(`ledger_mandate::branch` 의 갈래)·`detail.agree`,
+/// `value` 는 일치 1·불일치 0(대조 못 했으면 없음). `ledger_mandate::merge_shadow`.
+pub const KIND_LEDGER_MANDATE: &str = "ledger.mandate";
+
 /// 기록이 쓰는 권한 — homelab GRANT 와 같아야 한다. 없으면 `main.rs` 가 기록을 켜지 않는다(나머지는 그대로 돈다).
 pub const MEASURE_PRIVILEGES: &[(&str, &str)] =
     &[("measure_event", "SELECT"), ("measure_event", "INSERT")];
