@@ -76,21 +76,27 @@ describe('끊긴 동안의 스레드 패널 (A3-2)', () => {
     useAppStore.getState().set({ threadFetch: { rootId: 'other', reason: 'noResponse' } });
     render(<ThreadPanel />);
     expect(screen.queryByTestId('thread-no-response')).toBeNull();
-    expect(screen.getByTestId('thread-state').getAttribute('data-state')).not.toBe('unknown');
+    // 붙어 있으면 머리 배지 대신 진행 띠가 선다(R2).
+    expect(screen.queryByTestId('thread-state')).toBeNull();
+    expect(screen.getByTestId('thread-progress')).toBeTruthy();
   });
 
   /** designer s1 — 경계 줄이 「이 아래는 모른다」고 하는 동안 배지가 「끝남」이면 서로 반대 말을 한다. */
-  it('끊김 + 받아 둔 답글 + done → 「모름」, 다시 붙으면 「끝남」', () => {
+  it('끊김 + 받아 둔 답글 + done → 「모름」, 다시 붙으면 배지 대신 진행 띠', () => {
     fakeController();
     const { rerender } = render(<ThreadPanel />);
-    expect(screen.getByTestId('thread-state').getAttribute('data-state')).toBe('done');
+    expect(screen.queryByTestId('thread-state')).toBeNull();
+    expect(screen.getByTestId('thread-progress-idle')).toBeTruthy();
     useAppStore.getState().set({ connected: false, link: 'offline', offlineSince: Date.parse('2026-10-12T10:00:00Z') });
     rerender(<ThreadPanel />);
     expect(screen.getByTestId('thread-held-boundary')).toBeTruthy();
     expect(screen.getByTestId('thread-state').getAttribute('data-state')).toBe('unknown');
+    // 끊긴 동안에는 띠를 세우지 않는다 — 못 본 줄이 있는데 「진행 중인 일 없음」이라 말하면 거짓이다.
+    expect(screen.queryByTestId('thread-progress')).toBeNull();
     useAppStore.getState().set({ connected: true, link: 'online', offlineSince: null });
     rerender(<ThreadPanel />);
-    expect(screen.getByTestId('thread-state').getAttribute('data-state')).toBe('done');
+    expect(screen.queryByTestId('thread-state')).toBeNull();
+    expect(screen.getByTestId('thread-progress-idle')).toBeTruthy();
   });
 
   /** designer n1·n5 — ⑥ 은 원인(서버가 응답하지 않는다)을 말하고, 받아 둔 답글이 있으면 못 받은 것은 「새」 답글이다. */

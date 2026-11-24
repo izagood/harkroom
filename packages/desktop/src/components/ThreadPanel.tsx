@@ -32,6 +32,10 @@ import { appendedFromHere } from '../lib/ownSends';
 import type { SectionId } from './settings/sections';
 import { useLocale, useT } from '../i18n/useT';
 import { stampLabel } from '../lib/day';
+import { threadProgress } from '../lib/threadProgress';
+import { useThreadTurns } from '../lib/threadTurns';
+import { useAgentWakes } from '../lib/agentTurns';
+import { ThreadProgressStrip } from './ThreadProgressStrip';
 
 export function ThreadPanel({ onOpenProfile, onOpenSettings, reserveLeft = MIN_CHANNEL_WIDTH }: {
   /** 멘션 이동(#279). 스레드의 멘션도 대화의 멘션과 같게 동작해야 한다. */
@@ -158,6 +162,32 @@ export function ThreadPanel({ onOpenProfile, onOpenSettings, reserveLeft = MIN_C
     isAgent: (id) => accounts[id]?.kind === 'agent',
     live,
   }), [thread, me, accounts, live]);
+
+  /**
+   * 진행 띠(R2). 머리 배지가 상태 **하나**를 말한다면 띠는 칸마다 센다 — 내 차례 카드와 도는 턴이 함께 있어도 둘 다 보인다.
+   * 끊긴 동안에는 턴을 묻지 않고 띠도 세우지 않는다 — 그때는 머리에 옛 배지(받아 둔 줄의 판정·「모름」)가 선다.
+   * 띠가 서는 동안에는 머리 배지를 그리지 않는다: 한 화면에 판정이 둘이면 서로 다른 말을 한다(시안 D2).
+   */
+  const askTurns = useCallback(
+    async (root: string) => getCommunityController(communityId).api.threadTurns(root),
+    [communityId],
+  );
+  const turns = useThreadTurns(stale || communityId == null || !threadRootId ? null : askTurns, threadRootId ?? '');
+  const wakesSnapshot = useAgentWakes(!stale);
+  const wakesHere = wakesSnapshot.kind === 'known'
+    ? wakesSnapshot.wakes.filter((w) => w.threadRootId === threadRootId).length
+    : 0;
+  const progress = useMemo(() => threadProgress({
+    messages: thread,
+    myAccountId: me?.id ?? null,
+    turns,
+    wakes: wakesHere,
+    plan: planProgress,
+    legacyRunning: state === 'running',
+    now: Date.now(),
+  }), [thread, me, turns, wakesHere, planProgress, state]);
+  // 첫 답 전(`checking`)에는 옛 판정(`legacyRunning`)으로 센다 — 띠가 늦게 서며 머리가 한 번 바뀌는 깜박임을 없앤다.
+  const stripShown = !stale && !unfetchedEmpty && thread.length > 0;
 
   /**
    * 대기 사슬(Task 7). 상태 배지가 "무엇인가"를 말한다면 이 줄은 **"왜"** 를 말한다 —
@@ -450,9 +480,10 @@ export function ThreadPanel({ onOpenProfile, onOpenSettings, reserveLeft = MIN_C
             주장이라 최신 줄을 봐야만 할 수 있고, 경계 줄은 「이 아래는 모른다」고 말한다. 둘이 반대 말을 하면
             안 된다. 나머지 상태는 그대로다 — 받아 둔 줄 안에 근거(미답 카드·실패 줄)가 보이고, running 은
             '마지막으로 알던 사실'을 유지하는 규약이다. */}
-        {unfetchedEmpty || (stale && state === 'done')
+        {/* 띠가 서면 배지는 물러난다(R2, 시안 D2) — 상태는 머리 아래 띠가 칸마다 말한다. */}
+        {!stripShown && (unfetchedEmpty || (stale && state === 'done')
           ? <UnknownThreadStateBadge className="ml-2" />
-          : state && <ThreadStateBadge state={state} className="ml-2" />}
+          : state && <ThreadStateBadge state={state} className="ml-2" />)}
         {/* 참여자 줄과 터미널 선택자는 **헤더**다 — 세션이 (에이전트, 스레드)당 하나이므로
             문이 달릴 자리가 여기다(규칙 06). */}
         <div className="ml-auto flex items-center gap-2">
@@ -480,6 +511,12 @@ export function ThreadPanel({ onOpenProfile, onOpenSettings, reserveLeft = MIN_C
           ×
         </button>
       </header>
+      {stripShown && (
+        <ThreadProgressStrip
+          progress={progress}
+          plan={planShown && planProgress ? { done: planProgress.done, total: planProgress.total } : null}
+        />
+      )}
       {/* 「맡긴 일」 칩 줄(위임 재설계 v1 P6) — 머리 바로 아래. 위임이 없으면 줄이 없다. */}
       <DelegationChips
         rootId={threadRootId}
