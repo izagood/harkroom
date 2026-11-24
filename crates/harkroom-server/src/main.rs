@@ -5845,8 +5845,32 @@ async fn spawn_loops() {
     if plan_progress::shadow_enabled(std::env::var(plan_progress::SWITCH_ENV).ok().as_deref()) {
         match write::missing_in(&pool, plan_progress::PLAN_PROGRESS_PRIVILEGES, &[]).await {
             Ok(m) if m.is_empty() => {
-                eprintln!("front: loop plan.progress on (shadow — records counts only)");
-                plan_progress::spawn(gate.clone(), pool.clone());
+                // 멈춤 판정(s64)은 읽는 표가 더 있다 — 그 권한이 없으면 멈춤 판정만 빼고 띄운다.
+                let stall =
+                    match write::missing_in(&pool, plan_progress::PLAN_STALL_PRIVILEGES, &[]).await
+                    {
+                        Ok(m) if m.is_empty() => Some(plan_progress::stall_after_sec(
+                            std::env::var(plan_progress::STALL_HOURS_ENV)
+                                .ok()
+                                .as_deref(),
+                        )),
+                        Ok(m) => {
+                            eprintln!(
+                                "front: loop plan.progress stall off — missing privileges {m:?}"
+                            );
+                            None
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "front: loop plan.progress stall off — privilege check failed: {e}"
+                            );
+                            None
+                        }
+                    };
+                eprintln!(
+                    "front: loop plan.progress on (shadow — records counts only; stall after {stall:?}s)"
+                );
+                plan_progress::spawn(gate.clone(), pool.clone(), stall);
             }
             Ok(m) => eprintln!("front: loop plan.progress off — missing privileges {m:?}"),
             Err(e) => eprintln!("front: loop plan.progress off — privilege check failed: {e}"),

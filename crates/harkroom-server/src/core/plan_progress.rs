@@ -7,6 +7,14 @@
 //! - `would_unblock` — 단계가 `blocked` 이고, 달린 카드 중 열린 것이 없으며 하나 이상이 **답으로** 닫혔다.
 //! - `would_start` — 단계가 `pending` 이고 담당(`assigneeId`)이 에이전트이며, `dependsOn` 이 모두 끝났고 열린 카드가 없다.
 //!
+//! 멈춤 판정([`judge_stall`], s64 그림자) — `active` 단계인데 아무도 움직이지 않는 것을 센다:
+//! - `quiet` — 담당(단계 → 없으면 그룹)이 에이전트이고, 그 단계에 **신호가 하나도 없다**. 신호는 열린 카드(단계 `links`),
+//!   열린 위임, 살아 있는 턴 임대, 걸린 예약, 열린 PR 감시다([`Signals`]).
+//! - `would_stall` — `quiet` 이면서 담당이 그 스레드에 정해진 시간 안에 쓴 글도 없다([`Signals::recent`]).
+//!
+//! 사람 담당·담당 없는 단계·다른 스레드에 이어진 그룹의 단계는 판정하지 않는다. 단계가 `active` 로 바뀐 시각은 문서에 없어서
+//! 방금 바뀐 단계와 오래된 단계를 가르지 못한다(단계별 시계는 뒤 단계의 몫이다).
+//!
 //! 건드리지 않는 것:
 //! - 카드가 안 달린 단계의 막힘·풀림(손으로 막은 단계는 손으로 푼다). 모르는 카드(지워졌거나 답할 카드가 아님)는 없는 것으로 본다.
 //! - 답 없이 닫힌 카드(만료·대체)만 달린 `blocked` 단계 — 풀지 않는다.
@@ -178,6 +186,110 @@ pub fn judge(
             _ => &mut out.would_start,
         }
         .push(id.to_string());
+    }
+    out
+}
+
+/// 한 스레드의 멈춤 판정 신호 — 계정 id 는 소문자.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Signals {
+    /// 단계가 적힌 열린 위임 — (담당, 단계 id). 그 단계만의 신호다.
+    pub step_delegations: HashSet<(String, String)>,
+    /// 단계가 안 적힌 열린 위임이 있는 담당. 어느 단계 것인지 모르므로 그 담당의 `active` 단계 모두의 신호로 친다.
+    pub loose_delegations: HashSet<String>,
+    /// 살아 있는 턴 임대·걸린 예약·열린 PR 감시가 있는 담당. 단계를 가를 수 없는 신호다 — 그 담당에게 단계가 적힌 열린
+    /// 위임이 있으면 그 단계 것으로 보고, 없으면 그 담당의 `active` 단계 모두의 신호로 친다.
+    pub turns: HashSet<String>,
+    /// 정해진 시간 안에 이 스레드에 글을 쓴 담당.
+    pub recent: HashSet<String>,
+}
+
+/// 한 계획의 멈춤 판정 — 단계 id 들(문서의 단계 순서). `would_stall` 은 `quiet` 의 부분집합이다.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Stall {
+    pub quiet: Vec<String>,
+    pub would_stall: Vec<String>,
+    /// 상한에 걸려 뒤 단계의 판정을 버렸다.
+    pub truncated: bool,
+}
+
+impl Stall {
+    /// (조용함, 멈춤) 수.
+    pub fn counts(&self) -> (usize, usize) {
+        (self.quiet.len(), self.would_stall.len())
+    }
+}
+
+/// 단계의 담당(소문자) — 단계에 없으면 그룹 것을 물려받는다. 다른 스레드에 이어진 그룹의 단계는 담당이 없는 것으로 본다.
+fn step_assignee(doc: &Value, step: &Value) -> Option<String> {
+    let group = step["groupId"].as_str().and_then(|g| {
+        doc["groups"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|x| x["id"].as_str() == Some(g))
+    });
+    if group.is_some_and(|g| g.get("linkedRootId").is_some_and(|v| !v.is_null())) {
+        return None;
+    }
+    step["assigneeId"]
+        .as_str()
+        .or_else(|| group.and_then(|g| g["assigneeId"].as_str()))
+        .map(str::to_lowercase)
+}
+
+/// `active` 단계와 그 담당 — (단계 id, 담당 id). 담당이 없는 단계는 빠진다. 문서 순서.
+pub fn active_steps(doc: &Value) -> Vec<(String, String)> {
+    steps(doc)
+        .iter()
+        .filter(|s| s["state"].as_str() == Some("active"))
+        .filter_map(|s| Some((s["id"].as_str()?.to_string(), step_assignee(doc, s)?)))
+        .collect()
+}
+
+/// 계획 한 장의 멈춤을 판정한다. `cards`·`agents` 는 [`judge`] 와 같고, `signals` 는 이 스레드 것이다.
+/// `quiet` 은 `cap` 개까지만 낸다(넘으면 `truncated`).
+pub fn judge_stall(
+    doc: &Value,
+    cards: &HashMap<String, Card>,
+    agents: &HashSet<String>,
+    signals: &Signals,
+    cap: usize,
+) -> Stall {
+    let active = active_steps(doc);
+    let mut out = Stall::default();
+    for (id, who) in &active {
+        if !agents.contains(who) {
+            continue;
+        }
+        let open_card = steps(doc)
+            .iter()
+            .find(|s| s["id"].as_str() == Some(id))
+            .is_some_and(|s| step_cards(s).any(|c| cards.get(&c) == Some(&Card::Open)));
+        let own = signals
+            .step_delegations
+            .contains(&(who.clone(), id.clone()));
+        // 이 담당의 다른 `active` 단계에 단계가 적힌 열린 위임이 있으면, 가를 수 없는 신호는 그 단계 것이다.
+        let elsewhere = active.iter().any(|(other, w)| {
+            w == who
+                && other != id
+                && signals
+                    .step_delegations
+                    .contains(&(w.clone(), other.clone()))
+        });
+        let shared =
+            signals.loose_delegations.contains(who) || (!elsewhere && signals.turns.contains(who));
+        if open_card || own || shared {
+            continue;
+        }
+        if out.quiet.len() >= cap {
+            out.truncated = true;
+            break;
+        }
+        out.quiet.push(id.clone());
+        if !signals.recent.contains(who) {
+            out.would_stall.push(id.clone());
+        }
     }
     out
 }
@@ -435,6 +547,167 @@ mod tests {
         assert!(!v.truncated);
     }
 
+    fn agent_step(id: &str, state: &str, links: Vec<Value>) -> Value {
+        with(step(id, state, links, &[]), "assigneeId", json!(AGENT))
+    }
+
+    fn stall(d: &Value, c: &[(&str, Card)], s: &Signals) -> Stall {
+        judge_stall(d, &cards(c), &agents(), s, 100)
+    }
+
+    fn who() -> HashSet<String> {
+        HashSet::from([AGENT.to_string()])
+    }
+
+    #[test]
+    fn active_agent_step_without_signal_is_quiet_and_would_stall() {
+        let d = doc(vec![
+            agent_step("s1", "active", vec![]),
+            agent_step("s2", "pending", vec![]),
+            agent_step("s3", "blocked", vec![]),
+            agent_step("s4", "done", vec![]),
+        ]);
+        let v = stall(&d, &[], &Signals::default());
+        assert_eq!(v.quiet, ["s1"]);
+        assert_eq!(v.would_stall, ["s1"]);
+        assert_eq!(v.counts(), (1, 1));
+    }
+
+    #[test]
+    fn recent_writing_keeps_a_quiet_step_from_stalling() {
+        let d = doc(vec![agent_step("s1", "active", vec![])]);
+        let s = Signals {
+            recent: who(),
+            ..Signals::default()
+        };
+        let v = stall(&d, &[], &s);
+        assert_eq!(v.counts(), (1, 0));
+    }
+
+    #[test]
+    fn human_and_unassigned_active_steps_are_not_judged() {
+        let d = doc(vec![
+            with(
+                step("s1", "active", vec![], &[]),
+                "assigneeId",
+                json!(HUMAN),
+            ),
+            step("s2", "active", vec![], &[]),
+        ]);
+        assert_eq!(stall(&d, &[], &Signals::default()), Stall::default());
+        assert_eq!(active_steps(&d), [("s1".to_string(), HUMAN.to_string())]);
+    }
+
+    #[test]
+    fn each_signal_alone_keeps_the_step_from_being_quiet() {
+        let d = doc(vec![agent_step("s1", "active", vec![card("c1")])]);
+        let none = Signals::default();
+        // 열린 카드만 신호다 — 답했거나 답 없이 닫힌 카드는 아니다.
+        assert_eq!(stall(&d, &[("c1", Card::Open)], &none).counts(), (0, 0));
+        assert_eq!(stall(&d, &[("c1", Card::Answered)], &none).counts(), (1, 1));
+        assert_eq!(stall(&d, &[("c1", Card::Closed)], &none).counts(), (1, 1));
+        let own = Signals {
+            step_delegations: HashSet::from([(AGENT.to_string(), "s1".to_string())]),
+            ..Signals::default()
+        };
+        let loose = Signals {
+            loose_delegations: who(),
+            ..Signals::default()
+        };
+        let turns = Signals {
+            turns: who(),
+            ..Signals::default()
+        };
+        for s in [own, loose, turns] {
+            assert_eq!(stall(&d, &[], &s).counts(), (0, 0), "{s:?}");
+        }
+    }
+
+    #[test]
+    fn step_delegation_does_not_hide_the_assignees_other_steps() {
+        let d = doc(vec![
+            agent_step("s1", "active", vec![]),
+            agent_step("s2", "active", vec![]),
+        ]);
+        // s2 에 단계가 적힌 열린 위임이 있고 턴도 돈다 — 그 턴은 s2 것이라 s1 은 조용하다.
+        let s = Signals {
+            step_delegations: HashSet::from([(AGENT.to_string(), "s2".to_string())]),
+            turns: who(),
+            recent: who(),
+            ..Signals::default()
+        };
+        let v = stall(&d, &[], &s);
+        assert_eq!(v.quiet, ["s1"]);
+        assert!(v.would_stall.is_empty());
+        // 단계를 모르는 위임은 둘 다 가린다.
+        let s = Signals {
+            loose_delegations: who(),
+            ..s
+        };
+        assert_eq!(stall(&d, &[], &s).counts(), (0, 0));
+        // 단계가 적힌 위임이 없으면 가를 수 없는 신호는 둘 다의 것이다.
+        let s = Signals {
+            turns: who(),
+            ..Signals::default()
+        };
+        assert_eq!(stall(&d, &[], &s).counts(), (0, 0));
+        // 끝난 단계에 적힌 위임은 다른 단계의 신호를 뺏지 않는다.
+        let d = doc(vec![
+            agent_step("s1", "active", vec![]),
+            agent_step("s2", "done", vec![]),
+        ]);
+        let s = Signals {
+            step_delegations: HashSet::from([(AGENT.to_string(), "s2".to_string())]),
+            turns: who(),
+            ..Signals::default()
+        };
+        assert_eq!(stall(&d, &[], &s).counts(), (0, 0));
+    }
+
+    #[test]
+    fn another_accounts_signals_do_not_count() {
+        let d = doc(vec![agent_step("s1", "active", vec![])]);
+        let other = HashSet::from([HUMAN.to_string()]);
+        let s = Signals {
+            step_delegations: HashSet::from([(HUMAN.to_string(), "s1".to_string())]),
+            loose_delegations: other.clone(),
+            turns: other.clone(),
+            recent: other,
+        };
+        assert_eq!(stall(&d, &[], &s).counts(), (1, 1));
+    }
+
+    #[test]
+    fn group_assignee_is_inherited_and_linked_groups_are_skipped() {
+        let groups = json!([
+            {"id": "g1", "title": "", "assigneeId": AGENT.to_uppercase(), "dependsOn": []},
+            {"id": "g2", "title": "", "assigneeId": AGENT, "linkedRootId": "r", "dependsOn": []},
+            {"id": "g3", "title": "", "assigneeId": HUMAN, "dependsOn": []}
+        ]);
+        let in_group =
+            |id: &str, g: &str| with(step(id, "active", vec![], &[]), "groupId", json!(g));
+        let d = json!({"goal": "", "groups": groups, "steps": [
+            in_group("s1", "g1"),
+            in_group("s2", "g2"),
+            in_group("s3", "g3"),
+            with(in_group("s4", "g3"), "assigneeId", json!(AGENT)),
+        ]});
+        assert_eq!(stall(&d, &[], &Signals::default()).quiet, ["s1", "s4"]);
+    }
+
+    #[test]
+    fn stall_cap_truncates_in_document_order() {
+        let d = doc((0..4)
+            .map(|i| agent_step(&format!("s{i}"), "active", vec![]))
+            .collect());
+        let v = judge_stall(&d, &cards(&[]), &agents(), &Signals::default(), 2);
+        assert_eq!(v.quiet, ["s0", "s1"]);
+        assert!(v.truncated);
+        let v = judge_stall(&d, &cards(&[]), &agents(), &Signals::default(), 4);
+        assert_eq!(v.counts(), (4, 4));
+        assert!(!v.truncated);
+    }
+
     #[test]
     fn malformed_doc_yields_nothing() {
         for d in [
@@ -445,6 +718,8 @@ mod tests {
         ] {
             assert!(run(&d, &[("c1", Card::Open)]).is_empty());
             assert!(card_ids(&d).is_empty() && assignee_ids(&d).is_empty());
+            assert!(active_steps(&d).is_empty());
+            assert_eq!(stall(&d, &[], &Signals::default()), Stall::default());
         }
     }
 }
