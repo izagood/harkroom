@@ -44,6 +44,7 @@ pub const BG_ALLOWED_TOOLS: &[&str] = &[
     "mcp__harkroom__memory_archive",
     "mcp__harkroom__memory_merge",
     "mcp__harkroom__memory_audit",
+    "mcp__harkroom__memory_lease",
     "mcp__harkroom__thread_note",
     "mcp__harkroom__message_read",
     // 계획판은 읽기만(설계 3-6) — 쓰기는 서버가 `bg_plan_read_only` 로 막고, 하나짜리 쓰기 도구는 아래 금지 목록에 둔다.
@@ -338,7 +339,7 @@ fn str_array<'a>(job: &'a BgJob, key: &str) -> Vec<&'a str> {
 }
 
 const HEAD_TAIL: &[&str] = &[
-    "쓸 수 있는 것은 기억 도구(memory.get/list/search/audit/set/archive/merge)와 아래 입력 스레드의 읽기(message.read·thread.note)뿐이다.",
+    "쓸 수 있는 것은 기억 도구(memory.get/list/search/audit/lease/set/archive/merge)와 아래 입력 스레드의 읽기(message.read·thread.note)뿐이다.",
     "core 는 쓰지 못하고, 기억을 지우지 않는다(안 쓰는 것은 memory.archive). 기억 쓰기는 이 회차에 20건까지다.",
     "",
 ];
@@ -371,10 +372,11 @@ const ORGANIZE_BODY: &[&str] = &[
     "고칠 땐 memory.get 의 updatedAt 을 ifUpdatedAt 으로 준다(그 사이 다른 턴이 고쳤으면 건너뛴다). core 는 손대지 않는다.",
 ];
 
-// 주간 정리(C3)와 정리 신호를 옮겨 온 것(BG5). 사람에게 보고하던 줄은 없다 — 결과는 회차 기록(히스토리)이 말한다.
+// 매일 정리 — 정리 신호와 지난 정리 뒤의 쓰기가 까닭이다. 사람에게 보고하던 줄은 없다 — 결과는 회차 기록(히스토리)이 말한다.
 // 첫 줄은 까닭에 따라 바뀌어 `bg_prompt` 가 만든다.
 const CLEANUP_BODY_REST: &[&str] = &[
     "오래 안 고친 것·큰 것·요약 없음)를 받아 **하나씩 memory.get 으로 읽고** 판단한다.",
+    "먼저 memory.lease 를 acquire 로 잡는다(`acquired: false` 면 아무것도 고치지 말고 「없음 — 다른 턴이 정리 중」으로 끝낸다). 끝나면 그 token 으로 release 한다.",
     "- 같은 주제 여럿 → memory.merge 한 번(into·from·value·kind). 경위는 버리고 되풀이할 사실만 남긴다.",
     "- 안 쓰는 것 → 지우지 말고 memory.archive. 한 스레드의 진행 상태로 보이는 것(delegation-*·review-* 등)이 끝난 일이면 보관한다.",
     "- audit 의 `idleState`(60일 넘게 안 쓰인 상태 꼴·journal) → 되풀이할 교훈이 있으면 먼저 topic·procedure 로 증류하고 나머지는 memory.archive 로 묶어 보관한다.",

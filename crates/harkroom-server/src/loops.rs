@@ -14,6 +14,7 @@ pub mod bg;
 pub mod bg_produce;
 pub mod delegation_deadline;
 pub mod mandate_idle;
+pub mod memory_daily;
 pub mod outbox_prune;
 pub mod permission_expire;
 pub mod plan_progress;

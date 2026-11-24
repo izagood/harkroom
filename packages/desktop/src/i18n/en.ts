@@ -962,6 +962,7 @@ export const en = {
   'automations.err.forbidden': 'No permission to post in the target channel',
   'automations.err.rejected': 'The server refused the post',
   'automations.err.badThread': 'The thread to reply in was not found',
+  'automations.err.replacedByBuiltin': 'Replaced by a built-in feature — memory cleanup now runs every day automatically.',
   'automations.err.rateLimited': 'More than 20 runs in an hour, so this automation was turned off. Turn it on to resume from the next run.',
   'automations.err.attachment': 'Attachments could not be added',
   'automations.err.unknown': 'Unknown reason',

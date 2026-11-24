@@ -338,7 +338,7 @@ pub async fn produce_organize(
     Ok(out)
 }
 
-/// 생산 한 번 — TS `produce` 와 같은 순서(distill → cleanup → organize). 하나가 실패하면 그 tick 은 거기서 끝난다(TS 의 try 하나와 같다).
+/// 생산 한 번 — TS `produce` 와 같은 순서(distill → organize). 정리(cleanup)는 매일 정리([`super::memory_daily`])가 맡는다. 하나가 실패하면 그 tick 은 거기서 끝난다(TS 의 try 하나와 같다).
 pub async fn produce_all(
     pool: &PgPool,
     tick: &Tick,
@@ -347,8 +347,6 @@ pub async fn produce_all(
 ) -> Result<(), sqlx::Error> {
     let d = produce_distill(pool, tick, enabled, daily_max).await?;
     log_produced("distill", &d);
-    let c = produce_cleanup(pool, tick, enabled, daily_max).await?;
-    log_produced("cleanup", &c);
     let o = produce_organize(pool, tick, enabled, daily_max).await?;
     log_produced("organize", &o);
     Ok(())

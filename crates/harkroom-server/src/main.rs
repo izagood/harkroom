@@ -2953,6 +2953,26 @@ async fn main() {
     };
     // S5.5 — 회차 되돌리기(`POST …/background/runs/{runId}/revert`). 기억 쓰기 줄이 섰고 쓰기 풀에 `BG_REVERT_PRIVILEGES` 도
     // 다 있을 때만 — 아니면 그 한 줄만 TS 에 남는다(나머지 여섯 줄은 그대로).
+    let memory_cleanup_settings = match &agent_memory_write {
+        Some(w) => {
+            use harkroom_server::core::agent_memory_write as a;
+            match write::missing_in(w, a::MEMORY_CLEANUP_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => true,
+                Ok(m) => {
+                    eprintln!("front: memory cleanup settings off — missing privileges {m:?}");
+                    false
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: memory cleanup settings off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    false
+                }
+            }
+        }
+        None => false,
+    };
     let bg_revert = match &agent_memory_write {
         Some(w) => {
             use harkroom_server::core::agent_memory_write as a;
@@ -5200,6 +5220,7 @@ async fn main() {
                     write,
                     trust: (*state.trust).clone(),
                     revert: bg_revert,
+                    cleanup: memory_cleanup_settings,
                 },
                 auth.clone(),
                 state.cors.clone(),
@@ -5964,8 +5985,8 @@ async fn spawn_loops() {
         bg::background_enabled(std::env::var("HARKROOM_BACKGROUND_ENABLED").ok().as_deref());
     match write::missing_in(&pool, bg::BG_PRIVILEGES, &[]).await {
         Ok(m) if m.is_empty() => {
-            eprintln!("front: loop bg on (enabled={bg_on}; runs unless server_loop pins it to ts)");
-            bg::spawn(gate.clone(), pool.clone(), bg_on);
+            eprintln!("front: loop bg on (runs unless server_loop pins it to ts)");
+            bg::spawn(gate.clone(), pool.clone());
         }
         Ok(m) => eprintln!("front: loop bg off — missing privileges {m:?}"),
         Err(e) => eprintln!("front: loop bg off — privilege check failed: {e}"),
@@ -6071,6 +6092,21 @@ async fn spawn_loops() {
                 events,
             );
         }
+    }
+    // 매일 기억 정리(기본 기능) — 문지기 이름 `memory.daily`. 전역 백그라운드 스위치와 상관없다.
+    match write::missing_in(
+        &pool,
+        harkroom_server::loops::memory_daily::MEMORY_DAILY_PRIVILEGES,
+        &[],
+    )
+    .await
+    {
+        Ok(m) if m.is_empty() => {
+            eprintln!("front: loop memory.daily on");
+            harkroom_server::loops::memory_daily::spawn(gate.clone(), pool.clone());
+        }
+        Ok(m) => eprintln!("front: loop memory.daily off — missing privileges {m:?}"),
+        Err(e) => eprintln!("front: loop memory.daily off — privilege check failed: {e}"),
     }
     // C5c-3b-2 — 백그라운드 회차 생산(distill → cleanup → organize, 1시간에 한 번). 문지기 이름 `bg.produce` — 주인이 rust 일 때만 돈다.
     match write::missing_in(&pool, bg_produce::BG_PRODUCE_PRIVILEGES, &[]).await {

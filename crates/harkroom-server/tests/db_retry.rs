@@ -49,7 +49,7 @@ fn real(
     move || {
         hits.fetch_add(1, Ordering::SeqCst);
         let (pool, args) = (pool.clone(), args.clone());
-        Box::pin(async move { tools::answer(&pool, &me(), tool, &args, None, None).await })
+        Box::pin(async move { tools::answer(&pool, &me(), tool, &args, None).await })
     }
 }
 

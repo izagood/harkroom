@@ -198,9 +198,13 @@ pub const BG_CLAIM_PRIVILEGES: &[(&str, &str)] = &[
 ];
 
 /// TS `claimBgJob` 의 update — 자리표에 형만 붙였다(Rust 는 값을 글자로 넘긴다).
+///
+/// `$3` = 옛 회차(증류·구조 정리)를 줄 수 있는가(전역 스위치 + 밤 창). 매일 정리 회차(`not_before`)는 그때부터 24시간 집힌다.
 const CLAIM_SQL: &str = "update bg_job set status = 'running', claimed_at = now()
      where id = (
-       select id from bg_job where account_id = $1::uuid and status = 'queued' and day = $2::date
+       select id from bg_job where account_id = $1::uuid and status = 'queued'
+         and (($3 and not_before is null and day = $2::date)
+           or (not_before <= now() and not_before > now() - interval '24 hours'))
        order by created_at limit 1 for update skip locked)
      returning id::text, kind, to_char(day, 'YYYY-MM-DD'), input::text";
 
@@ -299,15 +303,15 @@ pub async fn claim(
     write: &sqlx::PgPool,
     me: &str,
     now_ms: i64,
+    background: bool,
 ) -> Option<String> {
     use super::respond::text_result;
-    if !in_window(now_ms) {
-        return Some(text_result("{\"job\":null,\"reason\":\"outside_window\"}"));
-    }
+    let windowed = background && in_window(now_ms);
     let mut tx = write.begin().await.ok()?;
     let row: Option<(String, String, String, String)> = sqlx::query_as(CLAIM_SQL)
         .bind(me)
         .bind(kst_day(now_ms))
+        .bind(windowed)
         .fetch_optional(&mut *tx)
         .await
         .ok()?;

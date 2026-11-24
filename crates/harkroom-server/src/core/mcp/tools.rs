@@ -405,14 +405,12 @@ fn guide(mode: &str, avcs: bool) -> Option<&'static str> {
 
 /// 도구 하나의 답(`result` 글자). `None` 이면 TS 로.
 /// `cause` 는 요청의 `x-harkroom-cause`(TS mcpPlugin 처럼 uuid 꼴 하나만, [`super::reads3::cause_from`]).
-/// `background` 는 앞단 env `HARKROOM_BACKGROUND_ENABLED`(`memory.list` 의 `bgCleanup` 칸).
 pub async fn answer(
     pool: &PgPool,
     me: &Account,
     tool: &str,
     args: &Value,
     cause: Option<&str>,
-    background: Option<bool>,
 ) -> Option<String> {
     match tool {
         // `mode: z.enum(['resident','turn']).optional()` · `avcs: z.unknown().optional()` — 정확히 `false` 일 때만 avcs 절을 뺀다.
@@ -479,7 +477,7 @@ pub async fn answer(
             super::reads3::answer(pool, me, tool, args, cause).await
         }
         "memory.list" | "secret.list" | "thread.note.list" | "memory.revisions" => {
-            super::reads2::answer(pool, me, tool, args, background).await
+            super::reads2::answer(pool, me, tool, args).await
         }
         _ => None,
     }
