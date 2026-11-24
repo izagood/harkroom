@@ -197,7 +197,7 @@ function BodyLink({ label, href, target, t }: { label: string; href: string; tar
  * 그 배선은 `test/mentionClick.test.tsx` 가 `Workspace` 를 통째로 띄워 지킨다.
  */
 interface MentionOpeners {
-  onOpenDirectory?: (accountId: string | null) => void;
+  onOpenProfile?: (accountId: string) => void;
   onOpenSettings?: (section?: SectionId, targetId?: string) => void;
 }
 
@@ -205,7 +205,7 @@ export function MessageBody({
   body,
   messageId,
   refIds,
-  onOpenDirectory,
+  onOpenProfile,
   onOpenSettings,
 }: {
   body: string;
@@ -321,11 +321,11 @@ export function MessageBody({
     // 오타(`@없는이름`)가 애초에 여기 오지 않는 것과 같은 이유다: 누를 수 있게 만들면
     // "여기에 뭔가 있다" 는 거짓을 말하게 된다.
     //
-    // 에이전트를 어디로 보낼지(admin·소유자면 설정, 그 외는 디렉터리)와 접근 가능한 이름은
+    // 에이전트를 어디로 보낼지(admin·소유자면 설정, 그 외는 프로필)와 접근 가능한 이름은
     // **`lib/accountOpen` 한 곳**에서 나온다. 여기 인라인으로 있던 것을 옮긴 이유는 그
     // 파일 머리에 적었다 — 이름줄·아바타(`MessageItem`)가 같은 곳으로 가야 해서, 그대로
     // 두면 같은 조건문이 두 벌이 된다.
-    const open = isGroup ? null : accountOpen(account, viewer, { onOpenDirectory, onOpenSettings }, t);
+    const open = isGroup ? null : accountOpen(account, viewer, { onOpenProfile, onOpenSettings }, t);
     const target = open?.run ?? null;
     const accessibleName = open?.label;
 

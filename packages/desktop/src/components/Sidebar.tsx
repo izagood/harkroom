@@ -321,7 +321,7 @@ export function Sidebar({
   onOpenClaudeReauth?: () => void;
   /**
    * 설정을 볼 수 없는 사람이 카드를 눌렀을 때 여는 곳(`onPick` 주석에 근거) — 프로필은
-   * "이 사람이 무엇인가"에 답한다(`Workspace.handleOpenDirectory` 주석).
+   * "이 사람이 무엇인가"에 답한다(`Workspace.handleOpenProfile` 주석).
    */
   onOpenProfile: (accountId: string) => void;
   /*

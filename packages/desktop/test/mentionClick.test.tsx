@@ -32,11 +32,11 @@ beforeEach(() => {
 afterEach(() => { cleanup(); setController(null as unknown as Controller); usePrefsStore.getState().setLocale('system'); });
 
 describe('멘션 클릭 (#279)', () => {
-  let onOpenDirectory: ReturnType<typeof vi.fn>;
+  let onOpenProfile: ReturnType<typeof vi.fn>;
   let onOpenSettings: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
-    onOpenDirectory = vi.fn();
+    onOpenProfile = vi.fn();
     onOpenSettings = vi.fn();
   });
 
@@ -44,7 +44,7 @@ describe('멘션 클릭 (#279)', () => {
     render(
       <MessageItem
         message={msg('m1', 'c1', 1, body, 'u2')}
-        onOpenDirectory={onOpenDirectory}
+        onOpenProfile={onOpenProfile}
         onOpenSettings={onOpenSettings}
       />,
     );
@@ -56,7 +56,7 @@ describe('멘션 클릭 (#279)', () => {
     expect(mention.tagName).toBe('BUTTON');
     fireEvent.click(mention);
 
-    expect(onOpenDirectory).toHaveBeenCalledWith('u2');
+    expect(onOpenProfile).toHaveBeenCalledWith('u2');
     expect(onOpenSettings).not.toHaveBeenCalled();
   });
 
@@ -76,7 +76,7 @@ describe('멘션 클릭 (#279)', () => {
     fireEvent.click(mention);
 
     expect(onOpenSettings).toHaveBeenCalledWith('agents', 'a1');
-    expect(onOpenDirectory).not.toHaveBeenCalled();
+    expect(onOpenProfile).not.toHaveBeenCalled();
   });
 
 /**
@@ -100,7 +100,7 @@ describe('멘션 클릭 (#279)', () => {
     fireEvent.click(mention);
 
     expect(onOpenSettings).toHaveBeenCalledWith('agents', 'a2');
-    expect(onOpenDirectory).not.toHaveBeenCalled();
+    expect(onOpenProfile).not.toHaveBeenCalled();
   });
 
   it('소유자가 설정으로 가면 에이전트가 선택된 화면이다', async () => {
@@ -142,7 +142,7 @@ describe('멘션 클릭 (#279)', () => {
 
     fireEvent.click(screen.getByTestId('mention-fizz'));
 
-    expect(onOpenDirectory).toHaveBeenCalledWith('a1');
+    expect(onOpenProfile).toHaveBeenCalledWith('a1');
     expect(onOpenSettings).not.toHaveBeenCalled();
   });
 
@@ -196,7 +196,7 @@ describe('멘션 클릭 (#279)', () => {
     mention.focus();
     expect(document.activeElement).toBe(mention);
     fireEvent.click(mention);
-    expect(onOpenDirectory).toHaveBeenCalledWith('u2');
+    expect(onOpenProfile).toHaveBeenCalledWith('u2');
 
     // 갈 곳이 없는 것(집합)은 포커스를 받지 않는다 — 탭으로 지나가지도 않는다.
     const group = screen.getByTestId('mention-oncall') as HTMLElement;

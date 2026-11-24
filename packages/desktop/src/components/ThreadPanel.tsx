@@ -33,9 +33,9 @@ import type { SectionId } from './settings/sections';
 import { useLocale, useT } from '../i18n/useT';
 import { stampLabel } from '../lib/day';
 
-export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN_CHANNEL_WIDTH }: {
+export function ThreadPanel({ onOpenProfile, onOpenSettings, reserveLeft = MIN_CHANNEL_WIDTH }: {
   /** 멘션 이동(#279). 스레드의 멘션도 대화의 멘션과 같게 동작해야 한다. */
-  onOpenDirectory?: (accountId: string | null) => void;
+  onOpenProfile?: (accountId: string) => void;
   onOpenSettings?: (section?: SectionId, targetId?: string) => void;
   /**
    * 이 패널 왼쪽에 **남겨 둘 폭**. 기본은 대화의 하한이다. 왼쪽에 인박스가 서면 더 크게
@@ -516,7 +516,7 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
                   messages={slot.messages}
                   items={slot.items}
                   inThread
-                  onOpenDirectory={onOpenDirectory}
+                  onOpenProfile={onOpenProfile}
                   onOpenSettings={onOpenSettings}
                 />
               )
@@ -525,7 +525,7 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
                   key={slot.message.id}
                   message={slot.message}
                   inThread
-                  onOpenDirectory={onOpenDirectory}
+                  onOpenProfile={onOpenProfile}
                   onOpenSettings={onOpenSettings}
                 />
               )

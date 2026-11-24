@@ -2925,12 +2925,12 @@ describe('잔여 — 계정 열기·멘션', () => {
   it('계정 열기 이름이 갈 곳을 가르고 언어를 따라온다', () => {
     const agent = { ...acc(FORGE, 'forge'), kind: 'agent' as const };
     const admin = { id: ME, isAdmin: true };
-    const openers = { onOpenDirectory: () => {}, onOpenSettings: () => {} };
+    const openers = { onOpenProfile: () => {}, onOpenSettings: () => {} };
     for (const [locale, cat] of [['en', en], ['ko', ko]] as const) {
       const t = translator(locale);
       // admin 이면 설정으로, 문이 없으면 프로필로 — **갈 곳이 다르면 이름도 다르다.**
       const toConfig = accountOpen(agent, admin, openers, t)!;
-      const toProfile = accountOpen(agent, admin, { onOpenDirectory: () => {} }, t)!;
+      const toProfile = accountOpen(agent, admin, { onOpenProfile: () => {} }, t)!;
       expect(toConfig.label, locale).not.toBe(toProfile.label);
       expect(toConfig.label, locale).toBe(
         (cat['accountOpen.agentConfig'] as string).replace('{handle}', 'forge'),

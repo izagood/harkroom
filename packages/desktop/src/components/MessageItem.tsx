@@ -94,11 +94,11 @@ const MSG_NO_TEAMS: never[] = [];
  */
 export const MessageItem = memo(MessageItemImpl);
 
-function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSettings }: {
+function MessageItemImpl({ message, inThread = false, onOpenProfile, onOpenSettings }: {
   message: MessageRow;
   inThread?: boolean;
   /** 멘션을 눌렀을 때 갈 곳(#279). 넘기지 않으면 멘션은 버튼이 아니다 — `MessageBody` 참고. */
-  onOpenDirectory?: (accountId: string | null) => void;
+  onOpenProfile?: (accountId: string) => void;
   onOpenSettings?: (section?: SectionId, targetId?: string) => void;
 }) {
   // 「스레드 열기」는 **이 창의** 자리로 간다(채널 창이면 자기 패널, W4 — `state/windowView`).
@@ -130,11 +130,11 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
    * 이름·얼굴을 눌렀을 때 갈 곳. **`@멘션` 칩과 같은 함수**를 지난다(`lib/accountOpen`) —
    * 화면에서 한 사람을 가리키는 자리는 셋(멘션 칩·이름줄·거터 아바타)인데 그 셋이 서로
    * 다른 곳으로 가면, 사람은 "어디를 눌러야 프로필이 나오는지"를 매번 시험해 봐야 한다.
-   * 신호(`onOpenDirectory`·`onOpenSettings`)가 없는 자리에서는 `null` 이라 **버튼이 아니다**
+   * 신호(`onOpenProfile`·`onOpenSettings`)가 없는 자리에서는 `null` 이라 **버튼이 아니다**
    * — 눌러도 아무 일이 없는 컨트롤을 남기지 않는다(`MessageBody` 의 같은 규칙).
    */
   // 시스템 줄의 author 는 말한 사람이 아니다 — 이름·얼굴을 누를 자리도 없다(시스템 줄 C안 c5).
-  const authorOpen = message.kind === 'system' ? null : accountOpen(author, { id: myId, isAdmin }, { onOpenDirectory, onOpenSettings }, t);
+  const authorOpen = message.kind === 'system' ? null : accountOpen(author, { id: myId, isAdmin }, { onOpenProfile, onOpenSettings }, t);
   // 생존 판정의 두 축 — `connected` 가 false 면 `online` 은 '아무도 없다'가 아니라 '모른다'다.
   //
   // `online` 은 **이 행의 판정에 드는 계정만** 구독한다. 목록 전체를 구독하면 누가 접속하거나
@@ -867,7 +867,7 @@ function MessageItemImpl({ message, inThread = false, onOpenDirectory, onOpenSet
                 </p>
               : systemLine !== null
               ? <p className="whitespace-pre-wrap break-words" data-testid="system-i18n-line">{systemLine}</p>
-              : shownBody.trim() && <MessageBody body={shownBody} messageId={message.id} refIds={mentionRefs} onOpenDirectory={onOpenDirectory} onOpenSettings={onOpenSettings} />}
+              : shownBody.trim() && <MessageBody body={shownBody} messageId={message.id} refIds={mentionRefs} onOpenProfile={onOpenProfile} onOpenSettings={onOpenSettings} />}
             {/* 선택지는 본문 **바로 아래**에 붙는다 — 답할 자리가 말 옆에 있어야 한다(규칙 05).
                 형식을 못 알아보면 `AskCard` 가 스스로 아무것도 그리지 않는다. */}
             {/* 머지 거절 카드(P5) — 권한 칸은 서버 기록(meta.mergeDenial), 선택지는 그 아래 AskCard. */}

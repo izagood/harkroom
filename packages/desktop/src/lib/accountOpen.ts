@@ -9,16 +9,16 @@ import { canSeeAgentConfig } from './agentConfigGate';
  * **판정이 한 곳에 있는 것이 요점이다.** 이 규칙은 `MessageBody` 의 멘션 칩 안에 인라인으로
  * 살고 있었는데, 이름줄·아바타에서도 같은 곳으로 가야 한다는 요구가 생기면서 같은 조건문이
  * 두 벌이 될 참이었다 — 이 저장소가 반복해서 겪은 결함 형태다(`Identity.tsx` 머리 주석).
- * 조건이 갈리면 "@fizz 는 설정으로 가는데 이름줄의 fizz 는 디렉터리로 간다" 같은,
+ * 조건이 갈리면 "@fizz 는 설정으로 가는데 이름줄의 fizz 는 프로필로 간다" 같은,
  * 사람이 원인을 짚을 수 없는 화면이 남는다.
  *
  * 함께 고쳐진 것: 예전 코드는 **갈 곳**과 **접근 가능한 이름**을 각각 계산했다. 그래서
  * `onOpenSettings` 가 없는 자리(채널 문서 패널 등)에서 admin 이 에이전트 멘션을 보면
- * 실제로는 디렉터리로 가면서 이름만 "에이전트 설정 열기" 였다. 여기서는 둘이 **같은
+ * 실제로는 프로필로 가면서 이름만 "에이전트 설정 열기" 였다. 여기서는 둘이 **같은
  * 분기에서 함께** 나오므로 갈라질 수가 없다.
  */
 export interface AccountOpeners {
-  onOpenDirectory?: (accountId: string | null) => void;
+  onOpenProfile?: (accountId: string) => void;
   onOpenSettings?: (section?: SectionId, targetId?: string) => void;
 }
 
@@ -46,7 +46,7 @@ export function accountOpen(
   // 이름 쪽 필드만 읽는다 — `lib/accountNames` 의 투영도 그대로 받도록.
   account: Pick<AccountView, 'id' | 'handle' | 'kind' | 'ownerAccountId'> | undefined,
   viewer: Viewer,
-  { onOpenDirectory, onOpenSettings }: AccountOpeners,
+  { onOpenProfile, onOpenSettings }: AccountOpeners,
   // 번역기를 **맨 뒤에 필수로** 받는다 — 기본값을 주면 부르는 화면이 안 넘겨도 컴파일이
   // 통과하고 그 화면의 접근 이름만 한 언어로 굳는다(`lastTurnAgo`·`inboxRow` 와 같은 규약).
   t: Translate,
@@ -72,9 +72,9 @@ export function accountOpen(
       label: t('accountOpen.agentConfig', { handle: account.handle }),
     };
   }
-  if (onOpenDirectory) {
+  if (onOpenProfile) {
     return {
-      run: () => onOpenDirectory(account.id),
+      run: () => onOpenProfile(account.id),
       label: t('accountOpen.profile', { handle: account.handle }),
     };
   }
