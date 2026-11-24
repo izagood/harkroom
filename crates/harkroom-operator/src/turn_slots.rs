@@ -85,7 +85,8 @@ pub struct TurnSlots {
     observer: Option<SlotObserver>,
 }
 
-/// 자리 수 통지를 받는 쪽. **이 표의 잠금을 쥔 채 불린다** — 안에서 `TurnSlots` 를 다시 잠그지 않는다.
+/// 자리 수 통지를 받는 쪽. **이 표의 잠금을 쥔 채 불린다** — 안에서 `TurnSlots` 를 다시 잠그지 않고, 다른 잠금·입출력·
+/// 패닉할 수 있는 일을 하지 않는다(채널에 넣고 바로 돌아온다 — 패닉하면 칸 표의 잠금이 오염된다).
 pub type SlotObserver = Box<dyn Fn(&str, usize) + Send + Sync>;
 
 fn answer(req: &RunnerLinkRequest, status: u16, body: String) -> RunnerLinkResponse {

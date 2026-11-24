@@ -75,6 +75,9 @@ struct NamingScheduler {
     poll: Arc<PollLoop>,
 }
 
+/// 오퍼레이터가 풀 에이전트의 러너에게 주는 표지(오퍼레이터 `assignments::RUNNER_ONE_JOB_ENV` 와 같은 이름).
+const RUNNER_ONE_JOB_ENV: &str = "HARKROOM_RUNNER_ONE_JOB";
+
 impl Scheduler for NamingScheduler {
     fn admit(&self, batch: &Value, ctx: &BatchContext) -> Result<AdmitOutcome, HarkroomError> {
         self.maker.set_names(Names {
@@ -93,6 +96,9 @@ impl Scheduler for NamingScheduler {
     }
     fn drain(&self) {
         self.inner.drain();
+    }
+    fn idle(&self) -> bool {
+        self.inner.idle()
     }
 }
 
@@ -463,13 +469,25 @@ fn main() {
         now_ms,
     );
     let drain_limit = Duration::from_millis(config.turn_timeout_ms) + Duration::from_secs(5 * 60);
-    let poll = Arc::new(PollLoop::new(
+    let poll = PollLoop::new(
         Me {
             id: me_id.clone(),
             handle: me_handle,
         },
         started_at_ms as i64,
-    ));
+    );
+    // 「작업 하나」 러너(I1b) — 오퍼레이터가 풀 에이전트에게만 '1' 을 준다. 그 밖의 값·없음은 상주다.
+    let one_job = env.get(RUNNER_ONE_JOB_ENV).map(String::as_str) == Some("1");
+    let poll = Arc::new(if one_job {
+        eprintln!("[main] 작업 하나 러너({RUNNER_ONE_JOB_ENV}=1) — 할 일이 없으면 스스로 물러난다");
+        // 폴더 정리 박동(30분)까지 살지 않는다 — 뜰 때 한 번 훑는다.
+        harkroom_runner::cleanup_report::tick_now();
+        // 터미널·중계 세션이 열려 있으면 물러나지 않는다(사람이 보고 있다).
+        let busy_relay = Arc::clone(&relay);
+        poll.with_one_job(Box::new(move || !busy_relay.is_empty()))
+    } else {
+        poll
+    });
     let sched = NamingScheduler {
         inner: RunnerScheduler::new(ledger, admit, launcher, Arc::clone(&running))
             .with_drain_limit(drain_limit),

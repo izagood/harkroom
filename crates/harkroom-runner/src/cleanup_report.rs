@@ -773,6 +773,11 @@ pub fn on_turn_started(key: &str) {
     }
 }
 
+/// 지금 한 번 훑는다(I1b) — 「작업 하나」 러너는 30분 박동까지 살지 않으므로 뜰 때마다 한 번 돈다.
+pub fn tick_now() {
+    enqueue(Job::Tick);
+}
+
 /// 턴 끝(정본 `turnWatch.ended`).
 pub fn on_turn_ended(key: &str, mention_id: &str) {
     enqueue(Job::Ended(key.to_string(), mention_id.to_string()));

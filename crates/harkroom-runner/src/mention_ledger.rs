@@ -499,6 +499,20 @@ impl Ledger {
         self.in_flight_threads.remove(key);
     }
 
+    /// 이 러너만 아는 일이 하나도 없는가(I1b) — 도는 턴·재시도 대기·관문 대기·임대 대기·읽음 못 적은 끝난 항목이 전부 비었다.
+    /// 하나라도 있으면 러너가 끝날 때 그 기억이 사라지므로 「작업 하나」 러너는 끝나지 않는다. 최근 끝남·막힘 알림 표는 세지 않는다
+    /// (앞 것은 읽음이 적힌 항목이고, 뒤 것의 항목은 안 읽힌 채라 폴이 다시 내준다 — 빈 폴이 오지 않는다).
+    pub fn quiet(&self) -> bool {
+        self.attempts.is_empty()
+            && self.gate_waits.is_empty()
+            && self.gate_requeues.is_empty()
+            && self.lease_waits.is_empty()
+            && self.in_flight_entries.is_empty()
+            && self.in_flight_threads.is_empty()
+            && self.done_unread.is_empty()
+            && self.bundles.is_empty()
+    }
+
     /// 도는 턴이 쥔 entry(정본 `holdingEntries`).
     pub fn holding_entries(&self) -> Vec<i64> {
         let mut v: Vec<i64> = self.in_flight_entries.iter().copied().collect();

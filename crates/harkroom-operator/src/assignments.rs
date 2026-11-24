@@ -40,6 +40,36 @@ pub struct LocalAgent {
     pub provider_lane: Option<Value>,
     /// 적힌 러너 구현(B4-5a `runner`, `runner_kind_of`). `None` 은 안 적음 = 기본 rust(s9①). env 에는 안 실리고 `runner_pick` 이 읽는다.
     pub runner: Option<crate::local_agents::RunnerKind>,
+    /// 러너 풀(I1b, `runnerPool: true`) — 러너를 상주시키지 않고 깨움·훑기 때만 빌려 띄운다. 기본 꺼짐.
+    pub pool: bool,
+}
+
+fn pool_on(local: Option<&LocalAgent>) -> bool {
+    local.is_some_and(|l| l.pool)
+}
+
+/// 러너에게 「할 일이 없으면 스스로 끝나라」고 알리는 env(풀 에이전트만 '1').
+pub const RUNNER_ONE_JOB_ENV: &str = "HARKROOM_RUNNER_ONE_JOB";
+/// 반납된 풀 에이전트를 이만큼마다 한 번 띄워 훑는다(깨움을 놓쳤을 때의 안전망).
+pub const POOL_SWEEP_MS: u64 = 5 * 60_000;
+/// 턴 칸이 차서 못 빌렸을 때 다시 보는 간격.
+pub const POOL_WAIT_RETRY_MS: u64 = 10_000;
+
+/// 풀 에이전트에 깨움·훑기가 왔을 때의 결과.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PoolWake {
+    /// 이 조정기의 배정이 아니다.
+    NotMine,
+    /// 풀 에이전트가 아니다 — 상주 러너가 받는다.
+    Resident,
+    /// 러너가 떠 있거나 다시 뜨는 중이다(재기동 백오프·회수 포함) — 그 러너가 받는다.
+    Running,
+    /// 빌려 띄웠다.
+    Borrowed,
+    /// 턴 칸이 차서 기다린다(곧 다시 본다).
+    WaitFull,
+    /// 띄우지 못했다 — 다음 훑기 때 다시 본다.
+    Failed,
 }
 
 fn lane_on(local: Option<&LocalAgent>) -> bool {
@@ -114,6 +144,11 @@ pub trait AssignmentDeps: Send + Sync {
     /// 이 머신이 Claude in Chrome 을 열 수 있는가. 못 재면 false.
     fn chrome_host(&self) -> bool {
         false
+    }
+    /// 러너 하나를 더 빌릴 턴 칸이 있는가(I1b). `idle_pool_runners` 는 떠 있지만 아직 턴을 안 잡았을 수 있는 풀 러너 id —
+    /// 그것까지 쓴 칸으로 쳐야 몰린 깨움이 전부 빌리지 않는다. 기본은 있다(상한 없음).
+    fn pool_room(&self, _idle_pool_runners: &[String]) -> bool {
+        true
     }
     /// 이 오퍼레이터의 소유자 id. 모르면 None — personal 배정은 거절한다.
     fn operator_owner_id(&self) -> Option<String>;
@@ -190,6 +225,8 @@ struct State {
     respawns: HashMap<String, Cancel>,
     runner_lane: HashMap<String, bool>,
     current_runner: HashMap<String, String>,
+    /// 러너를 반납한 풀 에이전트 → 반납 시각(ms). 여기 있는 것만 깨움·훑기가 다시 띄운다.
+    parked: HashMap<String, u64>,
 }
 
 pub struct AssignmentReconciler {
@@ -292,6 +329,8 @@ impl AssignmentReconciler {
                     local: local.clone(),
                 },
             );
+            // 띄우는 길에 들어섰다 — 반납 표지를 지운다(실패하면 풀 길이 다시 적는다).
+            st.parked.remove(&agent_id);
             (
                 take_and_cancel(&mut st.respawns, &agent_id),
                 // 회수 중이던 에이전트가 다시 배정됐다 — 예약된 SIGKILL 을 놓는다.
@@ -488,6 +527,7 @@ impl AssignmentReconciler {
         put("HARKROOM_POST_TOOL_HOOK", bit(self.deps.post_tool_hook()));
         put("HARKROOM_CHROME_HOST", bit(self.deps.chrome_host()));
         put(PROVIDER_LANE_ENV, bit(lane_on(local)));
+        put(RUNNER_ONE_JOB_ENV, bit(pool_on(local)));
         env
     }
 
@@ -495,6 +535,7 @@ impl AssignmentReconciler {
         let respawn = {
             let mut st = self.st();
             st.assigned.remove(agent_id);
+            st.parked.remove(agent_id);
             st.respawns.remove(agent_id)
         };
         if let Some(c) = respawn {
@@ -563,23 +604,45 @@ impl AssignmentReconciler {
 
     /// 로컬 설정이 바뀌었다. API 키 연결 켜짐이 바뀌면 러너를 다시 띄운다.
     pub fn set_local(&self, agent_id: &str, local: Option<LocalAgent>) -> &'static str {
-        let (handle, now_on) = {
+        let (handle, now_on, lane_changed, now_pool, pool_changed, parked) = {
             let mut st = self.st();
             let Some(entry) = st.assigned.get_mut(agent_id) else {
                 return "none";
             };
-            let was = lane_on(entry.local.as_ref());
+            let (was, was_pool) = (lane_on(entry.local.as_ref()), pool_on(entry.local.as_ref()));
             entry.local = local;
-            let now_on = lane_on(entry.local.as_ref());
-            if was == now_on {
+            let (now_on, now_pool) = (lane_on(entry.local.as_ref()), pool_on(entry.local.as_ref()));
+            if was == now_on && was_pool == now_pool {
                 return "updated";
             }
-            (entry.definition.handle.clone(), now_on)
+            let handle = entry.definition.handle.clone();
+            let parked = st.parked.contains_key(agent_id);
+            (
+                handle,
+                now_on,
+                was != now_on,
+                now_pool,
+                was_pool != now_pool,
+                parked,
+            )
         };
-        self.deps.log(&format!(
-            "API 키 연결 {}: agent={handle} — 러너를 다시 띄운다(도는 턴이 끝난 뒤)",
-            if now_on { "켬" } else { "끔" }
-        ));
+        if lane_changed {
+            self.deps.log(&format!(
+                "API 키 연결 {}: agent={handle} — 러너를 다시 띄운다(도는 턴이 끝난 뒤)",
+                if now_on { "켬" } else { "끔" }
+            ));
+        }
+        if pool_changed {
+            self.deps.log(&format!(
+                "러너 풀 {}: agent={handle} — 러너를 다시 띄운다(도는 턴이 끝난 뒤)",
+                if now_pool { "켬" } else { "끔" }
+            ));
+            // 풀을 껐는데 러너가 반납된 채다 — 상주 러너가 받아야 하므로 지금 띄운다(반납 표지는 `on_assign` 이 지운다).
+            if !now_pool && parked {
+                self.schedule_reassign(agent_id, 0);
+                return "restarting";
+            }
+        }
         if !self.deps.is_alive(agent_id) {
             return "restarting";
         }
@@ -656,6 +719,19 @@ impl AssignmentReconciler {
             if st.reclaims.contains_key(agent_id) {
                 return;
             }
+            // 풀 에이전트가 할 일을 마치고 스스로 끝났다(코드 0) — 죽음이 아니라 반납이다. 다시 띄우지 않고 다음 깨움·훑기를 기다린다.
+            if pool_on(entry.local.as_ref()) && code == Some(0) {
+                st.backoff.remove(agent_id);
+                st.parked.insert(agent_id.to_string(), now);
+                drop(st);
+                self.deps.log(&format!(
+                    "러너 반납(풀): agent={} — 깨움이 오거나 {}분 뒤 훑을 때 다시 띄운다",
+                    entry.definition.handle,
+                    POOL_SWEEP_MS / 60_000
+                ));
+                self.schedule_pool(agent_id, POOL_SWEEP_MS);
+                return;
+            }
             let last = st.last_spawn_at.get(agent_id).copied().unwrap_or(0);
             let stable = now.saturating_sub(last) > STABLE_MS;
             let base = if stable {
@@ -686,6 +762,93 @@ impl AssignmentReconciler {
             (delay as f64 / 1000.0).round()
         ));
         self.schedule_reassign(agent_id, delay);
+    }
+
+    /// 반납된 풀 에이전트를 `ms` 뒤에 다시 본다. 예약은 `respawns` 에 둔다 — 배정·해제·다른 띄움이 알아서 걷는다.
+    fn schedule_pool(&self, agent_id: &str, ms: u64) {
+        let me = self.me.clone();
+        let id = agent_id.to_string();
+        let cancel = self.deps.schedule(
+            Box::new(move || {
+                let Some(me) = me.upgrade() else { return };
+                me.st().respawns.remove(&id);
+                me.pool_borrow(&id);
+            }),
+            ms,
+        );
+        let prev = self.st().respawns.insert(agent_id.to_string(), cancel);
+        if let Some(c) = prev {
+            c();
+        }
+    }
+
+    /// 깨움이 왔다(I1b). 반납된 풀 에이전트면 칸을 빌려 러너를 띄운다. 그 밖에는 아무것도 하지 않는다.
+    pub fn on_wake(&self, agent_id: &str) -> PoolWake {
+        self.pool_borrow(agent_id)
+    }
+
+    fn pool_borrow(&self, agent_id: &str) -> PoolWake {
+        let now = self.deps.now_ms();
+        let (cur, parked_at, others) = {
+            let st = self.st();
+            let Some(cur) = st.assigned.get(agent_id).cloned() else {
+                return PoolWake::NotMine;
+            };
+            if !pool_on(cur.local.as_ref()) {
+                return PoolWake::Resident;
+            }
+            // 반납 표지가 없으면 러너가 떠 있거나 재기동·회수 길에 있다 — 그 길을 앞지르지 않는다(백오프를 건너뛰지 않게).
+            let Some(at) = st.parked.get(agent_id).copied() else {
+                return PoolWake::Running;
+            };
+            let others: Vec<String> = st
+                .assigned
+                .iter()
+                .filter(|(a, e)| {
+                    a.as_str() != agent_id
+                        && pool_on(e.local.as_ref())
+                        && !st.parked.contains_key(a.as_str())
+                })
+                .filter_map(|(a, _)| st.current_runner.get(a).cloned())
+                .collect();
+            (cur, at, others)
+        };
+        // 훑기 기한이 찬 것은 칸이 없어도 띄운다 — 러너가 제 차례를 기다린다(오늘의 상주 러너와 같다). 안전망이 칸에 막히지 않게.
+        let due = now.saturating_sub(parked_at) >= POOL_SWEEP_MS;
+        if !due && !self.deps.pool_room(&others) {
+            self.schedule_pool(agent_id, POOL_WAIT_RETRY_MS);
+            return PoolWake::WaitFull;
+        }
+        let handle = cur.definition.handle.clone();
+        match self.on_assign(&cur.base_url, cur.definition, cur.local) {
+            Ok(AssignOutcome::Spawned) | Ok(AssignOutcome::Already) => PoolWake::Borrowed,
+            // 앞 세대가 물러나는 중 — `on_assign` 이 다시 띄우기를 예약했다.
+            Ok(AssignOutcome::Retiring) => PoolWake::Running,
+            other => {
+                self.deps.log(&format!(
+                    "풀 러너를 띄우지 못했다: agent={handle} — {} · {}분 뒤 다시 본다",
+                    match &other {
+                        Ok(AssignOutcome::Refused(r)) => r.as_str(),
+                        Err(e) => e.as_str(),
+                        _ => "",
+                    },
+                    POOL_SWEEP_MS / 60_000
+                ));
+                // 배정이 그 사이 풀리지 않았을 때만 다시 반납 자리에 둔다.
+                let still = {
+                    let mut st = self.st();
+                    let still = st.assigned.contains_key(agent_id);
+                    if still {
+                        st.parked.insert(agent_id.to_string(), now);
+                    }
+                    still
+                };
+                if still {
+                    self.schedule_pool(agent_id, POOL_SWEEP_MS);
+                }
+                PoolWake::Failed
+            }
+        }
     }
 
     pub fn announce(&self) -> Vec<Value> {
@@ -723,9 +886,14 @@ mod tests {
         /// `Some(false)` 면 node 가 없다(기본은 있음).
         node_missing: Mutex<bool>,
         account_use: Mutex<crate::runner_pick::AccountUse>,
+        /// 턴 칸이 찼다(풀 러너를 더 못 빌린다).
+        pool_full: Mutex<bool>,
     }
 
     impl AssignmentDeps for Fake {
+        fn pool_room(&self, _idle: &[String]) -> bool {
+            !*self.pool_full.lock().unwrap()
+        }
         fn spawn(
             &self,
             agent_id: &str,
@@ -1092,6 +1260,7 @@ mod tests {
             claude_pool: Some("p".into()),
             provider_lane: None,
             runner: Default::default(),
+            pool: false,
         };
         let out = r
             .on_assign(
@@ -1116,6 +1285,7 @@ mod tests {
             ("HARKROOM_POST_TOOL_HOOK", "1"),
             ("HARKROOM_CHROME_HOST", "0"),
             ("HARKROOM_PROVIDER_LANE", "0"),
+            ("HARKROOM_RUNNER_ONE_JOB", "0"),
         ]
         .into_iter()
         .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -1458,5 +1628,180 @@ mod tests {
         f.advance(5_000);
         assert!(!f.signals.lock().unwrap().iter().any(|s| s.1 == Sig::Kill));
         assert_eq!(r.announce().len(), 1);
+    }
+
+    fn pool() -> LocalAgent {
+        LocalAgent {
+            pool: true,
+            ..Default::default()
+        }
+    }
+
+    /// 풀 에이전트를 배정하고 러너가 할 일을 마쳐 스스로 끝난(코드 0) 자리까지 간다.
+    fn parked() -> (Arc<Fake>, Arc<AssignmentReconciler>) {
+        let (f, r) = setup();
+        let out = r.on_assign(
+            "https://srv",
+            def(CredentialScope::Community, None),
+            Some(pool()),
+        );
+        assert_eq!(out, Ok(AssignOutcome::Spawned));
+        f.kill("a1");
+        r.on_runner_exit("a1", Some(0), None);
+        (f, r)
+    }
+
+    fn spawn_count(f: &Fake) -> usize {
+        f.spawns.lock().unwrap().len()
+    }
+
+    #[test]
+    fn one_job_env_is_always_explicit_and_on_only_for_pool_agents() {
+        let (f, r) = setup();
+        r.on_assign("https://srv", def(CredentialScope::Community, None), None)
+            .unwrap();
+        assert_eq!(f.spawns.lock().unwrap()[0].1[RUNNER_ONE_JOB_ENV], "0");
+        let (f, _r) = parked();
+        assert_eq!(f.spawns.lock().unwrap()[0].1[RUNNER_ONE_JOB_ENV], "1");
+    }
+
+    #[test]
+    fn pool_runner_clean_exit_parks_instead_of_respawning() {
+        let (f, _r) = parked();
+        // 평소 재기동 백오프(1초)가 지나도 다시 뜨지 않는다.
+        f.advance(60_000);
+        assert_eq!(spawn_count(&f), 1);
+        assert!(
+            f.logs
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|l| l.contains("러너 반납(풀)"))
+        );
+    }
+
+    #[test]
+    fn resident_agent_clean_exit_still_respawns_and_wake_does_nothing() {
+        let (f, r) = setup();
+        r.on_assign("https://srv", def(CredentialScope::Community, None), None)
+            .unwrap();
+        assert_eq!(r.on_wake("a1"), PoolWake::Resident);
+        f.kill("a1");
+        r.on_runner_exit("a1", Some(0), None);
+        assert_eq!(r.on_wake("a1"), PoolWake::Resident);
+        f.advance(1_000);
+        assert_eq!(spawn_count(&f), 2);
+    }
+
+    #[test]
+    fn wake_borrows_a_parked_pool_runner_once() {
+        let (f, r) = parked();
+        assert_eq!(r.on_wake("a1"), PoolWake::Borrowed);
+        assert_eq!(spawn_count(&f), 2);
+        // 떠 있는 동안의 깨움은 그 러너가 받는다 — 또 띄우지 않는다.
+        assert_eq!(r.on_wake("a1"), PoolWake::Running);
+        assert_eq!(spawn_count(&f), 2);
+        // 빌린 뒤에는 훑기 예약도 걷혔다.
+        f.advance(POOL_SWEEP_MS * 2);
+        assert_eq!(spawn_count(&f), 2);
+        assert_eq!(r.on_wake("nope"), PoolWake::NotMine);
+    }
+
+    #[test]
+    fn parked_pool_runner_is_swept_every_five_minutes_without_a_wake() {
+        let (f, r) = parked();
+        f.advance(POOL_SWEEP_MS - 1);
+        assert_eq!(spawn_count(&f), 1);
+        f.advance(1);
+        assert_eq!(spawn_count(&f), 2);
+        // 훑은 러너도 할 일이 없으면 다시 반납하고, 다음 훑기가 또 온다.
+        f.kill("a1");
+        r.on_runner_exit("a1", Some(0), None);
+        f.advance(POOL_SWEEP_MS);
+        assert_eq!(spawn_count(&f), 3);
+    }
+
+    #[test]
+    fn pool_runner_crash_keeps_backoff_and_wake_does_not_jump_it() {
+        let (f, r) = setup();
+        r.on_assign(
+            "https://srv",
+            def(CredentialScope::Community, None),
+            Some(pool()),
+        )
+        .unwrap();
+        f.kill("a1");
+        r.on_runner_exit("a1", Some(1), None);
+        // 죽은 것은 반납이 아니다 — 깨움이 백오프를 앞지르지 않는다.
+        assert_eq!(r.on_wake("a1"), PoolWake::Running);
+        assert_eq!(spawn_count(&f), 1);
+        f.advance(1_000);
+        assert_eq!(spawn_count(&f), 2);
+    }
+
+    #[test]
+    fn full_pool_waits_then_borrows_when_room_opens_and_sweep_ignores_room() {
+        let (f, r) = parked();
+        *f.pool_full.lock().unwrap() = true;
+        assert_eq!(r.on_wake("a1"), PoolWake::WaitFull);
+        f.advance(POOL_WAIT_RETRY_MS * 2);
+        assert_eq!(spawn_count(&f), 1, "칸이 찬 동안은 띄우지 않는다");
+        *f.pool_full.lock().unwrap() = false;
+        f.advance(POOL_WAIT_RETRY_MS);
+        assert_eq!(spawn_count(&f), 2, "칸이 나면 다음 재시도에서 띄운다");
+        // 칸이 계속 차 있어도 훑기 기한이 차면 띄운다(안전망이 칸에 막히지 않는다).
+        f.kill("a1");
+        r.on_runner_exit("a1", Some(0), None);
+        *f.pool_full.lock().unwrap() = true;
+        assert_eq!(r.on_wake("a1"), PoolWake::WaitFull);
+        f.advance(POOL_SWEEP_MS);
+        assert_eq!(spawn_count(&f), 3);
+    }
+
+    #[test]
+    fn failed_borrow_parks_again_and_retries_at_next_sweep() {
+        let (f, r) = parked();
+        *f.spawn_err.lock().unwrap() = Some(SpawnError::Other("boom".into()));
+        assert_eq!(r.on_wake("a1"), PoolWake::Failed);
+        assert_eq!(spawn_count(&f), 1);
+        f.advance(POOL_SWEEP_MS);
+        assert_eq!(spawn_count(&f), 2);
+    }
+
+    #[test]
+    fn unassign_drops_the_parked_agent_and_its_sweep() {
+        let (f, r) = parked();
+        r.on_unassign("https://srv", "a1", true);
+        assert_eq!(r.on_wake("a1"), PoolWake::NotMine);
+        f.advance(POOL_SWEEP_MS * 2);
+        assert_eq!(spawn_count(&f), 1);
+    }
+
+    #[test]
+    fn turning_pool_off_while_parked_brings_the_resident_runner_back() {
+        let (f, r) = parked();
+        assert_eq!(r.set_local("a1", None), "restarting");
+        f.advance(0);
+        assert_eq!(spawn_count(&f), 2);
+        assert_eq!(f.spawns.lock().unwrap()[1].1[RUNNER_ONE_JOB_ENV], "0");
+        // 이제 상주 러너다 — 코드 0 으로 끝나도 다시 뜬다.
+        f.kill("a1");
+        r.on_runner_exit("a1", Some(0), None);
+        f.advance(1_000);
+        assert_eq!(spawn_count(&f), 3);
+    }
+
+    #[test]
+    fn turning_pool_on_restarts_the_resident_runner_into_a_pool_runner() {
+        let (f, r) = setup();
+        r.on_assign("https://srv", def(CredentialScope::Community, None), None)
+            .unwrap();
+        assert_eq!(r.set_local("a1", Some(pool())), "restarting");
+        assert_eq!(f.signals.lock().unwrap().last().unwrap().1, Sig::Term);
+        // 물러난 러너(코드 0)는 이제 풀 에이전트라 반납으로 친다 — 깨움이 풀 러너를 띄운다.
+        f.kill("a1");
+        r.on_runner_exit("a1", Some(0), None);
+        assert_eq!(r.on_wake("a1"), PoolWake::Borrowed);
+        assert_eq!(f.spawns.lock().unwrap()[1].1[RUNNER_ONE_JOB_ENV], "1");
     }
 }

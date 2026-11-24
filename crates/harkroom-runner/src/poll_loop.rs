@@ -324,6 +324,10 @@ pub trait Scheduler {
     fn done_entries(&self) -> Vec<i64>;
     /// 도는 턴이 모두 끝날 때까지 기다린다.
     fn drain(&self);
+    /// 이 러너만 아는 일이 하나도 없는가(「작업 하나」 러너가 끝나도 되는가, I1b). 모르면 `false` — 끝나지 않는다.
+    fn idle(&self) -> bool {
+        false
+    }
 }
 
 /// 루프 밖의 손잡이들.
@@ -347,7 +351,13 @@ pub struct PollLoop {
     /// 채널·계정 목록 캐시와 그 나이를 재는 기준.
     directory: Mutex<Option<Directory>>,
     born: std::time::Instant,
+    /// 「작업 하나」 러너(I1b, 풀 에이전트)일 때만 있다 — 루프 밖의 바쁨(열린 터미널·중계 세션)을 묻는다.
+    /// 없으면(기본) 빈 폴에도 끝나지 않는다.
+    one_job_busy: Option<BusyFn>,
 }
+
+/// 루프 밖에서 본 「아직 할 일이 있다」.
+pub type BusyFn = Box<dyn Fn() -> bool + Send + Sync>;
 
 impl PollLoop {
     pub fn new(me: Me, started_at_ms: i64) -> Self {
@@ -359,7 +369,14 @@ impl PollLoop {
             me: Mutex::new(me),
             directory: Mutex::new(None),
             born: std::time::Instant::now(),
+            one_job_busy: None,
         }
+    }
+
+    /// 「작업 하나」 러너로 돈다 — 빈 폴이 왔고 스케줄러가 비었고(`Scheduler::idle`) `busy` 도 아니면 스스로 물러난다.
+    pub fn with_one_job(mut self, busy: BusyFn) -> Self {
+        self.one_job_busy = Some(busy);
+        self
     }
 
     /// 이 배치에 쓸 채널·계정 목록 — 필요할 때만 서버에서 다시 읽는다([`Directory`]). 읽기가 실패하면 앞 목록은 그대로
@@ -448,7 +465,19 @@ impl PollLoop {
         if empty {
             // 멘션이 없어도 종료 요청은 봐야 한다 — 조용한 러너가 영원히 물러나지 않으면 안 된다.
             let at = idle_stop_requested_at(&batch, || src.definition())?;
-            self.consider_stop_request(at.as_deref());
+            if self.consider_stop_request(at.as_deref()) {
+                return Ok(0);
+            }
+            // 「작업 하나」 러너(I1b) — 서버에 안 읽은 것이 없고(빈 폴), 이 러너만 아는 일도 없고, 터미널도 닫혀 있으면 물러난다.
+            // 미룬·막힌 항목은 안 읽힌 채라 폴이 비지 않는다 — 이 자리에 오지 않는다.
+            if let Some(busy) = &self.one_job_busy
+                && self.running()
+                && sched.idle()
+                && !busy()
+            {
+                eprintln!("[main] 할 일이 없다 — 러너를 반납한다(작업 하나 러너)");
+                self.stop();
+            }
             return Ok(0);
         }
         eprintln!(
