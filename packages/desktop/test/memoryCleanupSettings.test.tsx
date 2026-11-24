@@ -80,6 +80,13 @@ describe('워크스페이스', () => {
     expect(tz.getAttribute('aria-invalid')).toBe('true');
     expect(screen.getByDisplayValue('03:00').getAttribute('aria-invalid')).toBe('false');
   });
+  it('다음 정리의 날짜와 시각만 굵게 쓴다', async () => {
+    fake();
+    render(<WorkspaceMemoryCleanup isAdmin />);
+    const bold = (await screen.findByTestId('ws-memory-cleanup-next')).querySelector('b')?.textContent;
+    expect(bold).toMatch(/^\d+월 \d+일 03:00/);
+    expect(bold).not.toContain('Asia/Seoul');
+  });
   it('옛 서버(404)에서는 그리지 않는다', async () => {
     const c = fake({ memoryCleanupSchedule: vi.fn(async () => { throw new ApiError(404, 'not_found', 'x'); }) });
     const { container } = render(<WorkspaceMemoryCleanup isAdmin />);
@@ -111,7 +118,35 @@ describe('에이전트 카드', () => {
     await screen.findByTestId('agent-memory-cleanup');
     expect(screen.queryByTestId('memory-archive-near')).toBeNull();
     rerender(<AgentMemoryCleanup agentId="a1" harness="claude-code" apiKey={false} archived={271} onReverted={vi.fn()} />);
-    expect(screen.getByTestId('memory-archive-near').textContent).toBe('보관 271/300 · 곧 오래된 것부터 지워집니다');
+    const near = screen.getByTestId('memory-archive-near');
+    expect(near.textContent).toBe('보관 271/300 · 곧 오래된 것부터 지워집니다');
+    expect(near.querySelector('b')?.textContent).toBe('271/300');
+  });
+  it('기록의 시각은 24시간제이고, 해가 다를 때만 연도를 적는다', async () => {
+    const at = (y: number, mo: number, d: number) => new Date(y, mo, d, 15, 5).toISOString();
+    const y = new Date().getFullYear();
+    const old = at(y - 1, 0, 2);
+    fake({ agentBackground: vi.fn(async () => bg({ runs: [run({ id: 'now', finishedAt: new Date().toISOString() }), run({ id: 'old', finishedAt: old })] })) });
+    card();
+    expect((await screen.findByTestId('memory-run-old')).textContent).toContain(`${y - 1}년 1월 2일 15:05`);
+    cleanup();
+    vi.useFakeTimers({ now: new Date(2026, 10, 25, 12), toFake: ['Date'] });
+    try {
+      fake({ agentBackground: vi.fn(async () => bg({ runs: [run({ id: 'd', finishedAt: at(2026, 10, 21) })] })) });
+      card();
+      const row = await screen.findByTestId('memory-run-d');
+      expect(row.textContent).toContain('11월 21일 15:05');
+      expect(row.textContent).not.toContain('2026');
+    } finally { vi.useRealTimers(); }
+  });
+  it('en 은 줄 머리만 대문자로 시작하고, 단추 둘은 한 묶음이다', async () => {
+    usePrefsStore.getState().setLocale('en');
+    fake({ agentBackground: vi.fn(async () => bg({ runs: [run({ finishedAt: new Date().toISOString() })] })) });
+    card();
+    expect((await screen.findByTestId('memory-run-r1')).textContent).toMatch(/^Today \d\d:\d\d/);
+    expect(screen.getByText(/^Last: today /)).toBeTruthy();
+    const undo = screen.getByRole('button', { name: 'Undo' });
+    expect(undo.parentElement).toBe(screen.getByRole('button', { name: 'Changes' }).parentElement);
   });
   it('저장이 실패하면 스위치를 되돌린다', async () => {
     fake({ setAgentMemoryCleanup: vi.fn(async () => { throw new Error('x'); }) });

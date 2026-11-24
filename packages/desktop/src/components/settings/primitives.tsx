@@ -536,3 +536,10 @@ export function SaveStatus({ state, failedLabel }: { state: SaveState; failedLab
     </p>
   );
 }
+
+/** 번역된 글에서 한 부분(날짜·숫자)만 굵게 그린다. 그 부분이 글에 없으면 글을 그대로 그린다. */
+export function Emphasis({ text, part }: { text: string; part: string }) {
+  const at = part ? text.indexOf(part) : -1;
+  if (at < 0) return <>{text}</>;
+  return <>{text.slice(0, at)}<b className="font-semibold">{part}</b>{text.slice(at + part.length)}</>;
+}

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useState, type ReactNode } from 'react';
 import { getController } from '../../state/controller';
 import { ApiError } from '../../lib/api';
-import { dayLabel, stampLabel } from '../../lib/day';
+import { dayLabel } from '../../lib/day';
 import { MAX_ARCHIVED_MEMORIES } from '../../lib/memoryList';
 import {
   ARCHIVE_NEAR, pausedKinds, windowText,
@@ -9,17 +9,24 @@ import {
 } from '../../lib/memoryCleanupSettings';
 import type { Locale, Translate } from '../../i18n';
 import { useLocale, useT } from '../../i18n/useT';
-import { Button, Switch } from './primitives';
+import { Button, Emphasis, Switch } from './primitives';
 
 type Data = { cleanup: AgentCleanup; bg: AgentBackground };
 
+/** 정리 기록의 시각 — 늘 24시간제. 그제부터는 월·일, 해가 다르면 연도까지 적는다. */
 function whenLabel(iso: string, locale: Locale): string {
   const now = new Date();
   const d = new Date(iso);
   const time = new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(d);
   const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
-  return d >= yesterday ? `${dayLabel(iso, locale, now)} ${time}` : stampLabel(iso, locale, now);
+  const day = d >= yesterday ? dayLabel(iso, locale, now) : new Intl.DateTimeFormat(locale, {
+    month: 'short', day: 'numeric', ...(d.getFullYear() !== now.getFullYear() && { year: 'numeric' }),
+  }).format(d);
+  return `${day} ${time}`;
 }
+
+/** 줄 머리에 설 때만 첫 글자를 대문자로(en 의 today·yesterday). */
+const lineHead = (s: string, locale: Locale) => s.charAt(0).toLocaleUpperCase(locale) + s.slice(1);
 
 function reasonText(t: Translate, reason: string): string {
   switch (reason) {
@@ -203,7 +210,7 @@ export function AgentMemoryCleanup({ agentId, harness, apiKey, archived, onRever
       </div>
       {archived > ARCHIVE_NEAR && (
         <p data-testid="memory-archive-near" className="border-t border-warning-border bg-warning-surface px-3 py-1.5 text-meta text-warning tabular-nums">
-          {t('memoryCleanup.ag.archiveNear', { n: archived, max: MAX_ARCHIVED_MEMORIES })}
+          <Emphasis text={t('memoryCleanup.ag.archiveNear', { n: archived, max: MAX_ARCHIVED_MEMORIES })} part={`${archived}/${MAX_ARCHIVED_MEMORIES}`} />
         </p>
       )}
       {body}
@@ -244,17 +251,21 @@ function RunRow({ agentId, run, onReverted }: { agentId: string; run: Background
   return (
     <div data-testid={`memory-run-${run.id}`} className="border-t border-border px-3 py-1.5 text-meta">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="min-w-24 text-fg-subtle">{whenLabel(run.finishedAt ?? run.createdAt, locale)}</span>
+        <span className="min-w-24 text-fg-subtle">{lineHead(whenLabel(run.finishedAt ?? run.createdAt, locale), locale)}</span>
         <span className="font-medium">{t(run.kind === 'cleanup' ? 'memoryCleanup.ag.daily' : 'memoryCleanup.ag.bg')}</span>
         <span className={`min-w-36 flex-1 break-words ${line.warn ? 'text-warning' : 'text-fg-muted'}`}>{line.text}</span>
-        {run.changes > 0 && <button className={SMALL} aria-expanded={changes !== null} onClick={view}>{t('memoryCleanup.ag.view')}</button>}
-        {reverted
-          ? <span className="text-fg-subtle">{counts ? `${t('memoryCleanup.ag.reverted')} · ${counts}` : t('memoryCleanup.ag.reverted')}</span>
-          : run.changes > 0 && (
-            <button className={SMALL} disabled={!finished || busy || confirming} onClick={() => setConfirming(true)}>
-              {t('memoryCleanup.ag.revert')}
-            </button>
-          )}
+        {(run.changes > 0 || reverted) && (
+          <span className="ml-auto flex max-w-full shrink-0 flex-wrap items-center gap-2">
+            {run.changes > 0 && <button className={SMALL} aria-expanded={changes !== null} onClick={view}>{t('memoryCleanup.ag.view')}</button>}
+            {reverted
+              ? <span className="text-fg-subtle">{counts ? `${t('memoryCleanup.ag.reverted')} · ${counts}` : t('memoryCleanup.ag.reverted')}</span>
+              : (
+                <button className={SMALL} disabled={!finished || busy || confirming} onClick={() => setConfirming(true)}>
+                  {t('memoryCleanup.ag.revert')}
+                </button>
+              )}
+          </span>
+        )}
       </div>
       {confirming && (
         <div className="mt-1 space-y-1.5 rounded-row border border-warning-border bg-warning-surface px-2 py-1.5 text-warning">

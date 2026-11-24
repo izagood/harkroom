@@ -3,7 +3,7 @@ import { getController } from '../../state/controller';
 import { ApiError } from '../../lib/api';
 import { nextWindow, timeZones, validTime, validTz, type CleanupSchedule } from '../../lib/memoryCleanupSettings';
 import { useLocale, useT } from '../../i18n/useT';
-import { Button, SettingsGroup, Switch } from './primitives';
+import { Button, Emphasis, SettingsGroup, Switch } from './primitives';
 
 type Load = CleanupSchedule | 'loading' | 'failed' | 'unsupported';
 
@@ -143,9 +143,12 @@ export function WorkspaceMemoryCleanup({ isAdmin }: { isAdmin: boolean }) {
       </div>
       {next && when && (
         <p data-testid="ws-memory-cleanup-next" className="px-4 py-2 text-meta text-fg-muted">
-          {next.local
-            ? t('memoryCleanup.ws.nextOther', { when, local: next.local })
-            : t('memoryCleanup.ws.next', { when, tz: load.tz })}
+          <Emphasis
+            part={when}
+            text={next.local
+              ? t('memoryCleanup.ws.nextOther', { when, local: next.local })
+              : t('memoryCleanup.ws.next', { when, tz: load.tz })}
+          />
         </p>
       )}
       <ul className="list-disc space-y-0.5 py-2 pr-4 pl-8 text-meta text-fg-muted">
