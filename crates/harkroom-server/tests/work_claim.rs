@@ -141,6 +141,18 @@ async fn child(
     .unwrap()
 }
 
+/// 이 시험의 스레드에 딸린 `work_claim` 줄 수. 시험들이 한 DB 를 같이 쓰고 나란히 돌아서, 표 전체를 세면
+/// 다른 시험이 적은 줄이 섞인다.
+async fn claim_rows(admin: &PgPool, (_, root): &(String, String)) -> i64 {
+    sqlx::query_scalar(
+        "select count(*) from work_claim c join work w on w.id = c.work_id where w.thread_root_id = $1::uuid",
+    )
+    .bind(root)
+    .fetch_one(admin)
+    .await
+    .unwrap()
+}
+
 async fn next(db: &Db, op: &str) -> Option<String> {
     claim_next_with(&db.w, true, op, 0, None, None)
         .await
@@ -199,10 +211,7 @@ async fn eligibility_and_order() {
         .await
         .unwrap();
     assert_eq!(off, Err(Refusal::Disabled));
-    let rows: i64 = sqlx::query_scalar("select count(*) from work_claim")
-        .fetch_one(a)
-        .await
-        .unwrap();
+    let rows = claim_rows(a, &t).await;
     assert_eq!(rows, 0);
 
     // 잡을 수 없는 것들: 담당 없음 · 허용 표에 없는 에이전트 · 이미 도는 작업 · 닫힌 작업.
@@ -362,10 +371,7 @@ async fn lease_renew_release_and_takeover() {
         .unwrap();
     assert_eq!(next(&db, &op1).await, Some(w2.clone()));
     assert_eq!(next(&db, &op1).await, None);
-    let rows: i64 = sqlx::query_scalar("select count(*) from work_claim")
-        .fetch_one(a)
-        .await
-        .unwrap();
+    let rows = claim_rows(a, &t).await;
     assert_eq!(rows, 2, "작업마다 한 줄");
 }
 
