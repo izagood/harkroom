@@ -396,3 +396,43 @@ fn old_server_empty_poll_reads_definition_for_stop() {
     );
     assert_eq!(src.polls.get(), 2);
 }
+
+#[test]
+fn kick_cuts_the_current_rest_and_skips_one_pending_rest() {
+    // 깨움 신호(E2b): 걸린 깨움은 다음 쉼 한 번을 건너뛰게 하고, 그다음 쉼은 다시 끝까지 잔다.
+    let poll = PollLoop::new(
+        Me {
+            id: "me".into(),
+            handle: "me".into(),
+        },
+        START,
+    );
+    poll.kick();
+    let t = Instant::now();
+    poll.rest(2_000);
+    assert!(
+        t.elapsed() < Duration::from_millis(500),
+        "걸린 깨움이 쉼을 건너뛴다"
+    );
+    let t = Instant::now();
+    poll.rest(60);
+    assert!(
+        t.elapsed() >= Duration::from_millis(50),
+        "깨움이 없으면 평소대로 쉰다"
+    );
+
+    let poll = Arc::new(poll);
+    let p = Arc::clone(&poll);
+    let h = std::thread::spawn(move || {
+        let t = Instant::now();
+        p.rest(5_000);
+        t.elapsed()
+    });
+    std::thread::sleep(Duration::from_millis(100));
+    poll.kick();
+    assert!(
+        h.join().unwrap() < Duration::from_millis(2_000),
+        "자는 중의 깨움이 쉼을 끊는다"
+    );
+    assert!(poll.running(), "깨움은 루프를 멈추지 않는다");
+}

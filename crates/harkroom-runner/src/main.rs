@@ -125,6 +125,22 @@ fn main() {
     let provider_lane = env.get("HARKROOM_PROVIDER_LANE").map(String::as_str) == Some("1");
     let mut opts = LinkOptions::new(config.operator_link.clone());
     opts.provider_lane = Some(provider_lane);
+    // 깨움 신호(E2b, 스위치 `HARKROOM_WAKE_TURN=on`) — 꺼져 있으면 프레임은 그림자다. 폴 루프가 선 뒤 `bind` 한다.
+    let wake_signal = Arc::new(harkroom_runner::wake_signal::WakeSignal::new(
+        harkroom_runner::wake_signal::wake_turn_enabled(
+            env.get(harkroom_runner::wake_signal::WAKE_TURN_ENV)
+                .map(String::as_str),
+        ),
+    ));
+    {
+        let sig = Arc::clone(&wake_signal);
+        opts.on_wake = Box::new(move |f| {
+            let note = sig.on_frame(&f);
+            if sig.enabled() {
+                eprintln!("[wake] 깨움 프레임: {note:?}");
+            }
+        });
+    }
     // 지난 러너가 남긴 lane 턴 파일을 기동 때 걷는다(정본 `main.ts` 655 `sweepLaneTurnDir`).
     harkroom_runner::provider_lane::sweep_lane_turn_dir(std::path::Path::new(&config.state_dir));
     // 옛 lane 대체 길이 남긴 `lane-mcp.json`(그때의 러너 링크 secret)을 지운다(정본 `sweepLaneMcpConfig`, L3c-3c).
@@ -448,6 +464,13 @@ fn main() {
         poll: Arc::clone(&poll),
     };
 
+    {
+        let kick_poll = Arc::clone(&poll);
+        wake_signal.bind(&me_id, Box::new(move || kick_poll.kick()));
+        if wake_signal.enabled() {
+            eprintln!("[wake] 깨움으로 당기기 켜짐(HARKROOM_WAKE_TURN=on)");
+        }
+    }
     let (stop_poll, lane_link) = (Arc::clone(&poll), Arc::clone(&link));
     let on_lane_turn: Option<Box<dyn Fn(bool) + Send + Sync>> = if provider_lane {
         Some(Box::new(move |ok| lane_link.notify_provider_lane_turn(ok)))

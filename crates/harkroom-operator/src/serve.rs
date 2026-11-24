@@ -826,6 +826,16 @@ pub fn spawn_server_link(
     let close_frames = std::sync::Arc::clone(&frames);
     let reap_runners = std::sync::Arc::clone(&state.runners);
     let wake_link = link.clone();
+    // E2b(스위치 `HARKROOM_WAKE_TURN=on`, 기본 꺼짐) — 깨움을 그 에이전트의 지금 세대 러너로 넘긴다.
+    let wake_forward_on = crate::wake_forward::enabled(
+        std::env::var(crate::wake_forward::WAKE_TURN_ENV)
+            .ok()
+            .as_deref(),
+    );
+    let (wake_runners, wake_runner_link) = (
+        std::sync::Arc::clone(&state.runners),
+        std::sync::Arc::clone(&bridge_link_adopt),
+    );
     let on_frame = Box::new(move |frame: harkroom_proto::p2::ServerToOperatorFrame| {
         // E2a(그림자) — 깨움 프레임은 적어 두고 받았다고만 답한다. 턴을 열지 않고 다른 동작도 바꾸지 않는다(글 내용은 오지 않는다).
         if let harkroom_proto::p2::ServerToOperatorFrame::Wake { wake_id, .. } = &frame {
@@ -835,6 +845,14 @@ pub fn spawn_server_link(
             let _ = wake_link.send(&OperatorToServerFrame::WakeAck {
                 wake_id: wake_id.clone(),
             });
+            if wake_forward_on {
+                let out = crate::wake_forward::forward(
+                    &frame,
+                    |agent| wake_runners.current_incarnation(agent),
+                    |runner, f| wake_runner_link.send(runner, f),
+                );
+                eprintln!("깨움 넘김(E2b): {wake_id} → {out:?}");
+            }
             return;
         }
         // 배정 프레임은 조정기로(작업 스레드에서 차례로 처리한다).
