@@ -128,6 +128,8 @@ pub struct McpWrites {
     pub bundle: Option<PgPool>,
     /// `bg.complete`(러너 길) — [`super::bg_complete::BG_COMPLETE_PRIVILEGES`].
     pub bg_complete: Option<PgPool>,
+    /// 백그라운드 회차의 기억 쓰기 — [`super::bg_write::BG_WRITE_PRIVILEGES`].
+    pub bg_write: Option<PgPool>,
     /// `delegation.close` — [`DELEGATION_CLOSE_PRIVILEGES`].
     pub delegation: Option<PgPool>,
     /// `grant.revoke`·`permission.revoke` — `grant_writes::GRANT_REVOKE_PRIVILEGES`.

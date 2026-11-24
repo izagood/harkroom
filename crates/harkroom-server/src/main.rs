@@ -329,6 +329,27 @@ async fn main() {
         }
         _ => None,
     };
+    // 백그라운드 회차의 기억 쓰기 — 권한이 모자라면 회차 쓰기만 꺼진다(일반 턴의 기억 쓰기는 그대로).
+    let bg_mem_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::mcp::bg_write as b;
+            match write::missing_in(w, b::BG_WRITE_PRIVILEGES, b::BG_WRITE_SEQUENCES).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: mcp background memory writes off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: mcp background memory writes off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // C4b ④-a(2/2) — MCP `bg.complete`(러너 길). 쓰기 풀에 회차 닫기·메모 보관 권한이 있을 때만 — 아니면 TS 에 남는다.
     let bg_complete_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -5344,6 +5365,7 @@ async fn main() {
                 ask: mcp_ask_write,
                 bundle: bundle_write,
                 bg_complete: bg_complete_write,
+                bg_write: bg_mem_write,
                 delegation: mcp_deleg_write,
                 grant: grant_write,
                 note: note_write,

@@ -118,7 +118,11 @@ pub async fn handle(
     let runner = super::bg_claim::runner(has_operator, &parts.headers);
     // P6-2c: 오퍼레이터가 잰 「정확한 명령」 파일 해시(TS `req.operator ? parseCommandFilesHeader(...) : null`).
     let command_files = command_files_header(has_operator, &parts.headers);
+    let bg_job = (has_operator && bg_cause(&parts.headers))
+        .then(|| bg_job_id(&parts.headers))
+        .flatten();
     let tools = |tool: &'static str, args: serde_json::Value| -> AnswerFut {
+        let bg_job = bg_job.clone();
         let (pool, me, cause, turn, writes, command_files) = (
             pool.clone(),
             me.clone(),
@@ -310,6 +314,29 @@ pub async fn handle(
             {
                 return r;
             }
+            // 백그라운드 회차의 기억 쓰기 — 상한 예약·변경 기록을 감싼다. 권한이 없으면 답하지 않는다(감싸기 없이 쓰지 않는다).
+            if let Some(job) = bg_job
+                .as_deref()
+                .filter(|_| super::bg_write::is_write(tool))
+            {
+                let (mem, body, bg) = (
+                    writes.memory.as_ref()?,
+                    writes.memory_body.as_ref()?,
+                    writes.bg_write.as_ref()?,
+                );
+                return super::bg_write::answer(
+                    &pool,
+                    mem,
+                    body,
+                    bg,
+                    &me,
+                    job,
+                    turn.as_deref(),
+                    tool,
+                    &args,
+                )
+                .await;
+            }
             if let Some(r) =
                 super::mem_writes::answer(&pool, writes.memory.as_ref(), &me, tool, &args).await
             {
@@ -319,7 +346,7 @@ pub async fn handle(
                 &pool,
                 writes.memory_body.as_ref(),
                 &me,
-                turn.as_deref(),
+                turn.as_deref().into(),
                 tool,
                 &args,
             )
@@ -353,6 +380,7 @@ pub async fn handle(
         operator_id: auth.operator.as_ref().map(|o| o.id.as_str()),
         bg_cause: has_operator && bg_cause(&parts.headers),
         bg_pool: writes.bg_complete.as_ref(),
+        bg_write: writes.bg_write.is_some(),
         cause_header: parts
             .headers
             .get("x-harkroom-cause")
@@ -476,6 +504,12 @@ pub fn bg_cause(headers: &axum::http::HeaderMap) -> bool {
     v.get(..3).is_some_and(|p| p.eq_ignore_ascii_case("bg:")) && is_uuid(&v[3..])
 }
 
+/// [`bg_cause`] 가 참인 헤더의 회차 id(소문자).
+fn bg_job_id(headers: &axum::http::HeaderMap) -> Option<String> {
+    let v = headers.get("x-harkroom-cause")?.to_str().ok()?;
+    Some(v.get(3..)?.to_ascii_lowercase())
+}
+
 fn is_uuid(s: &str) -> bool {
     let b = s.as_bytes();
     b.len() == 36
@@ -512,6 +546,8 @@ pub struct Pre<'a> {
     pub bg_cause: bool,
     /// 회차 상태를 읽을 풀 — `bg.complete` 쓰기 풀(`bg_job` SELECT 가 이미 있다). 없으면 회차 상태 확인은 TS `/mcp/admit`.
     pub bg_pool: Option<&'a sqlx::PgPool>,
+    /// 회차의 기억 쓰기를 Rust 가 답하는가([`super::bg_write`]).
+    pub bg_write: bool,
     /// cause 헤더 글자(`bg_cause` 가 참일 때 `bg:<uuid>`).
     pub cause_header: Option<&'a str>,
     /// P2 — 있으면 입장 확인을 Rust 가 끝까지 한다([`local_admit`]). 없으면 TS `/mcp/admit`.
@@ -591,6 +627,7 @@ impl Pre<'static> {
         operator_id: None,
         bg_cause: false,
         bg_pool: None,
+        bg_write: false,
         cause_header: None,
         presence: None,
         switches: AdmitSwitches {
@@ -611,7 +648,11 @@ fn admit_refused(tool: &str, pre: &Pre<'_>, headers: &axum::http::HeaderMap) -> 
         && pre.operator_id.is_some()
         && headers.get("x-harkroom-cause").is_none()
         && headers.get("x-harkroom-turn-id").is_none();
-    !runner_complete && (pre.bg_cause || !bg_write)
+    if bg_write {
+        // 회차 상태를 읽을 풀이 없으면 상태를 못 보니 받지 않는다.
+        return pre.bg_cause && !(pre.bg_write && pre.bg_pool.is_some());
+    }
+    !runner_complete
 }
 
 /// 앞부분 판정 — `Some(답)` 이면 그 거절을 도구 답으로 싣는다. `Err(())` 은 확인을 못 했다(→ TS).
@@ -1121,6 +1162,7 @@ mod tests {
             operator_id: op.then_some("o"),
             bg_cause: bg,
             bg_pool: None,
+            bg_write: false,
             cause_header: None,
             presence: None,
             switches: AdmitSwitches::default(),

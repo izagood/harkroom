@@ -15,6 +15,7 @@ pub mod automation_propose;
 pub mod automation_run;
 pub mod bg_claim;
 pub mod bg_complete;
+pub mod bg_write;
 pub mod db_retry;
 pub mod delegate_gate;
 pub mod grant_delegate;

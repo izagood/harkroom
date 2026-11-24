@@ -121,7 +121,7 @@ pub async fn remove(
     if let Err(r) = agent_target(&st.write, &id, false).await {
         return r;
     }
-    if let Err(e) = delete(&st.write, &owner(&id), None, &slug, None).await {
+    if let Err(e) = delete(&st.write, &owner(&id), None.into(), &slug, None).await {
         return internal(e);
     }
     audit(
@@ -209,7 +209,7 @@ pub async fn put(
     let r = upsert(
         &st.write,
         &owner(&id),
-        None,
+        None.into(),
         &slug,
         &b.value,
         b.description.as_deref(),
@@ -511,7 +511,7 @@ async fn revert_slug(
         let r = archive_one(write, id, slug, Some(Some(&updated))).await?;
         (matches!(r, Archived::Ok), false)
     } else if let Some((rev, _, _)) = first {
-        match restore_one(write, &owner(id), slug, Some(rev), None).await? {
+        match restore_one(write, &owner(id), slug, Some(rev), None.into()).await? {
             Restored::Ok => (true, false),
             Restored::TooMany => (false, true),
             Restored::NotFound => (false, false),
