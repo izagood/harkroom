@@ -20,7 +20,10 @@ const STALE_DAYS: i64 = 30;
 const NEVER_READ_GRACE_DAYS: i64 = 7;
 const OLD_DAYS: i64 = 90;
 const BODY_SIMILARITY: f64 = 0.5;
-const NAME_SIMILARITY: f64 = 0.6;
+pub(super) const NAME_SIMILARITY: f64 = 0.6;
+/// 요약이 이만큼 겹치면 비슷한 짝. 낱말이 [`DESC_MIN_TOKENS`] 보다 적은 요약은 우연히 겹쳐 견주지 않는다.
+pub(super) const DESC_SIMILARITY: f64 = 0.5;
+const DESC_MIN_TOKENS: usize = 4;
 const LIST_CAP: usize = 30;
 const LARGEST_CAP: usize = 10;
 /// shared `MAX_JOURNAL_MEMORIES_PER_ACCOUNT - JOURNAL_EXPIRING_WINDOW`.
@@ -142,7 +145,7 @@ fn body_split_re() -> &'static regex::Regex {
 }
 
 /// TS `nameTokens`.
-fn name_tokens(slug: &str) -> HashSet<String> {
+pub(super) fn name_tokens(slug: &str) -> HashSet<String> {
     let s = slug.strip_prefix("mem/").unwrap_or(slug);
     s.split(['/', '_', '-'])
         .filter(|t| utf16_len(t) > 1 && !t.bytes().all(|b| b.is_ascii_digit()))
@@ -151,7 +154,7 @@ fn name_tokens(slug: &str) -> HashSet<String> {
 }
 
 /// TS `bodyTokens`.
-fn body_tokens(value: &str) -> HashSet<String> {
+pub(super) fn body_tokens(value: &str) -> HashSet<String> {
     body_split_re()
         .split(&value.to_lowercase())
         .filter(|t| utf16_len(t) > 1)
@@ -189,7 +192,7 @@ fn ref_tokens(value: &str) -> Vec<String> {
     out
 }
 
-fn jaccard(a: &HashSet<String>, b: &HashSet<String>) -> f64 {
+pub(super) fn jaccard(a: &HashSet<String>, b: &HashSet<String>) -> f64 {
     if a.is_empty() || b.is_empty() {
         return 0.0;
     }
@@ -198,6 +201,15 @@ fn jaccard(a: &HashSet<String>, b: &HashSet<String>) -> f64 {
     {
         inter as f64 / (a.len() + b.len() - inter) as f64
     }
+}
+
+/// 요약 낱말(너무 짧으면 빈 집합 — [`jaccard`] 가 0 을 낸다).
+pub(super) fn desc_tokens(d: Option<&str>) -> HashSet<String> {
+    let t = body_tokens(d.unwrap_or(""));
+    if t.len() < DESC_MIN_TOKENS {
+        return HashSet::new();
+    }
+    t
 }
 
 /// JS 수 표기(정수면 소수점 없이).
@@ -335,11 +347,17 @@ pub(crate) fn audit_text_capped(
         .collect();
     let named: Vec<HashSet<String>> = judged.iter().map(|r| name_tokens(&r.slug)).collect();
     let bodies: Vec<HashSet<String>> = judged.iter().map(|r| body_tokens(&r.value)).collect();
+    let descs: Vec<HashSet<String>> = judged
+        .iter()
+        .map(|r| desc_tokens(r.description.as_deref().filter(|_| !r.flagged)))
+        .collect();
     let mut similar: Vec<(String, String)> = vec![];
     let mut similar_body: Vec<(String, String, f64)> = vec![];
     for i in 0..judged.len() {
         for j in i + 1..judged.len() {
-            if jaccard(&named[i], &named[j]) >= NAME_SIMILARITY {
+            if jaccard(&named[i], &named[j]) >= NAME_SIMILARITY
+                || jaccard(&descs[i], &descs[j]) >= DESC_SIMILARITY
+            {
                 similar.push((judged[i].slug.clone(), judged[j].slug.clone()));
             }
             let sim = jaccard(&bodies[i], &bodies[j]);
@@ -833,6 +851,26 @@ mod tests {
             v["usage"][0],
             serde_json::json!({ "slug": "mem/opened", "reads": 3, "recalls": 0 })
         );
+    }
+
+    #[test]
+    fn similar_compares_summaries_too() {
+        let mk = |slug: &str, d: &str| {
+            let mut r = row(slug, slug);
+            r.description = Some(d.into());
+            r
+        };
+        let a = mk("mem/aa", "배포 되돌리기 절차 순서 정리");
+        let b = mk("mem/bb", "배포 되돌리기 절차 순서 메모");
+        let short_a = mk("mem/cc", "짧은 요약");
+        let short_b = mk("mem/dd", "짧은 요약");
+        let v = audit(&[a, b, short_a, short_b], &[]);
+        assert_eq!(v["similar"], serde_json::json!([["mem/aa", "mem/bb"]]));
+        // 걸린 판의 요약은 견주지 않는다.
+        let mut f = mk("mem/ee", "배포 되돌리기 절차 순서 정리");
+        f.flagged = true;
+        let v = audit(&[mk("mem/aa", "배포 되돌리기 절차 순서 정리"), f], &[]);
+        assert_eq!(v["similar"], serde_json::json!([]));
     }
 
     #[test]
