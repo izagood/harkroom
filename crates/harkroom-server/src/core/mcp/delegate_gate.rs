@@ -310,7 +310,7 @@ enum SelfSplit {
 }
 
 /// `HARKROOM_SELF_SPLIT` — `on`·`1`·`true` 만 켬. 없거나 다른 값이면 꺼짐(예전 그대로 `self_delegation`).
-fn self_split_on(raw: Option<&str>) -> bool {
+pub(crate) fn self_split_on(raw: Option<&str>) -> bool {
     matches!(
         raw.map(|v| v.trim().to_ascii_lowercase()).as_deref(),
         Some("on" | "1" | "true")

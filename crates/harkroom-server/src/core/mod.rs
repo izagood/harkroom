@@ -149,6 +149,7 @@ pub mod perm_card;
 pub mod permission_card;
 pub mod permission_command;
 pub mod pickable_models;
+pub mod piece_verdict;
 pub mod plan_graph;
 pub mod pr_status_checks;
 pub mod pr_watch_due;
