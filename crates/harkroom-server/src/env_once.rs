@@ -29,6 +29,8 @@ env_once! {
     DELEGATION_IMPLICIT = "HARKROOM_DELEGATION_IMPLICIT";
     /// 자기 쪼개기 스위치(`mcp::delegate_gate::self_split_on`).
     SELF_SPLIT = "HARKROOM_SELF_SPLIT";
+    /// 카드 판정 응답 칸(`self_serve::hint_on`).
+    ASK_SELF_SERVE = "HARKROOM_ASK_SELF_SERVE";
     /// 위임장 강제(`lease_read::mandate_switch`).
     MANDATE_ENFORCE = "HARKROOM_MANDATE_ENFORCE";
     /// avcs 서버 env 값(빈 값 거르기는 쓰는 쪽이 한다).
