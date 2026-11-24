@@ -210,6 +210,120 @@ async fn exec_combo_writes_and_permissions() {
         "xc-admin-key"
     );
 
+    // ④-b 남의 키 연결은 조합에 꽂지도, 돌려 꽂지도, 지우지도 못한다(관리자여도).
+    secret(&pool, "xc-admin2-key", &admin2).await;
+    // 만들기 — 남의 연결·없는 연결 둘 다 Forbidden.
+    for (name, link_id) in [
+        ("xc-steal-a", link.as_str()),
+        ("xc-steal-b", "00000000-0000-4000-8000-00000000dead"),
+    ] {
+        let steal = ComboInput::parse(&json!({
+            "name": name, "harness": "codex", "model": "m2", "keyLinkId": link_id
+        }))
+        .unwrap();
+        assert!(matches!(
+            ec::create_combo(&pool, &admin2, &s, &steal).await,
+            Err(ComboError::Forbidden)
+        ));
+    }
+    // 고치기 — 풀 조합을 남의 연결로 돌리지 못하고, 남의 키를 쓰는 조합의 다른 칸도 못 고친다.
+    let onto_link = ComboInput::parse(&json!({
+        "name": "xc-one", "harness": "claude-code", "model": "m", "keyLinkId": link
+    }))
+    .unwrap();
+    assert!(matches!(
+        ec::update_combo(&pool, &admin2, &s, &c1, &onto_link).await,
+        Err(ComboError::Forbidden)
+    ));
+    let keyed_other_model = ComboInput::parse(&json!({
+        "name": "xc-keyed", "harness": "codex", "model": "m9", "keyLinkId": link
+    }))
+    .unwrap();
+    assert!(matches!(
+        ec::update_combo(&pool, &admin2, &s, &c2, &keyed_other_model).await,
+        Err(ComboError::Forbidden)
+    ));
+    let combos = ec::list_combos(&pool, &admin, &s).await.unwrap();
+    assert_eq!(combos.len(), 2);
+    assert_eq!(combos[0]["model"], "m2");
+    assert_eq!(combos[1]["accountPool"], "main");
+    assert!(combos[1]["keyLinkId"].is_null());
+    // 연결의 주인은 같은 고치기를 한다. 없는 조합은 NotFound.
+    ec::update_combo(&pool, &admin, &s, &c2, &keyed)
+        .await
+        .unwrap();
+    assert!(matches!(
+        ec::update_combo(
+            &pool,
+            &admin,
+            &s,
+            "00000000-0000-4000-8000-00000000dead",
+            &keyed
+        )
+        .await,
+        Err(ComboError::NotFound)
+    ));
+    // 남의 연결을 자기 비밀로 돌려 꽂지 못하고, 지우지도 못한다(조합이 안 쓰는 연결이어도).
+    assert!(matches!(
+        ec::update_key_link(
+            &pool,
+            &admin2,
+            &s,
+            &link,
+            &link_input("xc-link", "xc-admin2-key")
+        )
+        .await,
+        Err(ComboError::Forbidden)
+    ));
+    let spare = ec::create_key_link(&pool, &admin, &s, &link_input("xc-spare", "xc-admin-key"))
+        .await
+        .unwrap();
+    for id in [&link, &spare] {
+        assert!(matches!(
+            ec::delete_key_link(&pool, &admin2, &s, id).await,
+            Err(ComboError::Forbidden)
+        ));
+    }
+    assert_eq!(
+        ec::list_key_links(&pool, &admin, &s).await.unwrap().len(),
+        2
+    );
+    ec::delete_key_link(&pool, &admin, &s, &spare)
+        .await
+        .unwrap();
+    // 자기 비밀의 연결은 자기 조합에 꽂는다. 가리키던 비밀이 지워진 연결은 다른 관리자가 치울 수 있다.
+    let own = ec::create_key_link(&pool, &admin2, &s, &link_input("xc-own", "xc-admin2-key"))
+        .await
+        .unwrap();
+    let own_combo = ComboInput::parse(&json!({
+        "name": "xc-own-combo", "harness": "codex", "model": "m2", "keyLinkId": own
+    }))
+    .unwrap();
+    let c_own = ec::create_combo(&pool, &admin2, &s, &own_combo)
+        .await
+        .unwrap();
+    assert!(matches!(
+        ec::update_combo(&pool, &admin, &s, &c_own, &own_combo).await,
+        Err(ComboError::Forbidden)
+    ));
+    ec::delete_combo(&pool, &admin2, &s, &c_own).await.unwrap();
+    sqlx::query("delete from secret where name = 'xc-admin2-key'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(matches!(
+        ec::update_key_link(
+            &pool,
+            &admin,
+            &s,
+            &own,
+            &link_input("xc-own", "xc-admin-key")
+        )
+        .await,
+        Err(ComboError::Forbidden)
+    ));
+    ec::delete_key_link(&pool, &admin, &s, &own).await.unwrap();
+
     // ⑤ 에이전트당 기본 조합은 하나. 남은 못 정하고, 허용 목록에 없는 조합은 기본이 못 된다.
     assert!(matches!(
         ec::set_default(&pool, &admin, &s, &bot.id, &c1).await,

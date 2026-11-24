@@ -10,6 +10,8 @@
 //!   - 에이전트 계정·오퍼레이터 토큰으로 선 요청은 전부 거절한다. MCP 도구로는 내놓지 않는다.
 //! - 키 연결은 주소(https)와 **비밀 이름**만 담는다 — 키 값은 여기 없다. 연결을 만들거나 고치는 사람은 **자기 소유 비밀**만
 //!   가리킬 수 있다(`secret.owner_account_id`, 같은 문장에서 본다).
+//! - 키 연결은 **그 비밀의 소유자 것**이다. 관리자라도 남의 비밀을 가리키는 연결은 고치지도, 지우지도, 조합에 꽂지도 못한다 —
+//!   조합을 만들거나 고칠 때 `key_link_id` 가 있으면 쓰는 사람이 그 연결이 가리키는 비밀의 소유자여야 한다(같은 문장에서 본다).
 //! - 켜는 곳은 [`enable`] 하나 — 쓰기 풀에 [`EXEC_COMBO_PRIVILEGES`] 가 다 있을 때만. 아직 HTTP 길에 붙이지 않았다(다음 조각).
 use crate::auth::{Account, Auth, Via};
 use serde_json::Value;
@@ -252,17 +254,23 @@ pub const KEY_LINK_INSERT_SQL: &str = "insert into exec_key_link (name, base_url
       where exists (select 1 from secret s where s.name = $4 and s.owner_account_id = $1::uuid) \
      returning id::text";
 
-/// 고칠 때도 같은 소유자 검사 — 가리키는 비밀을 바꾸든 안 바꾸든, 고치는 사람이 그 비밀의 소유자여야 한다.
+/// 고칠 때는 소유자 검사가 둘이다 — 고치는 사람이 **지금 가리키는 비밀**(`cur`)과 **새로 가리킬 비밀**(`s`) 둘 다의 소유자여야 한다.
+/// 앞의 것이 없으면 남의 연결을 자기 비밀·자기 주소로 돌려 꽂을 수 있다.
 pub const KEY_LINK_UPDATE_SQL: &str = "update exec_key_link k \
         set name = $3, base_url = $4, secret_name = $5, updated_at = now() \
       where k.id = $2::uuid \
+        and exists (select 1 from secret cur where cur.name = k.secret_name and cur.owner_account_id = $1::uuid) \
         and exists (select 1 from secret s where s.name = $5 and s.owner_account_id = $1::uuid) \
      returning k.id::text";
 
 pub const KEY_LINK_EXISTS_SQL: &str =
     "select exists (select 1 from exec_key_link where id = $1::uuid)";
 
-pub const KEY_LINK_DELETE_SQL: &str = "delete from exec_key_link where id = $1::uuid";
+/// 지우는 사람(`$1`)이 그 연결이 가리키는 비밀의 소유자일 때만 지운다. 가리키던 비밀이 이미 지워진 연결(주인 없는 줄)은
+/// 관리자 누구나 치울 수 있다 — 남의 비밀이 **있는** 연결만 막는다.
+pub const KEY_LINK_DELETE_SQL: &str = "delete from exec_key_link k \
+      where k.id = $2::uuid \
+        and not exists (select 1 from secret s where s.name = k.secret_name and s.owner_account_id <> $1::uuid)";
 
 macro_rules! combo_json {
     () => {
@@ -281,6 +289,21 @@ macro_rules! owns_agent {
     };
 }
 
+/// 쓰는 사람이 그 키 연결이 가리키는 비밀의 소유자인가 — 조합에 키 연결을 꽂는 모든 문장이 이 조각을 같이 건다.
+/// 연결이 없거나 비밀이 없어도 거짓이다.
+macro_rules! owns_key_link {
+    ($link:literal, $actor:literal) => {
+        concat!(
+            "exists (select 1 from exec_key_link k join secret s on s.name = k.secret_name \
+       where k.id = ",
+            $link,
+            "::uuid and s.owner_account_id = ",
+            $actor,
+            "::uuid)"
+        )
+    };
+}
+
 /// 조합 목록(워크스페이스 표 하나).
 pub const COMBO_LIST_SQL: &str = concat!(
     "select coalesce(json_agg(",
@@ -288,14 +311,28 @@ pub const COMBO_LIST_SQL: &str = concat!(
     " order by c.name), '[]'::json)::text from exec_combo c"
 );
 
-pub const COMBO_INSERT_SQL: &str = "insert into exec_combo \
+/// 키 연결(`$6`)을 꽂으면 쓰는 사람(`$10`)이 그 연결의 비밀 소유자일 때만 들어간다 — 남의 API 키를 조합에 싣지 못한다.
+pub const COMBO_INSERT_SQL: &str = concat!(
+    "insert into exec_combo \
        (name, harness, model, effort, account_pool, key_link_id, input_price, output_price, promote_allowed, created_by) \
-     values ($1, $2, $3, $4, $5, $6::uuid, $7, $8, $9, $10::uuid) returning id::text";
+     select $1::text, $2::text, $3::text, $4::text, $5::text, $6::uuid, $7::float8, $8::float8, $9::boolean, $10::uuid \
+      where $6::uuid is null or ",
+    owns_key_link!("$6", "$10"),
+    " returning id::text"
+);
 
-pub const COMBO_UPDATE_SQL: &str = "update exec_combo \
+/// 고칠 때도 같다 — 고친 뒤의 조합이 키 연결(`$6`)을 가리키면 고치는 사람(`$11`)이 그 비밀의 소유자여야 한다.
+/// 연결을 안 바꾸고 다른 칸만 고쳐도 본다(남의 키를 쓰는 조합의 모델·하네스를 바꾸지 못한다).
+pub const COMBO_UPDATE_SQL: &str = concat!(
+    "update exec_combo \
         set name = $1, harness = $2, model = $3, effort = $4, account_pool = $5, key_link_id = $6::uuid, \
             input_price = $7, output_price = $8, promote_allowed = $9, updated_at = now() \
-      where id = $10::uuid";
+      where id = $10::uuid and ($6::uuid is null or ",
+    owns_key_link!("$6", "$11"),
+    ")"
+);
+
+pub const COMBO_EXISTS_SQL: &str = "select exists (select 1 from exec_combo where id = $1::uuid)";
 
 pub const COMBO_DELETE_SQL: &str = "delete from exec_combo where id = $1::uuid";
 
@@ -424,27 +461,45 @@ pub async fn update_key_link(
     if hit.is_some() {
         return Ok(());
     }
-    let exists: bool = sqlx::query_scalar(KEY_LINK_EXISTS_SQL)
-        .bind(id)
-        .fetch_one(pool)
-        .await?;
-    Err(if exists {
-        ComboError::Forbidden
-    } else {
-        ComboError::NotFound
-    })
+    Err(missing_or_forbidden(pool, KEY_LINK_EXISTS_SQL, id).await?)
 }
 
-/// 키 연결 지우기. 조합이 쓰고 있으면 `Conflict`.
+/// 키 연결 지우기. 조합이 쓰고 있으면 `Conflict`, 남의 비밀을 가리키는 연결이면 `Forbidden`.
 pub async fn delete_key_link(
     pool: &PgPool,
     account: &Account,
     auth: &Auth,
     id: &str,
 ) -> Result<(), ComboError> {
-    manager(account, auth)?;
+    let actor = manager(account, auth)?;
     uuid(id, "id")?;
-    affected(sqlx::query(KEY_LINK_DELETE_SQL).bind(id), pool).await
+    let n = sqlx::query(KEY_LINK_DELETE_SQL)
+        .bind(actor)
+        .bind(id)
+        .execute(pool)
+        .await?
+        .rows_affected();
+    if n > 0 {
+        return Ok(());
+    }
+    Err(missing_or_forbidden(pool, KEY_LINK_EXISTS_SQL, id).await?)
+}
+
+/// 쓰기가 한 줄도 못 건드렸을 때 — 줄이 있으면 소유자 조건에 걸린 것(`Forbidden`), 없으면 `NotFound`.
+async fn missing_or_forbidden(
+    pool: &PgPool,
+    exists_sql: &'static str,
+    id: &str,
+) -> Result<ComboError, ComboError> {
+    let exists: bool = sqlx::query_scalar(exists_sql)
+        .bind(id)
+        .fetch_one(pool)
+        .await?;
+    Ok(if exists {
+        ComboError::Forbidden
+    } else {
+        ComboError::NotFound
+    })
 }
 
 async fn affected<'q>(
@@ -457,6 +512,7 @@ async fn affected<'q>(
     }
 }
 
+/// 조합 만들기. 키 연결을 꽂는데 그 비밀의 소유자가 아니면(또는 그 연결이 없으면) `Forbidden` — 둘을 구분해 알려 주지 않는다.
 pub async fn create_combo(
     pool: &PgPool,
     account: &Account,
@@ -465,7 +521,7 @@ pub async fn create_combo(
 ) -> Result<String, ComboError> {
     let actor = manager(account, auth)?;
     let (acct_pool, link) = input.pool_and_link();
-    Ok(sqlx::query_scalar::<_, String>(COMBO_INSERT_SQL)
+    sqlx::query_scalar::<_, String>(COMBO_INSERT_SQL)
         .bind(&input.name)
         .bind(&input.harness)
         .bind(&input.model)
@@ -476,10 +532,12 @@ pub async fn create_combo(
         .bind(input.output_price)
         .bind(input.promote_allowed)
         .bind(actor)
-        .fetch_one(pool)
-        .await?)
+        .fetch_optional(pool)
+        .await?
+        .ok_or(ComboError::Forbidden)
 }
 
+/// 조합 고치기. 고친 뒤의 조합이 가리키는 키 연결의 비밀 소유자가 아니면 `Forbidden`.
 pub async fn update_combo(
     pool: &PgPool,
     account: &Account,
@@ -487,24 +545,28 @@ pub async fn update_combo(
     id: &str,
     input: &ComboInput,
 ) -> Result<(), ComboError> {
-    manager(account, auth)?;
+    let actor = manager(account, auth)?;
     uuid(id, "id")?;
     let (acct_pool, link) = input.pool_and_link();
-    affected(
-        sqlx::query(COMBO_UPDATE_SQL)
-            .bind(&input.name)
-            .bind(&input.harness)
-            .bind(&input.model)
-            .bind(input.effort.as_deref())
-            .bind(acct_pool)
-            .bind(link)
-            .bind(input.input_price)
-            .bind(input.output_price)
-            .bind(input.promote_allowed)
-            .bind(id),
-        pool,
-    )
-    .await
+    let n = sqlx::query(COMBO_UPDATE_SQL)
+        .bind(&input.name)
+        .bind(&input.harness)
+        .bind(&input.model)
+        .bind(input.effort.as_deref())
+        .bind(acct_pool)
+        .bind(link)
+        .bind(input.input_price)
+        .bind(input.output_price)
+        .bind(input.promote_allowed)
+        .bind(id)
+        .bind(actor)
+        .execute(pool)
+        .await?
+        .rows_affected();
+    if n > 0 {
+        return Ok(());
+    }
+    Err(missing_or_forbidden(pool, COMBO_EXISTS_SQL, id).await?)
 }
 
 /// 조합 지우기 — 그 조합을 가리키던 허용 줄도 같이 지워진다(cascade).
@@ -738,6 +800,32 @@ mod tests {
     fn key_link_writes_require_owning_the_secret() {
         for sql in [KEY_LINK_INSERT_SQL, KEY_LINK_UPDATE_SQL] {
             assert!(sql.contains("s.owner_account_id = $1::uuid"), "{sql}");
+        }
+        // 고치기·지우기는 **지금 가리키는 비밀**의 소유자도 본다 — 남의 연결을 돌려 꽂거나 지우지 못한다.
+        assert!(
+            KEY_LINK_UPDATE_SQL
+                .contains("cur.name = k.secret_name and cur.owner_account_id = $1::uuid")
+        );
+        assert!(
+            KEY_LINK_DELETE_SQL
+                .contains("s.name = k.secret_name and s.owner_account_id <> $1::uuid")
+        );
+    }
+
+    #[test]
+    fn combo_writes_require_owning_the_linked_secret() {
+        // 조합에 키 연결을 꽂는 두 문장은 「쓰는 사람이 그 연결의 비밀 소유자」 조각을 같은 문장에 건다.
+        for (sql, actor) in [(COMBO_INSERT_SQL, "$10"), (COMBO_UPDATE_SQL, "$11")] {
+            assert!(sql.contains("$6::uuid is null or exists"), "{sql}");
+            assert!(
+                sql.contains("join secret s on s.name = k.secret_name"),
+                "{sql}"
+            );
+            assert!(sql.contains("k.id = $6::uuid"), "{sql}");
+            assert!(
+                sql.contains(&format!("s.owner_account_id = {actor}::uuid")),
+                "{sql}"
+            );
         }
         // 키 연결 표에는 값 칸이 없다 — 목록도 이름만 내보낸다.
         for sql in [KEY_LINK_LIST_SQL, KEY_LINK_INSERT_SQL, KEY_LINK_UPDATE_SQL] {
