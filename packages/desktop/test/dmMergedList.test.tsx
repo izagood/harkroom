@@ -41,7 +41,7 @@ const fakeController = () => {
 
 const renderDmPanel = () =>
   render(
-    <Sidebar panel="dm" onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}}
+    <Sidebar panel="dm" onOpenChannelDirectory={() => {}}
       onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}} collapsed={false} onToggleCollapse={vi.fn()} />,
   );
 
@@ -360,7 +360,7 @@ describe('로그인이 풀려 멈춘 에이전트 (2026-10-15 ③-3)', () => {
     useAuthWarningsStore.setState({ warnings: [s2] });
     const onReauth = vi.fn();
     render(
-      <Sidebar panel="dm" onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}}
+      <Sidebar panel="dm" onOpenChannelDirectory={() => {}}
         onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}} collapsed={false} onToggleCollapse={vi.fn()}
         onOpenClaudeReauth={onReauth} />,
     );

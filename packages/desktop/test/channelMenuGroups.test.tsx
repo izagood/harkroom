@@ -12,7 +12,7 @@ import { acc, chan, fakeApi } from './helpers/fakeApi';
  * 아래로 읽어 구분선에서 끊은 묶음 목록으로 비교한다.
  */
 const sidebar = () => render(
-  <Sidebar panel="home" onOpenDirectory={vi.fn()}
+  <Sidebar panel="home"
     onOpenChannelDirectory={vi.fn()} onOpenInbox={vi.fn()} onOpenAgentConfig={() => {}} onOpenProfile={() => {}}
     collapsed={false} onToggleCollapse={vi.fn()} />,
 );

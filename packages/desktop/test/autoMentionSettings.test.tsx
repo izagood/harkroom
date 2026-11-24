@@ -71,7 +71,7 @@ const seed = (opts: { admin: boolean }) => {
 };
 
 const sidebar = () => render(
-  <SidebarWithSheet panel="home" onOpenDirectory={vi.fn()} onOpenChannelDirectory={vi.fn()} onOpenInbox={vi.fn()} onOpenAgentConfig={() => {}} onOpenProfile={() => {}} collapsed={false} onToggleCollapse={vi.fn()} />,
+  <SidebarWithSheet panel="home" onOpenChannelDirectory={vi.fn()} onOpenInbox={vi.fn()} onOpenAgentConfig={() => {}} onOpenProfile={() => {}} collapsed={false} onToggleCollapse={vi.fn()} />,
 );
 
 const openSection = async (): Promise<HTMLElement> => {

@@ -117,7 +117,7 @@ const fakeController = (overrides: Record<string, unknown> = {}) => {
 
 const mount = () => render(
   <Sidebar panel="home"
-    onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}}
+    onOpenChannelDirectory={() => {}}
     onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}}
     collapsed={false} onToggleCollapse={vi.fn()}
   />,

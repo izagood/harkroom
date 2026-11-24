@@ -46,7 +46,7 @@ const fakeController = () => {
 };
 
 const sidebar = () => render(
-  <Sidebar panel="home" onOpenDirectory={vi.fn()} onOpenChannelDirectory={vi.fn()} onOpenInbox={vi.fn()}
+  <Sidebar panel="home" onOpenChannelDirectory={vi.fn()} onOpenInbox={vi.fn()}
     onOpenAgentConfig={() => {}} onOpenProfile={() => {}} collapsed={false} onToggleCollapse={vi.fn()} />,
 );
 

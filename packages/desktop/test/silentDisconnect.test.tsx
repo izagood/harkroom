@@ -38,7 +38,7 @@ import { render, screen, cleanup } from '@testing-library/react';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { setController, type Controller } from '../src/state/controller';
 import { Sidebar } from '../src/components/Sidebar';
-import { Directory } from '../src/components/Directory';
+import { AccountRow } from '../src/components/AccountRow';
 import { acc, chan } from './helpers/fakeApi';
 import { presenceView, anyPresenceView, PRESENCE_LABEL } from '../src/lib/presenceView';
 import { usePrefsStore } from '../src/state/prefsStore';
@@ -59,7 +59,7 @@ const fakeController = () => {
 
 const renderSidebar = () => render(
   <Sidebar panel="dm"
-    onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}}
+    onOpenChannelDirectory={() => {}} onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}}
     collapsed={false} onToggleCollapse={vi.fn()}
   />,
 );
@@ -258,7 +258,10 @@ describe('사이드바 — DM 줄의 생존 표시 (#443)', () => {
  * 하고 있던 것**이고, 저쪽은 **사람이 물었을 때 답이 오는 것**이다. 후자는 이미 답한다.
  */
 
-describe('디렉터리 — 목록의 점 (#443)', () => {
+/** 계정 줄 하나(설정 › 멤버와 초대가 쓴다). 디렉터리 겹창은 지웠고 줄만 남았다. */
+const row = (id: string) => render(<ul><AccountRow account={useAppStore.getState().accounts[id]!} /></ul>);
+
+describe('계정 줄 — 목록의 점 (#443)', () => {
   /**
    * 이 자리는 저장소에서 `connected` 를 **아예 안 보던** 유일한 곳이었다. 그래서 끊기면
    * 여기만 반대 방향으로 틀렸다 — 모두가 회색이 되어 "전원 오프라인"으로 읽혔다.
@@ -271,7 +274,7 @@ describe('디렉터리 — 목록의 점 (#443)', () => {
   it('끊기면 오프라인이라고 단정하지도 않는다', async () => {
     fakeController();
     끊는다();
-    render(<Directory open onClose={vi.fn()} accountId={null} />);
+    row('u2');
 
     const dot = await screen.findByTestId('directory-presence-u2');
     expect(dot.dataset.online).toBe('unknown');
@@ -282,7 +285,8 @@ describe('디렉터리 — 목록의 점 (#443)', () => {
 
   it('대조군 — 붙어 있으면 초록과 회색으로 갈린다', async () => {
     fakeController();
-    render(<Directory open onClose={vi.fn()} accountId={null} />);
+    row('u2');
+    row('u1');
 
     const live = await screen.findByTestId('directory-presence-u2');
     expect(live.dataset.online).toBe('online');

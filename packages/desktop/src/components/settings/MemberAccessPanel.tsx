@@ -5,7 +5,7 @@ import { useT } from '../../i18n/useT';
 import type { MessageKey } from '../../i18n';
 import { errorText } from '../../lib/errorText';
 import { ConfirmDialog } from '../ConfirmDialog';
-import { RoleChip } from '../Directory';
+import { RoleChip } from '../AccountRow';
 import { Switch } from './primitives';
 
 /**
@@ -184,7 +184,7 @@ export function MemberAccessPanel({ person, me, onBack, testId }: {
         ) : grants.kind === 'error' ? (
           <p role="alert" className="text-meta text-danger">{t('members.cap.loadFailed')}</p>
         ) : grants.kind === 'loading' ? (
-          <p className="text-meta text-fg-subtle">{t('directory.loading')}</p>
+          <p className="text-meta text-fg-subtle">{t('common.loading')}</p>
         ) : (
           <ul className="flex flex-col">
             {MEMBER_CAPS.map(({ cap, label, hint }) => (

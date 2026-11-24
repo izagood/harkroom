@@ -74,7 +74,6 @@ const mountSidebar = (panel: 'home' | 'dm' | 'agents') =>
   render(
     <Sidebar
       panel={panel}
-      onOpenDirectory={vi.fn()}
       onOpenChannelDirectory={vi.fn()}
       onOpenInbox={vi.fn()} onOpenAgentConfig={() => {}} onOpenProfile={() => {}}
       collapsed={false}

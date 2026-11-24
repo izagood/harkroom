@@ -261,7 +261,7 @@ function selectDmLiveAt(s: AppState): Record<string, string | null> {
 }
 
 export function Sidebar({
-  panel, onOpenDirectory, onOpenChannelDirectory, onOpenInbox, onOpenAgentConfig, onOpenProfile,
+  panel, onOpenChannelDirectory, onOpenInbox, onOpenAgentConfig, onOpenProfile,
   onOpenProjectionSettings, onOpenClaudeReauth, collapsed, onToggleCollapse, footer,
 }: {
   /**
@@ -285,8 +285,6 @@ export function Sidebar({
    * 것은 자리뿐이다"). `⌘,` 배선도 그 메뉴와 같은 컴포넌트에 있어야 하므로 함께 갔다:
    * 메뉴에 적힌 단축키가 참이어야 한다는 규칙(#488 A1)이 그것을 요구한다.
    */
-  /** 워크스페이스 전체 디렉터리를 연다(#226). 채널 멤버 목록이 아니라 워크스페이스 전체다. */
-  onOpenDirectory: () => void;
   /**
    * 채널 디렉터리 모달을 연다(#180). **옵셔널이 아니다** — 여기서 기본값을 공급하면
    * 배선을 잊은 화면에서도 버튼이 그려지고 눌러도 아무 일이 없다(design.md §4).
@@ -322,9 +320,8 @@ export function Sidebar({
    */
   onOpenClaudeReauth?: () => void;
   /**
-   * 설정을 볼 수 없는 사람이 카드를 눌렀을 때 여는 곳(`onPick` 주석에 근거). 위
-   * `onOpenDirectory`(누구를 지목하지 않는 검색 목록)와 **다른 화면**이다 — 디렉터리는
-   * "누가 있나", 프로필은 "이 사람이 무엇인가"에 답한다(`Workspace.handleOpenDirectory` 주석).
+   * 설정을 볼 수 없는 사람이 카드를 눌렀을 때 여는 곳(`onPick` 주석에 근거) — 프로필은
+   * "이 사람이 무엇인가"에 답한다(`Workspace.handleOpenDirectory` 주석).
    */
   onOpenProfile: (accountId: string) => void;
   /*
@@ -1861,17 +1858,13 @@ className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-rais
         {panel === 'home' && (
         <>
         <div>
-          {/* 디렉터리는 조회 전용이라 admin 여부를 보지 않는다 — 누가 이 워크스페이스에
-              있는지는 모두가 알아야 한다. 계정 관리는 설정 진입점(레일 맨 아래)의 몫이다.
+          {/* 인박스는 사이드바 항목이 뷰를 열고, 뷰는 닫혀 있으면 아무것도 그리지 않는다(#185).
 
-              인박스도 디렉터리와 **같은 방식으로** 연다(#185) — 사이드바 항목이 뷰를 열고,
-              뷰는 닫혀 있으면 아무것도 그리지 않는다. */}
+              `디렉터리` 한 줄이 여기 있었다. **지웠다**(소유자 결정 2026-11-23) — 거의 쓰이지 않았고,
+              사람·에이전트 찾기는 사이드바 맨 위 찾기(`SidebarFind`)가 같은 입력으로 한다. */}
           <button className={`${row(false)} text-fg-muted`} onClick={onOpenInbox}>
             {t('inbox.pane.title')}
             <InboxRowBadge />
-          </button>
-          <button className={`${row(false)} text-fg-muted`} onClick={onOpenDirectory}>
-            {t('chat.directory')}
           </button>
           {/*
             `Saved` 한 줄이 여기 있었다. **레일의 북마크 칸으로 갔다** — 문서: "북마크는

@@ -21,7 +21,7 @@ const section = (id: string, name: string, position: number, o: Partial<ChannelS
 
 const mount = () => render(
   <Sidebar panel="home"
-    onOpenDirectory={() => {}} onOpenChannelDirectory={() => {}}
+    onOpenChannelDirectory={() => {}}
     onOpenInbox={() => {}} onOpenAgentConfig={() => {}} onOpenProfile={() => {}}
     collapsed={false} onToggleCollapse={vi.fn()}
   />,
