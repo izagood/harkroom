@@ -145,6 +145,13 @@ async fn team_in_to_expands_and_gates_each_member() {
     let closed = agent(&pool, "ct-closed", &bob, true).await;
     // 접속하지 않은 에이전트.
     let away = agent(&pool, "ct-away", &alice, false).await;
+    // 꺼진 에이전트 — 펼칠 때 빠지고 `notCalled` 에 `disabled` 로 실린다.
+    let off = agent(&pool, "ct-off", &alice, true).await;
+    sqlx::query("update account set disabled_at = now() where id = $1::uuid")
+        .bind(&off.id)
+        .execute(&pool)
+        .await
+        .unwrap();
     let channel: String = sqlx::query_scalar(
         "insert into channel(name, kind, visibility, created_by) values ('ct-ch', 'standard', 'public', $1::uuid) returning id::text",
     )
@@ -167,7 +174,8 @@ async fn team_in_to_expands_and_gates_each_member() {
         "community",
         &alice,
         Some(&me),
-        &[&me, &mate, &closed, &away],
+        // 사람(`bob`)은 라우트가 팀원으로 받지 않지만 표에는 그 제약이 없다 — 표에 직접 넣어 본다.
+        &[&me, &mate, &closed, &away, &bob, &off],
     )
     .await;
     // 호출 범위가 owner 인 팀 — 에이전트인 부른 쪽은 팀을 부를 수 없다(팀원은 부를 수 있는 사이여도).
@@ -211,6 +219,14 @@ async fn team_in_to_expands_and_gates_each_member() {
     };
     assert_eq!(why("ct-closed").as_deref(), Some("gate_denied"), "{handed}");
     assert_eq!(why("ct-away").as_deref(), Some("unreachable"), "{handed}");
+    // 사람·꺼진 팀원은 말없이 빠지지 않는다 — 이유와 함께 실리고, 펼친 명단(`teams.members`)·부름·의무에는 없다.
+    assert_eq!(why("ct-bob").as_deref(), Some("not_agent"), "{handed}");
+    assert_eq!(why("ct-off").as_deref(), Some("disabled"), "{handed}");
+    assert_eq!(
+        v["teams"][0]["members"],
+        json!(["ct-away", "ct-closed", "ct-mate"]),
+        "{handed}"
+    );
     assert_eq!(v["teams"][0]["teamId"], json!(crew), "{handed}");
     assert_eq!(v["teams"][0]["team"], "ct-crew", "{handed}");
     assert_eq!(
@@ -227,6 +243,13 @@ async fn team_in_to_expands_and_gates_each_member() {
         .await
         .unwrap();
     assert_eq!(woke, 0);
+    let woke_skipped: i64 =
+        sqlx::query_scalar("select count(*) from inbox where account_id = any($1::uuid[])")
+            .bind(vec![bob.id.clone(), off.id.clone()])
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(woke_skipped, 0);
 
     // 팀 id 로도 같다 · 알리기(`expect` 없음)도 같은 게이트를 지난다.
     let by_id = call(json!({ "to": [crew] })).await;
@@ -239,6 +262,14 @@ async fn team_in_to_expands_and_gates_each_member() {
             .unwrap()
             .iter()
             .any(|x| x["handle"] == "ct-closed" && x["reason"] == "gate_denied"),
+        "{by_id}"
+    );
+    assert!(
+        v["notCalled"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|x| x["handle"] == "ct-off" && x["reason"] == "disabled"),
         "{by_id}"
     );
 

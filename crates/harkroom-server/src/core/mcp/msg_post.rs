@@ -1474,7 +1474,7 @@ const MAX_CALL_TARGETS: usize = 8;
 struct CallTargets {
     /// (계정 id, handle) — `to` 순서, 겹침 없음.
     agents: Vec<(String, String)>,
-    /// (적힌 글자, 이유) — `unknown`·`not_agent`·`self`·`gate_denied`(팀의 호출 범위)·`empty_team`.
+    /// (적힌 글자, 이유) — `unknown`·`not_agent`·`self`·`gate_denied`(팀의 호출 범위)·`empty_team`·`disabled`(펼친 팀의 꺼진 팀원).
     not_called: Vec<(String, &'static str)>,
     /// T2 — `to` 에 적힌 팀을 펼친 것 `(팀 id, 팀 이름, 펼친 팀원 handle)`. 팀원은 `agents` 에 들어가 **각자** 호출 게이트를 지난다.
     teams: Vec<(String, String, Vec<String>)>,
@@ -1509,7 +1509,14 @@ impl CallTargets {
                         team_id,
                         name,
                         members,
+                        skipped,
                     }) => {
+                        // 펼칠 때 빠진 팀원(사람·꺼진 에이전트)도 이유와 함께 싣는다 — 말없이 빠지지 않는다.
+                        for (handle, why) in skipped {
+                            if !out.not_called.iter().any(|(h, w)| h == handle && w == why) {
+                                out.not_called.push((handle.clone(), why));
+                            }
+                        }
                         let others: Vec<&(String, String)> =
                             members.iter().filter(|(id, _)| id != me).collect();
                         if others.is_empty() {
@@ -2554,6 +2561,7 @@ mod tests {
                     ("id-c".into(), "gamma".into()),
                     ("id-me".into(), "me".into()),
                 ],
+                skipped: vec![("hugo".into(), "not_agent"), ("zed".into(), "disabled")],
             },
         );
         teams.insert("closed".into(), TeamCall::Denied("Closed".into()));
@@ -2563,6 +2571,7 @@ mod tests {
                 team_id: "t-2".into(),
                 name: "solo".into(),
                 members: vec![("id-me".into(), "me".into())],
+                skipped: vec![],
             },
         );
         let to: Vec<String> = ["alpha", "@Crew", "closed", "solo", "ghost", "crew"]
@@ -2581,6 +2590,9 @@ mod tests {
         assert_eq!(
             t.not_called,
             vec![
+                // 펼친 팀에서 빠진 팀원 — 팀을 두 번 적어도(`@Crew`·`crew`) 한 번만 실린다.
+                ("hugo".to_string(), "not_agent"),
+                ("zed".to_string(), "disabled"),
                 ("closed".to_string(), "gate_denied"),
                 ("solo".to_string(), "empty_team"),
                 ("ghost".to_string(), "unknown"),
