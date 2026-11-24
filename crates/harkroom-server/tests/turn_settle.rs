@@ -231,8 +231,19 @@ async fn settle_canceled_turn_like_ts() {
     );
     let ev = events_since(&admin, o0).await;
     let types: Vec<&str> = ev.iter().map(|e| e["type"].as_str().unwrap()).collect();
-    assert_eq!(types, ["thread.reportWakes.changed", "message.updated"]);
+    // 대기 줄 다음에, 열린 목록이 줄어든 위임 글도 다시 알린다.
+    assert_eq!(
+        types,
+        [
+            "thread.reportWakes.changed",
+            "message.updated",
+            "message.updated"
+        ]
+    );
     assert_eq!(ev[1]["message"]["id"], a_here.as_str());
+    assert_eq!(ev[2]["message"]["id"], d1_msg.as_str());
+    assert_eq!(ev[2]["message"]["meta"]["delegation"]["open"], json!([b]));
+    assert_eq!(out.updated, vec![d1_msg.clone()]);
 
     // ② 팀원 b 중단 — 마지막 미결이었으니 팀장을 한 번 깨우고, 이 위임에 걸린 팀장 예약을 접는다.
     let o1 = outbox_top(&admin).await;
@@ -255,12 +266,17 @@ async fn settle_canceled_turn_like_ts() {
     );
     let ev = events_since(&admin, o1).await;
     let types: Vec<&str> = ev.iter().map(|e| e["type"].as_str().unwrap()).collect();
-    assert_eq!(types, ["inbox.updated", "message.updated"]);
+    assert_eq!(
+        types,
+        ["inbox.updated", "message.updated", "message.updated"]
+    );
     assert_eq!(ev[0]["accountId"], lead.as_str());
+    assert_eq!(ev[1]["message"]["id"], lead_d1.as_str());
+    assert_eq!(ev[2]["message"]["id"], d1_msg.as_str());
 
     // ③ 다시 불러도 아무 일 없다 — 한 번만 깨운다.
     let out = settle_canceled_turn(&write, &root, &b).await;
-    assert!(out.woke.is_empty() && out.rows.is_empty());
+    assert!(out.woke.is_empty() && out.rows.is_empty() && out.updated.is_empty());
     assert_eq!(inbox(&admin, &lead).await.len(), 1);
 
     // ── 팀장 lead2 가 c 에게 넘긴 위임 D2 — 팀장이 중단되면 전부 닫고 깨우지 않는다 ──
@@ -286,7 +302,9 @@ async fn settle_canceled_turn_like_ts() {
         .iter()
         .map(|e| e["type"].as_str().unwrap().to_owned())
         .collect();
-    assert_eq!(types, ["message.updated"]);
+    // 팀장의 대기 줄, 그리고 열린 목록이 빈 위임 글.
+    assert_eq!(types, ["message.updated", "message.updated"]);
+    assert_eq!(out.updated, vec![d2_msg.clone()]);
 
     // ④ 실패는 롤백하고 던지지 않는다 — 깨진 스레드 id 로 부르면 빈 결과, 남은 예약(a_there)은 그대로.
     let o3 = outbox_top(&admin).await;

@@ -321,6 +321,17 @@ async fn delegation_deadline_like_ts() {
     .await
     .unwrap();
 
+    // 자동 닫힘(max_age): 만든 지 25시간, 답 없음 → closed/max_age. 위임 글의 열린 목록도 비운다.
+    let (_, aged, aged_msg) = due(&admin, &ch, &lead, &bob).await;
+    sqlx::query(
+        "update team_delegation set created_at = now() - interval '25 hours', deadline_at = now() + interval '1 hour' \
+          where id = $1::uuid",
+    )
+    .bind(&aged)
+    .execute(&admin)
+    .await
+    .unwrap();
+
     let before = outbox_max(&admin).await;
     sweep(&w, true).await.unwrap();
     assert_eq!(state(&admin, &stalled).await, (None, true, false, true));
@@ -352,6 +363,38 @@ async fn delegation_deadline_like_ts() {
     assert_eq!(reason.as_deref(), Some("idle"));
     // 자동 닫힘은 깨우지 않는다.
     assert!(inbox(&admin, &lead, &idle_msg).await.is_empty());
+    let aged_reason: Option<String> = sqlx::query_scalar(
+        "select closed_reason from team_delegation_item where delegation_id = $1::uuid",
+    )
+    .bind(&aged)
+    .fetch_one(&admin)
+    .await
+    .unwrap();
+    assert_eq!(aged_reason.as_deref(), Some("max_age"));
+    // 조용히 닫힌 위임 글의 열린 목록이 비고, 그 글마다 `message.updated` 가 한 번 나간다. 안 닫힌 위임 글은 그대로다.
+    let quiet = events_since(&admin, before).await;
+    for msg in [&aged_msg, &idle_msg] {
+        let open: Value = sqlx::query_scalar(
+            "select meta->'delegation'->'open' from message where id = $1::uuid",
+        )
+        .bind(msg)
+        .fetch_one(&admin)
+        .await
+        .unwrap();
+        assert_eq!(open, json!([]));
+        let updated = quiet
+            .iter()
+            .filter(|e| e["type"] == "message.updated" && e["message"]["id"] == msg.as_str())
+            .count();
+        assert_eq!(updated, 1, "{quiet:?}");
+    }
+    let still_open: Value =
+        sqlx::query_scalar("select meta->'delegation'->'open' from message where id = $1::uuid")
+            .bind(&stalled_msg)
+            .fetch_one(&admin)
+            .await
+            .unwrap();
+    assert_eq!(still_open, json!([bob]));
     assert_eq!(
         inbox(&admin, &lead, &up_msg).await,
         vec!["delegation_update".to_string()]

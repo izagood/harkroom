@@ -1248,6 +1248,7 @@ pub(crate) async fn post_tx(
             woke: Vec::new(),
             report: std::mem::take(&mut deleg.report),
             rows: std::mem::take(&mut deleg.rows),
+            updated: std::mem::take(&mut deleg.updated),
         },
     )
     .await?;

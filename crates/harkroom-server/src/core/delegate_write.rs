@@ -181,6 +181,8 @@ pub(crate) async fn create(
                     .bind(&closed)
                     .execute(&mut *conn)
                     .await?;
+                // 대체된 앞 위임 글의 열린 목록에서 이 담당을 빼고 화면에 알린다.
+                super::turn_settle::sync_open_announce(conn, &closed).await?;
             }
         }
         sqlx::query(s.item.as_str())
