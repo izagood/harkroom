@@ -19,7 +19,7 @@
 //!   회신권을 닫는다(`closeReplyGrants`). 위임 키·깨움 선점·카드 닫기는 TS 와 같이 사람 글에만. 아직 TS 로 넘기는 것:
 //!   암묵 위임 쓰기 권한이 빠진 서버의 부름. 스위치 값이 없으면 TS 기본값으로 맡고, 암묵 위임은 [`implicit_delegation`] 이 적는다(C1c-4d).
 //! - **사슬 깊이·정체 홉·사슬 시작은 적지 않는다**(O2): 홉 수·사슬 나이로 부름을 막지 않게 된 뒤로(O1) 읽는 곳이 없다.
-//!   `message.mention_depth`·`stall_depth`·`chain_started_at` 은 기본값으로 남는다.
+//!   `message.mention_depth`·`stall_depth` 칸은 지웠고(마이그레이션 189), `chain_started_at` 은 기본값으로 남는다.
 //! - 순서(TS 와 같다): 본문 읽기(413·400·415) → 인증(401, `route_layer`) → 경로·본문 검사(400) → 쓰기 게이트(403 `forbidden`·
 //!   `channel_archived`) → **쓰기 트랜잭션 하나**: seq 락(TS `lockChannelForSeq`) → 재시도 키 재생(200, 헤더 없음) → insert →
 //!   첨부 잇기(실패면 되돌리고 400 `bad_attachment`) → 다시 읽기 → 재시도 키 기록 → 부름 넣기 → 위임 → `message.created`·
