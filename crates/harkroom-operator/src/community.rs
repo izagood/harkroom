@@ -594,6 +594,11 @@ impl AssignmentFrames {
         }
     }
 
+    /// 이 커뮤니티에 배정된 풀 에이전트(`runnerPool: true`)인가 — 잡기(I2b)는 이것일 때만 묻는다.
+    pub fn is_pool(&self, agent_id: &str) -> bool {
+        lock(&self.assigned).contains(agent_id) && self.reconciler.is_pool(agent_id)
+    }
+
     /// TS `onRunnerExit` — 이 커뮤니티의 배정이면 조정기에(재기동 판단).
     pub fn on_runner_exit(&self, agent_id: &str, code: Option<i32>, reason: Option<&str>) {
         if lock(&self.assigned).contains(agent_id) {

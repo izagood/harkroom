@@ -135,6 +135,8 @@ pub fn build_hello_labeled(
         update_channel: labels.update_channel.clone(),
         // E2a — `wake` 프레임을 받을 줄 안다(받아 적고 `wake.ack` 만 답한다).
         wake_frames: Some(true),
+        // I2b — 잡기 프레임을 보낼 줄 안다(실제로 보내는지는 서버 스위치와 그 에이전트의 `runnerPool` 이 정한다).
+        work_claim: Some(true),
     }
 }
 
@@ -289,7 +291,8 @@ mod tests {
                 "runners": [{"agentId": "a1", "runnerId": "r1", "pid": 42}],
                 "sessions": [], "version": "0.4.473",
                 // E2a — `wake` 프레임을 받을 줄 안다고 밝힌다.
-                "wakeFrames": true
+                "wakeFrames": true,
+                "workClaim": true
             })
         );
         let no_ver =
