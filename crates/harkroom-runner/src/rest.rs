@@ -650,7 +650,13 @@ impl<L: RunnerLink> HarkroomRestClient<L> {
 
     /// 턴을 마쳤다(본문 없음 — 시각은 서버가 찍는다). 실패는 던진다 — 삼킬지는 호출자 몫.
     pub fn report_activity(&self) -> Result<(), HarkroomError> {
-        self.rest("POST", "/agent/activity", "agent/activity", None)
+        self.report_activity_with(None)
+    }
+
+    /// 턴을 마쳤다 + 선택 본문(PX0 턴 토큰, `turn_tokens::activity_body`). `None` 이면 [`report_activity`] 와 글자까지 같다.
+    /// 옛 서버는 본문을 읽지 않고 버린다.
+    pub fn report_activity_with(&self, body: Option<&Value>) -> Result<(), HarkroomError> {
+        self.rest("POST", "/agent/activity", "agent/activity", body)
             .map(|_| ())
     }
 

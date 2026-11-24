@@ -17,7 +17,7 @@ pub const KIND_MERGE_DENIED: &str = "merge.denied";
 pub const KIND_DELEGATION_OUTCOME: &str = "delegation.outcome";
 /// 에이전트 글이 `@핸들` 을 적었지만 깨우지 못한 호출 — `detail.reason`. `mention_calls::resolve`.
 pub const KIND_CALL_MISSED: &str = "call.missed";
-/// 턴 하나의 토큰 — `detail` 에 input·output·cache.
+/// 턴 하나의 토큰 — `value` 는 합, `detail` 에 harness·model·input·output·cacheRead·cacheWrite·messages·durationMs(모르는 칸은 없음). [`turn_tokens`].
 pub const KIND_TURN_TOKENS: &str = "turn.tokens";
 /// 팀 명단 갈래를 지난 위임 한 건(T1) — `value` 는 명단으로 지나간 팀원 중 호출 게이트였다면 막혔을 수,
 /// `detail.branch` 는 `gate_would_pass`·`gate_would_block`·`unknown`(판정 못 함). `message.delegate` 게이트.
@@ -177,6 +177,80 @@ pub fn team_route(
     });
 }
 
+/// 토큰 수 한 칸의 상한 — 넘는 값은 그 칸만 버린다(턴 하나가 이만큼 쓸 수 없다).
+pub const TOKEN_COUNT_MAX: i64 = 2_000_000_000;
+/// 턴 길이 상한(ms) — 7일.
+pub const TURN_DURATION_MAX_MS: i64 = 7 * 86_400_000;
+/// 모델 id·하네스 이름 길이 상한(글자).
+pub const MODEL_ID_MAX_CHARS: usize = 80;
+pub const HARNESS_NAME_MAX_CHARS: usize = 32;
+
+fn bounded(v: Option<&Value>, max: i64) -> Option<i64> {
+    v.and_then(Value::as_i64).filter(|n| (0..=max).contains(n))
+}
+
+/// 러너가 턴 끝 보고(`POST /agent/activity`)의 선택 칸 `tokens` 로 보낸 값 → [`KIND_TURN_TOKENS`] 한 줄.
+/// 거절하지 않는다: 음수·상한 넘는 수·수가 아닌 칸은 그 칸만 버리고, 모르는 칸은 무시한다. 토큰 수가 하나도
+/// 남지 않으면 줄을 만들지 않는다(`None`). `value` 는 남은 토큰 수의 합. 글·경로는 싣지 않는다 — 수와 이름만.
+pub fn turn_tokens_event(account: &str, tokens: &Value) -> Option<Event> {
+    let t = tokens.as_object()?;
+    let mut detail = serde_json::Map::new();
+    let mut total: i64 = 0;
+    let mut any = false;
+    for key in ["input", "output", "cacheRead", "cacheWrite"] {
+        if let Some(n) = bounded(t.get(key), TOKEN_COUNT_MAX) {
+            total = total.saturating_add(n);
+            any = true;
+            detail.insert(key.to_string(), json!(n));
+        }
+    }
+    if !any {
+        return None;
+    }
+    if let Some(n) = bounded(t.get("messages"), TOKEN_COUNT_MAX) {
+        detail.insert("messages".into(), json!(n));
+    }
+    if let Some(n) = bounded(t.get("durationMs"), TURN_DURATION_MAX_MS) {
+        detail.insert("durationMs".into(), json!(n));
+    }
+    // 하네스 이름은 소문자·숫자·`-` 만(아니면 버린다). 모델 id 는 하네스가 준 글자 그대로 — 제어 문자만 빼고 길이를 자른다.
+    if let Some(h) = t.get("harness").and_then(Value::as_str).filter(|h| {
+        !h.is_empty()
+            && h.len() <= HARNESS_NAME_MAX_CHARS
+            && h.bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    }) {
+        detail.insert("harness".into(), json!(h));
+    }
+    if let Some(m) = t.get("model").and_then(Value::as_str) {
+        let m: String = m
+            .chars()
+            .filter(|c| !c.is_control())
+            .take(MODEL_ID_MAX_CHARS)
+            .collect();
+        if !m.is_empty() {
+            detail.insert("model".into(), json!(m));
+        }
+    }
+    Some(Event {
+        kind: KIND_TURN_TOKENS,
+        account_id: Some(account.to_string()),
+        value: Some(total),
+        detail: Some(Value::Object(detail)),
+        ..Event::default()
+    })
+}
+
+/// 턴 끝 보고 본문에 `tokens` 가 있으면 한 줄 적는다. 없거나(옛 러너) 쓸 수 없으면 아무것도 안 한다.
+pub fn turn_tokens(account: &str, body: Option<&Value>) {
+    if let Some(e) = body
+        .and_then(|b| b.get("tokens"))
+        .and_then(|t| turn_tokens_event(account, t))
+    {
+        record(e);
+    }
+}
+
 macro_rules! summary_sql {
     ($cond:literal) => {
         concat!(
@@ -311,6 +385,77 @@ pub async fn summary_route(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn turn_tokens_keeps_valid_fields_and_drops_the_rest() {
+        let e = turn_tokens_event(
+            "a1",
+            &json!({
+                "harness": "claude-code", "model": "model-x", "input": 10, "output": 5,
+                "cacheRead": 100, "cacheWrite": 7, "messages": 3, "durationMs": 1200,
+                "prompt": "hello", "path": "/x"
+            }),
+        )
+        .unwrap();
+        assert_eq!(e.kind, KIND_TURN_TOKENS);
+        assert_eq!(e.account_id.as_deref(), Some("a1"));
+        assert_eq!(e.value, Some(122));
+        assert_eq!(
+            e.detail.unwrap(),
+            json!({
+                "harness": "claude-code", "model": "model-x", "input": 10, "output": 5,
+                "cacheRead": 100, "cacheWrite": 7, "messages": 3, "durationMs": 1200
+            })
+        );
+    }
+
+    #[test]
+    fn turn_tokens_drops_bad_numbers_without_rejecting() {
+        // 음수·상한 넘는 수·문자열·소수는 그 칸만 버린다. 캐시 칸이 없어도 된다.
+        let e = turn_tokens_event(
+            "a1",
+            &json!({
+                "input": -1, "output": 9, "cacheRead": TOKEN_COUNT_MAX + 1, "cacheWrite": "7",
+                "durationMs": TURN_DURATION_MAX_MS + 1, "messages": 1.5,
+                "harness": "Bad Name", "model": format!("m\n{}", "x".repeat(200))
+            }),
+        )
+        .unwrap();
+        assert_eq!(e.value, Some(9));
+        let d = e.detail.unwrap();
+        assert_eq!(d["output"], 9);
+        for k in [
+            "input",
+            "cacheRead",
+            "cacheWrite",
+            "durationMs",
+            "messages",
+            "harness",
+        ] {
+            assert!(d.get(k).is_none(), "{k}");
+        }
+        let m = d["model"].as_str().unwrap();
+        assert_eq!(m.chars().count(), MODEL_ID_MAX_CHARS);
+        assert!(m.starts_with("mx"));
+    }
+
+    #[test]
+    fn turn_tokens_without_counts_is_no_event() {
+        assert!(turn_tokens_event("a1", &json!({ "model": "m", "durationMs": 5 })).is_none());
+        assert!(turn_tokens_event("a1", &json!({ "input": "many" })).is_none());
+        assert!(turn_tokens_event("a1", &json!([1, 2])).is_none());
+        assert!(turn_tokens_event("a1", &json!(null)).is_none());
+        // 0 은 「모름」이 아니라 잰 값이다.
+        assert_eq!(
+            turn_tokens_event("a1", &json!({ "input": 0 }))
+                .unwrap()
+                .value,
+            Some(0)
+        );
+        // 본문이 없거나 `tokens` 칸이 없으면(옛 러너) 아무 일도 없다 — 기록이 꺼져 있어도 던지지 않는다.
+        turn_tokens("a1", None);
+        turn_tokens("a1", Some(&json!({})));
+    }
 
     #[test]
     fn team_route_branches() {
