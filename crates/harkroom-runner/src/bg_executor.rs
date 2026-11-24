@@ -377,6 +377,8 @@ const CLEANUP_BODY_REST: &[&str] = &[
     "오래 안 고친 것·큰 것·요약 없음)를 받아 **하나씩 memory.get 으로 읽고** 판단한다.",
     "- 같은 주제 여럿 → memory.merge 한 번(into·from·value·kind). 경위는 버리고 되풀이할 사실만 남긴다.",
     "- 안 쓰는 것 → 지우지 말고 memory.archive. 한 스레드의 진행 상태로 보이는 것(delegation-*·review-* 등)이 끝난 일이면 보관한다.",
+    "- audit 의 `idleState`(60일 넘게 안 쓰인 상태 꼴·journal) → 되풀이할 교훈이 있으면 먼저 topic·procedure 로 증류하고 나머지는 memory.archive 로 묶어 보관한다.",
+    "  보관은 300개까지다 — `items.archived` 와 더해 300을 넘으면 오래된 보관부터 지워지니 넘지 않는 만큼만 한다.",
     "- 곧 밀려날 journal → 되풀이할 교훈만 topic·procedure 로 증류하고 journal 은 둔다.",
     "- 요약 없는 것 → 읽고 「언제 열어 볼지」 한 줄을 description 으로(memory.set, kind 도 같이, 본문 그대로).",
     "- core 가 길면: core 는 쓸 수 없다 — 손대지 않는다.",
