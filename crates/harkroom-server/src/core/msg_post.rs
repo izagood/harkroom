@@ -1274,10 +1274,25 @@ pub(crate) async fn post_tx(
     // D1 그림자 — 위임마다 하위 작업 행. 커밋 뒤에만 부른다(작업 행의 FK 가 글·위임 행을 본다). 기록만.
     if let Some(d) = &delegation_id {
         super::work_shadow::delegation_created(d);
+        // U3 측정 — 어느 문·어느 `expect` 로 선 의무인가. 기록만.
+        let (door, expect) = match (&origin.delegation, &origin.call_obligation) {
+            (Some(p), _) => ("delegate", p.close_on.as_str()),
+            (None, Some(o)) => ("call", o.close_on.as_str()),
+            (None, None) => ("delegate", "report"),
+        };
+        super::measure::obligation_created(d, author, channel, root.unwrap_or(&id), door, expect);
     }
     // U4: 맨 앞 멘션이 세운 의무(암묵 위임 켜짐)에도 같은 그림자.
     for d in &implicit_ids {
         super::work_shadow::delegation_created(d);
+        super::measure::obligation_created(
+            d,
+            author,
+            channel,
+            root.unwrap_or(&id),
+            "mention",
+            "reply",
+        );
     }
     Ok(Outcome::Posted {
         row,

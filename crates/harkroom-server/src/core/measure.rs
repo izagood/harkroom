@@ -22,6 +22,9 @@ pub const KIND_TURN_TOKENS: &str = "turn.tokens";
 /// 팀 명단 갈래를 지난 위임 한 건(T1) — `value` 는 명단으로 지나간 팀원 중 호출 게이트였다면 막혔을 수,
 /// `detail.branch` 는 `gate_would_pass`·`gate_would_block`·`unknown`(판정 못 함). `message.delegate` 게이트.
 pub const KIND_TEAM_ROUTE: &str = "team.route";
+/// 세워진 의무 한 건(U3) — `ref_id` 는 위임 id, `detail.door` 는 어느 문(`call`·`delegate`·`mention`),
+/// `detail.expect` 는 닫는 조건(`report`·`reply`). 의무 없는 부름(`expect: "none"`)은 의무가 없어 적지 않는다.
+pub const KIND_OBLIGATION_CREATED: &str = "obligation.created";
 
 /// 머지 판정 한 건의 원장 위임장 대조(G1, 그림자) — `detail.branch`(`ledger_mandate::branch` 의 갈래)·`detail.agree`,
 /// `value` 는 일치 1·불일치 0(대조 못 했으면 없음). `ledger_mandate::merge_shadow`.
@@ -123,6 +126,26 @@ pub fn delegation_outcomes(ids: &[String], outcome: &str, reason: Option<&str>) 
             ..Event::default()
         });
     }
+}
+
+/// 세워진 의무 한 건 — 어느 문·어느 `expect` 로 섰나([`KIND_OBLIGATION_CREATED`]).
+pub fn obligation_created(
+    delegation_id: &str,
+    lead: &str,
+    channel: &str,
+    root: &str,
+    door: &'static str,
+    expect: &'static str,
+) {
+    record(Event {
+        kind: KIND_OBLIGATION_CREATED,
+        account_id: Some(lead.to_string()),
+        channel_id: Some(channel.to_string()),
+        thread_root_id: Some(root.to_string()),
+        ref_id: Some(delegation_id.to_string()),
+        detail: Some(json!({ "door": door, "expect": expect })),
+        ..Event::default()
+    });
 }
 
 /// 닫힌 호출 누락들 — 대상 하나에 한 줄(`ref_id`). `missed` 는 `mention_calls::Resolved::missed`(대상, 이유).
