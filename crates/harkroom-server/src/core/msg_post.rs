@@ -41,6 +41,7 @@ use super::msg_edit::{
 };
 use super::msg_list::read_list_row;
 use super::msg_read::{is_uuid, message_by_id};
+use super::text_mention_wake;
 use super::turn_settle;
 use super::wake_preempt;
 use crate::auth::{RequireAccount, Via};
@@ -353,6 +354,9 @@ pub(crate) struct Origin<'a> {
     /// 막힌 담당은 이번 턴을 깨운 사람 권한으로 다시 잼·하루 상한)을 지난 대상에게만 같은 tx 에서 의무를 만든다. 지난 대상이 없으면
     /// 아무것도 쓰지 않고 [`Outcome::Rejected`](`not_invokable`).
     pub(crate) call_obligation: Option<delegate_write::CallObligation<'a>>,
+    /// C2 — 「도구가 만든 호출」 표지. 서버가 `to` 인자로 머리 멘션을 지은 글(`agent.call`)에만 켠다 — 글자 멘션 깨움을 걷어도
+    /// 이 글의 부름은 그대로 닿는다([`super::text_mention_wake`]). 라우트 입력·본문에서는 켜지 않는다.
+    pub(crate) tool_call: bool,
     /// TS `kind: 'system'`(S5.4 CH4b-2) — 서버가 사실을 남기는 줄(멤버 넣기·빼기). 라우트 입력에서는 켜지 않는다. TS `postMessage` 와 같이
     /// `kind` 칸이 `system` 이고 `meta`(`i18n` 포함)를 그대로 싣는다. 결과로는 센다(`countsAsReply`). 위임 키(`stampHumanMandate` 는
     /// `kind === 'user'` 만)와 암묵 위임(`kind !== 'system'`)은 하지 않는다. 스레드 안(머리 아래)에도 쓴다(S5.4 TM2) — 머리·DM 갈래
@@ -597,6 +601,7 @@ fn no_mention_calls(body: &str) -> mention_calls::Resolved {
         normalized_body: body.to_owned(),
         account_handles: HashSet::new(),
         called_ids: Vec::new(),
+        called_agents: Vec::new(),
         denied_ids: HashSet::new(),
         team_plans: Vec::new(),
         target_call: Vec::new(),
@@ -746,6 +751,34 @@ pub(crate) async fn post_tx(
         )
         .await?
     };
+    // C2 — 글자 멘션 깨움 걷기. 스위치가 꺼져 있으면(기본) 아무것도 바뀌지 않는다. 게이트가 정한 부름에서 빼기만 한다.
+    let mut calls = calls;
+    let text_route = if origin.system || origin.server_notice || origin.plan_auto_stamp.is_some() {
+        text_mention_wake::Route::System
+    } else if origin.tool_call
+        || origin.delegation.is_some()
+        || origin.call_obligation.is_some()
+        || origin.closes_delegation
+        || origin.service_call
+        || origin.meta.contains_key("ask")
+        || origin.meta.get("kind").and_then(Value::as_str) == Some("delegation")
+    {
+        text_mention_wake::Route::Tool
+    } else {
+        text_mention_wake::Route::Text
+    };
+    let text_stripped = text_mention_wake::apply(
+        text_mention_wake::stripped(crate::env_once::get(&crate::env_once::TEXT_MENTION_WAKE)),
+        if author_is_agent {
+            text_mention_wake::Author::Agent
+        } else {
+            text_mention_wake::Author::Human
+        },
+        text_route,
+        author,
+        &mut calls,
+    );
+    super::measure::text_wake_stripped(author, channel, text_stripped);
     // U1 `agent.call` 의 의무 — 위 판정(게이트·principal)을 지난 `to` 대상만 담당이 된다. 판정을 다시 하지 않는다.
     let call_open: Option<Vec<(String, String)>> = origin.call_obligation.as_ref().map(|o| {
         o.targets

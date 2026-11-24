@@ -966,6 +966,7 @@ async fn post_service(
         server_notice: false,
         closes_delegation: false,
         call_obligation: None,
+        tool_call: false,
         delegation: None,
         system: false,
         progress: false,
@@ -1293,6 +1294,8 @@ async fn post_full(
             deadline_at: o.deadline_at,
             close_on: o.close_on,
         }),
+        // C2 — `agent.call` 이 `to` 로 지은 머리 멘션은 도구가 만든 호출이다.
+        tool_call: call.is_some(),
         delegation: None,
         system: kind == Kind::Notice,
         progress: kind == Kind::Progress,
