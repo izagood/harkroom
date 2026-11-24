@@ -507,6 +507,19 @@ describe('WaitChainLine — 줄 끝의 시간은 기다린 시간이다', () => 
     expect(screen.getByTestId('wait-chain').textContent).toContain('4시간째 기다림');
   });
 
+  it('1분이 안 됐으면 시간 조각을 그리지 않는다 — 「0분째 기다림」은 나오지 않는다', () => {
+    const fresh = { ...ask('a1', 1, FORGE, null), createdAt: new Date(Date.now() - 20_000).toISOString() };
+    usePrefsStore.getState().setLocale('ko');
+    render(<WaitChainLine chain={chain([fresh])} />);
+    const ko = screen.getByTestId('wait-chain').textContent ?? '';
+    expect(ko).not.toContain('기다림');
+    expect(ko).not.toContain('0분');
+    cleanup();
+    usePrefsStore.getState().setLocale('en');
+    render(<WaitChainLine chain={chain([fresh])} />);
+    expect(screen.getByTestId('wait-chain').textContent).not.toMatch(/waiting \d|0m/);
+  });
+
   it('영어: running 이라 하지 않는다', () => {
     usePrefsStore.getState().setLocale('en');
     render(<WaitChainLine chain={chain([old()])} />);
