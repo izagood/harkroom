@@ -17,6 +17,8 @@ pub const KIND_MERGE_DENIED: &str = "merge.denied";
 pub const KIND_DELEGATION_OUTCOME: &str = "delegation.outcome";
 /// 에이전트 글이 `@핸들` 을 적었지만 깨우지 못한 호출 — `detail.reason`. `mention_calls::resolve`.
 pub const KIND_CALL_MISSED: &str = "call.missed";
+/// 글자 멘션 깨움을 걷은 글 한 건(C2) — `value` 는 걷은 수, `detail.branch` 는 `account`·`team`. `text_mention_wake::apply`.
+pub const KIND_TEXT_WAKE_OFF: &str = "call.text_wake_off";
 /// 턴 하나의 토큰 — `value` 는 합, `detail` 에 harness·model·input·output·cacheRead·cacheWrite·messages·durationMs(모르는 칸은 없음). [`turn_tokens`].
 pub const KIND_TURN_TOKENS: &str = "turn.tokens";
 /// 팀 명단 갈래를 지난 위임 한 건(T1) — `value` 는 명단으로 지나간 팀원 중 호출 게이트였다면 막혔을 수,
@@ -138,6 +140,27 @@ pub fn calls_missed<'a>(
             channel_id: Some(channel.to_string()),
             ref_id: Some(reference.clone()),
             detail: Some(json!({ "reason": reason })),
+            ..Event::default()
+        });
+    }
+}
+
+/// 걷은 글자 멘션 — 갈래(`account`·`team`)마다 한 줄, 수만. 걷은 것이 없으면 아무것도 적지 않는다.
+pub fn text_wake_stripped(
+    author: &str,
+    channel: &str,
+    s: crate::core::text_mention_wake::Stripped,
+) {
+    for (branch, n) in [("account", s.accounts), ("team", s.teams)] {
+        if n == 0 {
+            continue;
+        }
+        record(Event {
+            kind: KIND_TEXT_WAKE_OFF,
+            account_id: Some(author.to_string()),
+            channel_id: Some(channel.to_string()),
+            value: Some(n as i64),
+            detail: Some(json!({ "branch": branch })),
             ..Event::default()
         });
     }

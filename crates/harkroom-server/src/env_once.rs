@@ -25,6 +25,8 @@ env_once! {
     BACKGROUND_ENABLED = "HARKROOM_BACKGROUND_ENABLED";
     /// 원인 제공자 부름 스위치(`mention_calls::principal_invoke_enabled`).
     PRINCIPAL_INVOKE = "HARKROOM_PRINCIPAL_INVOKE";
+    /// 글자 멘션 깨움 걷기(`text_mention_wake::stripped`) — `off` 일 때만 걷는다.
+    TEXT_MENTION_WAKE = "HARKROOM_TEXT_MENTION_WAKE";
     /// 위임 묵시 모드(`implicit_delegation::mode`).
     DELEGATION_IMPLICIT = "HARKROOM_DELEGATION_IMPLICIT";
     /// 자기 쪼개기 스위치(`mcp::delegate_gate::self_split_on`).

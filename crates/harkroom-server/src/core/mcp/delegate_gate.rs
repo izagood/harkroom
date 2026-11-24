@@ -745,6 +745,7 @@ async fn write(
         turn_id: turn.filter(|_| operator),
         meta,
         server_notice: false,
+        tool_call: false,
         closes_delegation: false,
         call_obligation: None,
         delegation: Some(delegate_write::Plan {

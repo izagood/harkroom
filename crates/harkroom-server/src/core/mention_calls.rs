@@ -112,6 +112,8 @@ pub struct Resolved {
     /// 계정으로 처리한 이름(본문 글자 기준, 소문자).
     pub account_handles: HashSet<String>,
     pub called_ids: Vec<String>,
+    /// C2 — `called_ids` 가운데 에이전트 계정 `(id, handle)`. 글자 멘션 깨움 걷기(`text_mention_wake`)만 쓴다.
+    pub called_agents: Vec<(String, String)>,
     pub denied_ids: HashSet<String>,
     pub team_plans: Vec<TeamPlan>,
     pub target_call: Vec<Target>,
@@ -578,8 +580,19 @@ pub async fn resolve(conn: &mut PgConnection, input: &Input<'_>) -> Result<Resol
                 .map(|a| (a.handle.clone(), *why))
         })
         .collect();
+    let called_agents: Vec<(String, String)> = split
+        .call
+        .iter()
+        .filter_map(|id| {
+            called_accounts
+                .iter()
+                .find(|a| a.kind == "agent" && &a.id == id)
+                .map(|a| (a.id.clone(), a.handle.clone()))
+        })
+        .collect();
     Ok(Resolved {
         normalized_body: normalized,
+        called_agents,
         account_handles,
         called_ids: split.call,
         denied_ids: denied,
