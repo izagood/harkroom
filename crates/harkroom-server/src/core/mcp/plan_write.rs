@@ -423,6 +423,12 @@ fn build_set(
 }
 
 /// 관리자 칸 정리(TS): 칸이 없으면 앞 판 값 유지, null 이면 비움. 처음 세울 때 비었으면 쓰는 에이전트. `(새 관리자, 앞 관리자)`.
+///
+/// 관리자를 **누가 적었는지**(`managerBy`)도 여기서 서버가 정한다 — 입력에서 온 값은 쓰지 않는다(입력 꼴이 이미 버린다).
+/// 서버가 관리자를 스스로 깨울 때(멈춤 판정) 「적은 계정이 그 관리자를 부를 수 있나」를 보는 근거다.
+/// - 관리자가 바뀌면 지금 쓰는 계정.
+/// - 그대로면 앞 판 값. 앞 판에 적은 계정이 없는데(이 칸이 생기기 전의 판) 관리자 자신이 쓰면 관리자 자신.
+/// - 관리자가 비면 지운다.
 fn settle_manager(
     doc: &mut Value,
     before: Option<&Value>,
@@ -430,6 +436,7 @@ fn settle_manager(
 ) -> (Option<String>, Option<String>) {
     let s = |v: &Value| v.as_str().filter(|s| !s.is_empty()).map(str::to_string);
     let prev = before.and_then(|b| s(&b["managerId"]));
+    let prev_by = before.and_then(|b| s(&b[MANAGER_BY]));
     let Some(o) = doc.as_object_mut() else {
         return (None, prev);
     };
@@ -440,6 +447,11 @@ fn settle_manager(
     if before.is_none() && manager.is_none() {
         manager = Some(me.to_string());
     }
+    let by = match &manager {
+        None => None,
+        Some(m) if Some(m) != prev.as_ref() => Some(me.to_string()),
+        Some(m) => prev_by.or_else(|| (m == me).then(|| me.to_string())),
+    };
     match &manager {
         Some(m) => {
             o.insert("managerId".into(), Value::from(m.as_str()));
@@ -448,8 +460,19 @@ fn settle_manager(
             o.remove("managerId");
         }
     }
+    match by {
+        Some(b) => {
+            o.insert(MANAGER_BY.into(), Value::from(b));
+        }
+        None => {
+            o.remove(MANAGER_BY);
+        }
+    }
     (manager, prev)
 }
+
+/// 계획 문서에서 관리자를 적은 계정의 칸 이름. [`settle_manager`] 만 쓴다.
+pub(crate) const MANAGER_BY: &str = "managerBy";
 
 /// 연결 꼴 — TS 순서(그룹 순서, 중복 없음)로 첫 거절.
 fn link_shape(doc: &Value, root: &str) -> Option<Refusal> {
