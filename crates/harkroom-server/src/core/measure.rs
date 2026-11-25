@@ -25,7 +25,7 @@ pub const KIND_TURN_TOKENS: &str = "turn.tokens";
 /// `detail.branch` 는 `gate_would_pass`·`gate_would_block`·`unknown`(판정 못 함). `message.delegate` 게이트.
 pub const KIND_TEAM_ROUTE: &str = "team.route";
 /// 세워진 의무 한 건(U3) — `ref_id` 는 위임 id, `detail.door` 는 어느 문(`call`·`delegate`·`mention`),
-/// `detail.expect` 는 닫는 조건(`report`·`reply`). 의무 없는 부름(`expect: "none"`)은 의무가 없어 적지 않는다.
+/// `detail.expect` 는 닫는 조건(`report`·`reply`), `detail.expectOmitted` 는 `agent.call` 이 `expect` 를 비워 기본값으로 섰는가. 의무 없는 부름(`expect: "none"`)은 의무가 없어 적지 않는다.
 pub const KIND_OBLIGATION_CREATED: &str = "obligation.created";
 
 /// 머지 판정 한 건의 원장 위임장 대조(G1, 그림자) — `detail.branch`(`ledger_mandate::branch` 의 갈래)·`detail.agree`,
@@ -130,7 +130,8 @@ pub fn delegation_outcomes(ids: &[String], outcome: &str, reason: Option<&str>) 
     }
 }
 
-/// 세워진 의무 한 건 — 어느 문·어느 `expect` 로 섰나([`KIND_OBLIGATION_CREATED`]).
+/// 세워진 의무 한 건 — 어느 문·어느 `expect` 로 섰나([`KIND_OBLIGATION_CREATED`]). `expect_omitted` 는 `agent.call` 이 `expect` 를
+/// 비워 기본값으로 선 의무다(다른 문은 늘 `false`).
 pub fn obligation_created(
     delegation_id: &str,
     lead: &str,
@@ -138,6 +139,7 @@ pub fn obligation_created(
     root: &str,
     door: &'static str,
     expect: &'static str,
+    expect_omitted: bool,
 ) {
     record(Event {
         kind: KIND_OBLIGATION_CREATED,
@@ -145,7 +147,7 @@ pub fn obligation_created(
         channel_id: Some(channel.to_string()),
         thread_root_id: Some(root.to_string()),
         ref_id: Some(delegation_id.to_string()),
-        detail: Some(json!({ "door": door, "expect": expect })),
+        detail: Some(json!({ "door": door, "expect": expect, "expectOmitted": expect_omitted })),
         ..Event::default()
     });
 }

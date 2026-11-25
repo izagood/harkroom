@@ -1,5 +1,6 @@
 //! U1 — `agent.call` 의 `expect`(report·reply)가 호출 게이트를 지난 대상에게만 의무를 세우는지, `reply` 의무가 담당의 첫 답글로
 //! 닫히는지, 새 부름이 **같은 넘긴 쪽**의 앞 의무만 대체하는지를 실제 스키마에서 본다.
+//! U3 — `expect` 를 비운 부름은 `report` 의무이고, 스레드 없이 비우면 아무것도 쓰지 않고 거절되는지도 본다.
 //! `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `db-tests` 잡이 넘긴다).
 use harkroom_server::auth::Account;
 use harkroom_server::core::mcp::msg_post::{answer, answer_call};
@@ -151,7 +152,38 @@ async fn expect_makes_obligations_only_for_gate_passed_targets() {
     .await
     .expect("answered");
     assert!(no_thread.contains("bad_request"), "{no_thread}");
-    let stray = call(&me, json!({ "to": ["ce-mate"], "deadlineSec": 60 })).await;
+    // U3 — 스레드 없이 `expect` 를 비운 부름도 거절이다(의무 없는 글로 낮춰 세우지 않는다). 문구가 두 길을 알려 준다.
+    let bare = answer_call(
+        &st,
+        &me,
+        &json!({ "channelId": channel, "body": "x", "to": ["ce-mate"] }),
+        None,
+        None,
+        false,
+        true,
+        false,
+    )
+    .await
+    .expect("answered");
+    assert!(bare.contains("bad_request"), "{bare}");
+    assert!(
+        bare.contains("threadRootId") && bare.contains("none"),
+        "{bare}"
+    );
+    let top: i64 = sqlx::query_scalar(
+        "select count(*) from message where channel_id = $1::uuid and thread_root_id is null and author_id = $2::uuid",
+    )
+    .bind(&channel)
+    .bind(&me.id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(top, 0, "거절된 부름은 채널 최상위에 글을 남기지 않는다");
+    let stray = call(
+        &me,
+        json!({ "to": ["ce-mate"], "expect": "none", "deadlineSec": 60 }),
+    )
+    .await;
     assert!(stray.contains("bad_request"), "{stray}");
     let one = call(
         &me,
@@ -252,12 +284,46 @@ async fn expect_makes_obligations_only_for_gate_passed_targets() {
     assert_eq!(r[2].4, None, "{r:?}");
     assert_eq!((r[3].1.as_str(), &r[3].4), (me.id.as_str(), &None));
 
-    // 의무 없는 부름(기본)은 예전 그대로 — 의무도 위임 글도 아니다.
-    let plain = call(&me, json!({ "to": ["ce-mate"] })).await;
+    // 의무 없는 부름(`expect: "none"`)은 의무도 위임 글도 아니다.
+    let plain = call(&me, json!({ "to": ["ce-mate"], "expect": "none" })).await;
     let v = inner(&plain);
     assert!(v.get("delegationId").is_none(), "{plain}");
     assert!(v["message"]["meta"].get("kind").is_none(), "{plain}");
     assert_eq!(rows(&pool, &root).await.len(), 4);
+
+    // U3 — `expect` 를 비우면 일 넘기기(`report`)다: 의무가 서고 기한은 기본값(600초)이며, 내 앞 의무를 대체한다.
+    let before = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let omitted = call(&me, json!({ "to": ["ce-mate"] })).await;
+    let v = inner(&omitted);
+    assert!(v["delegationId"].is_string(), "{omitted}");
+    assert_eq!(v["expect"], "report", "{omitted}");
+    assert_eq!(v["message"]["meta"]["kind"], "delegation", "{omitted}");
+    let left: i64 = sqlx::query_scalar(
+        "select extract(epoch from deadline_at)::bigint from team_delegation where id = $1::uuid",
+    )
+    .bind(v["delegationId"].as_str().unwrap())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(
+        (595..=660).contains(&(left - before)),
+        "기본 기한 600초: {}",
+        left - before
+    );
+    let r = rows(&pool, &root).await;
+    assert_eq!(r.len(), 5, "{r:?}");
+    assert_eq!(r[3].4.as_deref(), Some("closed"), "{r:?}");
+    assert_eq!(
+        (r[4].1.as_str(), r[4].2.as_str(), &r[4].4),
+        (me.id.as_str(), "report", &None),
+        "{r:?}"
+    );
+    // 보통 답글로는 닫히지 않는다 — 비운 부름도 `report` 의무다.
+    say(&mate, "받음").await;
+    assert_eq!(rows(&pool, &root).await[4].4, None);
 
     // 계획 단계(`planStepId`) — 의무 행의 `plan_step_id` 에 남는다. 다른 스레드에서 본다.
     let plan_root: String = sqlx::query_scalar(
@@ -290,7 +356,11 @@ async fn expect_makes_obligations_only_for_gate_passed_targets() {
         .unwrap()
     };
     // 의무 없는 부름에는 실을 수 없다 · 계획이 없으면 거절 — 글도 의무도 없다.
-    let stray = call(&me, json!({ "to": ["ce-mate"], "planStepId": "s1" })).await;
+    let stray = call(
+        &me,
+        json!({ "to": ["ce-mate"], "expect": "none", "planStepId": "s1" }),
+    )
+    .await;
     assert!(stray.contains("bad_request"), "{stray}");
     let no_plan = step_call(json!({ "to": ["ce-mate"], "planStepId": "s1" })).await;
     assert!(no_plan.contains("no_plan"), "{no_plan}");
