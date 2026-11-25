@@ -1046,13 +1046,23 @@ mod tests {
         );
     }
 
+    /// 루프처럼 10분마다 돌려 `to` 까지 간다(한 번에 건너뛰면 낡은 시계로 읽힌다).
+    fn run_to(mut c: Clock, to: i64, views: &[StepView]) -> Clock {
+        let mut t = c.seen_at;
+        while t < to {
+            t = (t + 600).min(to);
+            c = tick_clock(&c, t, views).0;
+        }
+        c
+    }
+
     #[test]
     fn manager_is_woken_once_per_step_and_once_per_window_per_plan() {
         let views = [view("s1", false, false), view("s2", false, false)];
         let (mut c, _) = tick_clock(&Clock::default(), T0, &[view("s1", false, false)]);
         c = tick_clock(&c, T0 + 600, &views).0;
         let t = T0 + 6 * H;
-        c = tick_clock(&c, t, &views).0;
+        c = run_to(c, t, &views);
         let stalled = stall_of(&views, Some((&c, t, 6 * H)), 20).would_stall;
         assert_eq!(stalled, ["s1"]);
         assert_eq!(wake_due(&c, &stalled, t, 6 * H), ["s1"]);
@@ -1065,6 +1075,7 @@ mod tests {
         assert_eq!(stalled, ["s1", "s2"]);
         assert!(wake_due(&c, &stalled, t2, 6 * H).is_empty());
         let t3 = t + 6 * H;
+        c = run_to(c, t3, &views);
         assert_eq!(wake_due(&c, &stalled, t3, 6 * H), ["s2"]);
         mark_woken(&mut c, &["s2".to_string()], t3);
         assert!(wake_due(&c, &stalled, t3 + 100 * H, 6 * H).is_empty());
