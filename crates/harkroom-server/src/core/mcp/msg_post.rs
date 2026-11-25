@@ -1295,6 +1295,7 @@ async fn post_full(
             close_on: o.close_on,
             plan_step: o.plan_step,
             plan_doc: o.plan_doc,
+            expect_omitted: o.expect_omitted,
         }),
         // C2 — `agent.call` 이 `to` 로 지은 머리 멘션은 도구가 만든 호출이다.
         tool_call: call.is_some(),
@@ -1635,9 +1636,9 @@ fn call_key(raw: &str) -> String {
 /// `agent.call` 의 `expect` — 이 부름이 무엇으로 끝나는가.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Expect {
-    /// 알리기 — 의무 없음(예전 그대로).
+    /// 알리기 — 의무 없음. 적어야만 고른다(`expect: "none"`).
     None,
-    /// 담당의 `message.report`·`message.fail`·기한으로 닫히는 의무(`message.delegate` 와 같다).
+    /// 담당의 `message.report`·`message.fail`·기한으로 닫히는 의무(`message.delegate` 와 같다). `expect` 를 비우면 이것이다.
     Report,
     /// 담당의 첫 답글로 닫히는 의무(묻기).
     Reply,
@@ -1655,6 +1656,8 @@ struct CallOblige<'a> {
     plan_step: Option<&'a str>,
     /// 이 스레드의 계획 문서 — 없으면 단계를 잇지 않는다.
     plan_doc: Option<&'a Value>,
+    /// `expect` 를 비워 기본값으로 선 의무인가 — 측정에만 쓴다.
+    expect_omitted: bool,
 }
 
 /// zod 가 받는 `agent.call` 인자.
@@ -1662,6 +1665,8 @@ struct CallArgs {
     post: Args,
     to: Vec<String>,
     expect: Expect,
+    /// `expect` 칸이 없었다 — 기본값([`Expect::Report`])으로 읽었다.
+    expect_omitted: bool,
     deadline_sec: Option<i64>,
     picks: Vec<Pick>,
     plan_root: Option<String>,
@@ -1687,14 +1692,18 @@ fn parse_call(args: &Value) -> Option<CallArgs> {
         }
         to.push(s.to_owned());
     }
-    let expect = match o.get("expect") {
-        None => Expect::None,
-        Some(v) => match v.as_str()? {
-            "none" => Expect::None,
-            "report" => Expect::Report,
-            "reply" => Expect::Reply,
-            _ => return None,
-        },
+    // U3 — 비우면 일 넘기기(`report`)다. 알리기는 `none` 을 적어야 한다.
+    let (expect, expect_omitted) = match o.get("expect") {
+        None => (Expect::Report, true),
+        Some(v) => (
+            match v.as_str()? {
+                "none" => Expect::None,
+                "report" => Expect::Report,
+                "reply" => Expect::Reply,
+                _ => return None,
+            },
+            false,
+        ),
     };
     let deadline_sec = match o.get("deadlineSec") {
         None => None,
@@ -1738,6 +1747,7 @@ fn parse_call(args: &Value) -> Option<CallArgs> {
         post: parse(&Value::Object(post))?,
         to,
         expect,
+        expect_omitted,
         deadline_sec,
         picks,
         plan_root,
@@ -1756,6 +1766,8 @@ const CALL_STEP_UNKNOWN_MSG: &str =
     "planStepId 가 이 스레드 계획에 없는 단계다 — thread.plan 으로 단계 id 를 확인한다";
 /// 의무 있는 부름은 스레드 안에서만 선다 — 결말이 돌아올 자리가 그 스레드다.
 const CALL_NEEDS_THREAD_MSG: &str = "expect 가 report 나 reply 면 threadRootId 를 준다";
+/// `expect` 를 비운 부름은 일 넘기기(`report`)다 — 스레드 없이 비우면 의무 없는 글로 낮춰 세우지 않고 거절한다.
+const CALL_DEFAULT_NEEDS_THREAD_MSG: &str = "expect 를 비우면 report 다 — threadRootId 를 주거나, 알리기만 할 것이면 expect: \"none\" 을 적는다";
 
 /// C1 `agent.call` — 대상을 본문이 아니라 `to` 인자로 받아 부른다. 대상을 머리 멘션으로 앞세운 글을 `message.post` 와 **같은 경로**
 /// ([`post_full`])로 세운다 — 호출 게이트·principal·감사·측정·inbox 가 머리 멘션과 한 줄도 다르지 않다.
@@ -1779,6 +1791,7 @@ pub async fn answer_call(
         post: mut a,
         to,
         expect,
+        expect_omitted,
         deadline_sec,
         picks,
         plan_root,
@@ -1798,7 +1811,12 @@ pub async fn answer_call(
     let root = a.post.thread_root.clone();
     if expect != Expect::None {
         let Some(root) = root.as_deref() else {
-            return Some(err("bad_request", CALL_NEEDS_THREAD_MSG));
+            let msg = if expect_omitted {
+                CALL_DEFAULT_NEEDS_THREAD_MSG
+            } else {
+                CALL_NEEDS_THREAD_MSG
+            };
+            return Some(err("bad_request", msg));
         };
         if plan.is_some_and(|(r, _)| r.eq_ignore_ascii_case(root)) {
             return Some(err("self_link", super::delegate_gate::SELF_LINK_MSG));
@@ -2053,6 +2071,7 @@ pub async fn answer_call(
             plan,
             plan_step: plan_step.as_deref(),
             plan_doc: plan_doc.as_ref(),
+            expect_omitted,
         }),
     };
     post_full(
@@ -2509,7 +2528,9 @@ mod tests {
         let c = parse_call(&ok).unwrap();
         assert_eq!(c.to, vec!["@alpha", "beta"]);
         assert!(!c.post.post.also_in_channel && c.post.post.attachment_ids.is_empty());
-        assert_eq!(c.expect, Expect::None);
+        // U3 — `expect` 를 비우면 일 넘기기(`report`)이고, 비웠다는 표시가 남는다.
+        assert_eq!(c.expect, Expect::Report);
+        assert!(c.expect_omitted);
         assert!(c.deadline_sec.is_none() && c.picks.is_empty());
         // U1 — 의무 칸.
         let full = json!({"channelId": ch, "threadRootId": ch, "to": ["a"], "body": "x", "expect": "reply",
@@ -2537,9 +2558,11 @@ mod tests {
         let v = json!({"channelId": ch, "to": ["a"], "body": "x", "planStepId": "s0"});
         assert!(matches!(check("agent.call", &v), Verdict::Reject(_)));
         let report = json!({"channelId": ch, "to": ["a"], "body": "x", "expect": "report"});
-        assert_eq!(parse_call(&report).unwrap().expect, Expect::Report);
+        let c = parse_call(&report).unwrap();
+        assert!(c.expect == Expect::Report && !c.expect_omitted);
         let none = json!({"channelId": ch, "to": ["a"], "body": "x", "expect": "none"});
-        assert_eq!(parse_call(&none).unwrap().expect, Expect::None);
+        let c = parse_call(&none).unwrap();
+        assert!(c.expect == Expect::None && !c.expect_omitted);
         for bad in [
             json!({"channelId": ch, "to": ["a"], "body": "x", "expect": "wait"}),
             json!({"channelId": ch, "to": ["a"], "body": "x", "expect": null}),

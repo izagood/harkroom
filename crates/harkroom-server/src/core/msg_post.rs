@@ -1318,12 +1318,20 @@ pub(crate) async fn post_tx(
     if let Some(d) = &delegation_id {
         super::work_shadow::delegation_created(d);
         // U3 측정 — 어느 문·어느 `expect` 로 선 의무인가. 기록만.
-        let (door, expect) = match (&origin.delegation, &origin.call_obligation) {
-            (Some(p), _) => ("delegate", p.close_on.as_str()),
-            (None, Some(o)) => ("call", o.close_on.as_str()),
-            (None, None) => ("delegate", "report"),
+        let (door, expect, omitted) = match (&origin.delegation, &origin.call_obligation) {
+            (Some(p), _) => ("delegate", p.close_on.as_str(), false),
+            (None, Some(o)) => ("call", o.close_on.as_str(), o.expect_omitted),
+            (None, None) => ("delegate", "report", false),
         };
-        super::measure::obligation_created(d, author, channel, root.unwrap_or(&id), door, expect);
+        super::measure::obligation_created(
+            d,
+            author,
+            channel,
+            root.unwrap_or(&id),
+            door,
+            expect,
+            omitted,
+        );
     }
     // U4: 맨 앞 멘션이 세운 의무(암묵 위임 켜짐)에도 같은 그림자.
     for d in &implicit_ids {
@@ -1335,6 +1343,7 @@ pub(crate) async fn post_tx(
             root.unwrap_or(&id),
             "mention",
             "reply",
+            false,
         );
     }
     Ok(Outcome::Posted {

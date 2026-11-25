@@ -200,7 +200,7 @@ async fn team_in_to_expands_and_gates_each_member() {
     assert!(own.contains("not_callable"), "{own}");
     let far = call(json!({ "to": ["@ct-far"], "expect": "report" })).await;
     assert!(far.contains("not_invokable"), "{far}");
-    let far_plain = call(json!({ "to": ["ct-far"] })).await;
+    let far_plain = call(json!({ "to": ["ct-far"], "expect": "none" })).await;
     assert!(far_plain.contains("not_invokable"), "{far_plain}");
     assert_eq!(posted(&pool, &root).await, 0);
     assert!(rows(&pool, &root).await.is_empty());
@@ -251,8 +251,8 @@ async fn team_in_to_expands_and_gates_each_member() {
             .unwrap();
     assert_eq!(woke_skipped, 0);
 
-    // 팀 id 로도 같다 · 알리기(`expect` 없음)도 같은 게이트를 지난다.
-    let by_id = call(json!({ "to": [crew] })).await;
+    // 팀 id 로도 같다 · 알리기(`expect: "none"`)도 같은 게이트를 지난다.
+    let by_id = call(json!({ "to": [crew], "expect": "none" })).await;
     let v = inner(&by_id);
     // 알리기는 접속을 보지 않는다 — 접속하지 않은 팀원도 부름을 받는다(팀원 handle 순). 막힌 팀원은 여전히 빠진다.
     assert_eq!(v["called"], json!([away.id, mate.id]), "{by_id}");
@@ -281,7 +281,7 @@ async fn team_in_to_expands_and_gates_each_member() {
     let refs: Vec<&Account> = many.iter().collect();
     team(&pool, "ct-big", "community", &alice, None, &refs).await;
     let before = posted(&pool, &root).await;
-    let big = call(json!({ "to": ["ct-big"] })).await;
+    let big = call(json!({ "to": ["ct-big"], "expect": "none" })).await;
     assert!(big.contains("too_many_targets"), "{big}");
     assert_eq!(posted(&pool, &root).await, before);
 }

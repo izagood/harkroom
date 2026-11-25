@@ -51,6 +51,8 @@ pub(crate) struct CallObligation<'a> {
     pub(crate) plan_step: Option<&'a str>,
     /// 그 스레드의 계획 문서(`thread_plan.doc`) — 인자가 비었을 때 단계를 미루어 잡는 데 쓴다. 계획이 없으면 없음.
     pub(crate) plan_doc: Option<&'a Value>,
+    /// `expect` 를 비워 기본값(`report`)으로 선 의무인가 — 측정([`super::measure::obligation_created`])에만 쓴다.
+    pub(crate) expect_omitted: bool,
 }
 
 /// `agent.call` 의 의무가 걸리는 계획 단계. 순서: ① 인자(`planStepId`)가 그 계획에 있는 단계면 그것 → ② 담당마다
