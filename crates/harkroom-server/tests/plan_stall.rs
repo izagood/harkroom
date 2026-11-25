@@ -116,7 +116,7 @@ async fn stall_reads_each_signal_keeps_a_clock_and_wakes_the_manager() {
     let post = "insert into message(channel_id, author_id, body, kind) values ($1::uuid, $2::uuid, 'x', 'user') returning id::text";
     let root = one(&admin, post, &[&ch, &lead]).await;
     // s1: 에이전트 담당 active · s2: 사람 담당 active · s3: 에이전트 담당 pending. 관리자는 lead(에이전트).
-    let doc = serde_json::json!({"goal": "", "managerId": lead, "groups": [], "steps": [
+    let doc = serde_json::json!({"goal": "", "managerId": lead, "managerBy": lead, "groups": [], "steps": [
         {"id": "s1", "title": "a @b", "state": "active", "assigneeId": agent, "links": [], "dependsOn": []},
         {"id": "s2", "title": "b", "state": "active", "assigneeId": human, "links": [], "dependsOn": []},
         {"id": "s3", "title": "c", "state": "pending", "assigneeId": agent, "links": [], "dependsOn": ["s1"]}
@@ -447,6 +447,101 @@ async fn stall_reads_each_signal_keeps_a_clock_and_wakes_the_manager() {
         .await
         .unwrap();
     assert_eq!(one(&admin, lines, &[&root]).await, "2");
+
+    // 부름 게이트 — 관리자를 누가 적었는지(`managerBy`)를 본다. 관리자를 주인(human)만 부를 수 있게 좁힌다.
+    let stranger = one(&admin, account, &["ps_stranger", "human"]).await;
+    run(
+        &admin,
+        "insert into channel_member(channel_id, account_id) values ($1::uuid, $2::uuid)",
+        &[&ch, &stranger],
+    )
+    .await;
+    run(
+        &admin,
+        "insert into agent_config(account_id, invoke_scope, owner_account_id, trust_siblings) \
+         values ($1::uuid, 'owner', $2::uuid, false)",
+        &[&lead, &human],
+    )
+    .await;
+    // 적은 계정을 바꾸고 깨운 표시를 지운 뒤 한 번 훑은 줄 수.
+    let swept_as = |by: Option<String>| {
+        let (admin, root, waking) = (&admin, &root, &waking);
+        async move {
+            match &by {
+                Some(by) => {
+                    run(
+                        admin,
+                        "update thread_plan set doc = jsonb_set(doc, '{managerBy}', to_jsonb($2::text)), \
+                           stall = stall #- '{steps,s1,wokenAt}' #- '{lastWokenAt}' where root_id = $1::uuid",
+                        &[root, by],
+                    )
+                    .await
+                }
+                None => {
+                    run(
+                        admin,
+                        "update thread_plan set doc = doc - 'managerBy', \
+                           stall = stall #- '{steps,s1,wokenAt}' #- '{lastWokenAt}' where root_id = $1::uuid",
+                        &[root],
+                    )
+                    .await
+                }
+            }
+            let mut state = waking();
+            sweep(admin, &mut Seen::new(), Some(&mut state))
+                .await
+                .unwrap();
+            one(admin, lines, &[root]).await
+        }
+    };
+    // 부를 수 없는 사람이 적은 관리자는 깨우지 않는다 — 표시만 남는다.
+    assert_eq!(swept_as(Some(stranger.clone())).await, "2");
+    let c = clock(&admin, &root).await;
+    assert!(
+        c["steps"]["s1"]["markedAt"].is_i64() && c["steps"]["s1"]["wokenAt"].is_null(),
+        "{c}"
+    );
+    assert!(view(true).await["stalled"]["s1"]["wokenAt"].is_null());
+    // 적은 계정이 안 남은 판(이 칸이 생기기 전)도, 꼴이 틀린 값도 깨우지 않는다.
+    assert_eq!(swept_as(None).await, "2");
+    assert_eq!(swept_as(Some("nope".into())).await, "2");
+    // 부를 수 있는 사람(주인)이 적었으면 깨운다.
+    assert_eq!(swept_as(Some(human.clone())).await, "3");
+    // 그 사람이 채널을 못 보게 됐거나(비공개 채널에서 나감) 쉬는 계정이 되면 깨우지 않는다.
+    run(
+        &admin,
+        "update channel set visibility = 'private' where id = $1::uuid",
+        &[&ch],
+    )
+    .await;
+    run(
+        &admin,
+        "delete from channel_member where channel_id = $1::uuid and account_id = $2::uuid",
+        &[&ch, &human],
+    )
+    .await;
+    assert_eq!(swept_as(Some(human.clone())).await, "3");
+    run(
+        &admin,
+        "insert into channel_member(channel_id, account_id) values ($1::uuid, $2::uuid)",
+        &[&ch, &human],
+    )
+    .await;
+    run(
+        &admin,
+        "update account set disabled_at = now() where id = $1::uuid",
+        &[&human],
+    )
+    .await;
+    assert_eq!(swept_as(Some(human.clone())).await, "3");
+    run(
+        &admin,
+        "update account set disabled_at = null where id = $1::uuid",
+        &[&human],
+    )
+    .await;
+    // 관리자가 스스로 적었으면 좁은 범위여도 깨운다.
+    assert_eq!(swept_as(Some(lead.clone())).await, "4");
 
     // 단계가 active 를 벗어나면 시계도 지워진다.
     run(

@@ -81,6 +81,42 @@ fn manager_defaults_and_keeps() {
     );
 }
 
+/// 관리자를 적은 계정(`managerBy`)은 서버가 정한다 — 바뀌면 쓰는 계정, 그대로면 앞 판 값, 입력 값은 믿지 않는다.
+#[test]
+fn manager_writer_is_set_by_the_server() {
+    // 처음 세움: 기본 관리자든 남을 적든 쓰는 계정.
+    let mut d = json!({ "goal": "x" });
+    settle_manager(&mut d, None, ME);
+    assert_eq!(d["managerBy"], ME);
+    let mut d = json!({ "goal": "x", "managerId": OTHER, "managerBy": OTHER });
+    settle_manager(&mut d, None, ME);
+    assert_eq!(d["managerBy"], ME, "입력의 managerBy 는 덮인다");
+    // 그대로면 앞 판 값 — 입력에 없어도(전체 덮어쓰기), 남의 이름을 적어 와도.
+    let before = json!({ "managerId": OTHER, "managerBy": OTHER });
+    for mut d in [
+        json!({ "goal": "x" }),
+        json!({ "goal": "x", "managerId": OTHER, "managerBy": ME }),
+    ] {
+        settle_manager(&mut d, Some(&before), ME);
+        assert_eq!(d["managerBy"], OTHER);
+    }
+    // 바뀌면 쓰는 계정. 비우면 지운다.
+    let mut d = json!({ "goal": "x", "managerId": ME });
+    settle_manager(&mut d, Some(&before), ME);
+    assert_eq!(d["managerBy"], ME);
+    let mut d = json!({ "goal": "x", "managerId": null });
+    settle_manager(&mut d, Some(&before), ME);
+    assert!(d.get("managerBy").is_none());
+    // 이 칸이 생기기 전의 판: 남이 쓰면 그대로 비어 있고(깨우지 않는다), 관리자 자신이 쓰면 자신.
+    let legacy = json!({ "managerId": OTHER });
+    let mut d = json!({ "goal": "x" });
+    settle_manager(&mut d, Some(&legacy), ME);
+    assert!(d.get("managerBy").is_none());
+    let mut d = json!({ "goal": "x" });
+    settle_manager(&mut d, Some(&legacy), OTHER);
+    assert_eq!(d["managerBy"], OTHER);
+}
+
 /// security 조건 — 연결 루트 꼴(`invalid_linked_root`)·자기 연결(`self_link`)은 그룹 순서로 첫 거절.
 #[test]
 fn link_shape_refuses_bad_and_self() {

@@ -30,6 +30,8 @@
 //!   권한이 더 있어야 한다(없으면 표시만).
 //! - 시간: [`STALL_HOURS_ENV`](기본 [`DEFAULT_STALL_HOURS`] 시간, 위임 유휴 기한과 같다).
 use super::{GateResult, Side, run_gated};
+use crate::core::invoke_gate;
+use crate::core::mcp::plan_write::MANAGER_BY;
 use crate::core::measure::{self, Event};
 use crate::core::msg_post::PostState;
 use crate::core::msg_read::channel_visible;
@@ -127,6 +129,10 @@ pub const CLOCK_WRITE_SQL: &str =
 pub const MANAGER_SQL: &str = "select handle from account \
       where id = $1::uuid and kind = 'agent' and deleted_at is null and disabled_at is null";
 
+/// 관리자를 적은 계정이 아직 살아 있나(사람·에이전트 모두).
+pub const WRITER_SQL: &str =
+    "select 1 from account where id = $1::uuid and deleted_at is null and disabled_at is null";
+
 /// 깨움 줄에 적을 담당 이름.
 pub const HANDLES_SQL: &str = "select id::text, handle from account where id = any($1::uuid[])";
 
@@ -157,6 +163,10 @@ pub const PLAN_STALL_CLOCK_PRIVILEGES: &[(&str, &str)] = &[
 pub const PLAN_STALL_WAKE_PRIVILEGES: &[(&str, &str)] = &[
     ("channel", "SELECT"),
     ("channel_member", "SELECT"),
+    // 부름 게이트(`invoke_gate`) — 관리자를 적은 계정이 그 관리자를 부를 수 있나.
+    ("agent_config", "SELECT"),
+    ("agent_invoker", "SELECT"),
+    ("agent_owner_delegate", "SELECT"),
     ("inbox", "INSERT"),
     ("event_outbox", "INSERT"),
 ];
@@ -326,17 +336,27 @@ pub fn stall_body(after_sec: i64, steps: &[(String, String, Option<String>, i64)
     lines.join("\n")
 }
 
-/// 이 계획의 관리자를 깨울 수 있나 — 살아 있는 에이전트이고 그 채널을 볼 때만 (관리자 id, 이름).
+/// 이 계획의 관리자를 깨울 수 있나 — 살아 있는 에이전트이고 그 채널을 보며, **부름 게이트를 지날 때만** 관리자 id.
+///
+/// 관리자 칸은 그 스레드를 쓸 수 있는 누구나 적는다. 그래서 적은 계정(`managerBy`, 서버가 쓰기 때 남긴다)을 본다:
+/// - 관리자가 스스로 적었으면 깨운다.
+/// - 남이 적었으면 그 계정이 살아 있고, 그 채널을 보고, 그 관리자를 멘션으로 부를 수 있을 때만 깨운다
+///   (`thread_plan_start` 의 `reachable` 과 같은 판정 — [`invoke_gate::may_invoke`], 회신권 없이).
+/// - 적은 계정이 안 남은 판(이 칸이 생기기 전)은 깨우지 않는다 — 표시만 남는다.
 async fn wakeable_manager(
     pool: &PgPool,
     doc: &Value,
     channel: &str,
 ) -> Result<Option<String>, sqlx::Error> {
-    let Some(manager) = doc["managerId"]
-        .as_str()
-        .map(str::to_lowercase)
-        .filter(|m| is_uuid_shaped(m))
-    else {
+    let id = |v: &Value| {
+        v.as_str()
+            .map(str::to_lowercase)
+            .filter(|m| is_uuid_shaped(m))
+    };
+    let Some(manager) = id(&doc["managerId"]) else {
+        return Ok(None);
+    };
+    let Some(by) = id(&doc[MANAGER_BY]) else {
         return Ok(None);
     };
     let alive: Option<String> = sqlx::query_scalar(MANAGER_SQL)
@@ -346,7 +366,30 @@ async fn wakeable_manager(
     if alive.is_none() || !channel_visible(pool, &manager, channel).await? {
         return Ok(None);
     }
-    Ok(Some(manager))
+    if by == manager {
+        return Ok(Some(manager));
+    }
+    let writer: Option<i32> = sqlx::query_scalar(WRITER_SQL)
+        .bind(&by)
+        .fetch_optional(pool)
+        .await?;
+    if writer.is_none() || !channel_visible(pool, &by, channel).await? {
+        return Ok(None);
+    }
+    let mut conn = pool.acquire().await?;
+    let facts = invoke_gate::invoke_facts(&mut conn, std::slice::from_ref(&manager)).await?;
+    let Some(f) = facts.get(&manager) else {
+        return Ok(None);
+    };
+    let ctx = invoke_gate::Ctx {
+        caller_id: &by,
+        channel_id: channel,
+        via: invoke_gate::Via::Mention,
+        reply_grant_thread_id: None,
+    };
+    Ok(invoke_gate::may_invoke(&mut conn, f, &ctx)
+        .await?
+        .then_some(manager))
 }
 
 /// 관리자를 깨운다 — 스레드에 시스템 줄 하나 + 관리자의 inbox `wake` 한 줄. 줄이 올라갔으면 `true`.
@@ -753,6 +796,7 @@ mod tests {
             ACTIVITY_SQL,
             CLOCKS_SQL,
             MANAGER_SQL,
+            WRITER_SQL,
             HANDLES_SQL,
         ] {
             assert!(sql.starts_with("select "));
@@ -851,6 +895,8 @@ mod tests {
         );
         assert!(MANAGER_SQL.contains("kind = 'agent'"));
         assert!(MANAGER_SQL.contains("deleted_at is null and disabled_at is null"));
+        // 관리자를 적은 계정도 살아 있어야 한다(부름 게이트 앞).
+        assert!(WRITER_SQL.contains("deleted_at is null and disabled_at is null"));
         // 열린 카드만, 권한 카드는 빼고. 서버가 세운 줄은 담당의 글이 아니다.
         assert!(ASKING_SQL.contains("not (meta ? 'permissionRequest')"));
         assert!(
