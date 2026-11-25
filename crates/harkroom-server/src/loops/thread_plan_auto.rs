@@ -212,12 +212,12 @@ pub fn candidates<'a>(
 const WAKE_LIST_MAX: usize = 8;
 
 /// TS `plainNoticeText`.
-fn plain(t: &str) -> String {
+pub(crate) fn plain(t: &str) -> String {
     t.replace('@', "＠")
 }
 
 /// TS `title.replace(/\s+/g, ' ').trim()` — JS `\s` 는 유니코드 공백에서 U+0085 를 빼고 U+FEFF 를 더한 것이다.
-fn fold(t: &str) -> String {
+pub(crate) fn fold(t: &str) -> String {
     t.split(|c: char| (c.is_whitespace() && c != '\u{85}') || c == '\u{feff}')
         .filter(|w| !w.is_empty())
         .collect::<Vec<_>>()

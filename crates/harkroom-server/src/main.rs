@@ -5799,6 +5799,60 @@ fn spawn_embed() -> Option<std::sync::Arc<harkroom_server::embed::Embedder>> {
     }
 }
 
+/// 멈춤 판정(s65) 설정 — 스위치가 꺼졌거나 읽기·시계 권한이 없으면 `None`(멈춤 판정만 빠진다). 관리자 깨움은 `on` 이고
+/// 글 올리기 권한까지 있을 때만 붙는다(없으면 표시만 남는다).
+async fn plan_stall_config(
+    pool: &sqlx::PgPool,
+    mode: harkroom_server::loops::plan_progress::StallMode,
+) -> Option<harkroom_server::loops::plan_progress::StallConfig> {
+    use harkroom_server::loops::plan_progress as pp;
+    if mode == pp::StallMode::Off {
+        return None;
+    }
+    let needed = [pp::PLAN_STALL_PRIVILEGES, pp::PLAN_STALL_CLOCK_PRIVILEGES].concat();
+    match write::missing_in(pool, &needed, &[]).await {
+        Ok(m) if m.is_empty() => {}
+        Ok(m) => {
+            eprintln!("front: loop plan.progress stall off — missing privileges {m:?}");
+            return None;
+        }
+        Err(e) => {
+            eprintln!("front: loop plan.progress stall off — privilege check failed: {e}");
+            return None;
+        }
+    }
+    let on = mode == pp::StallMode::On;
+    let mut wake = None;
+    if on {
+        let needed = [
+            harkroom_server::core::msg_post::MESSAGE_POST_PRIVILEGES,
+            pp::PLAN_STALL_WAKE_PRIVILEGES,
+        ]
+        .concat();
+        match write::missing_in(pool, &needed, pp::PLAN_STALL_WAKE_SEQUENCE_PRIVILEGES).await {
+            Ok(m) if m.is_empty() => {
+                wake = Some(harkroom_server::core::msg_post::PostState {
+                    read: pool.clone(),
+                    write: pool.clone(),
+                    up: harkroom_server::proxy::Upstream::new(""),
+                    implicit_ok: false,
+                });
+            }
+            Ok(m) => {
+                eprintln!("front: loop plan.progress stall wake off — missing privileges {m:?}")
+            }
+            Err(e) => {
+                eprintln!("front: loop plan.progress stall wake off — privilege check failed: {e}")
+            }
+        }
+    }
+    Some(pp::StallConfig {
+        after_sec: pp::stall_after_sec(std::env::var(pp::STALL_HOURS_ENV).ok().as_deref()),
+        on,
+        wake,
+    })
+}
+
 /// 서버 루프 전용 풀(문지기·sweep)을 따로 연다 — 루프 tick 은 문지기 연결 1 + sweep 연결 1 + 이벤트 연결 1 을 쓰는데 쓰기 풀은
 /// 요청과 나눠 쓴다. 이 풀이 막혀도 요청은 막히지 않는다. 권한([`loops::wake::WAKE_PRIVILEGES`])이 모자라면 띄우지 않는다(TS 에 남는다).
 async fn spawn_loops(embedder: Option<std::sync::Arc<harkroom_server::embed::Embedder>>) {
@@ -5843,36 +5897,24 @@ async fn spawn_loops(embedder: Option<std::sync::Arc<harkroom_server::embed::Emb
         Ok(m) => eprintln!("front: loop wake.mirror off — missing privileges {m:?}"),
         Err(e) => eprintln!("front: loop wake.mirror off — privilege check failed: {e}"),
     }
-    // K1 — 계획 진행(그림자). 스위치가 꺼져 있으면(기본) 권한도 보지 않고 띄우지 않는다.
-    if plan_progress::shadow_enabled(std::env::var(plan_progress::SWITCH_ENV).ok().as_deref()) {
+    // K1 — 계획 진행(그림자)과 멈춤 판정(s65). 스위치가 둘 다 꺼져 있으면(기본) 권한도 보지 않고 띄우지 않는다.
+    let progress =
+        plan_progress::shadow_enabled(std::env::var(plan_progress::SWITCH_ENV).ok().as_deref());
+    let stall_mode = plan_progress::stall_mode(
+        std::env::var(plan_progress::STALL_SWITCH_ENV)
+            .ok()
+            .as_deref(),
+    );
+    if progress || stall_mode != plan_progress::StallMode::Off {
         match write::missing_in(&pool, plan_progress::PLAN_PROGRESS_PRIVILEGES, &[]).await {
             Ok(m) if m.is_empty() => {
-                // 멈춤 판정(s64)은 읽는 표가 더 있다 — 그 권한이 없으면 멈춤 판정만 빼고 띄운다.
-                let stall =
-                    match write::missing_in(&pool, plan_progress::PLAN_STALL_PRIVILEGES, &[]).await
-                    {
-                        Ok(m) if m.is_empty() => Some(plan_progress::stall_after_sec(
-                            std::env::var(plan_progress::STALL_HOURS_ENV)
-                                .ok()
-                                .as_deref(),
-                        )),
-                        Ok(m) => {
-                            eprintln!(
-                                "front: loop plan.progress stall off — missing privileges {m:?}"
-                            );
-                            None
-                        }
-                        Err(e) => {
-                            eprintln!(
-                                "front: loop plan.progress stall off — privilege check failed: {e}"
-                            );
-                            None
-                        }
-                    };
+                let stall = plan_stall_config(&pool, stall_mode).await;
                 eprintln!(
-                    "front: loop plan.progress on (shadow — records counts only; stall after {stall:?}s)"
+                    "front: loop plan.progress on (progress shadow {progress}; stall {stall_mode:?} after {:?}s, wake {})",
+                    stall.as_ref().map(|c| c.after_sec),
+                    stall.as_ref().is_some_and(|c| c.wake.is_some())
                 );
-                plan_progress::spawn(gate.clone(), pool.clone(), stall);
+                plan_progress::spawn(gate.clone(), pool.clone(), progress, stall);
             }
             Ok(m) => eprintln!("front: loop plan.progress off — missing privileges {m:?}"),
             Err(e) => eprintln!("front: loop plan.progress off — privilege check failed: {e}"),
