@@ -215,6 +215,21 @@ pub(crate) async fn post_line(
     meta: Map<String, Value>,
     tag: &str,
 ) -> sqlx::Result<()> {
+    post_line_id(st, channel, root, actor, body, meta, tag)
+        .await
+        .map(|_| ())
+}
+
+/// [`post_line`] 과 같은 줄 — 올라간 글의 id 를 돌려준다(못 올렸으면 `None`). 그 줄로 누군가를 깨우는 쪽이 쓴다.
+pub(crate) async fn post_line_id(
+    st: &PostState,
+    channel: &str,
+    root: &str,
+    actor: &str,
+    body: String,
+    meta: Map<String, Value>,
+    tag: &str,
+) -> sqlx::Result<Option<String>> {
     let audience = audience_for(&st.write, channel).await?.to_json();
     let is_dm = channel_is_dm(&st.write, channel).await?;
     let input = PostBody {
@@ -235,7 +250,11 @@ pub(crate) async fn post_line(
     )
     .await?
     {
-        Outcome::Posted { .. } => {}
+        Outcome::Posted { row, .. } => {
+            return Ok(serde_json::from_str::<Value>(&row)
+                .ok()
+                .and_then(|m| m.get("id").and_then(Value::as_str).map(str::to_owned)));
+        }
         // TS 는 `posted.failure` 면 알리지 않고 지나간다 — 판은 이미 꺼졌다. 흔적만 남긴다.
         Outcome::ToTs => eprintln!("[{tag}] system line not posted: to_ts"),
         Outcome::BadThread => eprintln!("[{tag}] system line not posted: bad_thread"),
@@ -243,7 +262,7 @@ pub(crate) async fn post_line(
             eprintln!("[{tag}] system line not posted")
         }
     }
-    Ok(())
+    Ok(None)
 }
 
 /// 코어 라우터에 합칠 줄 — 인증은 `route_layer`, CORS 는 `layer`. 같은 접두의 `GET …/plan` 은 읽기 코어

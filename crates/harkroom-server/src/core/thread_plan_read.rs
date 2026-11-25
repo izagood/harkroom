@@ -10,10 +10,14 @@
 //!   보는 사람 자리로 얹은 것이다. 판정은 `msg_list.rs` 의 [`derive_plan`]·[`plan_progress`](shared `planGraph.ts` 이식).
 //! - **읽기만 한다.** 읽기 풀만 쓰고 새 GRANT 가 없다. 필요한 SELECT 는 [`THREAD_PLAN_READ_PRIVILEGES`] — 없으면 `main.rs` 가
 //!   이 줄을 붙이지 않아 TS 에 남는다.
+//! - 멈춘 단계(s65): 멈춤 판정 스위치가 `on` 일 때만 계획 진행 루프가 적어 둔 표시(`thread_plan.stall`)를 따로 읽어, 멈춘 단계가
+//!   있으면 `stalled: { <단계 id>: { since, wokenAt } }` 를 덧붙인다([`stalled_json`]). 스위치가 꺼졌거나 멈춘 단계가 없으면 그
+//!   읽기도 키도 없다(답이 전과 같다). 표시는 루프의 추정이다 — 문서에서 그 단계가 이미 `active` 가 아니면 싣지 않는다.
 //! - 계획 쓰기(`POST …/plan/start`·`PUT …/plan/manager`·`DELETE …/plan/auto`)와 MCP `thread.plan` 쓰기·`thread.plan.item` 은 TS 에 남긴다.
 //!   MCP `thread.plan` 읽기(`plan` 인자 없음)는 [`plan_view_json`] 을 같이 쓴다(`core/mcp/plan_read.rs`).
 use super::msg_list::{Linked, Progress, derive_plan, linked_roots, plan_progress};
 use super::msg_read::channel_visible;
+use super::plan_progress::Clock;
 use crate::auth::RequireAccount;
 use crate::directory::{internal, json_ok};
 use axum::extract::{Path, State};
@@ -43,6 +47,51 @@ const PLAN_SQL: &str = concat!(
     crate::iso!("auto_at"),
     " from thread_plan where root_id = $1::uuid"
 );
+
+/// 시계 칸과 DB 의 지금(epoch 초).
+const STALL_SQL: &str =
+    "select stall::text, extract(epoch from now())::int8 from thread_plan where root_id = $1::uuid";
+
+/// epoch 초 → `toISOString` 꼴.
+fn iso(secs: i64) -> Option<String> {
+    chrono::DateTime::from_timestamp(secs, 0)
+        .map(|t| t.format("%Y-%m-%dT%H:%M:%S.000Z").to_string())
+}
+
+/// 멈춘 단계 보기 `{ "<id>": { "since": …, "wokenAt": …|null } }` — 없으면 `None`. 루프가 최근에 본 시계([`Clock::live`])의 표시만
+/// 믿고, 문서에서 지금 `active` 인 단계만 싣는다(루프가 다음에 돌기 전에 끝났거나 막힌 단계는 멈춤이 아니다).
+pub(crate) fn stalled_json(doc: &Value, clock: &Clock, now: i64) -> Option<String> {
+    if !clock.live(now) {
+        return None;
+    }
+    let active = |id: &str| {
+        doc["steps"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|s| s["id"].as_str() == Some(id) && s["state"].as_str() == Some("active"))
+    };
+    let parts: Vec<String> = clock
+        .steps
+        .iter()
+        .filter(|(id, s)| s.marked_at.is_some() && active(id))
+        .filter_map(|(id, s)| {
+            Some(format!(
+                r#"{}:{{"since":{},"wokenAt":{}}}"#,
+                q(id),
+                q(&iso(s.quiet_at)?),
+                opt_q(&s.woken_at.and_then(iso))
+            ))
+        })
+        .collect();
+    (!parts.is_empty()).then(|| format!("{{{}}}", parts.join(",")))
+}
+
+/// 읽기 답이 멈춘 단계를 싣나 — 멈춤 판정 스위치가 `on` 일 때만.
+fn stall_view_on() -> bool {
+    use crate::loops::plan_progress::{StallMode, stall_mode};
+    stall_mode(crate::env_once::get(&crate::env_once::PLAN_STALL)) == StallMode::On
+}
 
 /// TS `childFacts(db, roots, viewerId)` — `$1` 자식 루트들, `$2` 보는 사람.
 fn children_sql() -> &'static str {
@@ -245,6 +294,16 @@ pub async fn plan_view_json(
     viewer: &str,
     root_id: &str,
 ) -> Result<String, sqlx::Error> {
+    plan_view_json_with(pool, viewer, root_id, stall_view_on()).await
+}
+
+/// [`plan_view_json`] 의 몸통 — `with_stalled` 면 멈춘 단계도 읽어 싣는다(스위치와 떼어 시험한다).
+pub async fn plan_view_json_with(
+    pool: &PgPool,
+    viewer: &str,
+    root_id: &str,
+    with_stalled: bool,
+) -> Result<String, sqlx::Error> {
     let row: PlanRow = match sqlx::query_as(PLAN_SQL)
         .bind(root_id)
         .fetch_optional(pool)
@@ -284,8 +343,25 @@ pub async fn plan_view_json(
         ),
         _ => "null".into(),
     };
+    // 멈춘 단계 — 이 읽기가 실패해도(쓰기 풀에 그 칸 권한이 없는 답 등) 계획 답은 그대로 낸다. 표시가 빠질 뿐이다.
+    let stalled = if with_stalled {
+        sqlx::query_as::<_, (String, i64)>(STALL_SQL)
+            .bind(root_id)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|(raw, now)| {
+                let v: Value = serde_json::from_str(&raw).ok()?;
+                stalled_json(&doc, &Clock::parse(&v), now)
+            })
+            .map(|j| format!(r#","stalled":{j}"#))
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
     Ok(format!(
-        r#"{{"plan":{{"rootId":{},"channelId":{},"doc":{doc_text},"rev":{rev},"updatedAt":{},"updatedBy":{},"flagged":{flagged},"derived":{},"progress":{},"linked":{linked},"auto":{auto}}}}}"#,
+        r#"{{"plan":{{"rootId":{},"channelId":{},"doc":{doc_text},"rev":{rev},"updatedAt":{},"updatedBy":{},"flagged":{flagged},"derived":{},"progress":{},"linked":{linked},"auto":{auto}{stalled}}}}}"#,
         q(&root),
         q(&chan),
         q(&updated_at),
@@ -397,6 +473,35 @@ mod tests {
             .map(|(k, _)| k)
             .collect();
         assert_eq!(keys, ["g1", "g2", "g3", "s1", "s2"]);
+    }
+
+    #[test]
+    fn stalled_view_shows_only_marked_active_steps_of_a_live_clock() {
+        let now = 1_764_061_200; // 2025-11-25T09:00:00Z
+        let clock = Clock::parse(
+            &json!({"seenAt": now - 60, "lastWokenAt": now - 600, "steps": {
+                "s1": {"quietAt": now - 7 * 3600, "markedAt": now - 3600, "wokenAt": now - 600},
+                "s2": {"quietAt": now - 7 * 3600, "markedAt": now - 3600},
+                "s3": {"quietAt": now - 60},
+                "s4": {"quietAt": now - 7 * 3600, "markedAt": now - 3600}
+            }}),
+        );
+        let doc = json!({"steps": [
+            {"id": "s1", "state": "active"}, {"id": "s2", "state": "active"},
+            {"id": "s3", "state": "active"}, {"id": "s4", "state": "done"}
+        ]});
+        let v: Value = serde_json::from_str(&stalled_json(&doc, &clock, now).unwrap()).unwrap();
+        assert_eq!(
+            v,
+            json!({
+                "s1": {"since": "2025-11-25T02:00:00.000Z", "wokenAt": "2025-11-25T08:50:00.000Z"},
+                "s2": {"since": "2025-11-25T02:00:00.000Z", "wokenAt": null}
+            })
+        );
+        // 루프가 한 시간 넘게 안 본 시계(스위치를 껐다)는 믿지 않는다. 표시가 없으면 키도 없다.
+        assert_eq!(stalled_json(&doc, &clock, now + 2 * 3600), None);
+        assert_eq!(stalled_json(&doc, &Clock::default(), now), None);
+        assert_eq!(stalled_json(&json!({"steps": []}), &clock, now), None);
     }
 
     #[test]
