@@ -44,7 +44,7 @@ describe('이전 메시지 실패 줄', () => {
     await vi.waitFor(() => expect(useAppStore.getState().olderFailed.c1).toBe(true));
 
     render(<ChannelPane />);
-    expect(screen.getByTestId('load-older-failed').textContent).toBe('이전 메시지를 불러오지 못했어요.');
+    expect(screen.getByTestId('load-older-failed').textContent).toBe('이전 메시지를 불러오지 못했다');
     expect(screen.getByTestId('load-older').textContent).toBe('다시 시도');
 
     await act(async () => { fireEvent.click(screen.getByTestId('load-older')); });

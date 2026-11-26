@@ -936,7 +936,7 @@ export function ChannelPane({ onOpenSearch, onOpenProfile, onOpenSettings }: Cha
             {/* 받기가 실패했으면 그 사실을 말하고 같은 버튼을 「다시 시도」로 바꾼다 — 예전에는 실패를 삼켜
                 최신 몇 줄만 보인 채 아무 표시가 없었다. 자리는 같은 버튼이라 줄 상자가 튀지 않는다. */}
             {olderFailed && !olderSkeleton && (
-              <div className="mb-1 text-meta text-fg-muted" role="status" data-testid="load-older-failed">
+              <div className="mb-1 text-meta text-warning" role="status" data-testid="load-older-failed">
                 {t('chat.loadOlderFailed')}
               </div>
             )}
@@ -946,7 +946,7 @@ export function ChannelPane({ onOpenSearch, onOpenProfile, onOpenSettings }: Cha
               data-testid="load-older"
               onClick={loadOlderPage}
             >
-              {olderSkeleton ? t('chat.loadingOlder') : olderFailed ? t('chat.retryOlder') : t('chat.loadOlder')}
+              {olderSkeleton ? t('chat.loadingOlder') : olderFailed ? t('common.retry') : t('chat.loadOlder')}
             </button>
           </div>
         )}

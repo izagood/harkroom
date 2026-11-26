@@ -4563,7 +4563,6 @@ export const en = {
   'chat.loadOlder': 'Load older messages',
   'chat.loadingOlder': 'Loading earlier messages',
   'chat.loadOlderFailed': "Couldn't load earlier messages.",
-  'chat.retryOlder': 'Try again',
   'chat.adminBadge': 'admin',
   'chat.lease.title': 'Active work',
   'chat.lease.empty': 'No active work',
