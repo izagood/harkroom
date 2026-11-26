@@ -52,24 +52,24 @@ describe('채널 옛 페이지는 본문에 서는 줄로 센다(feed)', () => {
     const c = new Controller(fakeApi({ messages: server(true) as never }), fakeWsFactory().makeWs);
     await c.start();
     await c.openChannel('c1');
-    // 첫 창(50행)은 3451..3500 의 머리다. 뒤채움은 그 아래 **본문 줄** 450 개를 데려온다 — T2 답글 450 행이 아니라.
-    await expect.poll(feedRoots).toBe(50 + 450);
+    // 첫 창(50행)은 3451..3500 의 머리다. 뒤채움은 그 아래 **본문 줄** 100 개(`FEED_PAGE_LIMIT`)를 데려온다 — T2 답글 100 행이 아니라.
+    await expect.poll(feedRoots).toBe(50 + 100);
     expect(useAppStore.getState().hasMore.c1).toBe(true);
 
-    // 그 아래는 T1 의 답글 구간이다 — 피드 페이지는 그것을 건너 본문 줄 200 개씩을 데려온다.
+    // 그 아래는 T1 의 답글 구간이다 — 피드 페이지는 그것을 건너 본문 줄 100 개씩을 데려온다.
     const before = feedRoots();
     await c.loadOlder('c1');
-    expect(feedRoots()).toBe(before + 200);
+    expect(feedRoots()).toBe(before + 100);
     await c.loadOlder('c1');
-    expect(feedRoots()).toBe(before + 400);
+    expect(feedRoots()).toBe(before + 200);
   });
 
   it('본문에 설 줄이 끝나면 답글이 더 남았어도 hasMore 가 거짓이 된다', async () => {
     const c = new Controller(fakeApi({ messages: server(true) as never }), fakeWsFactory().makeWs);
     await c.start();
     await c.openChannel('c1');
-    await expect.poll(feedRoots).toBe(500);
-    for (let i = 0; i < 10 && useAppStore.getState().hasMore.c1; i += 1) await c.loadOlder('c1');
+    await expect.poll(feedRoots).toBe(150);
+    for (let i = 0; i < 30 && useAppStore.getState().hasMore.c1; i += 1) await c.loadOlder('c1');
     // 머리 1..1000 + T1 머리 + alsoInChannel 답글 하나 + 2001..2450 + T2 머리 + 3451..3500.
     expect(feedRoots()).toBe(1000 + 1 + 1 + 450 + 1 + 50);
     expect(useAppStore.getState().hasMore.c1).toBe(false);
@@ -79,12 +79,12 @@ describe('채널 옛 페이지는 본문에 서는 줄로 센다(feed)', () => {
     const c = new Controller(fakeApi({ messages: server(false) as never }), fakeWsFactory().makeWs);
     await c.start();
     await c.openChannel('c1');
-    await expect.poll(() => useAppStore.getState().messages.c1?.length).toBe(500);
-    // 첫 창 아래 450 행은 T2 의 답글이다 — 본문 줄이 하나도 늘지 않았다.
+    await expect.poll(() => useAppStore.getState().messages.c1?.length).toBe(150);
+    // 첫 창 아래 100 행은 T2 의 답글이다 — 본문 줄이 하나도 늘지 않았다.
     expect(feedRoots()).toBe(50);
     await c.loadOlder('c1');
-    // 다음 200 행도 답글이다. 화면에 늘어나는 줄이 없으니 스크롤 이벤트도 없다 — 이것이 멈춤의 모양이다.
+    // 다음 100 행도 답글이다. 화면에 늘어나는 줄이 없으니 스크롤 이벤트도 없다 — 이것이 멈춤의 모양이다.
     expect(feedRoots()).toBe(50);
-    expect(useAppStore.getState().messages.c1).toHaveLength(700);
+    expect(useAppStore.getState().messages.c1).toHaveLength(250);
   });
 });

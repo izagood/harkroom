@@ -129,8 +129,8 @@ describe('받아 온 구간 — 채널 전환·재연결', () => {
     const c = new Controller(api, makeWs);
     await c.start();
     await c.openChannel('c1');
-    // 첫 화면 50행 + 뒤채움 450행 = 첫 창 500행.
-    await vi.waitFor(() => expect(useAppStore.getState().messages.c1!.length).toBe(500));
+    // 첫 화면 50행 + 뒤채움 100행(`FEED_PAGE_LIMIT`) = 첫 창 150행.
+    await vi.waitFor(() => expect(useAppStore.getState().messages.c1!.length).toBe(150));
     // 끊긴 사이에 450개가 쌓였다.
     all.c1 = rows(1, 1460);
     messages.mockClear();
@@ -140,7 +140,7 @@ describe('받아 온 구간 — 채널 전환·재연결', () => {
     const since = messages.mock.calls.filter(([, o]) => o?.since !== undefined && o.since > 0).map(([, o]) => o!.since);
     expect(since).toEqual([1010, 1210, 1410]);
     const seqs = useAppStore.getState().messages.c1!.map((m) => m.seq);
-    expect(seqs.length).toBe(1460 - 511 + 1);
+    expect(seqs.length).toBe(1460 - 861 + 1);
     // 예전엔 두 번째 페이지가 없어 비던 자리 — 창 없이도 그 줄이 있고, 창을 또 받지 않는다.
     messages.mockClear();
     await c.openMessage('c1-m1300');
