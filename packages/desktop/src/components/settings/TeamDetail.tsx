@@ -303,10 +303,9 @@ export function TeamDetail({ team, agents, onBack, onChanged }: {
           <div className="text-meta font-medium text-fg-muted">{t('agents.teams.membersHeading')}</div>
           {/*
             **팀장의 뜻을 여기서 한 번 말한다.** 배지만 두면 그것이 무엇을 바꾸는지 아무도
-            모르고, 지금은 실제로 **아무것도 바꾸지 않는다** — 팀 멘션은 여전히 명단
-            전체를 깨운다(`services/messages.ts`). 그 사실을 적지 않으면 팀장을 세운 사람은
-            창구가 하나로 좁혀졌다고 믿고 팀을 부른다. 라우팅이 이 값을 읽는 날 이 문장이
-            바뀌는 자리다.
+            모른다. 팀장은 **창구**다 — `@팀` 을 부르면 팀장 하나만 깨어난다.
+            권한이 아니다: 팀장이 팀원을 부를 때도 호출 범위를 건너뛰지 않는다. 그래서
+            "일을 나눠 주는 자리"처럼 권한으로 읽히는 말은 여기 두지 않는다.
           */}
           <p data-testid="team-lead-note" className="mt-1 text-meta text-fg-subtle">
             {t('agents.teams.leadNote')}
