@@ -12,6 +12,7 @@
 //! - **펜싱**: 잡을 때 받은 횟수(`attempts`)가 그 임대의 이름이다. 갱신·놓기·턴 적기는 그 횟수가 지금 줄과 같을 때만 닿는다 —
 //!   임대가 끝난 뒤 같은 기기가 다시 잡았더라도 옛 임대를 쥔 쪽은 새 줄을 건드리지 못한다.
 //! - **갱신도 자격을 다시 본다**: 허용 표·회수·개인 자격증명 규칙이 잡을 때와 같다. 자격을 잃으면 갱신이 끊겨 임대가 끝난다.
+//!   작업이 닫혔거나 담당이 바뀌어도 갱신이 끊긴다.
 //! - **임대**: 잡을 때 만료 시각을 적고, 오퍼레이터가 자기가 아직 쥔 작업 목록으로 묶어서 갱신한다([`renew`]). 갱신이 끊기면 만료되고
 //!   다음에 잡는 쪽이 같은 줄을 덮어쓴다(`attempts` 가 하나 오른다). 치우는 일꾼은 없다.
 //! - 이 모듈은 `work.state` 를 바꾸지 않고 `work_event` 도 적지 않는다 — 상태를 옮기는 일은 잡는 쪽을 잇는 단계가 정한다.
@@ -211,7 +212,8 @@ pub const CLAIM_SQL: &str = concat!(
 
 /// 묶어서 갱신 — 이 오퍼레이터(`$1`)가 쥔 살아 있는 줄 가운데 `$3`(작업)·`$4`(그 작업을 잡을 때 받은 횟수) 짝이 맞는 것만
 /// 만료를 민다. 돌려주는 것은 갱신된 작업 id. 이미 만료됐거나, 다시 잡혀 횟수가 달라졌거나, 그 사이 자격(허용 표·회수·개인
-/// 자격증명)을 잃은 줄은 갱신되지 않는다(돌아온 목록에 없으면 잃은 것이다).
+/// 자격증명)을 잃은 줄은 갱신되지 않는다(돌아온 목록에 없으면 잃은 것이다). 작업이 그 사이 닫혔거나 담당이 바뀐 줄도
+/// 갱신되지 않는다 — 끝난 일·남의 일의 임대를 붙들고 있지 않게.
 pub const RENEW_SQL: &str = concat!(
     "update work_claim c set renewed_at = now(), lease_expires_at = now() + make_interval(secs => $2::int) \
        from unnest($3::uuid[], $4::int[]) as h(work_id, attempts) \
@@ -224,7 +226,10 @@ pub const RENEW_SQL: &str = concat!(
               left join agent_config cfg on cfg.account_id = al.agent_id \
              where al.agent_id = c.agent_id and al.operator_id = c.operator_id and ",
     entitled!(),
-    ") returning c.work_id::text"
+    ") and exists ( \
+            select 1 from work w \
+             where w.id = c.work_id and w.closed_at is null and w.assignee_account_id = c.agent_id) \
+     returning c.work_id::text"
 );
 
 /// 놓기 — 이 오퍼레이터(`$1`)가 쥔 살아 있는 줄이고 횟수(`$4`)가 같을 때만. `$3` 까닭.
@@ -553,6 +558,10 @@ mod tests {
                 "{sql}"
             );
         }
+        // 갱신은 작업이 아직 열려 있고 담당이 그대로일 때만 닿는다.
+        assert!(RENEW_SQL.contains(
+            "w.id = c.work_id and w.closed_at is null and w.assignee_account_id = c.agent_id"
+        ));
         assert!(CLAIM_SQL.contains("skip locked"));
         // 스레드 좁히기는 후보를 줄이기만 한다 — 자격 술어와 `and` 로 붙는다.
         for sql in [CANDIDATE_SQL, CLAIM_SQL] {

@@ -226,7 +226,11 @@ pub async fn end(
         Err(r) => return r,
     };
     match lease::end(&st.write, &id, &token, &agent_id).await {
-        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(true) => {
+            // 턴 끝 판정(그림자) — 요청 밖에서 기록만 한다. 응답은 그대로다.
+            super::turn_end_judge::turn_ended(&id, &agent_id);
+            StatusCode::NO_CONTENT.into_response()
+        }
         Ok(false) => not_found(),
         Err(e) => internal(e),
     }

@@ -5654,6 +5654,7 @@ async fn open_write_pool() -> Option<sqlx::PgPool> {
             eprintln!("front: write pool on");
             enable_measure(&pool).await;
             enable_work_shadow(&pool).await;
+            enable_turn_end_judge(&pool).await;
             enable_device_allow(&pool).await;
             enable_work_route(&pool).await;
             enable_ledger_mandate(&pool).await;
@@ -5713,6 +5714,42 @@ async fn enable_work_shadow(pool: &sqlx::PgPool) {
         Ok(m) => eprintln!("front: work shadow off — missing privileges {m:?}"),
         Err(e) => eprintln!(
             "front: work shadow off — privilege check failed ({})",
+            e.as_database_error().map_or("io", |_| "db")
+        ),
+    }
+}
+
+/// I2c-a 턴 끝 판정(그림자) — 임대가 끝날 때 판정을 작업 사건으로 적는다. 위임 그림자와 같은 스위치이고, 권한이 모자라면 켜지 않는다
+/// (기록만 빠지고 나머지는 그대로). 켤 때 닫히지 않은 옛 뿌리 작업을 세어 한 줄 남긴다(닫지 않는다).
+async fn enable_turn_end_judge(pool: &sqlx::PgPool) {
+    use harkroom_server::core::{turn_end_judge, work_shadow};
+    if work_shadow::switch_from_env() == work_shadow::Switch::Off {
+        eprintln!("front: turn end judge off — switch");
+        return;
+    }
+    match write::missing_in(
+        pool,
+        turn_end_judge::TURN_JUDGE_PRIVILEGES,
+        harkroom_server::core::work::WORK_SEQUENCE_PRIVILEGES,
+    )
+    .await
+    {
+        Ok(m) if m.is_empty() => {
+            eprintln!("front: turn end judge on (shadow)");
+            turn_end_judge::enable(pool.clone());
+            match turn_end_judge::open_roots(pool).await {
+                Ok((all, old, idle)) => eprintln!(
+                    "front: turn end judge — open root works {all} (older than a day {old}, idle {idle})"
+                ),
+                Err(e) => eprintln!(
+                    "front: turn end judge — open root count failed ({})",
+                    e.as_database_error().map_or("io", |_| "db")
+                ),
+            }
+        }
+        Ok(m) => eprintln!("front: turn end judge off — missing privileges {m:?}"),
+        Err(e) => eprintln!(
+            "front: turn end judge off — privilege check failed ({})",
             e.as_database_error().map_or("io", |_| "db")
         ),
     }

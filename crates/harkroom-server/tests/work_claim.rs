@@ -562,6 +562,7 @@ async fn stale_holder_of_the_same_operator_is_fenced_by_attempts() {
 }
 
 /// 갱신도 잡을 때와 같은 자격을 본다: 허용 줄이 빠지거나, 기기가 회수되거나, 개인 자격증명 에이전트의 주인이 달라지면 끊긴다.
+/// 작업이 닫히거나 담당이 바뀌어도 끊긴다.
 #[tokio::test]
 async fn renew_rechecks_eligibility() {
     let Some(db) = db().await else { return };
@@ -571,7 +572,16 @@ async fn renew_rechecks_eligibility() {
     let t = thread(a, &owner, "wc5-ch").await;
     // 경우마다 에이전트·기기·작업을 따로 둔다.
     let mut cases = Vec::new();
-    for name in ["allow", "revoke", "personal", "deleted", "kept"] {
+    let stranger = account(a, "agent", "wc5-agent-stranger").await;
+    for name in [
+        "allow",
+        "revoke",
+        "personal",
+        "deleted",
+        "closed",
+        "reassigned",
+        "kept",
+    ] {
         let agent = account(a, "agent", &format!("wc5-agent-{name}")).await;
         let op = operator(a, &owner, &format!("wc5-op-{name}")).await;
         allow(a, &agent, &op).await;
@@ -621,6 +631,25 @@ async fn renew_rechecks_eligibility() {
             "deleted" => {
                 sqlx::query("update account set deleted_at = now() where id = $1::uuid")
                     .bind(agent)
+                    .execute(a)
+                    .await
+                    .unwrap();
+            }
+            // 작업이 닫혔다 — 끝난 일의 임대는 늘지 않는다.
+            "closed" => {
+                sqlx::query(
+                    "update work set state = 'done', closed_at = now() where id = $1::uuid",
+                )
+                .bind(w)
+                .execute(a)
+                .await
+                .unwrap();
+            }
+            // 담당이 바뀌었다 — 잡을 때의 에이전트가 더는 그 작업의 담당이 아니다.
+            "reassigned" => {
+                sqlx::query("update work set assignee_account_id = $2::uuid where id = $1::uuid")
+                    .bind(w)
+                    .bind(&stranger)
                     .execute(a)
                     .await
                     .unwrap();
