@@ -3151,6 +3151,18 @@ export interface ThreadPlanView {
   linked: ThreadPlanLinkedView[];
   /** 자동 진행. 꺼져 있으면 `null`, 옛 서버면 없다. 켠 근거는 사람 글이다. */
   auto?: ThreadPlanAuto | null;
+  /**
+   * 「멈춤?」 — 진행 중인데 오래 신호가 없다고 **서버가 추정한** 단계(단계 id → 표시). 멈춘 단계가 없거나 판정이 꺼져 있으면
+   * 키가 없다. 사실이 아니라 추정이라 화면은 물음표와 점선으로 그린다.
+   */
+  stalled?: Record<string, ThreadPlanStall>;
+}
+
+export interface ThreadPlanStall {
+  /** 신호가 없다고 보기 시작한 때. */
+  since: string;
+  /** 관리자를 깨운 때. 아직 안 깨웠거나 깨울 수 없으면 `null`. */
+  wokenAt: string | null;
 }
 
 export interface ThreadPlanAuto {
