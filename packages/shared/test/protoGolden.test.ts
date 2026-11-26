@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   EVENT_NAMES, MAX_LINE_BYTES, REQUEST_TYPES,
-  type DaemonError, type DaemonErrorCode, type DaemonEventMessage, type DaemonRequest, type DaemonResponse, type HelloMessage, type HelloResult,
+  type DaemonError, type DaemonErrorCode, type DaemonEventMessage, type DaemonRequest, type DaemonResponse, type HelloMessage, type HelloResult, type ServerLinkState,
 } from '../src/daemonProtocol.js';
 import { DAEMON_PROTOCOL_VERSION, daemonEndpointPaths } from '../src/daemonEndpoint.js';
 import type { OperatorToServerFrame, ServerToOperatorFrame } from '../src/operatorProtocol.js';
@@ -162,6 +162,10 @@ const p3Response = [
 const p3Event = [
   { type: 'event', event: 'runnerExit', payload: { runnerId: RUNNER, code: 0 } },
   { type: 'event', event: 'terminalEnded', payload: null },
+  {
+    type: 'event', event: 'serverLinkState',
+    payload: { state: 'down', reason: 'dns', closeCode: null, host: 'one.example.com', downSinceMs: 1_700_000_000_000, lastUpMs: 1_699_999_000_000, attempts: 3, nextRetryAtMs: 1_700_000_030_000 } satisfies ServerLinkState,
+  },
 ] satisfies DaemonEventMessage[];
 
 // ── P4 `harkroom-operator merge` 한 줄 출력(operator `main.ts::mergeMain` + `turnMerge.ts`). 에이전트 지시문·허용 규칙이 이 키에 기댄다. ──

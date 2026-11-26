@@ -132,6 +132,45 @@ fn connect_tcp(host: &str, port: u16) -> Result<TcpStream, String> {
     Err(format!("접속 실패: {last}"))
 }
 
+/// 접속 실패·닫힘 한 줄(`dial` 의 오류, [`describe_close`] 의 줄)을 까닭 낱말로 접는다(안 A). 원문은 앱에 넘기지 않는다.
+/// 닫힘 줄이면 `close NNNN` 의 코드도 꺼낸다.
+pub fn classify_failure(line: &str) -> (crate::link_state::LinkReason, Option<u16>) {
+    use crate::link_state::LinkReason as R;
+    let close_code = line
+        .strip_prefix("close ")
+        .and_then(|r| r.split(|c: char| !c.is_ascii_digit()).next())
+        .and_then(|n| n.parse::<u16>().ok());
+    let l = line.to_ascii_lowercase();
+    let reason = if line.contains("주소 풀이 실패") {
+        R::Dns
+    } else if l.contains("network is unreachable")
+        || l.contains("no route to host")
+        || l.contains("network is down")
+        || l.contains("os error 50)")
+        || l.contains("os error 51)")
+        || l.contains("os error 65)")
+    {
+        R::Offline
+    } else if l.contains("connection refused")
+        || l.contains("os error 61)")
+        || l.contains("os error 111)")
+    {
+        R::Refused
+    } else if line.starts_with("업그레이드 거절 HTTP 401")
+        || line.starts_with("업그레이드 거절 HTTP 403")
+        || matches!(close_code, Some(4401 | 4403))
+    {
+        R::Auth
+    } else if l.contains("certificate") || l.contains("tls") {
+        R::Tls
+    } else if close_code.is_some() {
+        R::Closed
+    } else {
+        R::Other
+    };
+    (reason, close_code)
+}
+
 /// 실제 dialer.
 #[derive(Default)]
 pub struct WsDialer {
@@ -242,6 +281,44 @@ impl Conn for WsConn {
 mod tests {
     use super::*;
     use std::net::TcpListener;
+
+    #[test]
+    fn classify_failure_words() {
+        use crate::link_state::LinkReason as R;
+        let c = classify_failure;
+        assert_eq!(
+            c(
+                "주소 풀이 실패: failed to lookup address information: nodename nor servname provided, or not known"
+            ),
+            (R::Dns, None)
+        );
+        assert_eq!(
+            c("접속 실패: Network is unreachable (os error 51)"),
+            (R::Offline, None)
+        );
+        assert_eq!(
+            c("close 1006, 오류 IO error: No route to host (os error 65), 마지막 서버 ping 3초 전"),
+            (R::Offline, Some(1006))
+        );
+        assert_eq!(
+            c("접속 실패: Connection refused (os error 61)"),
+            (R::Refused, None)
+        );
+        assert_eq!(c("업그레이드 거절 HTTP 401"), (R::Auth, None));
+        assert_eq!(
+            c("close 4401, bad token, 마지막 서버 ping 1초 전"),
+            (R::Auth, Some(4401))
+        );
+        assert_eq!(
+            c("핸드셰이크 실패: TLS error: invalid peer certificate: Expired"),
+            (R::Tls, None)
+        );
+        assert_eq!(
+            c("close 1006, 오류 서버 ping 침묵, 마지막 서버 ping 80초 전"),
+            (R::Closed, Some(1006))
+        );
+        assert_eq!(c("업그레이드 거절 HTTP 502"), (R::Other, None));
+    }
 
     #[test]
     fn split_url_shapes() {

@@ -54,6 +54,7 @@ pub mod hello;
 pub mod hook_cli;
 pub mod hook_run;
 pub mod index;
+pub mod link_state;
 pub mod local_agents;
 pub mod local_mcp;
 pub mod local_merge;

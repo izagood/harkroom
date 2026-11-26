@@ -302,6 +302,10 @@ pub struct LinkControl {
     pub is_up: Box<dyn Fn() -> bool + Send + Sync>,
     pub attach: Box<dyn Fn() + Send + Sync>,
     pub renew: Box<dyn Fn() -> bool + Send + Sync>,
+    /// 서버 링크 상태(안 A, `serverLinkGet`) — 링크가 없으면 None.
+    pub link_state: Box<dyn Fn() -> Option<Value> + Send + Sync>,
+    /// 재접속 대기를 건너뛴다(`serverLinkRetryNow`) — 깨웠으면 true(붙어 있거나 링크가 없으면 false).
+    pub retry_now: Box<dyn Fn() -> bool + Send + Sync>,
 }
 
 impl ServerState {
@@ -851,6 +855,20 @@ impl ServerState {
                     (ctl.attach)();
                 }
                 Ok(out)
+            }
+            // ── 서버 링크 상태(안 A) ─────────────────────────────────────────────────────────────
+            "serverLinkGet" => Ok(self
+                .link_control
+                .get()
+                .and_then(|c| (c.link_state)())
+                .unwrap_or(Value::Null)),
+            "serverLinkRetryNow" => {
+                let retried = self
+                    .link_control
+                    .get()
+                    .map(|c| (c.retry_now)())
+                    .unwrap_or(false);
+                Ok(json!({ "retried": retried }))
             }
             "operatorAgentRemove" => {
                 let local = self.local()?;
@@ -1942,6 +1960,8 @@ mod tests {
                     up.store(true, Ordering::SeqCst);
                 })
             },
+            link_state: Box::new(|| None),
+            retry_now: Box::new(|| false),
             renew: {
                 let renewed = renewed.clone();
                 Box::new(move || {

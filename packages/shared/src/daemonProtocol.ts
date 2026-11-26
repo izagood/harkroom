@@ -154,6 +154,10 @@ export const REQUEST_TYPES = [
   'terminalUnsubscribe',
   'terminalInput',
   'terminalResize',
+  // 오퍼레이터 ↔ 서버 링크 상태(안 A). 끊긴 도중에 앱이 켜져도 첫 값을 받게 `serverLinkGet`, 카드의 [지금 다시 시도]가
+  // `serverLinkRetryNow`(재접속 대기를 건너뛴다). 바뀔 때마다는 `serverLinkState` 이벤트로 온다.
+  'serverLinkGet',
+  'serverLinkRetryNow',
 ] as const;
 export type DaemonRequestType = (typeof REQUEST_TYPES)[number];
 
@@ -214,8 +218,29 @@ export interface DaemonEventMessage {
  * 로그인 출력이 **응답이 아니라 이벤트**인 이유: `claude auth login` 은 URL 을 찍고 사람이
  * 브라우저를 다녀오는 동안 기다린다 — 요청 하나에 대한 답으로 담을 수 없는 길이의 시간이다.
  */
-export const EVENT_NAMES = ['runnerExit', 'claudeLoginOutput', 'codexLoginOutput', 'terminalOutput', 'terminalEnded'] as const;
+export const EVENT_NAMES = ['runnerExit', 'claudeLoginOutput', 'codexLoginOutput', 'terminalOutput', 'terminalEnded', 'serverLinkState'] as const;
 export type DaemonEventName = (typeof EVENT_NAMES)[number];
+
+/**
+ * 오퍼레이터가 서버에 붙지 못한 까닭(안 A). 오퍼레이터가 접속 오류를 이 낱말로 접어 넘기고 **원문 오류는 싣지 않는다**.
+ * `dns` 주소 풀이 실패 · `offline` 네트워크 없음 · `closed` 연결이 끊김 · `refused` 서버가 받지 않음 ·
+ * `tls` 보안 연결 실패 · `auth` 오퍼레이터 인증 거절 · `other` 그 밖.
+ */
+export const SERVER_LINK_REASONS = ['dns', 'offline', 'closed', 'refused', 'tls', 'auth', 'other'] as const;
+export type ServerLinkReason = (typeof SERVER_LINK_REASONS)[number];
+
+/** `serverLinkState` 이벤트·`serverLinkGet` 응답의 몸. 시각은 epoch ms. 붙어 있으면 `reason`·`downSinceMs` 는 null 이다. */
+export interface ServerLinkState {
+  state: 'up' | 'down';
+  reason: ServerLinkReason | null;
+  closeCode: number | null;
+  host: string;
+  downSinceMs: number | null;
+  lastUpMs: number | null;
+  /** 끊긴 뒤 실패한 접속 시도 수(붙으면 0). */
+  attempts: number;
+  nextRetryAtMs: number | null;
+}
 
 /**
  * 실패의 갈래. **코드가 사유이고, 메시지는 사람이 읽는 덧말이다**(`#368`).

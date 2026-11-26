@@ -49,14 +49,17 @@
    "terminalSubscribe",
    "terminalUnsubscribe",
    "terminalInput",
-   "terminalResize"
+   "terminalResize",
+   "serverLinkGet",
+   "serverLinkRetryNow"
   ],
   "eventNames": [
    "runnerExit",
    "claudeLoginOutput",
    "codexLoginOutput",
    "terminalOutput",
-   "terminalEnded"
+   "terminalEnded",
+   "serverLinkState"
   ],
   "daemonErrorCodes": [
    "line-too-long",
@@ -747,6 +750,20 @@
     "type": "event",
     "event": "terminalEnded",
     "payload": null
+   },
+   {
+    "type": "event",
+    "event": "serverLinkState",
+    "payload": {
+     "state": "down",
+     "reason": "dns",
+     "closeCode": null,
+     "host": "one.example.com",
+     "downSinceMs": 1700000000000,
+     "lastUpMs": 1699999000000,
+     "attempts": 3,
+     "nextRetryAtMs": 1700000030000
+    }
    }
   ]
  },
