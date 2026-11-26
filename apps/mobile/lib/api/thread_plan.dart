@@ -470,6 +470,13 @@ class PlanStartDone {
 }
 
 /// 그룹 머리의 표지·수. 막힘이 먼저고, 내 단계가 있으면 내 차례, 그 밖은 서버 파생 상태다.
+/// 그룹 접힘의 기본값 — 단계가 있고 그 단계가 전부 끝난 그룹만 접는다. 하나라도 안 끝났으면 편다
+/// (데스크톱 `planGroupFoldedByDefault` 와 같다). 사람이 직접 접거나 편 것은 이것보다 앞선다.
+bool groupFoldedByDefault(ThreadPlanView plan, PlanGroup g) {
+  final steps = plan.stepsOf(g.id);
+  return steps.isNotEmpty && steps.every((s) => plan.stateOf(s.id) == PlanState.done);
+}
+
 ({PlanRowKind kind, int done, int total, int active, int mine}) groupFacts(ThreadPlanView plan, PlanGroup g, String? me) {
   final kinds = plan.stepsOf(g.id).map((s) => stepKind(plan, s, me)).toList(growable: false);
   final c = groupCount(plan, g);

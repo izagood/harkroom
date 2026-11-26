@@ -7,6 +7,14 @@ import 'package:harkroom/api/thread_plan.dart';
 /// 계획판 판정 규칙(개선 시안 P6) — 데스크톱 `test/threadPlanRules.test.ts` 와 **같은 자료**를 읽어 두 앱의 결과가 같은지 잰다.
 void main() {
   final rules = jsonDecode(File('test/fixtures/plan_rules.json').readAsStringSync()) as Map<String, dynamic>;
+
+  test('그룹 접힘 기본값 — 단계가 전부 끝난 그룹만 접는다(데스크톱 planGroupFoldedByDefault 와 같다)', () {
+    final c = (rules['cases'] as List).first as Map<String, dynamic>;
+    final plan = ThreadPlanView.fromJson({'rev': 1, ...(c['plan'] as Map<String, dynamic>)})!;
+    // g1 은 s1 끝·s2 진행이라 편다. g5 는 s7 하나가 끝나 접는다. 단계 없는 그룹은 접을 것이 없다.
+    expect({for (final g in plan.groups) g.id: groupFoldedByDefault(plan, g)},
+        {'g1': false, 'g2': false, 'g3': false, 'g4': false, 'g5': true, 'g6': false});
+  });
   for (final c in (rules['cases'] as List).cast<Map<String, dynamic>>()) {
     final me = c['me'] as String;
     final e = c['expect'] as Map<String, dynamic>;
