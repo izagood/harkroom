@@ -456,8 +456,9 @@ class _PlanSheetState extends State<_PlanSheet> {
   final _headKey = GlobalKey();
   bool _fitted = false;
 
-  /// 사람이 접은 그룹. 처음엔 모두 펼친다(W1). 이 시트 안에서만 산다(기억하지 않는다, W8).
-  final Set<String> _collapsed = {};
+  /// 그룹 접힘. 사람이 머리를 눌러 정한 것은 [AppState.savePlanFold] 로 기억하고(스레드 id + 그룹 id),
+  /// 정한 적 없는 그룹은 [groupFoldedByDefault](다 끝난 그룹만 접힘)를 따른다. 칩으로 찾아가 편 것도 여기 들지만 기억하지 않는다.
+  final Map<String, bool> _folds = {};
   final Set<String> _whyOpen = {};
   final Map<String, GlobalKey> _nodeKeys = {};
 
@@ -474,6 +475,11 @@ class _PlanSheetState extends State<_PlanSheet> {
   @override
   void initState() {
     super.initState();
+    AppScope.read(context).loadPlanFolds(widget.rootId).then((saved) {
+      if (!mounted || saved.isEmpty) return;
+      // 기억을 읽는 사이 사람이 누른 것이 있으면 그것이 앞선다.
+      setState(() => _folds.addAll({...saved, ..._folds}));
+    });
     final id = widget.focusStepId;
     if (id == null) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -562,7 +568,7 @@ class _PlanSheetState extends State<_PlanSheet> {
       if (s.id == id) groupId = s.groupId;
     }
     setState(() {
-      if (groupId != null) _collapsed.remove(groupId);
+      if (groupId != null) _folds[groupId] = false;
       if (why) _whyOpen.add(id);
       _flashId = id;
       _flashNo++;
@@ -781,7 +787,7 @@ class _PlanSheetState extends State<_PlanSheet> {
     final f = groupFacts(plan, g, me);
     final steps = plan.stepsOf(g.id);
     final linked = g.linkedRootId == null ? null : plan.linkedOf(g.id);
-    final open = !_collapsed.contains(g.id);
+    final open = !(_folds[g.id] ?? groupFoldedByDefault(plan, g));
     final node = plan.derived[g.id];
     final canToggle = steps.isNotEmpty;
     final childProgress = linked?.progress;
@@ -793,7 +799,12 @@ class _PlanSheetState extends State<_PlanSheet> {
           expanded: canToggle ? open : null,
           child: InkWell(
             key: Key('plan-group-${g.id}'),
-            onTap: canToggle ? () => setState(() => open ? _collapsed.add(g.id) : _collapsed.remove(g.id)) : null,
+            onTap: canToggle
+                ? () {
+                    setState(() => _folds[g.id] = open);
+                    unawaited(app.savePlanFold(widget.rootId, g.id, open));
+                  }
+                : null,
             child: ConstrainedBox(
               constraints: const BoxConstraints(minHeight: HarkroomSize.row),
               child: Padding(

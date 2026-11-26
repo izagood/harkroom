@@ -28,7 +28,7 @@ import { ApiError } from '../src/lib/api';
 import { JumpToLatestPill } from '../src/components/JumpToLatestPill';
 import { HostDocumentContext } from '../src/lib/hostDocument';
 import { resetAppWindowsForTest, setWindowOpener, useAppWindows } from '../src/lib/appWindows';
-import { loadPlanOpen, savePlanOpen } from '../src/lib/threadPlan';
+import { clearPlanOpenKeys, loadPlanFolds, loadPlanOpen, savePlanFold, savePlanOpen } from '../src/lib/threadPlan';
 import rules from './fixtures/planRules.json';
 
 const base = rules.cases[0]!.plan;
@@ -120,10 +120,13 @@ describe('버튼', () => {
 });
 
 describe('패널', () => {
-  it('끝난 일을 접지 않고 문서 순서로 둔다. 끝은 흐리게 하지 않는다', () => {
+  it('문서 순서로 두되 다 끝난 그룹(g5)만 접어 연다. 끝은 흐리게 하지 않는다', () => {
     const panel = openPanel_();
     const ids = [...panel.querySelectorAll('[data-kind][data-node^="s"]')].map((e) => e.getAttribute('data-node'));
-    expect(ids).toEqual(rules.cases[0]!.expect.order);
+    // g5 는 단계(s7)가 전부 끝나 접힌다. g1 은 s1 이 끝났어도 s2 가 남아 펼친다.
+    expect(ids).toEqual(rules.cases[0]!.expect.order.filter((id) => id !== 's7'));
+    expect(groupHead('g5').getAttribute('aria-expanded')).toBe('false');
+    expect(groupHead('g1').getAttribute('aria-expanded')).toBe('true');
     const done = panel.querySelector('[data-node="s1"]')!;
     expect(done.querySelector('.line-through')).toBeNull();
     expect(done.textContent).toContain('Done');
@@ -719,6 +722,50 @@ describe('최신 답글 알약', () => {
     cleanup();
     render(<JumpToLatestPill {...p} />);
     expect(screen.getByTestId('jump').className).toContain('bottom-3 right-4');
+  });
+});
+
+const groupHead = (id: string) => document.querySelector(`[data-node="${id}"] button[aria-expanded]`)!;
+const shown = (id: string) => document.querySelector(`[data-node="${id}"]`) !== null;
+
+describe('그룹 접기 기억', () => {
+  it('사람이 편 「다 끝난 그룹」은 패널을 다시 그려도 펼친 채다', () => {
+    openPanel_();
+    expect(shown('s7')).toBe(false);
+    fireEvent.click(groupHead('g5'));
+    expect(shown('s7')).toBe(true); // 그 자리에서 바로
+    expect(JSON.parse(localStorage.getItem('harkroom.threadPlan.fold.r1')!)).toEqual({ g5: false });
+    cleanup();
+    openPanel_();
+    expect(shown('s7')).toBe(true);
+    expect(groupHead('g5').getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('사람이 접은 진행 중 그룹은 다시 열어도 접힌 채다. 키는 스레드 id + 그룹 id', () => {
+    openPanel_();
+    expect(shown('s2')).toBe(true);
+    fireEvent.click(groupHead('g1'));
+    expect(shown('s2')).toBe(false);
+    cleanup();
+    openPanel_();
+    expect(shown('s2')).toBe(false);
+    expect(loadPlanFolds('r1')).toEqual({ g1: true });
+    expect(loadPlanFolds('r2')).toEqual({});
+  });
+
+  it('칩으로 찾아가 편 것은 기억하지 않는다', () => {
+    openPanel_();
+    // 끝 칩은 s1 → s7 차례로 간다. s7 로 가면 접힌 g5 를 편다.
+    act(() => { fireEvent.click(screen.getByTestId('plan-chip-done')); });
+    act(() => { fireEvent.click(screen.getByTestId('plan-chip-done')); });
+    expect(shown('s7')).toBe(true);
+    expect(localStorage.getItem('harkroom.threadPlan.fold.r1')).toBeNull();
+  });
+
+  it('로그아웃 정리가 접힘 기억도 지운다', () => {
+    savePlanFold('r9', 'g1', true);
+    clearPlanOpenKeys();
+    expect(localStorage.getItem('harkroom.threadPlan.fold.r9')).toBeNull();
   });
 });
 

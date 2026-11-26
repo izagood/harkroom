@@ -26,6 +26,7 @@ import '../api/ws.dart';
 import '../api/ws_socket.dart';
 import '../mention/sticky.dart';
 import '../mention/usage.dart';
+import '../session/plan_fold_store.dart';
 import '../session/recent_search_store.dart';
 import '../session/session_store.dart';
 
@@ -118,13 +119,56 @@ class AppState extends ChangeNotifier {
     this.otherPollEvery = const Duration(seconds: 60),
     this.otherRequestTimeout = const Duration(seconds: 10),
     RecentSearchStore? recentSearchStore,
+    PlanFoldStore? planFoldStore,
   })  : _sessions = sessions,
         _recentStore = recentSearchStore ?? RecentSearchStore.inMemory(),
+        _foldStore = planFoldStore ?? PlanFoldStore.inMemory(),
         _apiFactory = apiFactory ?? ((b, t) => ApiClient(baseUrl: b, token: t)),
         _connector = connector ?? RealWsConnection.connect;
 
   final SessionStore _sessions;
   final RecentSearchStore _recentStore;
+  final PlanFoldStore _foldStore;
+
+  /// 지금 커뮤니티의 계획판 접힘 기억(스레드 id → 그룹 id → 접힘). [loadPlanFolds] 가 처음 한 번 채운다.
+  Map<String, Map<String, bool>>? _planFolds;
+  String? _foldsFor;
+
+  /// 기억할 스레드 수 — 넘치면 가장 오래 안 고친 스레드부터 버린다(키체인 한 칸이 끝없이 크지 않게).
+  static const int planFoldThreadsMax = 200;
+
+  Future<Map<String, Map<String, bool>>> _folds() async {
+    final key = activeKey ?? '';
+    if (_foldsFor != key || _planFolds == null) {
+      _planFolds = await _foldStore.load(key);
+      _foldsFor = key;
+    }
+    return _planFolds!;
+  }
+
+  Future<void> _dropPlanFolds(String key) async {
+    if (_foldsFor == key) {
+      _planFolds = null;
+      _foldsFor = null;
+    }
+    await _foldStore.delete(key);
+  }
+
+  /// 그 스레드에서 사람이 직접 접거나 편 그룹(그룹 id → 접힘). 없는 그룹은 기본값을 따른다.
+  Future<Map<String, bool>> loadPlanFolds(String rootId) async => {...?(await _folds())[rootId]};
+
+  /// 사람이 그룹 머리를 눌러 정한 것을 기억한다. 칩·링크로 찾아가 편 것은 부르지 않는다.
+  Future<void> savePlanFold(String rootId, String groupId, bool folded) async {
+    final key = activeKey ?? '';
+    final all = await _folds();
+    final g = all.remove(rootId) ?? <String, bool>{};
+    g[groupId] = folded;
+    all[rootId] = g; // 맨 뒤로 — 가장 최근에 고친 스레드
+    while (all.length > planFoldThreadsMax) {
+      all.remove(all.keys.first);
+    }
+    await _foldStore.save(key, all);
+  }
 
   /// 지금 커뮤니티의 최근 찾은 말(새것이 앞, [recentSearchMax] 개까지). [loadRecentSearches] 가 채운다.
   List<String> recentSearches = const [];
@@ -2807,6 +2851,7 @@ class AppState extends ChangeNotifier {
       await _revoke(gone);
       await _sessions.remove(key);
       await _recentStore.delete(key);
+      await _dropPlanFolds(key);
       return;
     }
     _generation++;
@@ -2814,6 +2859,7 @@ class AppState extends ChangeNotifier {
     await _revoke(gone);
     await _sessions.remove(key);
     await _recentStore.delete(key);
+    await _dropPlanFolds(key);
     // 위 두 await 사이에 화면이 부른 요청은 첫 줄에서 올린 세대를 쥐고 옛 토큰으로 간다.
     // 비우기 직전에 한 번 더 올려 그 답도 버린다.
     _generation++;
@@ -2865,6 +2911,7 @@ class AppState extends ChangeNotifier {
     await Future.wait([for (final c in communities) _revoke(c)]);
     await _sessions.clear();
     await Future.wait([for (final c in communities) _recentStore.delete(c.key)]);
+    await Future.wait([for (final c in communities) _dropPlanFolds(c.key)]);
     _generation++;
     _resetSession();
     communities = const [];

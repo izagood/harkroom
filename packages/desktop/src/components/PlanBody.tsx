@@ -6,7 +6,7 @@ import { getExternalOpener } from '../lib/openExternal';
 import type { PlanStartDone } from '../lib/api';
 import {
   crossGroupTitle, groupFacts, isPlanStale, nextCycleIndex, PLAN_CHIP_KINDS, planFlow, planFlowVisible, planLists,
-  planReadyStepIds, planPills, planStalledIds, planStartClean, planTitleOf, quietSpanLabel, stallClockLabel, takePlanAskHelp, planTone, prUrl, stepAssignee,
+  loadPlanFolds, planGroupFoldedByDefault, planReadyStepIds, planPills, savePlanFold, planStalledIds, planStartClean, planTitleOf, quietSpanLabel, stallClockLabel, takePlanAskHelp, planTone, prUrl, stepAssignee,
   stepGoTargets, stepKind, stepStartState, stepWaiters, stepWhy, stepsOf,
   type PlanChipKind, type PlanPill, type PlanRowKind,
 } from '../lib/threadPlan';
@@ -59,7 +59,11 @@ export function PlanBody({ plan, headActions, onLeave, onOpenMessage, onAsked }:
   const me = useActiveStore((s) => s.me?.id ?? null);
   const editor = useActiveStore((s) => (plan.updatedBy ? s.accounts[plan.updatedBy] : undefined));
   const list = useRef<HTMLDivElement>(null);
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  // 사람이 직접 접거나 편 그룹만 담는다(스레드 id + 그룹 id 로 기억). 없으면 「다 끝난 그룹은 접힘」 기본값을 따른다.
+  const [folds, setFolds] = useState<Record<string, boolean>>(() => loadPlanFolds(plan.rootId));
+  const [foldsOf, setFoldsOf] = useState(plan.rootId);
+  if (foldsOf !== plan.rootId) { setFoldsOf(plan.rootId); setFolds(loadPlanFolds(plan.rootId)); }
+  const isFolded = (g: PlanGroup) => folds[g.id] ?? planGroupFoldedByDefault(plan, g);
   const [whyOpen, setWhyOpen] = useState<Record<string, boolean>>({});
   const [flash, setFlash] = useState<string | null>(null);
   const [cycle, setCycle] = useState<{ kind: PlanChipKind | 'stalled'; index: number } | null>(null);
@@ -107,7 +111,8 @@ export function PlanBody({ plan, headActions, onLeave, onOpenMessage, onAsked }:
   /** 그 노드로 스크롤하고 깜빡인다(접힌 그룹이면 편다). [why] 면 「막힌 까닭」까지 편다. */
   const goTo = (id: string, why = false) => {
     const g = plan.doc.steps.find((s) => s.id === id)?.groupId;
-    if (g) setCollapsed((c) => ({ ...c, [g]: false }));
+    // 칩·링크로 찾아가 펴는 것은 이번 화면에서만 — 사람이 머리를 눌러 정한 기억은 바꾸지 않는다.
+    if (g) setFolds((c) => ({ ...c, [g]: false }));
     if (why) setWhyOpen((w) => ({ ...w, [id]: true }));
     setFlash(id);
     clearTimeout(flashTimer.current);
@@ -231,13 +236,17 @@ export function PlanBody({ plan, headActions, onLeave, onOpenMessage, onAsked }:
           </div>
         )}
       </div>
-      {/* 목록만 스크롤한다. 끝난 일도 접지 않고 문서 순서대로 쭉 둔다(W1·W2). */}
+      {/* 목록만 스크롤한다. 문서 순서대로 두되, 다 끝난 그룹은 기본으로 접는다(사람이 정한 것은 기억). */}
       <div ref={list} data-testid="plan-list" className="min-h-0 flex-1 overflow-y-auto px-2.5 pb-2 pt-1">
         {startFor === 'all' && <PlanStartBox plan={plan} stepIds={readyIds} bulk onClose={() => setStartFor(null)} onStarted={onStarted} />}
         {plan.flagged && <div className="py-1 text-meta text-state-stuck">{t('plan.flagged')}</div>}
         {plan.doc.groups.map((g) => (
-          <GroupRow key={g.id} group={g} collapsed={!!collapsed[g.id]} actions={shared}
-            onToggle={() => setCollapsed((c) => ({ ...c, [g.id]: !c[g.id] }))} />
+          <GroupRow key={g.id} group={g} collapsed={isFolded(g)} actions={shared}
+            onToggle={() => {
+              const next = !isFolded(g);
+              savePlanFold(plan.rootId, g.id, next);
+              setFolds((c) => ({ ...c, [g.id]: next }));
+            }} />
         ))}
         {loose.map((s) => <StepRow key={s.id} step={s} actions={shared} />)}
         {plan.doc.next && <div className="pt-1 text-meta"><span className="text-fg-subtle">{t('plan.next')} </span>{plan.doc.next}</div>}

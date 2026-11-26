@@ -367,6 +367,7 @@ export function stepsOf(doc: PlanDoc, group: PlanGroup | null) {
 
 /** 펼침 기억(D4) — 스레드별, 처음엔 접힘. 저장소가 막혀도 화면은 그대로 돈다. */
 const OPEN_KEY = 'harkroom.threadPlan.open.';
+const FOLD_KEY = 'harkroom.threadPlan.fold.';
 const ASK_HELP_KEY = 'harkroom.planAskHelpSeen';
 /** 💬 는 마우스를 올려야 보인다 — 처음 한 번만 머리에 알린다. 이 함수를 부른 순간 본 것으로 친다. */
 export function takePlanAskHelp(): boolean {
@@ -389,13 +390,36 @@ export function savePlanOpen(rootId: string, open: boolean): void {
   } catch { /* 저장 못 해도 이번 화면은 연다 */ }
 }
 
-/** 로그아웃 때 펼침 기억을 지운다(security 낮음) — 내용은 없지만 연 스레드 id 가 기기에 남지 않게. */
+/**
+ * 그룹 접힘의 기본값 — 단계가 있고 그 단계가 전부 끝난 그룹만 접는다. 하나라도 안 끝났으면 편다.
+ * 묶음 그룹(다른 스레드 계획)은 이 판에 단계가 없어 접을 것이 없다.
+ */
+export function planGroupFoldedByDefault(plan: ThreadPlanView, g: PlanGroup): boolean {
+  const steps = plan.doc.steps.filter((s) => s.groupId === g.id);
+  return steps.length > 0 && steps.every((s) => plan.derived[s.id]?.derived === 'done');
+}
+
+/** 사람이 직접 접거나 편 그룹(스레드마다 `{그룹 id: 접힘}`). 기억이 기본값보다 앞선다. 이 기기에만 둔다. */
+export function loadPlanFolds(rootId: string): Record<string, boolean> {
+  try {
+    const v = JSON.parse(localStorage.getItem(FOLD_KEY + rootId) ?? 'null') as unknown;
+    if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
+    return Object.fromEntries(Object.entries(v).filter((e): e is [string, boolean] => typeof e[1] === 'boolean'));
+  } catch { return {}; }
+}
+export function savePlanFold(rootId: string, groupId: string, folded: boolean): void {
+  try {
+    localStorage.setItem(FOLD_KEY + rootId, JSON.stringify({ ...loadPlanFolds(rootId), [groupId]: folded }));
+  } catch { /* 저장 못 해도 이번 화면은 그대로 접고 편다 */ }
+}
+
+/** 로그아웃 때 펼침·접힘 기억을 지운다(security 낮음) — 내용은 없지만 연 스레드 id 가 기기에 남지 않게. */
 export function clearPlanOpenKeys(): void {
   try {
     const keys: string[] = [];
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
-      if (k && k.startsWith(OPEN_KEY)) keys.push(k);
+      if (k && (k.startsWith(OPEN_KEY) || k.startsWith(FOLD_KEY))) keys.push(k);
     }
     for (const k of keys) localStorage.removeItem(k);
   } catch { /* 저장소가 막혀도 로그아웃은 계속한다 */ }

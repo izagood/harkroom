@@ -763,15 +763,23 @@ void main() {
       expect(find.descendant(of: find.byKey(const Key('plan-sheet-scroll')), matching: chip), findsNothing);
     });
 
-    testWidgets('펼침·접힘은 기억하지 않는다', (tester) async {
+    testWidgets('사람이 접은 진행 중 그룹은 시트를 닫았다 열어도 접힌 채다. 다시 펴면 편 채다', (tester) async {
       await open(tester, _Server());
+      Future<void> reopen() async {
+        await tester.tap(find.byKey(const Key('plan-sheet-close')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const Key('plan-button-open')));
+        await tester.pumpAndSettle();
+      }
+
+      await tester.tap(find.byKey(const Key('plan-group-g1')));
+      await tester.pump();
+      expect(find.byKey(const Key('plan-step-s1')), findsNothing); // 그 자리에서 바로
+      await reopen();
+      expect(find.byKey(const Key('plan-step-s1')), findsNothing);
       await tester.tap(find.byKey(const Key('plan-group-g1')));
       await tester.pumpAndSettle();
-      expect(find.byKey(const Key('plan-step-s1')), findsNothing);
-      await tester.tap(find.byKey(const Key('plan-sheet-close')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('plan-button-open')));
-      await tester.pumpAndSettle();
+      await reopen();
       expect(find.byKey(const Key('plan-step-s1')), findsOneWidget);
     });
 

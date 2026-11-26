@@ -9,6 +9,7 @@ import 'push/push_gate.dart';
 import 'push/push_platform.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
+import 'session/plan_fold_store.dart';
 import 'session/recent_search_store.dart';
 import 'ui/parts.dart';
 import 'session/session_store.dart';
@@ -24,7 +25,7 @@ void main() => runApp(bootApp());
 /// 빌드는 아무 오류도 없이 흰 화면에 멈춘다(TestFlight 281). 시험은 [sessions] 를 바꿔 끼운다.
 HarkroomApp bootApp({SessionStore? sessions}) {
   WidgetsFlutterBinding.ensureInitialized();
-  final state = AppState(sessions: sessions ?? SessionStore.keychain(), recentSearchStore: RecentSearchStore.keychain());
+  final state = AppState(sessions: sessions ?? SessionStore.keychain(), recentSearchStore: RecentSearchStore.keychain(), planFoldStore: PlanFoldStore.keychain());
   return HarkroomApp(state: state, push: PushCoordinator(state, MethodChannelPush()));
 }
 
