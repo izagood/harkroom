@@ -303,7 +303,7 @@ export function TeamDetail({ team, agents, onBack, onChanged }: {
           <div className="text-meta font-medium text-fg-muted">{t('agents.teams.membersHeading')}</div>
           {/*
             **팀장의 뜻을 여기서 한 번 말한다.** 배지만 두면 그것이 무엇을 바꾸는지 아무도
-            모른다. 팀장은 **창구**다 — 사람이 `@팀` 으로 부르면 팀장이 먼저 깨어난다.
+            모른다. 팀장은 **창구**다 — `@팀` 을 부르면 팀장 하나만 깨어난다.
             권한이 아니다: 팀장이 팀원을 부를 때도 호출 범위를 건너뛰지 않는다. 그래서
             "일을 나눠 주는 자리"처럼 권한으로 읽히는 말은 여기 두지 않는다.
           */}

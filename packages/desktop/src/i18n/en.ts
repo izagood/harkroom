@@ -1964,8 +1964,8 @@ export const en = {
   'agents.teams.invalidName':
     'Names take letters, digits, hyphens and underscores — 2 to 32 characters',
   /**
-   * 팀장의 뜻 — **창구**다. 사람이 `@팀` 으로 부르면 팀장 하나가 먼저 깨어난다(팀장이
-   * 없거나 비활성이면 팀원 전원). 권한이 아니다 — 팀장이 팀원을 부를 때도 호출 범위를
+   * 팀장의 뜻 — **창구**다. `@팀` 을 부르면 팀장 하나만 깨어난다(팀장을 부를 수 없으면
+   * 부를 수 있는 팀원 모두). 권한이 아니다 — 팀장이 팀원을 부를 때도 호출 범위를
    * 건너뛰지 않으므로, "일을 나눠 주는 자리"처럼 권한으로 읽히는 말은 쓰지 않는다.
    */
   'agents.teams.lead': 'Lead',
@@ -1973,9 +1973,10 @@ export const en = {
   'agents.teams.leadClearAction': 'Unset the lead: {handle}',
   'agents.teams.leadFailed': 'The lead was not changed',
   'agents.teams.leadNote':
-    "The lead is the team's front door: when a person calls @team, the lead wakes first and takes "
-    + 'the request. It is not a permission: to call another member, the lead goes through that '
-    + "member's own call scope like anyone else. With no lead — or a disabled one — every member wakes.",
+    "The lead is the team's front door: calling @team wakes only the lead, who takes the request. "
+    + 'Being lead grants no extra permission: to call another member, the lead goes through that '
+    + "member's own call scope like anyone else. If the lead cannot be called — none set, disabled, "
+    + 'or outside its call scope — every member who can be called wakes.',
   'agents.teams.leadSet': 'Make lead',
   'agents.teams.leadSetAction': 'Make the lead: {handle}',
   'agents.teams.listFailed': 'The team list did not arrive',
