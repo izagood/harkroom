@@ -1,6 +1,6 @@
 //! 미리 센 스레드 집계(마이그레이션 197 `thread_stat`·`thread_stat_of`)가 예전 줄마다 다시 세던 LATERAL 과
-//! **같은 값**인지 실제 Postgres 로 대조한다. 넣기·지우기(soft delete)·여러 kind·같은 작성자 여러 번·시스템 줄·
-//! 작성자 없는 줄·채널 지우기를 지난다. `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다.
+//! **같은 값**인지 실제 Postgres 로 대조한다. 넣기·지우기(soft delete)·여러 kind·같은 작성자 여러 번·시스템 줄(시스템 줄만 쓴 작성자 포함)·
+//! 채널 지우기를 지난다. `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다.
 use sqlx::PgPool;
 
 /// 예전 `golden/sql_fragments.json` 의 `thread_stats` LATERAL 그대로(뿌리 하나에 대해).
@@ -98,7 +98,7 @@ async fn thread_stat_matches_lateral() {
     say(&db, &ch, Some(&root), Some(&bot), "progress", 3).await;
     say(&db, &ch, Some(&root), Some(&bot), "wake", 4).await;
     say(&db, &ch, Some(&root), Some(&alice), "system", 5).await;
-    say(&db, &ch, Some(&root), None, "system", 6).await;
+    say(&db, &ch, Some(&root), Some(&bob), "system", 6).await;
     let r_bob = say(&db, &ch, Some(&root), Some(&bob), "user", 7).await;
     say(&db, &ch, Some(&root), Some(&alice), "user", 8).await;
     let s = same(&db, &root, "넣기 뒤").await;
