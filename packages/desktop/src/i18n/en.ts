@@ -1964,17 +1964,18 @@ export const en = {
   'agents.teams.invalidName':
     'Names take letters, digits, hyphens and underscores — 2 to 32 characters',
   /**
-   * 팀장의 뜻 — **지금 무엇을 바꾸는가**를 정직하게 적는다. 지정만 열렸고 멘션 라우팅은
-   * 아직 명단 전체를 깨우므로(`services/messages.ts`), "창구가 하나로 좁혀졌다"고 읽히면
-   * 사람은 팀을 부르고 나서야 그것이 아님을 안다.
+   * 팀장의 뜻 — **창구**다. 사람이 `@팀` 으로 부르면 팀장 하나가 먼저 깨어난다(팀장이
+   * 없거나 비활성이면 팀원 전원). 권한이 아니다 — 팀장이 팀원을 부를 때도 호출 범위를
+   * 건너뛰지 않으므로, "일을 나눠 주는 자리"처럼 권한으로 읽히는 말은 쓰지 않는다.
    */
   'agents.teams.lead': 'Lead',
   'agents.teams.leadClear': 'Unset',
   'agents.teams.leadClearAction': 'Unset the lead: {handle}',
   'agents.teams.leadFailed': 'The lead was not changed',
   'agents.teams.leadNote':
-    'A lead is the one member who speaks for the team: calling @team wakes the lead alone, and it '
-    + 'hands out the work. With no lead — or a disabled one — every member wakes, as before.',
+    "The lead is the team's front door: when a person calls @team, the lead wakes first and takes "
+    + 'the request. It is not a permission: to call another member, the lead goes through that '
+    + "member's own call scope like anyone else. With no lead — or a disabled one — every member wakes.",
   'agents.teams.leadSet': 'Make lead',
   'agents.teams.leadSetAction': 'Make the lead: {handle}',
   'agents.teams.listFailed': 'The team list did not arrive',
