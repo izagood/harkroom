@@ -32,9 +32,13 @@ class PlanCounts {
 class PlanProgressMark extends PlanCounts {
   const PlanProgressMark({
     required super.done, required super.total, super.active, super.blocked, super.waiting, required this.rev, this.updatedAt,
+    this.stalled,
   });
 
   final int rev;
+
+  /// 「멈춤?」 단계 수(서버의 추정). **null 은 「모른다」다** — 실시간 이벤트·쓰기 응답·옛 서버·판정이 꺼진 서버에는 없다.
+  final int? stalled;
 
   /// 실시간 이벤트에는 없다 — 없으면 rev 만 견준다.
   final DateTime? updatedAt;
@@ -45,8 +49,23 @@ class PlanProgressMark extends PlanCounts {
     return PlanProgressMark(
       done: c.done, total: c.total, active: c.active, blocked: c.blocked, waiting: c.waiting,
       rev: _n(_at(j, 'rev')), updatedAt: DateTime.tryParse(_s(_at(j, 'updatedAt')) ?? '')?.toUtc(),
+      stalled: _stalledCount(_at(j, 'stalled'), c.total),
     );
   }
+
+  /// 수가 아니거나 음수면 모르는 것으로 읽고, 단계 수를 넘으면 단계 수로 자른다(멈춘 단계는 그 계획의 단계다).
+  static int? _stalledCount(Object? v, int total) {
+    if (v is! num || !v.isFinite || v < 0) return null;
+    return v > total ? total : v.toInt();
+  }
+
+  /// 멈춤 수를 모르는 새 값이 **같은 판**(rev)이면 앞 값의 수를 지킨다. 판이 바뀌었으면 모르는 채로 둔다 — 다음 목록 읽기가 채운다.
+  PlanProgressMark keepStalled(PlanProgressMark? prev) => stalled != null || prev?.stalled == null || prev!.rev != rev
+      ? this
+      : PlanProgressMark(
+          done: done, total: total, active: active, blocked: blocked, waiting: waiting, rev: rev, updatedAt: updatedAt,
+          stalled: prev.stalled,
+        );
 
   /// `thread.plan.changed` 의 값. 계획이 지워졌으면(rev null·progress null) null.
   static PlanProgressMark? fromEvent(Object? rev, Object? progress) {

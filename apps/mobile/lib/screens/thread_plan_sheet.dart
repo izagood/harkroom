@@ -55,10 +55,19 @@ class PlanSummaryLayout {
     return PlanSummaryLayout(avatars: avatars, replyMax: replyMax, chipMax: chipMax);
   }
 
-  static PlanSummaryLayout of(BuildContext context, double width, String reply, TextStyle replyStyle, PlanCounts p, int participants) => resolve(
+  static PlanSummaryLayout of(
+    BuildContext context,
+    double width,
+    String reply,
+    TextStyle replyStyle,
+    PlanCounts p,
+    int participants, {
+    int stalled = 0,
+  }) =>
+      resolve(
         width: width,
         reply: _textWidth(context, reply, replyStyle) + 1,
-        chip: PlanChip.widthOf(context, p),
+        chip: PlanChip.widthOf(context, p, stalled: stalled),
         participants: participants,
       );
 }
@@ -75,10 +84,12 @@ class PlanChip extends StatelessWidget {
   final int stalled;
 
   /// 칩 하나가 차지하는 폭(말줄임 없을 때) — 좁은 요약 줄이 무엇을 줄일지 정할 때 쓴다.
-  static double widthOf(BuildContext context, PlanCounts p) {
+  /// [stalled] 가 있으면 「· 멈춤? n」 글자만큼 넓다 — 그리는 글자와 같은 글자를 잰다.
+  static double widthOf(BuildContext context, PlanCounts p, {int stalled = 0}) {
     final t = context.t;
     final base = t.planChip(p.done, p.total);
-    final label = p.blocked > 0 ? '$base ${t.planChipBlocked(p.blocked)}' : base;
+    final counts = p.blocked > 0 ? '$base ${t.planChipBlocked(p.blocked)}' : base;
+    final label = stalled > 0 ? '$counts ${t.planChipStalled(stalled)}' : counts;
     return _textWidth(context, label, const TextStyle(fontSize: HarkroomType.meta, fontWeight: FontWeight.w500)) + 12 + 5 + 28;
   }
 

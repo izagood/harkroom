@@ -58,23 +58,34 @@ fn iso(secs: i64) -> Option<String> {
         .map(|t| t.format("%Y-%m-%dT%H:%M:%S.000Z").to_string())
 }
 
-/// 멈춘 단계 보기 `{ "<id>": { "since": …, "wokenAt": …|null } }` — 없으면 `None`. 루프가 최근에 본 시계([`Clock::live`])의 표시만
-/// 믿고, 문서에서 지금 `active` 인 단계만 싣는다(루프가 다음에 돌기 전에 끝났거나 막힌 단계는 멈춤이 아니다).
-pub(crate) fn stalled_json(doc: &Value, clock: &Clock, now: i64) -> Option<String> {
-    if !clock.live(now) {
-        return None;
-    }
-    let active = |id: &str| {
+/// 지금 멈춘 것으로 보일 단계들(시계의 단계 순서) — 루프가 최근에 본 시계([`Clock::live`])의 표시만 믿고, 문서에서 지금 `active` 인
+/// 단계만 낸다(루프가 다음에 돌기 전에 끝났거나 막힌 단계는 멈춤이 아니다).
+fn stalled_steps<'a>(
+    doc: &'a Value,
+    clock: &'a Clock,
+    now: i64,
+) -> impl Iterator<Item = (&'a String, &'a super::plan_progress::StepClock)> {
+    let active = move |id: &str| {
         doc["steps"]
             .as_array()
             .into_iter()
             .flatten()
             .any(|s| s["id"].as_str() == Some(id) && s["state"].as_str() == Some("active"))
     };
-    let parts: Vec<String> = clock
+    clock
         .steps
         .iter()
-        .filter(|(id, s)| s.marked_at.is_some() && active(id))
+        .filter(move |(id, s)| clock.live(now) && s.marked_at.is_some() && active(id))
+}
+
+/// 멈춘 단계 수 — 목록 행의 `planProgress.stalled` 가 싣는다([`stalled_json`] 과 같은 규칙으로 센다).
+pub(crate) fn stalled_count(doc: &Value, clock: &Clock, now: i64) -> usize {
+    stalled_steps(doc, clock, now).count()
+}
+
+/// 멈춘 단계 보기 `{ "<id>": { "since": …, "wokenAt": …|null } }` — 없으면 `None`. 고르는 규칙은 [`stalled_steps`] 다.
+pub(crate) fn stalled_json(doc: &Value, clock: &Clock, now: i64) -> Option<String> {
+    let parts: Vec<String> = stalled_steps(doc, clock, now)
         .filter_map(|(id, s)| {
             Some(format!(
                 r#"{}:{{"since":{},"wokenAt":{}}}"#,
@@ -88,7 +99,7 @@ pub(crate) fn stalled_json(doc: &Value, clock: &Clock, now: i64) -> Option<Strin
 }
 
 /// 읽기 답이 멈춘 단계를 싣나 — 멈춤 판정 스위치가 `on` 일 때만.
-fn stall_view_on() -> bool {
+pub(crate) fn stall_view_on() -> bool {
     use crate::loops::plan_progress::{StallMode, stall_mode};
     stall_mode(crate::env_once::get(&crate::env_once::PLAN_STALL)) == StallMode::On
 }
@@ -502,6 +513,13 @@ mod tests {
         assert_eq!(stalled_json(&doc, &clock, now + 2 * 3600), None);
         assert_eq!(stalled_json(&doc, &Clock::default(), now), None);
         assert_eq!(stalled_json(&json!({"steps": []}), &clock, now), None);
+        // 목록 행의 수는 같은 규칙으로 센다.
+        assert_eq!(
+            stalled_count(&doc, &clock, now),
+            v.as_object().unwrap().len()
+        );
+        assert_eq!(stalled_count(&doc, &clock, now + 2 * 3600), 0);
+        assert_eq!(stalled_count(&doc, &Clock::default(), now), 0);
     }
 
     #[test]

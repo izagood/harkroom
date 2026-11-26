@@ -515,10 +515,57 @@ struct Row {
     is_root: bool,
 }
 
+/// 계획들의 시계 칸과 DB 의 지금(epoch 초) — `$1` 루트들.
+const STALLS_SQL: &str = "select root_id::text, stall::text, extract(epoch from now())::int8 \
+     from thread_plan where root_id = any($1::uuid[])";
+
+/// 루트 → 멈춘 단계 수. 읽지 못하면(그 칸 권한이 없는 풀 등) `None` — 진행률은 그대로 내고 수만 빠진다.
+/// 트랜잭션 안에서는 부르지 않는다(실패한 문장이 트랜잭션을 깬다).
+async fn stalled_counts(
+    conn: &mut sqlx::PgConnection,
+    roots: &[String],
+    plans: &HashMap<String, (String, Value, i64, String)>,
+) -> Option<HashMap<String, usize>> {
+    use super::plan_progress::Clock;
+    let rows: Vec<(String, String, i64)> = sqlx::query_as(STALLS_SQL)
+        .bind(roots)
+        .fetch_all(&mut *conn)
+        .await
+        .ok()?;
+    Some(
+        rows.into_iter()
+            .filter_map(|(root, raw, now)| {
+                let (_, doc, _, _) = plans.get(&root)?;
+                let clock = Clock::parse(&serde_json::from_str::<Value>(&raw).ok()?);
+                let n = super::thread_plan_read::stalled_count(doc, &clock, now);
+                Some((root, n))
+            })
+            .collect(),
+    )
+}
+
+/// 머리 행의 `planProgress` 값. `stalled`(멈춘 단계 수)는 읽었을 때만 붙는다 — 키가 없으면 「모른다」다.
+fn progress_value(p: &Progress, rev: i64, updated: &str, stalled: Option<usize>) -> Value {
+    let mut o = Map::new();
+    o.insert("done".into(), p.done.into());
+    o.insert("total".into(), p.total.into());
+    o.insert("active".into(), p.active.into());
+    o.insert("blocked".into(), p.blocked.into());
+    o.insert("waiting".into(), p.waiting.into());
+    o.insert("rev".into(), rev.into());
+    o.insert("updatedAt".into(), updated.into());
+    if let Some(n) = stalled {
+        o.insert("stalled".into(), n.into());
+    }
+    Value::Object(o)
+}
+
 /// TS `attachPlanProgress` — 머리 행마다 `planProgress`(계획 없으면 null). 쿼리는 최대 둘(계획들, 연결 자식들).
+/// `with_stalled` 면 멈춘 단계 수도 읽어 `planProgress.stalled` 로 싣는다(쿼리 하나 더).
 async fn attach_plan_progress(
     conn: &mut sqlx::PgConnection,
     rows: &mut [Row],
+    with_stalled: bool,
 ) -> Result<(), sqlx::Error> {
     let roots: Vec<String> = rows
         .iter()
@@ -561,6 +608,11 @@ async fn attach_plan_progress(
             facts.insert(id, (channel, public, progress));
         }
     }
+    let stalls = if with_stalled && !plans.is_empty() {
+        stalled_counts(conn, &roots, &plans).await
+    } else {
+        None
+    };
     for r in rows.iter_mut().filter(|r| r.is_root) {
         let pp = match plans.get(&r.id) {
             None => Value::Null,
@@ -575,16 +627,8 @@ async fn attach_plan_progress(
                     };
                     map.insert(id, l);
                 }
-                let p = plan_progress(doc, &map);
-                let mut o = Map::new();
-                o.insert("done".into(), p.done.into());
-                o.insert("total".into(), p.total.into());
-                o.insert("active".into(), p.active.into());
-                o.insert("blocked".into(), p.blocked.into());
-                o.insert("waiting".into(), p.waiting.into());
-                o.insert("rev".into(), (*rev).into());
-                o.insert("updatedAt".into(), updated.clone().into());
-                Value::Object(o)
+                let stalled = stalls.as_ref().map(|m| m.get(&r.id).copied().unwrap_or(0));
+                progress_value(&plan_progress(doc, &map), *rev, updated, stalled)
             }
         };
         // 행 JSON 의 맨 끝 `}` 앞에 끼운다 — 칸 순서를 지키려고 다시 파싱하지 않는다.
@@ -622,7 +666,8 @@ pub(crate) async fn read_list_row(
         thread_root_id,
         is_root,
     }];
-    attach_plan_progress(conn, &mut rows).await?;
+    // 쓰기 트랜잭션 안에서 불린다 — 멈춤 수는 읽지 않는다(키가 없으면 앱은 「모른다」로 읽어 앞 값을 지킨다).
+    attach_plan_progress(conn, &mut rows, false).await?;
     let [row] = rows;
     Ok(Some(row.body))
 }
@@ -642,6 +687,16 @@ async fn exists(
 /// `GET /channels/{id}/messages`.
 /// 갈래를 골라 행을 읽고 `planProgress` 를 붙인다 — REST 목록과 MCP `message.read`(S5.3 C4a-3)가 같이 쓴다.
 async fn fetch_rows(pool: &PgPool, id: &str, q: &Query) -> Result<Vec<Row>, sqlx::Error> {
+    fetch_rows_with(pool, id, q, super::thread_plan_read::stall_view_on()).await
+}
+
+/// [`fetch_rows`] 의 몸통 — `with_stalled` 면 머리 행에 멈춘 단계 수도 싣는다(스위치와 떼어 시험한다).
+async fn fetch_rows_with(
+    pool: &PgPool,
+    id: &str,
+    q: &Query,
+    with_stalled: bool,
+) -> Result<Vec<Row>, sqlx::Error> {
     let s = sql();
     let limit = q.limit.unwrap_or(200).min(500);
     let half = ((limit + 1) / 2).max(1);
@@ -706,10 +761,25 @@ async fn fetch_rows(pool: &PgPool, id: &str, q: &Query) -> Result<Vec<Row>, sqlx
     // 연결은 진행률 붙이기 동안만 쥔다 — 읽기 풀은 작아서(outbox 리스너가 하나를 쥔다) 쥔 채 뒤의 hasMore 를 풀에 물으면 서로 기다린다.
     {
         let mut conn = pool.acquire().await?;
-        attach_plan_progress(&mut conn, &mut rows).await?;
+        attach_plan_progress(&mut conn, &mut rows, with_stalled).await?;
     }
 
     Ok(rows)
+}
+
+/// 채널 최신 목록의 행 JSON 글자들 — 멈춤 수 스위치를 인자로 받는다(DB 시험이 쓴다).
+pub async fn latest_rows_with(
+    pool: &PgPool,
+    channel: &str,
+    with_stalled: bool,
+) -> Result<Vec<String>, sqlx::Error> {
+    Ok(
+        fetch_rows_with(pool, channel, &Query::default(), with_stalled)
+            .await?
+            .into_iter()
+            .map(|r| r.body)
+            .collect(),
+    )
 }
 
 /// MCP `message.read` — TS `listMessages(pool, channelId, { since, limit, threadRootId })` 의 행 JSON 글자들(가시성은 부른 쪽이 본다).
@@ -951,6 +1021,24 @@ mod tests {
             }
         );
         assert_eq!(linked_roots(&doc), vec!["c1".to_string(), "c2".to_string()]);
+    }
+
+    #[test]
+    fn progress_value_adds_stalled_only_when_read() {
+        let p = Progress {
+            done: 1,
+            total: 3,
+            active: 2,
+            ..Default::default()
+        };
+        // 읽지 않았으면 전과 같은 글자다 — 키가 없다.
+        assert_eq!(
+            progress_value(&p, 7, "t", None),
+            json!({"done": 1, "total": 3, "active": 2, "blocked": 0, "waiting": 0, "rev": 7, "updatedAt": "t"})
+        );
+        // 읽었으면 0 도 싣는다 — 「없다」와 「모른다」가 갈린다.
+        assert_eq!(progress_value(&p, 7, "t", Some(0))["stalled"], 0);
+        assert_eq!(progress_value(&p, 7, "t", Some(2))["stalled"], 2);
     }
 
     #[test]
