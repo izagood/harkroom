@@ -9,7 +9,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, act } from '@testing-library/react';
 import { useActiveStore as useAppStore } from '../src/state/communities';
-import { Controller, setController } from '../src/state/controller';
+import { Controller, setController, FEED_HEAD_BEFORE } from '../src/state/controller';
 import { ChannelPane } from '../src/components/ChannelPane';
 import { lastChannelScope, lastChannelStorage } from '../src/lib/prefs';
 import { usePrefsStore } from '../src/state/prefsStore';
@@ -45,7 +45,7 @@ async function bootWith(first: Page, back: Promise<Page>) {
   lastChannelStorage.save(SCOPE, 'c1');
   const { makeWs } = fakeWsFactory();
   const c = new Controller(fakeApi({
-    messages: vi.fn((_c: string, o?: { before?: number }) => (o?.before !== undefined ? back : Promise.resolve(first))) as never,
+    messages: vi.fn((_c: string, o?: { before?: number }) => ((o?.before !== undefined && o.before !== FEED_HEAD_BEFORE) ? back : Promise.resolve(first))) as never,
     me: vi.fn(async () => acc('u1', 'admin', 'human', true)),
   }), makeWs);
   c.lastChannelScope = SCOPE;

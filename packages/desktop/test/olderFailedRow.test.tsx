@@ -5,7 +5,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, act, fireEvent } from '@testing-library/react';
 import { useActiveStore as useAppStore } from '../src/state/communities';
-import { Controller, setController } from '../src/state/controller';
+import { Controller, setController, FEED_HEAD_BEFORE } from '../src/state/controller';
 import { ChannelPane } from '../src/components/ChannelPane';
 import { lastChannelScope, lastChannelStorage } from '../src/lib/prefs';
 import { usePrefsStore } from '../src/state/prefsStore';
@@ -29,7 +29,7 @@ describe('이전 메시지 실패 줄', () => {
   it('뒤채움이 실패하면 실패 문구와 다시 시도가 서고, 다시 시도가 성공하면 걷힌다', async () => {
     let fail = true;
     const messages = vi.fn(async (_c: string, o?: { before?: number }) => {
-      if (o?.before === undefined) return { messages: Array.from({ length: 50 }, (_, i) => root(951 + i)), hasMore: true };
+      if (o?.before === undefined || o.before === FEED_HEAD_BEFORE) return { messages: Array.from({ length: 50 }, (_, i) => root(951 + i)), hasMore: true };
       if (fail) { fail = false; throw new Error('timeout'); }
       return { messages: [root(900)], hasMore: true };
     });

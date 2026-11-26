@@ -10,7 +10,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useActiveStore as useAppStore } from '../src/state/communities';
-import { Controller, FIRST_PAGE_LIMIT, INITIAL_HISTORY_LIMIT, FEED_PAGE_LIMIT } from '../src/state/controller';
+import { Controller, FIRST_PAGE_LIMIT, INITIAL_HISTORY_LIMIT, FEED_PAGE_LIMIT, FEED_HEAD_BEFORE } from '../src/state/controller';
 import { fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';
 
 beforeEach(() => useAppStore.getState().reset());
@@ -30,7 +30,7 @@ describe('첫 창 나눠 받기', () => {
   it('첫 페이지는 뒤채움을 기다리지 않고 들어가고, 뒤채움이 그 아래를 첫 창까지 채운다', async () => {
     const back = deferred<Page>();
     const messages = vi.fn((_c: string, o?: { since?: number; before?: number }) =>
-      (o?.before !== undefined ? back.promise : Promise.resolve({ messages: rows(951, 1000), hasMore: true })));
+      ((o?.before !== undefined && o.before !== FEED_HEAD_BEFORE) ? back.promise : Promise.resolve({ messages: rows(951, 1000), hasMore: true })));
     const c = new Controller(fakeApi({ messages: messages as never }), fakeWsFactory().makeWs);
     await c.start();
     await c.openChannel('c1');
@@ -46,14 +46,14 @@ describe('첫 창 나눠 받기', () => {
   it('뒤채움 중 맨 위에 닿아도 같은 구간을 다시 묻지 않는다', async () => {
     const back = deferred<Page>();
     const messages = vi.fn((_c: string, o?: { before?: number }) =>
-      (o?.before !== undefined ? back.promise : Promise.resolve({ messages: rows(951, 1000), hasMore: true })));
+      ((o?.before !== undefined && o.before !== FEED_HEAD_BEFORE) ? back.promise : Promise.resolve({ messages: rows(951, 1000), hasMore: true })));
     const c = new Controller(fakeApi({ messages: messages as never }), fakeWsFactory().makeWs);
     await c.start();
     await c.openChannel('c1');
     const older = c.loadOlder('c1');
     back.resolve({ messages: rows(501, 950), hasMore: false });
     await older;
-    const befores = (messages.mock.calls as unknown as Array<[string, { before?: number }]>).filter(([, o]) => o?.before !== undefined);
+    const befores = (messages.mock.calls as unknown as Array<[string, { before?: number }]>).filter(([, o]) => o?.before !== undefined && o.before !== FEED_HEAD_BEFORE);
     expect(befores).toHaveLength(1);
     expect(useAppStore.getState().hasMore.c1).toBe(false);
   });
@@ -61,7 +61,7 @@ describe('첫 창 나눠 받기', () => {
   it('뒤채움이 실패하면 과거로 가는 길(hasMore)은 남고, loadOlder 가 다시 묻는다', async () => {
     let first = true;
     const messages = vi.fn(async (_c: string, o?: { before?: number }) => {
-      if (o?.before === undefined) return { messages: rows(951, 1000), hasMore: true };
+      if (o?.before === undefined || o.before === FEED_HEAD_BEFORE) return { messages: rows(951, 1000), hasMore: true };
       if (first) { first = false; throw new Error('network'); }
       return { messages: rows(501, 950), hasMore: false };
     });
@@ -79,6 +79,6 @@ describe('첫 창 나눠 받기', () => {
     const c = new Controller(fakeApi({ messages }), fakeWsFactory().makeWs);
     await c.start();
     await c.openChannel('c1');
-    expect(messages).toHaveBeenCalledTimes(1);
+    expect(messages).toHaveBeenCalledTimes(2); // 첫 페이지 = 본문 줄 머리 + 최신 행, 두 요청이다(`requestFirstPage`).
   });
 });

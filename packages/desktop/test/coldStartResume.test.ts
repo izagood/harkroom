@@ -11,7 +11,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useActiveStore as useAppStore } from '../src/state/communities';
-import { Controller, FIRST_PAGE_LIMIT, removeCommunity } from '../src/state/controller';
+import { Controller, FIRST_PAGE_LIMIT, FEED_HEAD_BEFORE, removeCommunity } from '../src/state/controller';
 import { useCommunityRegistry } from '../src/state/communities';
 import { lastChannelScope, lastChannelStorage } from '../src/lib/prefs';
 import { chan, fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';
@@ -51,14 +51,15 @@ describe('콜드 스타트: 마지막 채널 복원', () => {
 
     const started = c.start();
     // 기동 묶음(channels)이 아직 답하지 않았는데 메시지 요청은 이미 나갔다 — 병렬이다.
-    expect(messages).toHaveBeenCalledTimes(1);
+    expect(messages).toHaveBeenCalledTimes(2);
     expect(messages).toHaveBeenCalledWith('c1', { since: 0, limit: FIRST_PAGE_LIMIT });
+    expect(messages).toHaveBeenCalledWith('c1', { before: FEED_HEAD_BEFORE, limit: FIRST_PAGE_LIMIT, feed: true });
 
     channelsGate.resolve([chan('c1', 'general')]);
     await started;
     await vi.waitFor(() => expect(useAppStore.getState().messages.c1?.length).toBe(1));
     expect(useAppStore.getState().activeChannelId).toBe('c1');
-    expect(messages).toHaveBeenCalledTimes(1);
+    expect(messages).toHaveBeenCalledTimes(2);
 
     // 사람이 그 채널을 다시 누르면 두 번째 진입(증분) 길이다.
     messages.mockClear();
@@ -77,7 +78,7 @@ describe('콜드 스타트: 마지막 채널 복원', () => {
     const clicked = c.openChannel('c1');
     page.resolve({ messages: [msg('m1', 'c1', 1, '안녕', 'u2')], hasMore: false });
     await clicked;
-    expect(messages).toHaveBeenCalledTimes(1);
+    expect(messages).toHaveBeenCalledTimes(2);
     expect(useAppStore.getState().messages.c1?.length).toBe(1);
   });
 
@@ -138,7 +139,7 @@ describe('콜드 스타트: 마지막 채널 복원', () => {
     page.resolve({ messages: [msg('m1', 'c1', 1, '안녕', 'u2')], hasMore: false });
     await vi.waitFor(() => expect(useAppStore.getState().messages.c1?.map((m) => m.id)).toEqual(['m1', 'm2']));
     const calls = messages.mock.calls as unknown as Array<[string, { since?: number; limit?: number }]>;
-    expect(calls.filter(([, o]) => (o.since ?? 0) === 0)).toHaveLength(1);
+    expect(calls.filter(([, o]) => o.since === 0)).toHaveLength(1);
     expect(messages).toHaveBeenCalledWith('c1', { since: 1, limit: 200 });
 
     // 한 번 메웠으면 표시는 지워진다 — 다시 열 때는 평소 증분만.
@@ -157,7 +158,7 @@ describe('콜드 스타트: 마지막 채널 복원', () => {
     await c.start();
     await vi.waitFor(() => expect(useAppStore.getState().messages.c1?.length).toBe(1));
     await new Promise((r) => setTimeout(r, 0));
-    expect(messages).toHaveBeenCalledTimes(1);
+    expect(messages).toHaveBeenCalledTimes(2);
   });
 
   it('S1: 전체 로그아웃은 모든 scope 를 지운다', async () => {

@@ -71,6 +71,15 @@ export const FIRST_PAGE_LIMIT = 50;
 export const FEED_PAGE_LIMIT = 100;
 
 /**
+ * 본문 줄 **첫** 페이지를 물을 때의 `before` — 어떤 seq 보다도 크다(서버는 `before` 에 상한을 두지 않는다).
+ *
+ * 첫 페이지를 최신 행(`since=0`)으로만 받으면 답글이 몰린 채널에서 최신 50 행이 **전부 답글**일 수 있다(2026-11-26
+ * 실측: 최상위 0개). 그러면 본문은 뒤채움이 올 때까지 비고, 뒤채움이 시한에 걸리면 끝내 빈 화면이 남았다. 그래서 첫
+ * 페이지는 본문 줄 기준(`feed`)으로 받고, 최신 행 페이지는 같이 띄워 합친다(`requestFirstPage`).
+ */
+export const FEED_HEAD_BEFORE = Number.MAX_SAFE_INTEGER;
+
+/**
  * `openThread` 의 선택 인자들. **자리 인자였다가 묶었다** — `channelId` 를 더하면 넷이 되고,
  * 넷째 자리에 채널이 오는 호출은 읽는 사람이 무엇을 주는지 셀 수 없다. 이름으로 주면
  * `{ channelId }` 하나만 주는 흔한 경우가 짧아진다.
@@ -549,7 +558,7 @@ export class Controller {
   /** 첫 페이지를 미리 띄워 `prefetchedPages` 에 둔다. 실패는 `null` 로 접는다. */
   private prefetchPage(channelId: string): void {
     markBoot('messages:request');
-    const page = this.messagesPage(channelId, { since: 0, limit: FIRST_PAGE_LIMIT })
+    const page = this.requestFirstPage(channelId)
       .then((p) => { markBoot('messages:response'); return p; })
       .catch(() => null);
     this.prefetchedPages.set(channelId, page);
@@ -590,9 +599,41 @@ export class Controller {
       if (page) return page;
     }
     markBoot('messages:request');
-    const page = await this.messagesPage(channelId, { since: 0, limit: FIRST_PAGE_LIMIT });
+    const page = await this.requestFirstPage(channelId);
     markBoot('messages:response');
     return page;
+  }
+
+  /**
+   * 첫 페이지 = **본문 줄 최신 `FIRST_PAGE_LIMIT` 줄**(`feed`) + **최신 행 `FIRST_PAGE_LIMIT` 개**(`since=0`)를 함께 물어 합친 것.
+   *
+   * - 본문 줄 페이지가 화면을 세운다 — 답글이 아무리 몰려도 최상위가 0 줄이 되지 않는다(`FEED_HEAD_BEFORE`).
+   *   이 페이지의 줄은 스레드 집계(답글 수·참여자)를 달고 오므로 답글 행이 없어도 본문을 그린다.
+   * - 최신 행 페이지는 그 위의 **최신 끝**을 맞춘다 — 읽음 위치(`settleReadPosition`)와 다시 열 때의 증분(`since`)이
+   *   스토어의 가장 큰 seq 를 쓰므로, 본문 줄만 받으면 그 뒤의 답글을 「이미 받았다」로 착각하지는 않지만 읽음이 덜 올라간다.
+   *   본문 줄 N 개는 전체 최신 N 행보다 아래에서 시작하므로, 이 행들은 본문 줄 페이지가 말하는 구간 안에 든다.
+   * - `hasMore` 는 본문 줄 페이지의 것이다(뒤채움·「이전 메시지」가 같은 기준으로 잇는다).
+   * - 한쪽이 실패하면 다른 쪽으로 물러난다 — 본문 줄 페이지가 실패하면 예전 모양(최신 행 + 뒤채움) 그대로다.
+   */
+  private async requestFirstPage(channelId: string): Promise<MessagePage> {
+    const [feed, latest] = await Promise.allSettled([
+      this.messagesPage(channelId, { before: FEED_HEAD_BEFORE, limit: FIRST_PAGE_LIMIT, feed: true }),
+      this.messagesPage(channelId, { since: 0, limit: FIRST_PAGE_LIMIT }),
+    ]);
+    if (feed.status === 'rejected') {
+      if (latest.status === 'fulfilled') return latest.value;
+      throw feed.reason;
+    }
+    if (latest.status === 'rejected') return feed.value;
+    const byId = new Map<string, MessageRow>();
+    for (const m of feed.value.messages) byId.set(m.id, m);
+    for (const m of latest.value.messages) byId.set(m.id, m);
+    const asOfs = [feed.value.asOf, latest.value.asOf].filter((v): v is number => v !== undefined);
+    return {
+      messages: [...byId.values()].sort((a, b) => a.seq - b.seq),
+      hasMore: feed.value.hasMore,
+      ...(asOfs.length ? { asOf: Math.min(...asOfs) } : {}),
+    };
   }
 
   /** 채널별 진행 중인 뒤채움. `loadOlder` 가 같은 구간을 두 번 묻지 않도록 여기에 합류한다. */
