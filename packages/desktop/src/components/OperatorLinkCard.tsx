@@ -12,7 +12,7 @@ import { useLocale, useT } from '../i18n/useT';
 import type { MessageKey } from '../i18n';
 import {
   getOperatorLink, hasOperatorLinkSurface, hostOfBaseUrl, LINK_BACK_HOLD_MS, linkActionKey, linkDismissKey, linkPhase,
-  listenOperatorLink, retryOperatorLinkNow, type LinkPhase,
+  listenOperatorLink, retryOperatorLinkNow, retryUnlockDelayMs, type LinkPhase,
 } from '../lib/operatorLink';
 import { hasOperatorLocalSurface, listLocalAgents } from '../lib/operatorLocal';
 import { createNotifier } from '../lib/notify';
@@ -139,9 +139,17 @@ export function useOperatorLinkCard(view: OperatorLinkView, onOpenSettings: (sec
   const focusSeq = useOperatorLinkStore((s) => s.focusSeq);
   const cardRef = useRef<HTMLDivElement | null>(null);
   const { link, phase, back, localAgentIds, community, clearBack } = view;
-  // [지금 다시 시도] 누른 뒤 잠금 — 다음 serverLinkState·5초·retried:false 중 먼저 오는 것에 푼다.
+  // [지금 다시 시도] 누른 뒤 잠금 — 다음 serverLinkState(최소 1.5초 표시, 다시 붙음이면 곧바로)·5초·retried:false 중 먼저 오는 것에 푼다.
   const [retrying, setRetrying] = useState(false);
-  useEffect(() => { setRetrying(false); }, [link]);
+  const pressed = useRef<{ atMs: number; link: ServerLinkState | null } | null>(null);
+  useEffect(() => {
+    const p = pressed.current;
+    if (!retrying || !p || link === p.link) return undefined;
+    const wait = retryUnlockDelayMs(p.atMs, Date.now(), link);
+    if (wait === 0) { setRetrying(false); return undefined; }
+    const timer = setTimeout(() => setRetrying(false), wait);
+    return () => clearTimeout(timer);
+  }, [link, retrying]);
   useEffect(() => {
     if (!retrying) return undefined;
     const timer = setTimeout(() => setRetrying(false), 5_000);
@@ -240,6 +248,7 @@ export function useOperatorLinkCard(view: OperatorLinkView, onOpenSettings: (sec
         <button type="button" data-testid="op-link-retry-now" disabled={retrying} aria-busy={retrying}
           className="rounded-row bg-accent px-2 py-1 text-meta font-medium text-fg-on-strong hover:bg-accent-hover disabled:cursor-default disabled:opacity-60"
           onClick={() => {
+            pressed.current = { atMs: Date.now(), link };
             setRetrying(true);
             void retryOperatorLinkNow(community).then((retried) => { if (!retried) setRetrying(false); });
           }}>

@@ -31,6 +31,15 @@ export const LINK_BACK_HOLD_MS = 10_000;
 
 export type LinkPhase = 'ok' | 'retry' | 'long';
 
+/** [지금 다시 시도] 「다시 시도하는 중…」 최소 표시 — 거절이 수십 ms 안에 돌아와도 누른 사람이 반응을 보게 한다(designer, #2576 실물). */
+export const RETRY_MIN_SHOW_MS = 1_500;
+/** 누른 뒤 새 상태가 왔을 때 잠금을 풀기까지 남은 시간. 다시 붙었으면(up) 기다리지 않는다. */
+export function retryUnlockDelayMs(pressedAtMs: number, nowMs: number, link: ServerLinkState | null): number {
+  if (link?.state === 'up') return 0;
+  return Math.max(0, RETRY_MIN_SHOW_MS - (nowMs - pressedAtMs));
+}
+
+
 /** 몸을 재서 받는다 — 모양이 틀리면 null(카드를 지어내지 않는다). */
 export function parseServerLinkState(v: unknown): ServerLinkState | null {
   if (!v || typeof v !== 'object') return null;
