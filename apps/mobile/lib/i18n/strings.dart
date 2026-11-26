@@ -844,6 +844,12 @@ abstract class Strings {
   String planStallWoke(String at, String who);
   String get planStallHint;
 
+  /// 「멈춤?」 관리자 깨움 시스템 줄(`meta.planStall`) — 첫 줄 사유, 단계 줄, 넘친 수, 끝줄 할 일. [who] 가 없으면 「담당 모름」.
+  String planStallWakeHead(String manager, int hours);
+  String planStallWakeStep(String id, String title, String? who, String since);
+  String planStallWakeMore(int n);
+  String get planStallWakeTail;
+
   /// DM 을 열지 못했을 때.
   String get newMessageDmFailed;
 
@@ -2053,4 +2059,9 @@ Map<String, String> stringsToMap(Strings s) => {
       'planStallSignals': s.planStallSignals('{since}'),
       'planStallWoke': s.planStallWoke('{at}', '{who}'),
       'planStallHint': s.planStallHint,
+      'planStallWakeHead': s.planStallWakeHead('{manager}', 6),
+      'planStallWakeStep': s.planStallWakeStep('{id}', '{title}', '{who}', '{since}'),
+      'planStallWakeStepNoWho': s.planStallWakeStep('{id}', '{title}', null, '{since}'),
+      'planStallWakeMore': s.planStallWakeMore(3),
+      'planStallWakeTail': s.planStallWakeTail,
     };

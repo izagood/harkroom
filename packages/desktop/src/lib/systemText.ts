@@ -2,6 +2,7 @@ import { UNKNOWN_ACCOUNT_LABEL, parseSystemI18n, type MessageRow } from '@harkro
 import { en } from '../i18n/en';
 import { detectLocale, isLocale, translator, type MessageKey, type Translate } from '../i18n';
 import { usePrefsStore } from '../state/prefsStore';
+import { stallClockLabel } from './threadPlan';
 
 /**
  * 시스템 줄을 **앱 언어로** 적는다(i18n P5 ②, 소유자 결정 D1-B).
@@ -61,6 +62,51 @@ export function chainBackstopText(
   return t('ask.chainBackstop.body', { why, handle: clean(handle ?? UNKNOWN_ACCOUNT_LABEL) });
 }
 
+const STALL_STEP_ID = /^s[1-9][0-9]{0,3}$/;
+/** 서버가 싣는 상한(`loops/plan_progress.rs` 의 `WAKE_LIST_MAX`·`STALL_TITLE_MAX`). 제목은 서버가 글자 240개로 자르고 여기서는 UTF-16 단위로 센다 — 두 배까지 받는다. */
+const STALL_STEPS_MAX = 8;
+const STALL_TITLE_MAX = 480;
+
+/**
+ * 계획판 「멈춤?」 깨움 줄(`meta.planStall`)을 앱 언어로 적는다 — 사유 → 단계 목록(담당, 언제부터) → 할 일.
+ * 시각은 보는 사람의 시간대로 적는다(본문은 서버가 UTC 로 적는다). 단계 목록이 없거나(옛 줄) 모양이 하나라도
+ * 틀리면 `null` — 반쯤 그리지 않고 본문으로 물러난다. 제목은 남이 쓴 글이라 **글로만** 그린다(시스템 줄과 같다).
+ */
+export function planStallText(
+  message: Pick<MessageRow, 'kind' | 'meta'>,
+  accounts: Record<string, { handle: string }>,
+  t: Translate,
+  locale: string,
+  now: number = Date.now(),
+): string | null {
+  if (message.kind !== 'system') return null;
+  const raw = (message.meta as Record<string, unknown> | undefined)?.planStall;
+  if (!raw || typeof raw !== 'object') return null;
+  const { afterSec, managerId, steps, more } = raw as Record<string, unknown>;
+  if (typeof afterSec !== 'number' || !Number.isFinite(afterSec) || afterSec < 3600) return null;
+  if (typeof managerId !== 'string') return null;
+  if (!Array.isArray(steps) || steps.length === 0 || steps.length > STALL_STEPS_MAX) return null;
+  if (typeof more !== 'number' || !Number.isInteger(more) || more < 0 || more > 1000) return null;
+  const name = (id: string) => clean((Object.hasOwn(accounts, id) ? accounts[id]?.handle : undefined) ?? UNKNOWN_ACCOUNT_LABEL);
+  const lines = [t('plan.stallWake.head', { manager: name(managerId), span: new Intl.NumberFormat(locale, { style: 'unit', unit: 'hour', unitDisplay: 'long' }).format(Math.floor(afterSec / 3600)) })];
+  for (const step of steps as unknown[]) {
+    if (!step || typeof step !== 'object') return null;
+    const { id, title, assigneeId, since } = step as Record<string, unknown>;
+    if (typeof id !== 'string' || !STALL_STEP_ID.test(id)) return null;
+    if (typeof title !== 'string' || title.length > STALL_TITLE_MAX) return null;
+    if (assigneeId !== null && typeof assigneeId !== 'string') return null;
+    const at = typeof since === 'string' ? Date.parse(since) : NaN;
+    if (!Number.isFinite(at)) return null;
+    const args = { id, title: clean(title), since: stallClockLabel(at, now, locale) };
+    lines.push(assigneeId === null
+      ? t('plan.stallWake.stepNoWho', args)
+      : t('plan.stallWake.step', { ...args, who: name(assigneeId) }));
+  }
+  if (more > 0) lines.push(t('plan.stallWake.more', { n: more }));
+  lines.push(t('plan.stallWake.tail'));
+  return lines.join('\n');
+}
+
 /**
  * 제어 문자(C0·C1)·방향 바꿈 문자·줄/문단 구분·BOM 을 지운다 — 인자로 줄을 꾸미거나 순서를 뒤집지 못하게(C4). 줄바꿈은 공백으로.
  * 입력창 링크의 마우스 올림 주소(`ComposerEditor`)도 이것을 지난다 — 주소 안의 RLO 같은 글자가 보이는 주소를 뒤집지 못하게.
@@ -78,5 +124,7 @@ export function systemTextNow(
   message: Pick<MessageRow, 'kind' | 'meta'>, accounts: Record<string, { handle: string }>,
 ): string | null {
   const pref = usePrefsStore.getState().locale;
-  return systemText(message, accounts, translator(isLocale(pref) ? pref : detectLocale()));
+  const locale = isLocale(pref) ? pref : detectLocale();
+  const t = translator(locale);
+  return systemText(message, accounts, t) ?? planStallText(message, accounts, t, locale);
 }

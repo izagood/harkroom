@@ -1,4 +1,5 @@
 import '../api/models.dart';
+import '../api/thread_plan.dart';
 import 'strings.dart';
 
 /// 서버 시스템 줄의 번역 표지(`meta.i18n = { key, args }`)를 앱 언어로 적는다(i18n P5 ③).
@@ -140,4 +141,50 @@ String? systemText(MessageRow message, Map<String, AccountView> accounts, String
   // **한 번에** 바꾼다(security F1). 인자를 하나씩 차례로 바꾸면 앞에서 끼운 값 안의 `{뒤 인자}` 가
   // 뒤 차례에서 또 풀린다 — 에이전트가 보고한 path 에 `{granterId}` 를 넣어 남의 이름을 줄 중간에 지어낼 수 있다.
   return template.replaceAllMapped(_placeholder, (m) => out[m[1]] ?? m[0]!);
+}
+
+final RegExp _stallStepId = RegExp(r'^s[1-9][0-9]{0,3}$');
+
+/// 서버가 싣는 상한(`loops/plan_progress.rs` 의 `WAKE_LIST_MAX`·`STALL_TITLE_MAX`). 제목은 서버가 글자 240개로 자르고
+/// 여기서는 UTF-16 단위로 센다 — 두 배까지 받는다.
+const int _stallStepsMax = 8;
+const int _stallTitleMax = 480;
+
+/// 계획판 「멈춤?」 깨움 줄(`meta.planStall`)을 앱 언어로 적는다 — 사유 → 단계 목록(담당, 언제부터) → 할 일.
+/// 원본은 데스크톱 `lib/systemText.ts` 의 `planStallText` 다. 시각은 기기 시간대로 적는다(본문은 서버가 UTC 로 적는다).
+/// 단계 목록이 없거나(옛 줄) 모양이 하나라도 틀리면 `null` — 반쯤 그리지 않고 본문으로 물러난다.
+/// 제목은 남이 쓴 글이라 화면은 이 결과를 **마크다운 없이 글로만** 그린다(`message_tile.dart`).
+String? planStallText(MessageRow message, Map<String, AccountView> accounts, Strings t, {DateTime? now}) {
+  if (message.kind != MessageKind.system) return null;
+  final tag = message.meta['planStall'];
+  if (tag is! Map) return null;
+  final afterSec = tag['afterSec'];
+  final managerId = tag['managerId'];
+  final steps = tag['steps'];
+  final more = tag['more'];
+  if (afterSec is! num || !afterSec.isFinite || afterSec < 3600) return null;
+  if (managerId is! String) return null;
+  if (steps is! List || steps.isEmpty || steps.length > _stallStepsMax) return null;
+  if (more is! int || more < 0 || more > 1000) return null;
+  String name(String id) => (accounts[id]?.handle ?? t.systemAccountUnknown).replaceAll(_unsafe, ' ');
+  final at = now ?? DateTime.now();
+  final lines = [t.planStallWakeHead(name(managerId), afterSec ~/ 3600)];
+  for (final step in steps) {
+    if (step is! Map) return null;
+    final id = step['id'];
+    final title = step['title'];
+    final assigneeId = step['assigneeId'];
+    final since = step['since'];
+    if (id is! String || !_stallStepId.hasMatch(id)) return null;
+    if (title is! String || title.length > _stallTitleMax) return null;
+    if (assigneeId != null && assigneeId is! String) return null;
+    final sinceAt = since is String ? DateTime.tryParse(since) : null;
+    if (sinceAt == null) return null;
+    lines.add(t.planStallWakeStep(
+      id, title.replaceAll(_unsafe, ' '), assigneeId is String ? name(assigneeId) : null, planStallClock(sinceAt, at),
+    ));
+  }
+  if (more > 0) lines.add(t.planStallWakeMore(more));
+  lines.add(t.planStallWakeTail);
+  return lines.join('\n');
 }

@@ -366,13 +366,30 @@ async fn stall_reads_each_signal_keeps_a_clock_and_wakes_the_manager() {
         (lead.as_str(), "system")
     );
     assert!(
-        line.3.starts_with("멈춤?: ") && line.3.contains("- s1 a ＠b (담당 ps_agent · 2시간째)"),
+        line.3.starts_with("멈춤?: ")
+            && line.3.contains("- s1 a ＠b (담당 ps_agent, ")
+            && line.3.contains(" UTC부터)"),
         "{}",
         line.3
     );
     let meta: Value = serde_json::from_str(&line.4).unwrap();
     assert_eq!(meta["planStall"]["stepIds"], serde_json::json!(["s1"]));
     assert_eq!(meta["planStall"]["managerId"], lead.as_str());
+    // 표지에는 앱이 그릴 단계가 실린다 — 담당은 계정 id, 시각은 시계 칸의 조용해진 때.
+    assert_eq!(meta["planStall"]["more"], 0);
+    let listed = &meta["planStall"]["steps"];
+    assert_eq!(listed.as_array().map(Vec::len), Some(1));
+    assert_eq!(listed[0]["id"], "s1");
+    assert_eq!(listed[0]["title"], "a @b");
+    assert_eq!(listed[0]["assigneeId"], agent.as_str());
+    let quiet_at = clock(&admin, &root).await["steps"]["s1"]["quietAt"]
+        .as_i64()
+        .unwrap();
+    assert_eq!(
+        listed[0]["since"].as_str().map(str::to_owned),
+        chrono::DateTime::from_timestamp(quiet_at, 0)
+            .map(|t| t.format("%Y-%m-%dT%H:%M:%S.000Z").to_string())
+    );
     let inbox = "select string_agg(account_id::text || ' ' || reason, ',' order by reason) from inbox where message_id = $1::uuid and reason = 'wake'";
     assert_eq!(one(&admin, inbox, &[&line.0]).await, format!("{lead} wake"));
     let c = clock(&admin, &root).await;

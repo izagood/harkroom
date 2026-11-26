@@ -119,4 +119,73 @@ void main() {
   test('막힘 사유 사전이 en·ko 에 같은 code 로 있다', () {
     expect(ko.blockedWhy.keys.toSet(), en.blockedWhy.keys.toSet());
   });
+
+  group('planStallText — 「멈춤?」 깨움 줄', () {
+    final now = DateTime(2026, 11, 26, 17, 2);
+    final since1 = DateTime(2026, 11, 26, 11, 2).toUtc().toIso8601String();
+    final since2 = DateTime(2026, 11, 24, 16, 40).toUtc().toIso8601String();
+    MessageRow stall(Map<String, Object?> over, {MessageKind kind = MessageKind.system}) => MessageRow(
+          id: 'm1', seq: 1, channelId: 'c1', threadRootId: 'r1', authorId: id,
+          body: '멈춤?: 본문', kind: kind,
+          meta: {
+            'planStall': {
+              'stepIds': ['s34', 's69'], 'afterSec': 21600, 'managerId': id, 'more': 0,
+              'steps': [
+                {'id': 's34', 'title': 'J2 call args', 'assigneeId': id, 'since': since1},
+                {'id': 's69', 'title': 'I2c work state', 'assigneeId': null, 'since': since2},
+              ],
+              ...over,
+            },
+          },
+          createdAt: DateTime.utc(2026, 11, 26), editedAt: null, reactions: const [], attachments: const [], replyCount: null,
+        );
+
+    test('ko·en 으로 사유·단계(담당, 언제부터)·할 일 — 날짜가 다르면 날짜도', () {
+      expect(planStallText(stall({}), accounts, ko, now: now)!.split('\n'), [
+        '@mira 멈춤?: 6시간 넘게 신호(위임·턴·카드·예약·PR 감시)가 없는 ▶ 단계다.',
+        '- s34 J2 call args (담당 mira, 11:02부터)',
+        '- s69 I2c work state (담당 모름, 11-24 16:40부터)',
+        ko.planStallWakeTail,
+      ]);
+      expect(planStallText(stall({}), accounts, en, now: now)!.split('\n'), [
+        '@mira Stalled?: these ▶ steps have had no signal (delegation, turn, card, wake, PR watch) for over 6 hours.',
+        '- s34 J2 call args (assignee mira, since 11:02)',
+        '- s69 I2c work state (assignee unknown, since 11-24 16:40)',
+        en.planStallWakeTail,
+      ]);
+    });
+
+    test('넘친 수·모르는 계정·제목의 방향 바꿈 문자', () {
+      final out = planStallText(stall({
+        'more': 3, 'managerId': 'zzz',
+        'steps': [{'id': 's1', 'title': 'a\u202eb', 'assigneeId': 'nope', 'since': since1}],
+      }), accounts, en, now: now)!.split('\n');
+      expect(out[0], startsWith('@${en.systemAccountUnknown} '));
+      expect(out[1], '- s1 a b (assignee ${en.systemAccountUnknown}, since 11:02)');
+      expect(out[2], '… and 3 more');
+    });
+
+    test('시스템 줄이 아니거나 단계 목록이 없거나(옛 줄) 모양이 틀리면 null — 본문으로', () {
+      expect(planStallText(stall({}, kind: MessageKind.user), accounts, en, now: now), isNull);
+      expect(planStallText(stall({'steps': null}), accounts, en, now: now), isNull);
+      expect(planStallText(stall({'steps': []}), accounts, en, now: now), isNull);
+      expect(planStallText(stall({'more': -1}), accounts, en, now: now), isNull);
+      expect(planStallText(stall({'afterSec': 'x'}), accounts, en, now: now), isNull);
+      expect(planStallText(stall({'managerId': 7}), accounts, en, now: now), isNull);
+      final ok = {'id': 's1', 'title': 't', 'assigneeId': null, 'since': since1};
+      String? one(Object? step) => planStallText(stall({'steps': [step]}), accounts, en, now: now);
+      expect(one(ok), isNotNull);
+      expect(one({...ok, 'id': 'x1'}), isNull);
+      expect(one({...ok, 'title': 'x' * 481}), isNull);
+      expect(one({...ok, 'assigneeId': 3}), isNull);
+      expect(one({...ok, 'since': 'nope'}), isNull);
+      expect(planStallText(stall({'steps': List.filled(9, ok)}), accounts, en, now: now), isNull);
+    });
+
+    test('displayBody 가 같은 문장을 쓰고, 표지를 못 읽으면 본문이다', () {
+      String shown(MessageRow m) => displayBody(m, accounts, unknownMention: '?', unknownAccount: '?', t: en);
+      expect(shown(stall({})), contains('Stalled?: these ▶ steps'));
+      expect(shown(stall({'steps': null})), '멈춤?: 본문');
+    });
+  });
 }
