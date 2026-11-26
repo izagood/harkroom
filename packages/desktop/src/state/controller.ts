@@ -62,6 +62,15 @@ export const INITIAL_HISTORY_LIMIT = 500;
 export const FIRST_PAGE_LIMIT = 50;
 
 /**
+ * 본문 줄(`feed`) 페이지 하나의 줄 수 — 첫 창 뒤채움과 「이전 메시지」가 같이 쓴다(2026-11-26).
+ *
+ * 피드 페이지는 줄마다 스레드 집계를 붙여 오므로 비용이 줄 수에 비례한다. 답글이 몰린 채널에서 450 줄을 한 번에
+ * 물으면 서버 캐시가 차가울 때 읽기 시한(`api.ts` READ_TIMEOUT_MS)을 넘겼다. 100 줄이면 첫 화면을 채우고도 남고,
+ * 그 위는 사람이 올릴 때 `loadOlder` 가 같은 크기로 이어 받는다.
+ */
+export const FEED_PAGE_LIMIT = 100;
+
+/**
  * `openThread` 의 선택 인자들. **자리 인자였다가 묶었다** — `channelId` 를 더하면 넷이 되고,
  * 넷째 자리에 채널이 오는 호출은 읽는 사람이 무엇을 주는지 셀 수 없다. 이름으로 주면
  * `{ channelId }` 하나만 주는 흔한 경우가 짧아진다.
@@ -590,7 +599,7 @@ export class Controller {
   private backfills = new Map<string, Promise<void>>();
 
   /**
-   * 첫 페이지 **아래**를 `INITIAL_HISTORY_LIMIT` 까지 뒤에서 이어 받는다(`FIRST_PAGE_LIMIT` 주석).
+   * 첫 페이지 **아래**를 본문 줄 `FEED_PAGE_LIMIT` 만큼 뒤에서 이어 받는다(`FIRST_PAGE_LIMIT`·`FEED_PAGE_LIMIT` 주석).
    * `loadOlder` 와 같은 모양이다 — `before` 로 물은 범위를 받은 구간으로 적고, 그 응답의 `hasMore` 가
    * 과거의 끝을 말한다. 실패하면 `olderFailed` 를 세워 본문 맨 위에 「다시 시도」 줄을 보인다 —
    * 예전에는 조용히 삼켜, 시한에 걸린 채널이 최신 몇 줄만 보인 채 아무 표시도 없었다. 다시 시도는
@@ -601,7 +610,7 @@ export class Controller {
     const oldest = Math.min(...first.messages.map((m) => m.seq));
     const run = (async () => {
       // 본문에 서는 줄만 센다(`feed`, `api.messages` 의 근거) — 답글로 채운 450 행은 화면에 몇 줄 못 세운다.
-      const page = await this.messagesPage(channelId, { before: oldest, limit: INITIAL_HISTORY_LIMIT - FIRST_PAGE_LIMIT, feed: true });
+      const page = await this.messagesPage(channelId, { before: oldest, limit: FEED_PAGE_LIMIT, feed: true });
       if (this.stopped) return;
       if (page.messages.length) this.addCoverage(channelId, Math.min(...page.messages.map((m) => m.seq)), oldest - 1);
       const store = this.store.getState();
@@ -1914,7 +1923,7 @@ export class Controller {
     // 피드 페이지는 받은 것이 있으면 곧 본문 줄이다 — 그 줄이 높이를 늘려 다음 손짓이 다시 닿는다.
     let page: MessagePage;
     try {
-      page = await this.messagesPage(activeChannelId, { before: oldest, feed: true });
+      page = await this.messagesPage(activeChannelId, { before: oldest, limit: FEED_PAGE_LIMIT, feed: true });
     } catch {
       // 실패를 삼키지 않는다 — 「다시 시도」 줄이 선다. 화면의 받기 문(`loadOlderPage`)은 그대로 풀린다.
       if (!this.stopped) this.setOlderFailed(activeChannelId, true);

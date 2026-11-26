@@ -8,7 +8,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useActiveStore as useAppStore } from '../src/state/communities';
-import { Controller, FIRST_PAGE_LIMIT, INITIAL_HISTORY_LIMIT } from '../src/state/controller';
+import { Controller, FIRST_PAGE_LIMIT, INITIAL_HISTORY_LIMIT, FEED_PAGE_LIMIT } from '../src/state/controller';
 import { fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';
 
 beforeEach(() => useAppStore.getState().reset());
@@ -44,9 +44,10 @@ describe('이전 메시지의 아래 끝', () => {
   });
 
   it('이전 메시지 받기가 실패해도 던지지 않고 실패를 적는다', async () => {
+    let backfilled = false;
     const messages = vi.fn(async (_c: string, o?: Opts) => {
       if (o?.before === undefined) return { messages: rows(951, 1000), hasMore: true };
-      if (o.limit !== undefined) return { messages: rows(501, 950), hasMore: true };
+      if (!backfilled) { backfilled = true; return { messages: rows(501, 950), hasMore: true }; }
       throw new Error('timeout');
     });
     const c = new Controller(fakeApi({ messages: messages as never }), fakeWsFactory().makeWs);
@@ -69,7 +70,7 @@ describe('새 창 열기', () => {
     await c.start();
     await c.loadChannelForWindow('c1');
     expect(messages).toHaveBeenCalledWith('c1', { since: 0, limit: FIRST_PAGE_LIMIT });
-    expect(messages).toHaveBeenCalledWith('c1', { before: 951, limit: INITIAL_HISTORY_LIMIT - FIRST_PAGE_LIMIT, feed: true });
+    expect(messages).toHaveBeenCalledWith('c1', { before: 951, limit: FEED_PAGE_LIMIT, feed: true });
     await vi.waitFor(() => expect(useAppStore.getState().messages.c1).toHaveLength(INITIAL_HISTORY_LIMIT));
   });
 });
