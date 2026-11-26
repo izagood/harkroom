@@ -64,7 +64,7 @@ String displayBody(
 }) {
   // 서버가 번역 표지(meta.i18n)를 실은 시스템 줄은 앱 언어의 문장으로(i18n P5 ③). 못 하면 본문.
   if (t != null) {
-    final translated = systemText(message, accounts, t);
+    final translated = systemText(message, accounts, t) ?? planStallText(message, accounts, t);
     if (translated != null) return translated;
   }
   final accountId = message.meta['accountId'];

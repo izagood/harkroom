@@ -40,7 +40,7 @@ import { accountOpen } from '../lib/accountOpen';
 import { stampLabel } from '../lib/day';
 import type { SectionId } from './settings/sections';
 import { useT, useLocale } from '../i18n/useT';
-import { systemText, chainBackstopText } from '../lib/systemText';
+import { systemText, chainBackstopText, planStallText } from '../lib/systemText';
 import { planReadyTitles, systemLineShape, systemLineTarget, systemRecordIcon } from '../lib/systemLine';
 
 /**
@@ -201,7 +201,8 @@ function MessageItemImpl({ message, inThread = false, onOpenProfile, onOpenSetti
    * 번역 표지가 있는 시스템 줄(i18n P5 ②)은 **글로만** 그린다 — 마크다운·링크·멘션 렌더(`MessageBody`)를
    * 지나지 않는다(security C4). 인자에는 경로·저장소 이름처럼 바깥에서 온 글자가 들어간다.
    */
-  const systemLine = systemText(message, accounts, t) ?? chainBackstopText(message, accounts, t);
+  const systemLine = systemText(message, accounts, t) ?? chainBackstopText(message, accounts, t)
+    ?? planStallText(message, accounts, t, locale);
   const planReady = planReadyTitles(message);
 
   /**
