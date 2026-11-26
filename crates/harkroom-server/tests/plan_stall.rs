@@ -1,5 +1,6 @@
 //! 계획 진행 루프의 멈춤 판정(`loops::plan_progress`)이 실제 스키마에서 신호를 읽고, 단계별 시계(`thread_plan.stall`)를 적고,
 //! 켜져 있으면 관리자를 깨우는지 본다. `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다. 계획·글은 시험이 직접 깐다.
+use harkroom_server::core::msg_list::latest_rows_with;
 use harkroom_server::core::msg_post::PostState;
 use harkroom_server::core::thread_plan_read::plan_view_json_with;
 use harkroom_server::loops::plan_progress::{
@@ -334,6 +335,25 @@ async fn stall_reads_each_signal_keeps_a_clock_and_wakes_the_manager() {
             .ends_with(".000Z")
     );
     assert!(shown["stalled"]["s1"]["wokenAt"].is_null());
+
+    // 목록 행 — 켜져 있을 때만 머리 행의 planProgress 에 멈춘 단계 수가 실린다.
+    let listed = |on: bool| {
+        let (admin, ch, root) = (admin.clone(), ch.clone(), root.clone());
+        async move {
+            let rows = latest_rows_with(&admin, &ch, on).await.unwrap();
+            rows.iter()
+                .map(|r| serde_json::from_str::<Value>(r).unwrap())
+                .find(|r| r["id"] == root.as_str())
+                .unwrap()["planProgress"]
+                .clone()
+        }
+    };
+    let quiet = listed(false).await;
+    assert!(
+        quiet.is_object() && quiet.get("stalled").is_none(),
+        "{quiet}"
+    );
+    assert_eq!(listed(true).await["stalled"], 1);
 
     // 깨움이 켜졌다 — 관리자(에이전트) 이름의 시스템 줄 하나와 관리자 inbox 의 `wake` 한 줄. 줄은 부르지 않는다(멘션 없음).
     let waking = || {

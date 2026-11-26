@@ -192,6 +192,7 @@ class MessageTile extends StatelessWidget {
                                   _replyStyle(k),
                                   message.planProgress!,
                                   math.min(3, message.participantIds.length),
+                                  stalled: message.planProgress!.stalled ?? 0,
                                 );
                                 return _summaryRow(context, app, t, k, layout.avatars, layout.replyMax, layout.chipMax);
                               },
@@ -255,7 +256,11 @@ class MessageTile extends StatelessWidget {
             padding: const EdgeInsets.only(left: PlanSummaryLayout.chipGap),
             child: ConstrainedBox(
               constraints: BoxConstraints(maxWidth: chipMax),
-              child: PlanChip(key: Key('plan-chip-${message.id}'), progress: message.planProgress!),
+              child: PlanChip(
+                key: Key('plan-chip-${message.id}'),
+                progress: message.planProgress!,
+                stalled: message.planProgress!.stalled ?? 0,
+              ),
             ),
           ),
         // 좁으면 시각부터 줄이고 지운다 — 칩과 「답글 n개」는 남는다.

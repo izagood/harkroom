@@ -1314,10 +1314,10 @@ class AppState extends ChangeNotifier {
     for (final list in [messages[channelId], ...threads.values]) {
       if (list == null) continue;
       final idx = list.indexWhere((m) => m.id == rootId);
-      if (idx >= 0) list[idx] = list[idx].withPlanProgress(mark);
+      if (idx >= 0) list[idx] = list[idx].withPlanProgress(mark?.keepStalled(list[idx].planProgress));
     }
     final root = threadRoots[rootId];
-    if (root != null && root.channelId == channelId) threadRoots[rootId] = root.withPlanProgress(mark);
+    if (root != null && root.channelId == channelId) threadRoots[rootId] = root.withPlanProgress(mark?.keepStalled(root.planProgress));
     notifyListeners();
   }
 
@@ -1332,10 +1332,14 @@ class AppState extends ChangeNotifier {
 
   /// 앞 행의 계획 진행률을 지킨다 — `planProgress` 키가 없는 응답(실시간·POST·PATCH)은 「모른다」이지 「없다」가 아니다
   /// (데스크톱 `keepThreadFacts`). 키가 있으면 null 이어도 그 값이 맞다.
-  MessageRow _keepPlan(MessageRow? prev, MessageRow next) =>
-      prev != null && !next.planProgressKnown && prev.planProgressKnown
-          ? next.withPlanProgress(prev.planProgress)
-          : next;
+  /// 키는 있는데 멈춤 수만 없는 응답(쓰기 응답)은 같은 판이면 앞 행의 수를 지킨다.
+  MessageRow _keepPlan(MessageRow? prev, MessageRow next) {
+    if (prev == null || !prev.planProgressKnown) return next;
+    if (!next.planProgressKnown) return next.withPlanProgress(prev.planProgress);
+    final mark = next.planProgress;
+    final kept = mark?.keepStalled(prev.planProgress);
+    return identical(kept, mark) ? next : next.withPlanProgress(kept);
+  }
 
   void _applyThreadStatus(String channelId, String rootId, ThreadStatusMark? status) {
     _touch(rootId);

@@ -262,6 +262,47 @@ void main() {
       expect(row().planProgress, isNull, reason: '지운 뒤의 키 없는 갱신이 옛 값을 되살리면 안 된다');
     });
 
+    test('멈춤 수 — 없으면 모른다, 틀린 값은 버리고, 단계 수를 넘지 않는다', () {
+      PlanProgressMark? read(Object? stalled, {bool has = true}) =>
+          PlanProgressMark.fromJson({'done': 1, 'total': 5, 'active': 2, 'rev': 3, if (has) 'stalled': stalled});
+      expect(read(null, has: false)!.stalled, isNull);
+      expect(read(0)!.stalled, 0);
+      expect(read(2)!.stalled, 2);
+      expect(read(99)!.stalled, 5);
+      expect(read(-1)!.stalled, isNull);
+      expect(read('2')!.stalled, isNull);
+      expect(read(double.nan)!.stalled, isNull);
+      expect(read(double.infinity)!.stalled, isNull);
+    });
+
+    test('멈춤 수를 모르는 새 값은 같은 판일 때만 앞 수를 지킨다', () {
+      const prev = PlanProgressMark(done: 1, total: 5, rev: 3, stalled: 2);
+      final same = PlanProgressMark.fromEvent(3, {'done': 2, 'total': 5})!.keepStalled(prev);
+      expect((same.done, same.stalled), (2, 2));
+      expect(PlanProgressMark.fromEvent(4, {'done': 2, 'total': 5})!.keepStalled(prev).stalled, isNull, reason: '판이 바뀌면 옛 수를 믿지 않는다');
+      expect(const PlanProgressMark(done: 1, total: 5, rev: 3, stalled: 0).keepStalled(prev).stalled, 0, reason: '아는 값은 덮지 않는다');
+      expect(PlanProgressMark.fromEvent(3, {'done': 2, 'total': 5})!.keepStalled(null).stalled, isNull);
+    });
+
+    test('실시간 이벤트(멈춤 수 없음) — 같은 판이면 칩의 멈춤 수가 남고, 판이 바뀌면 사라진다', () async {
+      final s = _Server();
+      final (app, sock) = await _boot(s);
+      MessageRow row() => app.messages['c1']!.firstWhere((m) => m.id == _root);
+      final list = app.messages['c1']!;
+      final i = list.indexWhere((m) => m.id == _root);
+      list[i] = list[i].withPlanProgress(const PlanProgressMark(done: 1, total: 5, active: 1, rev: 3, stalled: 1));
+      void changed(int rev) => _emit(sock, {
+            'type': 'thread.plan.changed', 'channelId': 'c1', 'rootId': _root, 'rev': rev,
+            'progress': {'done': 1, 'total': 5, 'active': 1, 'blocked': 0, 'waiting': 0}, 'audience': 'all',
+          });
+      changed(3);
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+      expect(row().planProgress!.stalled, 1);
+      changed(4);
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+      expect((row().planProgress!.rev, row().planProgress!.stalled), (4, null));
+    });
+
     test('thread.plan.changed 는 칩 값을 이벤트 그대로, 판은 받지 않는다', () async {
       final s = _Server();
       final (app, sock) = await _boot(s);
@@ -386,6 +427,51 @@ void main() {
       final ago = tester.getTopLeft(find.textContaining(' · 3'));
       expect(reply.dx, lessThan(tester.getTopLeft(chip).dx));
       expect(tester.getTopLeft(chip).dx, lessThan(ago.dx));
+    });
+
+    testWidgets('목록 칩 — 멈춤 수가 있으면 낱말로 덧붙이고, 0 이거나 모르면 없다', (tester) async {
+      Map<String, Object?> plan(Object? stalled, {int blocked = 0}) =>
+          {'done': 1, 'total': 5, 'active': 2, 'blocked': blocked, 'waiting': 0, 'rev': 3, 'stalled': ?stalled};
+      String label() => tester.widget<Text>(find.descendant(of: find.byKey(const Key('plan-chip-$_root')), matching: find.byType(Text))).textSpan!.toPlainText();
+
+      await tile(tester, MessageRow.fromJson(_rootRow(plan: plan(2))));
+      expect(label(), '계획 1/5 · 멈춤? 2');
+      expect(find.byKey(const Key('plan-chip-label-stalled')), findsOneWidget);
+
+      await tile(tester, MessageRow.fromJson(_rootRow(plan: plan(1, blocked: 1))));
+      expect(label(), '계획 1/5 · 막힘 1 · 멈춤? 1');
+
+      await tile(tester, MessageRow.fromJson(_rootRow(plan: plan(0))));
+      expect(label(), '계획 1/5');
+      expect(find.byKey(const Key('plan-chip-label-stalled')), findsNothing);
+
+      await tile(tester, MessageRow.fromJson(_rootRow(plan: plan(null))));
+      expect(label(), '계획 1/5');
+    });
+
+    testWidgets('폭 계산은 멈춤 글자만큼 넓다 — 320pt 에 막힘·멈춤이 같이 서도 넘치지 않는다', (tester) async {
+      late double plain;
+      late double withStall;
+      await tester.pumpWidget(MaterialApp(
+        theme: harkroomTheme(Brightness.light),
+        builder: (context, child) => I18n(strings: stringsFor('ko'), child: child!),
+        home: Builder(builder: (context) {
+          const p = PlanCounts(done: 1, total: 5, blocked: 1);
+          plain = PlanChip.widthOf(context, p);
+          withStall = PlanChip.widthOf(context, p, stalled: 2);
+          return const SizedBox();
+        }),
+      ));
+      expect(withStall, greaterThan(plain));
+
+      final row = {
+        ..._rootRow(plan: {'done': 1, 'total': 5, 'active': 2, 'blocked': 1, 'waiting': 0, 'rev': 3, 'stalled': 2}),
+        'participantIds': ['a', 'b', 'c'],
+        'replyCount': 128,
+      };
+      await tile(tester, MessageRow.fromJson(row), width: 320);
+      expect(tester.takeException(), isNull);
+      expect(find.byKey(const Key('plan-chip-$_root')), findsOneWidget);
     });
 
     testWidgets('계획이 없거나 단계가 0개면 칩이 없다', (tester) async {
