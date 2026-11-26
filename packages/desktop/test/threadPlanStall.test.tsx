@@ -108,6 +108,10 @@ describe('멈춤? 화면', () => {
     fireEvent.click(screen.getByTestId('plan-stall-toggle'));
     expect(screen.getByTestId('plan-stall-toggle').getAttribute('aria-expanded')).toBe('true');
     expect(screen.getByTestId('plan-stall-signals').textContent).toMatch(/^No signal since \d\d:\d\d|^No signal since \d+\/\d+, \d\d:\d\d/);
+    // 신호 줄은 항목 사이에서만 끊긴다 — 항목은 줄바꿈 없는 조각이고 구분점은 앞 조각 끝에 붙는다.
+    const pieces = [...screen.getByTestId('plan-stall-signals').querySelectorAll('.whitespace-nowrap')].map((el) => el.textContent);
+    expect(pieces).toEqual(['turns 0 ·', 'cards 0 ·', 'wakes 0 ·', 'PR watches 0']);
+    expect(screen.getByTestId('plan-stall').className).toContain('break-keep');
     expect(screen.getByTestId('plan-stall-woke').textContent).toContain('@lead');
     fireEvent.click(screen.getByTestId('plan-stall-toggle'));
     expect(screen.queryByTestId('plan-stall')).toBeNull();

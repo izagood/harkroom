@@ -474,10 +474,17 @@ function StallBox({ stall, managerId }: { stall: ThreadPlanStall; managerId: str
   const now = Date.now();
   const woken = stall.wokenAt ? Date.parse(stall.wokenAt) : NaN;
   return (
-    <div data-testid="plan-stall" className="mb-1 ml-8 mr-1.5 rounded-row border border-dashed border-warning-border bg-surface-raised px-2.5 py-1.5 text-meta">
+    <div data-testid="plan-stall" className="mb-1 ml-8 mr-1.5 rounded-row border border-dashed border-warning-border bg-surface-raised px-2.5 py-1.5 break-keep text-meta">
       <div className="font-semibold text-warning">{t('plan.stall.title')}</div>
       <ul className="list-disc pl-4 text-fg-muted">
-        <li data-testid="plan-stall-signals">{t('plan.stall.signals', { since: stallClockLabel(Date.parse(stall.since), now, locale) })}</li>
+        {/* 낱말 한가운데서 끊기지 않게 — 신호 항목(「열린 위임 0」)마다 줄바꿈 없는 조각으로 두고, 구분점은 앞 조각 끝에 붙인다. */}
+        <li data-testid="plan-stall-signals" className="break-keep">
+          {t('plan.stall.signals', { since: stallClockLabel(Date.parse(stall.since), now, locale) }).split(' · ').map((piece, i, all) => (
+            <span key={i}>
+              <span className={i > 0 ? 'whitespace-nowrap' : undefined}>{piece}{i < all.length - 1 ? ' ·' : ''}</span>{i < all.length - 1 ? ' ' : ''}
+            </span>
+          ))}
+        </li>
         {Number.isFinite(woken) && manager?.kind === 'agent' && (
           <li data-testid="plan-stall-woke">{t('plan.stall.woke', { at: stallClockLabel(woken, now, locale), who: `@${manager.handle}` })}</li>
         )}
