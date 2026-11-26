@@ -639,11 +639,16 @@ async fn exists(
     Ok(query.bind(binds.2).fetch_optional(pool).await?.is_some())
 }
 
+/// 본문 줄(feed) 페이지 한 번의 최대 줄 수.
+pub(crate) const FEED_LIMIT_MAX: i64 = 100;
+
 /// `GET /channels/{id}/messages`.
 /// 갈래를 골라 행을 읽고 `planProgress` 를 붙인다 — REST 목록과 MCP `message.read`(S5.3 C4a-3)가 같이 쓴다.
 async fn fetch_rows(pool: &PgPool, id: &str, q: &Query) -> Result<Vec<Row>, sqlx::Error> {
     let s = sql();
-    let limit = q.limit.unwrap_or(200).min(500);
+    // 본문 줄(feed) 페이지는 줄마다 스레드 집계를 붙인다 — 이미 배포된 앱이 450 줄을 물어도 100 줄로 자른다.
+    // 받은 줄이 적으면 `hasMore` 가 참으로 남아 앱이 이어 받는다.
+    let limit = q.limit.unwrap_or(200).min(if q.before.is_some() && q.feed { FEED_LIMIT_MAX } else { 500 });
     let half = ((limit + 1) / 2).max(1);
     let base = |text: &'static str| {
         sqlx::query_as::<_, (String, String, i64, Option<String>, bool)>(text).bind(id)
