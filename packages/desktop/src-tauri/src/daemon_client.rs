@@ -1203,6 +1203,10 @@ fn runner_exit_emitter(
             "codexLoginOutput" => {
                 let _ = emitter.emit(crate::CODEX_LOGIN_EVENT, payload);
             }
+            // 서버 링크 상태(안 A ①) — 까닭은 오퍼레이터가 이미 낱말로 접어 보낸다. 모양은 화면이 가린다.
+            "serverLinkState" => {
+                let _ = emitter.emit(crate::OPERATOR_LINK_EVENT, payload);
+            }
             // 모르는 이벤트는 버린다 — 데몬이 우리보다 새 판본일 수 있다.
             _ => {}
         }
@@ -2385,6 +2389,16 @@ impl DaemonConnection {
             "operatorRegister",
             json!({ "baseUrl": base_url, "code": code, "name": name }),
         )
+    }
+
+    /// 서버 링크 상태(안 A ②). 링크가 없으면 null.
+    pub fn server_link_get(&self) -> Result<Value, String> {
+        self.request("serverLinkGet", json!({}))
+    }
+
+    /// 재접속 대기 건너뛰기(안 A ③).
+    pub fn server_link_retry_now(&self) -> Result<Value, String> {
+        self.request("serverLinkRetryNow", json!({}))
     }
 
     pub fn operator_agents_list(&self) -> Result<Value, String> {

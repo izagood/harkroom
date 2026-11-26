@@ -29,6 +29,7 @@ import {
 import { createNotifier } from '../lib/notify';
 import { useAuthWarningsStore } from '../state/authWarningsStore';
 import { GateCard } from './GateCard';
+import { useOperatorLinkCard, useOperatorLinkWatch } from './OperatorLinkCard';
 import type { SectionId } from './settings/sections';
 
 /** 계정 목록을 다시 읽는 간격. 러너 종료·로그인 끝·창 포커스 때는 바로 읽는다. */
@@ -94,6 +95,9 @@ export function AttentionStack({ onOpenSettings }: { onOpenSettings: (section?: 
   const t = useT();
   const locale = useLocale();
   const warnings = useAuthWarnings();
+  // 이 맥 오퍼레이터 ↔ 서버 링크(안 A) — 맨 위(S2 와 같은 순위)에 선다.
+  const linkView = useOperatorLinkWatch();
+  const linkCard = useOperatorLinkCard(linkView, onOpenSettings);
   const accounts = useActiveStore((s) => s.accounts);
   const gateOpen = useActiveStore((s) => s.gates.some((g) => !g.dismissed));
   const [dismissed, setDismissed] = useState<Set<string>>(() => readSet(DISMISSED_KEY));
@@ -151,9 +155,10 @@ export function AttentionStack({ onOpenSettings }: { onOpenSettings: (section?: 
 
   const s2 = shown.filter(({ w }) => w.kind === 's2');
   const s1 = shown.filter(({ w }) => w.kind === 's1');
-  type Slot = { kind: 'gate' } | { kind: 'auth'; key: string; w: AuthWarning } | { kind: 'signedOut'; entry: CommunityEntry };
+  type Slot = { kind: 'gate' } | { kind: 'link' } | { kind: 'auth'; key: string; w: AuthWarning } | { kind: 'signedOut'; entry: CommunityEntry };
   // 순서: S2(에이전트 멈춤) → 관문 → 다른 커뮤니티 로그아웃 → S1(designer 시안 ④ B-3). 두 장 규칙은 그대로다.
   const slots: Slot[] = [
+    ...(linkCard ? [{ kind: 'link' as const }] : []),
     ...s2.map((x) => ({ kind: 'auth' as const, ...x })),
     ...(gateOpen ? [{ kind: 'gate' as const }] : []),
     ...signedOutOthers.filter((e) => !laterSignedOut.has(e.id)).map((entry) => ({ kind: 'signedOut' as const, entry })),
@@ -179,6 +184,7 @@ export function AttentionStack({ onOpenSettings }: { onOpenSettings: (section?: 
         const more = i === visible.length - 1 && hidden > 0 ? hidden : 0;
         // 마지막 칸이 관문 카드여도 숨은 수를 잃지 않는다(designer s2).
         if (slot.kind === 'gate') return <GateCard key="gate" extraMore={more} />;
+        if (slot.kind === 'link') return linkCard;
         if (slot.kind === 'signedOut') {
           const name = communityLabel(slot.entry);
           return (

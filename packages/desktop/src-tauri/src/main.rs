@@ -304,6 +304,10 @@ pub const CLAUDE_LOGIN_EVENT: &str = "harkroom://claude-login";
 /// codex 로그인 진행 통지. `CLAUDE_LOGIN_EVENT` 와 같은 길이다.
 pub const CODEX_LOGIN_EVENT: &str = "harkroom://codex-login";
 
+/// 오퍼레이터 ↔ 서버 링크 상태(안 A). 오퍼레이터의 `serverLinkState` 이벤트를 그대로 올린다 — 까닭은 이미 낱말로
+/// 접혀 오고(원문 오류 없음), 어느 커뮤니티의 것인지는 몸의 `host` 로 화면이 가린다.
+pub const OPERATOR_LINK_EVENT: &str = "harkroom://operator-link";
+
 /// 자식에게 넘길 `PATH` 를 웹뷰에 **알려 준다** — 만들어 주는 것이 아니다(`#513`).
 ///
 /// ## 왜 이 커맨드가 생겼나 — 출처를 하나로 합치려고
@@ -480,6 +484,33 @@ async fn claude_accounts_list(
     on_daemon_pool(app, move |app, state| {
         let (conn, _kind) = daemon_client::ensure_daemon(app, state, community.as_deref())?;
         conn.claude_accounts_list()
+    })
+    .await
+}
+
+/// 오퍼레이터의 서버 링크 상태 한 장(안 A ②) — 끊긴 도중에 앱이 켜져도 첫 값을 받게. 링크가 없으면 null,
+/// 옛 오퍼레이터(요청을 모름)면 `Err` 다 — 화면은 둘 다 「카드 없음」으로 둔다.
+#[tauri::command]
+async fn operator_server_link_get(
+    app: tauri::AppHandle,
+    community: Option<String>,
+) -> Result<serde_json::Value, String> {
+    on_daemon_pool(app, move |app, state| {
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state, community.as_deref())?;
+        conn.server_link_get()
+    })
+    .await
+}
+
+/// [지금 다시 시도](안 A ③) — 오퍼레이터의 재접속 대기를 건너뛴다. `{retried}` 를 돌려준다.
+#[tauri::command]
+async fn operator_server_link_retry_now(
+    app: tauri::AppHandle,
+    community: Option<String>,
+) -> Result<serde_json::Value, String> {
+    on_daemon_pool(app, move |app, state| {
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state, community.as_deref())?;
+        conn.server_link_retry_now()
     })
     .await
 }
@@ -1228,6 +1259,8 @@ fn main() {
             write_saved_attachment,
             reveal_saved_attachment,
             claude_accounts_list,
+            operator_server_link_get,
+            operator_server_link_retry_now,
             claude_accounts_configure,
             claude_account_login_start,
             claude_account_login_submit,
