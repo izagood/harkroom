@@ -32,6 +32,10 @@ pub const KIND_OBLIGATION_CREATED: &str = "obligation.created";
 /// `value` 는 일치 1·불일치 0(대조 못 했으면 없음). `ledger_mandate::merge_shadow`.
 pub const KIND_LEDGER_MANDATE: &str = "ledger.mandate";
 
+/// 턴 끝 판정 한 건(I2c-a, 그림자) — `detail.verdict`(`work_shadow::Verdict`)·`detail.work`(작업을 찾은 길, 못 찾았으면 `none`)·
+/// `detail.closeBy`, `value` 는 뿌리 작업을 닫았을 것이면 1·아니면 0. `ref_id` 는 임대 id. `turn_end_judge::turn_ended`.
+pub const KIND_TURN_JUDGED: &str = "turn.judged";
+
 /// 기록이 쓰는 권한 — homelab GRANT 와 같아야 한다. 없으면 `main.rs` 가 기록을 켜지 않는다(나머지는 그대로 돈다).
 pub const MEASURE_PRIVILEGES: &[(&str, &str)] =
     &[("measure_event", "SELECT"), ("measure_event", "INSERT")];
