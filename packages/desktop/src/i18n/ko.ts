@@ -2626,6 +2626,7 @@ export const ko = {
   'chat.pickChannel': '채널을 골라 시작한다',
   'chat.loadOlder': '이전 메시지 불러오기',
   'chat.loadingOlder': '이전 메시지 불러오는 중',
+  'chat.loadOlderFailed': '이전 메시지를 불러오지 못했다',
   'chat.adminBadge': 'admin',
   'chat.lease.title': '진행 중인 작업',
   'chat.lease.empty': '진행 중인 작업 없음',

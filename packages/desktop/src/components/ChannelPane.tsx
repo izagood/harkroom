@@ -108,6 +108,8 @@ export function ChannelPane({ onOpenSearch, onOpenProfile, onOpenSettings }: Cha
   // 첫 창의 뒤채움(#1226)이 도는 중인가. 최상위 줄이 화면을 못 채우면 아래 `holdForBackfill` 이
   // 이 동안을 첫 페이지 대기처럼 다룬다.
   const backfilling = useActiveStore((s) => (activeChannelId ? !!s.backfilling[activeChannelId] : false));
+  // 이전 메시지 받기가 실패했는가 — 「이전 메시지」 버튼 자리에 실패 문구와 「다시 시도」를 세운다.
+  const olderFailed = useActiveStore((s) => (activeChannelId ? !!s.olderFailed[activeChannelId] : false));
   const channelDividerSeq = useActiveStore((s) => (windowView.kind !== 'main' ? windowView.dividerSeq : activeChannelId ? s.dividerSeq[activeChannelId] : undefined));
   const channelPinsRaw = useActiveStore((s) => (activeChannelId ? s.pins[activeChannelId] : undefined));
   const runnerStates = useActiveStore((s) => s.runnerStates);
@@ -931,13 +933,20 @@ export function ChannelPane({ onOpenSearch, onOpenProfile, onOpenSettings }: Cha
             {/* 받는 중(자리표시가 선 동안)에는 **숨기지 않고** 비활성 + 「불러오는 중」으로 바꾼다(#1463 designer
                 d1) — 숨기면 줄 상자의 시작 위치가 바뀌어 보던 줄이 튄다. 바뀌는 때를 자리표시와 같게 두는 것은
                 짧은 받기에서 글자가 번쩍이지 않게 하려는 것이다. 연달아 누르기는 `loadOlderPage` 의 문이 막는다. */}
+            {/* 받기가 실패했으면 그 사실을 말하고 같은 버튼을 「다시 시도」로 바꾼다 — 예전에는 실패를 삼켜
+                최신 몇 줄만 보인 채 아무 표시가 없었다. 자리는 같은 버튼이라 줄 상자가 튀지 않는다. */}
+            {olderFailed && !olderSkeleton && (
+              <div className="mb-1 text-meta text-warning" role="status" data-testid="load-older-failed">
+                {t('chat.loadOlderFailed')}
+              </div>
+            )}
             <button
               className="rounded-row border border-border px-2 py-1 text-meta text-fg-muted disabled:cursor-default disabled:opacity-60"
               disabled={olderSkeleton}
               data-testid="load-older"
               onClick={loadOlderPage}
             >
-              {olderSkeleton ? t('chat.loadingOlder') : t('chat.loadOlder')}
+              {olderSkeleton ? t('chat.loadingOlder') : olderFailed ? t('common.retry') : t('chat.loadOlder')}
             </button>
           </div>
         )}

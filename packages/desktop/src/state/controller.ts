@@ -164,6 +164,26 @@ export class Controller {
     this.coverage.set(channelId, addRange(this.coverage.get(channelId) ?? [], { lo, hi }));
   }
 
+  /**
+   * 「이전 메시지」를 어디 아래부터 물을지 — **최신 쪽에서 끊김 없이 이어 받은 구간의 아래 끝**이다.
+   * 스토어의 가장 작은 seq 를 쓰면 안 된다: 스레드를 열 때 함께 실려 온 옛 뿌리(`seqCoverage` 머리 주석)가
+   * 목록에 홀로 서 있으면 그 아래만 묻게 되고, 최신 구간과 그 뿌리 사이의 틈은 끝내 묻지 않는다.
+   * 최신 구간이 없으면(아직 첫 페이지 전·점프 창만 있음) 받아 둔 구간 가운데 가장 위의 것을 쓰고,
+   * 구간을 하나도 적지 않았으면 예전처럼 스토어의 가장 작은 seq 로 물러난다.
+   */
+  private olderFloor(channelId: string): number | null {
+    const ranges = this.coverage.get(channelId) ?? [];
+    const top = ranges.length ? ranges[ranges.length - 1]! : null;
+    if (top) return top.lo;
+    const rows = this.store.getState().messages[channelId] ?? [];
+    return rows.length ? Math.min(...rows.map((m) => m.seq)) : null;
+  }
+
+  /** 이전 메시지 받기가 실패했는지 화면에 적는다(`olderFailed`) — 「다시 시도」 줄이 이것을 읽는다. */
+  private setOlderFailed(channelId: string, on: boolean): void {
+    this.setChannelFlag('olderFailed', channelId, on);
+  }
+
   /** 그 seq 의 이웃을 받아 온 적이 있는가 — 스토어에 그 줄이 있다는 것과 다르다. */
   private covers(channelId: string, seq: number): boolean {
     return coversSeq(this.coverage.get(channelId) ?? [], seq);
@@ -543,7 +563,7 @@ export class Controller {
     this.setChannelFlag('firstPageLoading', channelId, on);
   }
 
-  private setChannelFlag(key: 'firstPageLoading' | 'backfilling', channelId: string, on: boolean): void {
+  private setChannelFlag(key: 'firstPageLoading' | 'backfilling' | 'olderFailed', channelId: string, on: boolean): void {
     const flags = this.store.getState()[key];
     if (!!flags[channelId] === on) return;
     const next = { ...flags };
@@ -572,8 +592,9 @@ export class Controller {
   /**
    * 첫 페이지 **아래**를 `INITIAL_HISTORY_LIMIT` 까지 뒤에서 이어 받는다(`FIRST_PAGE_LIMIT` 주석).
    * `loadOlder` 와 같은 모양이다 — `before` 로 물은 범위를 받은 구간으로 적고, 그 응답의 `hasMore` 가
-   * 과거의 끝을 말한다. 실패하면 조용히 그친다: `hasMore` 가 참으로 남아 사람이 위로 올리면
-   * `loadOlder` 가 같은 자리를 다시 묻는다.
+   * 과거의 끝을 말한다. 실패하면 `olderFailed` 를 세워 본문 맨 위에 「다시 시도」 줄을 보인다 —
+   * 예전에는 조용히 삼켜, 시한에 걸린 채널이 최신 몇 줄만 보인 채 아무 표시도 없었다. 다시 시도는
+   * `loadOlder` 이고, 그것은 최신 구간의 아래 끝(`olderFloor`)부터 묻는다.
    */
   private startBackfill(channelId: string, first: MessagePage): void {
     if (!first.hasMore || !first.messages.length || this.backfills.has(channelId)) return;
@@ -586,7 +607,10 @@ export class Controller {
       const store = this.store.getState();
       store.upsertMessages(channelId, page.messages, page.asOf);
       store.set({ hasMore: { ...this.store.getState().hasMore, [channelId]: page.hasMore } });
-    })().catch(() => {}).finally(() => {
+      this.setOlderFailed(channelId, false);
+    })().catch(() => {
+      if (!this.stopped) this.setOlderFailed(channelId, true);
+    }).finally(() => {
       this.backfills.delete(channelId);
       this.setChannelFlag('backfilling', channelId, false);
     });
@@ -1880,14 +1904,23 @@ export class Controller {
     // 첫 창의 뒤채움이 도는 중이면 그것이 곧 "더 오래된 것"이다 — 같은 구간을 또 묻지 않는다.
     const backfill = this.backfills.get(activeChannelId);
     if (backfill) { await backfill; return; }
-    const rows = messages[activeChannelId] ?? [];
-    if (!rows.length) return;
-    const oldest = Math.min(...rows.map((m) => m.seq));
+    if (!(messages[activeChannelId] ?? []).length) return;
+    // 아래 끝은 **받아 온 구간**으로 정한다(`olderFloor`) — 스레드로 들어온 옛 뿌리를 세면 틈이 굳는다.
+    const oldest = this.olderFloor(activeChannelId);
+    if (oldest === null) return;
 
     // **본문에 서는 줄만** 받는다(`feed`). 답글이 섞인 페이지가 답글뿐이면 화면에 늘어나는 줄이 없고, 다음
     // 페이지를 부르는 계기는 스크롤 이벤트뿐이라 맨 위에서 멈췄다(`ChannelPane.maybeLoadOlder`, 스레드 36caac7a).
     // 피드 페이지는 받은 것이 있으면 곧 본문 줄이다 — 그 줄이 높이를 늘려 다음 손짓이 다시 닿는다.
-    const page = await this.messagesPage(activeChannelId, { before: oldest, feed: true });
+    let page: MessagePage;
+    try {
+      page = await this.messagesPage(activeChannelId, { before: oldest, feed: true });
+    } catch {
+      // 실패를 삼키지 않는다 — 「다시 시도」 줄이 선다. 화면의 받기 문(`loadOlderPage`)은 그대로 풀린다.
+      if (!this.stopped) this.setOlderFailed(activeChannelId, true);
+      return;
+    }
+    this.setOlderFailed(activeChannelId, false);
     // `before: X` 는 X 아래 전부를 물은 것이다 — 받은 줄의 seq 가 아니라 물은 범위를 적는다.
     if (page.messages.length) this.addCoverage(activeChannelId, Math.min(...page.messages.map((m) => m.seq)), oldest - 1);
     this.store.getState().upsertMessages(activeChannelId, page.messages, page.asOf);
@@ -1910,13 +1943,19 @@ export class Controller {
       : 0;
     this.swallow(this.loadPins(channelId));
     this.swallow(this.loadChannelAutoMentions(channelId));
-    const page = await this.messagesPage(channelId, { since, limit: since === 0 ? INITIAL_HISTORY_LIMIT : undefined });
+    // 처음 여는 채널은 메인 창과 같은 모양으로 받는다 — 최신 첫 페이지 + 본문 줄 뒤채움(`startBackfill`).
+    // 예전에는 답글이 섞인 500 행만 받아, 답글이 몰린 채널에서는 본문 줄이 몇 개뿐이었고 구간도 적지 않았다.
+    const page = since === 0
+      ? await this.firstPage(channelId)
+      : await this.messagesPage(channelId, { since });
     this.loadedChannels.add(channelId);
+    if (since === 0 && page.messages.length) this.addCoverage(channelId, Math.min(...page.messages.map((m) => m.seq)), Infinity);
     this.store.getState().upsertMessages(channelId, page.messages, page.asOf);
     if (since > 0 && this.staleSinceReconnect.has(channelId)) await this.refreshLatestPage(channelId);
     // 증분 응답은 `hasMore` 를 말할 자격이 없다 — 근거는 `openChannel` 의 같은 자리.
     if (since === 0) {
       this.store.getState().set({ hasMore: { ...this.store.getState().hasMore, [channelId]: page.hasMore } });
+      this.startBackfill(channelId, page);
     }
   }
 

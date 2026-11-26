@@ -122,6 +122,11 @@ export interface AppState {
    * 바닥으로 미끄러진다(#1226 designer n1). 이 동안 「Load older」도 숨긴다(n2).
    */
   backfilling: Record<string, boolean>;
+  /**
+   * 채널별 '이전 메시지 받기(뒤채움·`loadOlder`)가 실패했다'. 본문 맨 위의 「이전 메시지」 버튼이
+   * 실패 문구와 「다시 시도」로 바뀐다. 다음 받기가 성공하면 걷힌다.
+   */
+  olderFailed: Record<string, boolean>;
   unread: InboxEntry[];
   /** 채널별 읽음 상태(서버 진실). 사이드바 배지가 여기서 나온다. */
   reads: Record<string, { lastReadSeq: number; unread: number }>;
@@ -554,7 +559,7 @@ export const NO_TEAMS: AgentTeamRow[] = [];
 
 const initial = {
   me: null, accounts: {}, groups: [], teams: null, channels: [], dms: [], activeChannelId: null, threadRootId: null,
-  messages: {}, typing: {}, hasMore: {}, firstPageLoading: {}, backfilling: {}, unread: [], reads: {}, dividerSeq: {},
+  messages: {}, typing: {}, hasMore: {}, firstPageLoading: {}, backfilling: {}, olderFailed: {}, unread: [], reads: {}, dividerSeq: {},
   online: [], terminalTarget: null, channelSheetId: null, artifactPreview: null, artifactPreviewFrom: null, channelSheetTab: null, leases: [], connected: false, link: 'online' as AppState['link'], offlineSince: null, threadFetch: null as AppState['threadFetch'], serverVersion: null, workspaceIconUrl: null,
   projectionStatus: null, projectionStatusError: null,
   channelPrefs: {}, channelSections: null, pins: {}, channelDocs: {}, channelMembers: {}, channelAutoMentions: {}, threadAgentModels: {}, threadPlans: {}, threadPlanDenied: {}, planAsks: {}, planFocus: null, drafts: {}, stickyMentions: {}, uploads: {},
