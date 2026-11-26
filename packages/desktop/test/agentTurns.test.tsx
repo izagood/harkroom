@@ -198,6 +198,19 @@ describe('중단 — 줄 · 스레드 · 전부', () => {
     expect(onCancel.mock.calls[0]![0].map((t: AgentSessionView) => t.sessionId)).toEqual(['s2']);
   });
 
+  // 메뉴는 `absolute` 라 가장 가까운 positioned 조상에 붙는다 — 감싸개가 없으면 화면 전체를 기준으로 떠
+  // 창 왼쪽 아래 구석에 섰다(2026-11-26). jsdom 은 배치를 계산하지 않으므로 「메뉴와 버튼이 같은 relative 상자 안」을 잰다.
+  it('[멈추기 ▾] 메뉴는 그 버튼을 담은 relative 상자 안에 서고 오른쪽 끝을 맞춘다', () => {
+    renderTurns({ kind: 'known', turns: twoThreads() }, vi.fn(), vi.fn());
+    fireEvent.click(screen.getByTestId('agent-turn-cancel-s2'));
+    const menu = screen.getByRole('menu');
+    const anchor = screen.getByTestId('agent-turn-cancel-anchor-s2');
+    expect(menu.parentElement).toBe(anchor);
+    expect(anchor.className.split(/\s+/)).toContain('relative');
+    expect(anchor.contains(screen.getByTestId('agent-turn-cancel-s2'))).toBe(true);
+    expect(menu.className.split(/\s+/)).toContain('right-0');
+  });
+
   it('스레드에 멈출 턴이 하나면 메뉴 없이 [멈추기] 가 바로 그 턴을 보낸다 (designer #1054)', () => {
     const onCancel = vi.fn();
     renderTurns({ kind: 'known', turns: twoThreads() }, vi.fn(), onCancel);
