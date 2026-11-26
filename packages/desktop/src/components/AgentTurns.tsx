@@ -386,8 +386,16 @@ export function AgentTurns({
                         </button>
                       ) : (
                         stoppable(group.turns).length > 1 ? (
+                          /*
+                            **`relative` 감싸개가 있어야 메뉴가 이 버튼 옆에 선다.** `Menu` 는 평소 `absolute top-full` 이라
+                            가장 가까운 positioned 조상에 붙는데, 이 줄에서 위로 그런 조상이 없어 「도는 턴」 화면 전체를
+                            기준으로 떠 창 왼쪽 아래 구석에 섰다(2026-11-26 신고). 버튼이 줄 오른쪽 끝이라 메뉴도 오른쪽
+                            끝을 맞춘다(`right-0`) — 왼쪽을 맞추면 목록 오른쪽 테두리를 넘는다.
+                          */
+                          <span data-testid={`agent-turn-cancel-anchor-${turn.sessionId}`} className="relative flex shrink-0">
                           <Menu
                             placement="bottom"
+                            className="right-0"
                             items={[
                               { label: t('agentTurns.cancelOne'), onSelect: () => onCancelTurns([turn]) },
                               // 범위가 큰 쪽이라 빨강이다 — "이 턴만" 과 무게가 갈린다(designer #1054).
@@ -404,6 +412,7 @@ export function AgentTurns({
                               </button>
                             )}
                           />
+                          </span>
                         ) : (
                           /* 스레드에 멈출 턴이 이것 하나면 **고를 것이 없다** — 항목 하나짜리 메뉴는 누르는 횟수만 늘린다
                              (designer #1054). ▾ 없는 버튼이 바로 멈춘다(옛 동작). */
