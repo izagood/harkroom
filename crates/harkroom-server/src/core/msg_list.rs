@@ -648,7 +648,11 @@ async fn fetch_rows(pool: &PgPool, id: &str, q: &Query) -> Result<Vec<Row>, sqlx
     let s = sql();
     // 본문 줄(feed) 페이지는 줄마다 스레드 집계를 붙인다 — 이미 배포된 앱이 450 줄을 물어도 100 줄로 자른다.
     // 받은 줄이 적으면 `hasMore` 가 참으로 남아 앱이 이어 받는다.
-    let limit = q.limit.unwrap_or(200).min(if q.before.is_some() && q.feed { FEED_LIMIT_MAX } else { 500 });
+    let limit = q.limit.unwrap_or(200).min(if q.before.is_some() && q.feed {
+        FEED_LIMIT_MAX
+    } else {
+        500
+    });
     let half = ((limit + 1) / 2).max(1);
     let base = |text: &'static str| {
         sqlx::query_as::<_, (String, String, i64, Option<String>, bool)>(text).bind(id)

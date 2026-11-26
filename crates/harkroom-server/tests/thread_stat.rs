@@ -25,7 +25,7 @@ const NEW: &str = "select reply_count, activity_count, last_reply_at, participan
 
 type Stat = (i32, i32, Option<String>, Vec<String>);
 
-async fn stat(pool: &PgPool, sql: &str, id: &str) -> Stat {
+async fn stat(pool: &PgPool, sql: &'static str, id: &str) -> Stat {
     sqlx::query_as(sql).bind(id).fetch_one(pool).await.unwrap()
 }
 
@@ -36,12 +36,23 @@ async fn same(pool: &PgPool, id: &str, ctx: &str) -> Stat {
     new
 }
 
-async fn one(pool: &PgPool, sql: &str, bind: &str) -> String {
-    sqlx::query_scalar(sql).bind(bind).fetch_one(pool).await.unwrap()
+async fn one(pool: &PgPool, sql: &'static str, bind: &str) -> String {
+    sqlx::query_scalar(sql)
+        .bind(bind)
+        .fetch_one(pool)
+        .await
+        .unwrap()
 }
 
 /// `at` 초 뒤 시각으로 넣는다 — 같은 시각이면 참여자 순서가 정해지지 않는다.
-async fn say(pool: &PgPool, ch: &str, root: Option<&str>, author: Option<&str>, kind: &str, at: i32) -> String {
+async fn say(
+    pool: &PgPool,
+    ch: &str,
+    root: Option<&str>,
+    author: Option<&str>,
+    kind: &str,
+    at: i32,
+) -> String {
     sqlx::query_scalar(
         "insert into message(channel_id, thread_root_id, author_id, body, kind, meta, created_at) \
          values ($1::uuid, $2::uuid, $3::uuid, 'x', $4, '{}', timestamptz '2026-01-01 00:00:00+00' + make_interval(secs => $5)) \
@@ -67,12 +78,20 @@ async fn thread_stat_matches_lateral() {
     let alice = one(&db, "insert into account(handle, display_name, kind, login_id) values ($1, $1, 'human', $1) returning id::text", "ts_alice").await;
     let bot = one(&db, "insert into account(handle, display_name, kind) values ($1, $1, 'agent') returning id::text", "ts_bot").await;
     let bob = one(&db, "insert into account(handle, display_name, kind, login_id) values ($1, $1, 'human', $1) returning id::text", "ts_bob").await;
-    let ch = one(&db, "insert into channel(name, kind) values ($1, 'standard') returning id::text", "thread-stat-rs").await;
+    let ch = one(
+        &db,
+        "insert into channel(name, kind) values ($1, 'standard') returning id::text",
+        "thread-stat-rs",
+    )
+    .await;
 
     // 답글 없는 뿌리 — 집계 줄이 없어도 0·null·빈 배열.
     let lonely = say(&db, &ch, None, Some(&alice), "user", 0).await;
     let s = same(&db, &lonely, "답글 없는 뿌리").await;
-    assert_eq!((s.0, s.1, s.2.is_none(), s.3.is_empty()), (0, 0, true, true));
+    assert_eq!(
+        (s.0, s.1, s.2.is_none(), s.3.is_empty()),
+        (0, 0, true, true)
+    );
 
     let root = say(&db, &ch, None, Some(&alice), "user", 1).await;
     let r1 = say(&db, &ch, Some(&root), Some(&bot), "user", 2).await;
@@ -90,11 +109,20 @@ async fn thread_stat_matches_lateral() {
     same(&db, &r1, "답글 줄").await;
 
     // 지우기: 마지막 답글·한 사람뿐인 작성자의 글.
-    sqlx::query("update message set deleted_at = now() where id = $1::uuid").bind(&r_bob).execute(&db).await.unwrap();
+    sqlx::query("update message set deleted_at = now() where id = $1::uuid")
+        .bind(&r_bob)
+        .execute(&db)
+        .await
+        .unwrap();
     let s = same(&db, &root, "bob 글 지운 뒤").await;
     assert_eq!(s.3.len(), 2);
-    sqlx::query("update message set deleted_at = now() where thread_root_id = $1::uuid and kind = 'user'")
-        .bind(&root).execute(&db).await.unwrap();
+    sqlx::query(
+        "update message set deleted_at = now() where thread_root_id = $1::uuid and kind = 'user'",
+    )
+    .bind(&root)
+    .execute(&db)
+    .await
+    .unwrap();
     let s = same(&db, &root, "사람 답글을 다 지운 뒤").await;
     assert_eq!(s.0, 2);
 
@@ -103,14 +131,29 @@ async fn thread_stat_matches_lateral() {
     same(&db, &root, "지운 뒤 다시 넣기").await;
 
     // 뿌리를 지워도(soft) 집계는 답글만 본다 — 예전과 같다.
-    sqlx::query("update message set deleted_at = now() where id = $1::uuid").bind(&root).execute(&db).await.unwrap();
+    sqlx::query("update message set deleted_at = now() where id = $1::uuid")
+        .bind(&root)
+        .execute(&db)
+        .await
+        .unwrap();
     same(&db, &root, "뿌리 soft delete").await;
 
     // 채널 지우기: 뿌리와 함께 집계 줄도 사라진다.
-    sqlx::query("delete from message where channel_id = $1::uuid").bind(&ch).execute(&db).await.unwrap();
+    sqlx::query("delete from message where channel_id = $1::uuid")
+        .bind(&ch)
+        .execute(&db)
+        .await
+        .unwrap();
     let left: i64 = sqlx::query_scalar("select count(*) from thread_stat where root_id = $1::uuid")
-        .bind(&root).fetch_one(&db).await.unwrap();
-    let left_p: i64 = sqlx::query_scalar("select count(*) from thread_participant where root_id = $1::uuid")
-        .bind(&root).fetch_one(&db).await.unwrap();
+        .bind(&root)
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    let left_p: i64 =
+        sqlx::query_scalar("select count(*) from thread_participant where root_id = $1::uuid")
+            .bind(&root)
+            .fetch_one(&db)
+            .await
+            .unwrap();
     assert_eq!((left, left_p), (0, 0));
 }
