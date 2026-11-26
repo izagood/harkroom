@@ -998,6 +998,32 @@ class StringsEn implements Strings {
   @override
   String get planStateHidden => 'Hidden';
   @override
+  String get planStalled => 'Stalled?';
+  @override
+  String planSumStalled(int n) => 'Stalled? $n';
+  @override
+  String planChipStalled(int n) => '· $n stalled?';
+  @override
+  String planStalledSemantics(int n) => '$n possibly stalled';
+  @override
+  String get planStateStalled => 'possibly stalled';
+  @override
+  String planQuietFor(Duration quiet) {
+    final m = quiet.isNegative ? 0 : quiet.inMinutes;
+    String unit(int n, String one) => '$n $one${n == 1 ? '' : 's'}';
+    final span = m < 60 ? unit(m, 'minute') : (m < 24 * 60 ? unit(m ~/ 60, 'hour') : unit(m ~/ (24 * 60), 'day'));
+    return 'No signal for $span';
+  }
+
+  @override
+  String get planStallTitle => 'Why it looks stalled';
+  @override
+  String planStallSignals(String since) => 'No signal since $since: delegations 0 · turns 0 · cards 0 · wakes 0 · PR watches 0';
+  @override
+  String planStallWoke(String at, String who) => 'Woke manager $who at $at';
+  @override
+  String get planStallHint => 'If it is actually waiting, marking it blocked with a reason clears this.';
+  @override
   String get newMessageDmFailed => "Couldn't open the DM.";
   @override
   String get unreadOnlyEmpty => 'All caught up.';

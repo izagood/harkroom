@@ -136,7 +136,7 @@ class ThreadPlanView {
   const ThreadPlanView({
     required this.rootId, required this.rev, required this.updatedAt, required this.goal,
     required this.groups, required this.steps, required this.derived, required this.progress, required this.linked,
-    this.next, this.blocked, this.flagged = false, this.updatedBy, this.managerId, this.channelId,
+    this.next, this.blocked, this.flagged = false, this.updatedBy, this.managerId, this.channelId, this.stalled = const {},
   });
 
   final String rootId;
@@ -146,6 +146,9 @@ class ThreadPlanView {
   final List<PlanGroup> groups;
   final List<PlanStep> steps;
   final Map<String, PlanNode> derived;
+
+  /// 「멈춤?」 — 진행 중인데 오래 신호가 없다고 **서버가 추정한** 단계(단계 id → 표시). 없으면 비어 있다.
+  final Map<String, PlanStall> stalled;
   final PlanCounts progress;
   final List<PlanLinked> linked;
   final String? next;
@@ -191,7 +194,18 @@ class ThreadPlanView {
         if (k is String) derived[k] = PlanNode(state: PlanState.parse(_at(v, 'derived')), waitingOn: _strs(_at(v, 'waitingOn')));
       });
     }
+    final stalled = <String, PlanStall>{};
+    final st = j['stalled'];
+    if (st is Map) {
+      st.forEach((k, v) {
+        final since = DateTime.tryParse(_s(_at(v, 'since')) ?? '')?.toUtc();
+        if (k is String && since != null) {
+          stalled[k] = PlanStall(since: since, wokenAt: DateTime.tryParse(_s(_at(v, 'wokenAt')) ?? '')?.toUtc());
+        }
+      });
+    }
     return ThreadPlanView(
+      stalled: stalled,
       rootId: _s(j['rootId']) ?? '',
       channelId: _s(j['channelId']),
       rev: _n(j['rev']),
@@ -275,6 +289,30 @@ PlanRowKind stepKind(ThreadPlanView plan, PlanStep step, String? me) {
     return PlanRowKind.mine;
   }
   return _kindOf(state);
+}
+
+/// 「멈춤?」 표시 하나. [since] 부터 신호가 없었고, [wokenAt] 에 관리자를 깨웠다(아직이면 null).
+class PlanStall {
+  const PlanStall({required this.since, this.wokenAt});
+
+  final DateTime since;
+  final DateTime? wokenAt;
+}
+
+/// 「멈춤?」 단계(문서 순서) — 서버가 표시했고 **화면에서 진행(▶)으로 그리는** 줄만. 막힘·내 차례·끝과 겹치면 뺀다
+/// (막힘은 누가 적은 사실이고 멈춤은 추정이라, 겹치면 사실만 보인다).
+List<String> planStalledIds(ThreadPlanView plan, String? me) => [
+      for (final s in planStepOrder(plan))
+        if (plan.stalled.containsKey(s.id) && stepKind(plan, s, me) == PlanRowKind.active) s.id,
+    ];
+
+/// 「11:02」, 날짜가 오늘이 아니면 「11-24 16:40」 — 기기 시간대.
+String planStallClock(DateTime at, DateTime now) {
+  final a = at.toLocal();
+  final n = now.toLocal();
+  String two(int v) => v.toString().padLeft(2, '0');
+  final clock = '${two(a.hour)}:${two(a.minute)}';
+  return a.year == n.year && a.month == n.month && a.day == n.day ? clock : '${two(a.month)}-${two(a.day)} $clock';
 }
 
 /// 화면의 줄 순서 — 그룹을 문서 순서로, 그 안의 단계를 문서 순서로, 그룹 밖 단계는 맨 뒤. 상태가 바뀌어도 줄이 자리를 옮기지 않는다(W2).
