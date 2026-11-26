@@ -14,8 +14,12 @@
  * **원문 오류는 오지 않는다** — 오퍼레이터가 까닭을 낱말(`ServerLinkReason`)로 접어 보낸다. 어느 커뮤니티의 오퍼레이터인지는
  * 몸의 `host` 로 가린다(커뮤니티를 섞지 않는다).
  */
-import { SERVER_LINK_REASONS, type ServerLinkReason, type ServerLinkState } from '@harkroom/shared/daemonProtocol';
+// 타입만 가져온다 — `daemonProtocol.ts` 는 node 모듈(daemonEndpoint)을 끌고 와 웹뷰 번들에 값으로 들이면 빌드가 깨진다.
+import type { ServerLinkReason, ServerLinkState } from '@harkroom/shared/daemonProtocol';
 import { withCommunity } from './operatorCommunity';
+
+/** shared `SERVER_LINK_REASONS` 와 같은 값(위 import 주석의 이유로 옮겨 적는다 — 시험이 둘을 대조한다). */
+export const LINK_REASONS: readonly ServerLinkReason[] = ['dns', 'offline', 'closed', 'refused', 'tls', 'auth', 'other'];
 
 export const OPERATOR_LINK_EVENT = 'harkroom://operator-link';
 /** 이보다 짧은 끊김은 정상으로 둔다. */
@@ -34,7 +38,7 @@ export function parseServerLinkState(v: unknown): ServerLinkState | null {
   if (o.state !== 'up' && o.state !== 'down') return null;
   if (typeof o.host !== 'string') return null;
   const num = (x: unknown): number | null => (typeof x === 'number' && Number.isFinite(x) ? x : null);
-  const reason = typeof o.reason === 'string' && (SERVER_LINK_REASONS as readonly string[]).includes(o.reason)
+  const reason = typeof o.reason === 'string' && (LINK_REASONS as readonly string[]).includes(o.reason)
     ? (o.reason as ServerLinkReason)
     : o.state === 'down' ? 'other' : null;
   return {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { hostOfBaseUrl, LINK_GRACE_MS, LINK_LONG_MS, linkActionKey, linkDismissKey, linkPhase, parseServerLinkState } from '../src/lib/operatorLink';
+import { SERVER_LINK_REASONS } from '@harkroom/shared/daemonProtocol';
+import { LINK_REASONS, hostOfBaseUrl, LINK_GRACE_MS, LINK_LONG_MS, linkActionKey, linkDismissKey, linkPhase, parseServerLinkState } from '../src/lib/operatorLink';
 
 const down = (since: number, reason = 'dns') => parseServerLinkState({
   state: 'down', reason, closeCode: null, host: 'one.example.com', downSinceMs: since, lastUpMs: null, attempts: 3, nextRetryAtMs: null,
@@ -29,6 +30,7 @@ describe('operatorLink 판정', () => {
     expect(linkActionKey('auth')).toBe('opLink.do.auth');
     expect(linkActionKey('other')).toBe('opLink.do.other');
   });
+  it('까닭 목록이 shared 와 같다', () => { expect([...LINK_REASONS]).toEqual([...SERVER_LINK_REASONS]); });
   it('커뮤니티 주소의 호스트', () => {
     expect(hostOfBaseUrl('https://One.example.com:8443/x')).toBe('one.example.com');
     expect(hostOfBaseUrl('nope')).toBeNull();
