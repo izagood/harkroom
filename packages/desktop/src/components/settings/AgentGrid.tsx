@@ -18,6 +18,8 @@ import { lastTurnAgo } from '../../lib/lastTurn';
 import type { MessageKey } from '../../i18n';
 import { useT, useLocale } from '../../i18n/useT';
 import { useLocalLanes } from '../../lib/localLanes';
+import { focusOperatorLinkCard, linkPhaseFor, useOperatorLinkStore } from '../../state/operatorLinkStore';
+import type { LinkPhase } from '../../lib/operatorLink';
 import { laneCodeText } from '../../lib/laneCodes';
 
 /**
@@ -384,9 +386,11 @@ const CHIP_STATE: Record<FaceState, MessageKey> = {
  * 아무 `.group` 에나 걸리는데 감싸개 `div` 가 이미 `group` 이라, 이름을 안 주면 카드
  * 어디에 마우스를 올려도 칩 글자가 바뀐다 — 내가 이 칩 위에 있다는 뜻이 사라진다.
  */
-function StateChip({ handle, face, stopping, action, onAct }: {
+function StateChip({ handle, face, stopping, action, onAct, link = 'ok' }: {
   handle: string;
   face: FaceState;
+  /** 이 맥 오퍼레이터의 서버 링크 단계(안 A) — 이 맥 에이전트가 아니면 'ok'. */
+  link?: LinkPhase;
   /** `isStopping` 의 답. 얼굴은 `ok` 인데 종료 요청이 걸린 다섯 번째 얼굴이다. */
   stopping: boolean;
   /** 지금 할 수 있는 일. `null` 이면 칩은 버튼이 아니다. */
@@ -394,6 +398,27 @@ function StateChip({ handle, face, stopping, action, onAct }: {
   onAct?(): void;
 }) {
   const t = useT();
+  /* **서버 끊김이 멈춤의 까닭이면 그것을 말한다**(안 A). 오래 끊김은 빨간 칩이 카드로 가는 문이고, 재시도 중은 노랑 글이다.
+     로컬 러너가 도는 얼굴(ok)·물러나는 중에는 덮지 않는다. */
+  if (link !== 'ok' && face !== 'ok' && face !== 'retiring' && !stopping) {
+    const shellL = 'inline-flex h-[22px] max-w-full items-center gap-1.5 rounded-full px-2.5 text-meta';
+    if (link === 'long') {
+      return (
+        <button type="button" data-testid={`agent-link-${handle}`} title={t('opLink.chip.longTitle')}
+          className={`${shellL} ${CHIP_FOCUS} border border-danger-border bg-danger-surface text-danger`}
+          onClick={(e) => { e.stopPropagation(); focusOperatorLinkCard(); }}>
+          <span aria-hidden="true" className="block h-1.5 w-1.5 shrink-0 rounded-full bg-danger" />
+          <span className="truncate leading-none">{t('opLink.chip.long')}</span>
+        </button>
+      );
+    }
+    return (
+      <span data-testid={`agent-link-${handle}`} className={`${shellL} border border-warning-border bg-warning-surface text-warning`}>
+        <span aria-hidden="true" className="block h-1.5 w-1.5 shrink-0 rounded-full bg-warning" />
+        <span className="truncate leading-none">{t('opLink.chip.retry')}</span>
+      </span>
+    );
+  }
   const state = stopping ? t('grid.chip.stopping') : t(CHIP_STATE[face]);
   const dot = stopping || face === 'retiring'
     ? 'bg-warning'
@@ -776,6 +801,7 @@ export function AgentGrid<T extends AgentCardSubject>({
   // *"숫자는 `Intl` 이, 뜻은 사전이"*.
   const t = useT();
   const lanes = useLocalLanes();
+  const opLink = useOperatorLinkStore();
   const locale = useLocale();
   const s = PLACE[place];
 
@@ -1134,6 +1160,7 @@ export function AgentGrid<T extends AgentCardSubject>({
                   */
                   action={canStop ? 'stop' : null}
                   onAct={canStop ? () => onStop?.(a) : undefined}
+                  link={linkPhaseFor(opLink, a.id)}
                 />
               )}
 

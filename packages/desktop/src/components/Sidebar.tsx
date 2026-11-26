@@ -27,6 +27,7 @@ import { SidebarFind } from './SidebarFind';
 // `runnerStatusLabel` 은 DM 줄이 쓴다 — 아바타에 실은 상태를 접근 이름으로도 내야 한다.
 import { runnerReason, runnerStatusLabel } from './RunnerStatus';
 import { useAuthWarningsStore, stoppedWarningFor } from '../state/authWarningsStore';
+import { focusOperatorLinkCard, linkPhaseFor, useOperatorLinkStore } from '../state/operatorLinkStore';
 import { requestClaudeReauth } from '../lib/claudeAccounts';
 import { AgentGrid } from './settings/AgentGrid';
 import { Collab } from './Collab';
@@ -303,6 +304,7 @@ export function Sidebar({
   /** 터미널에서 사람을 기다리는 에이전트(2026-10-09 A안) — 카드를 접어도 그 줄에 ⌨ 가 남는다. */
   const gates = useActiveStore((s) => s.gates);
   const authWarnings = useAuthWarningsStore((s) => s.warnings);
+  const opLink = useOperatorLinkStore();
   const poppedChannels = useMemo(
     () => new Set(appWindowEntries.flatMap((e) => (e.target.kind === 'channel' ? [e.target.channelId] : []))),
     [appWindowEntries],
@@ -871,8 +873,10 @@ export function Sidebar({
      * 러너 상태(`runnerStates`)의 사유가 있으면 그쪽이 먼저다.
      */
     const loginStop = dm.agentId && !reason ? stoppedWarningFor(authWarnings, dm.agentId) : undefined;
+    /** 이 맥 오퍼레이터가 서버와 끊겨 멈췄다(안 A). 러너 사유·로그인 풀림이 있으면 그쪽이 먼저다. 온라인이면 안 붙인다. */
+    const linkStop = !reason && !loginStop && dm.presence !== 'online' ? linkPhaseFor(opLink, dm.agentId) : 'ok';
     const rowButton = (
-      <button key={dm.id} className={`${row(dm.id === activeChannelId)} ${reason || loginStop ? 'flex-col items-start' : ''} ${gate || loginStop ? 'min-w-0 flex-1' : ''}`} data-channel-row={dm.id}
+      <button key={dm.id} className={`${row(dm.id === activeChannelId)} ${reason || loginStop || linkStop !== 'ok' ? 'flex-col items-start' : ''} ${gate || loginStop ? 'min-w-0 flex-1' : ''}`} data-channel-row={dm.id}
         onClick={(e) => openChannelFrom(e, dm.id, () => void getController().openChannel(dm.id))}>
         <span className="flex min-w-0 items-center gap-1.5">
           {/*
@@ -937,6 +941,14 @@ export function Sidebar({
             {runner?.status === 'needs_harness' || runner?.status === 'needs_login'
               ? reason
               : t('sidebar.runner.launchFailed', { reason })}
+          </span>
+        )}
+        {linkStop !== 'ok' && (
+          <span data-testid={`runner-link-${dm.agentId}`}
+            title={linkStop === 'long' ? t('opLink.chip.longTitle') : undefined}
+            className={`whitespace-normal text-left text-meta ${linkStop === 'long' ? 'text-danger' : 'text-warning'}`}
+            onClick={linkStop === 'long' ? (e) => { e.stopPropagation(); focusOperatorLinkCard(); } : undefined}>
+            {linkStop === 'long' ? t('opLink.sidebar.long') : t('opLink.sidebar.retry')}
           </span>
         )}
         {loginStop && (
