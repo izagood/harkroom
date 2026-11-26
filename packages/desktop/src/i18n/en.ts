@@ -1180,6 +1180,8 @@ export const en = {
   'opLink.back.runners': 'Restarting runners {n}/{total}',
   'opLink.dur.m': '{m} min',
   'opLink.dur.hm': '{h} h {m} min',
+  'opLink.dur.h': '{h} h',
+  'opLink.retrying': 'Retrying…',
   'opLink.chip.retry': 'Reconnecting',
   'opLink.chip.long': 'Stopped · Disconnected',
   'opLink.chip.longTitle': 'This Mac lost the server — click to see the card',

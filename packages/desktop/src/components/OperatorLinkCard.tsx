@@ -5,7 +5,7 @@
  * 오래 끊김은 빨강 `role=alert`(OS 알림 1회, [지금 다시 시도][자세히][나중에]), 다시 붙음은 초록 `role=status`(저절로 걷힘).
  * 원문 오류는 오지 않는다 — 까닭 낱말과 시각·횟수만 그린다.
  */
-import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
 import type { ServerLinkState } from '@harkroom/shared/daemonProtocol';
 import { useActiveStore, useCommunityRegistry } from '../state/communities';
 import { useLocale, useT } from '../i18n/useT';
@@ -40,6 +40,8 @@ export interface OperatorLinkView {
   back: { downSinceMs: number; upAtMs: number } | null;
   localAgentIds: readonly string[];
   community: string | null;
+  /** 초록 카드가 걷혔다 — back 을 비워 타이머를 멈춘다. */
+  clearBack: () => void;
 }
 
 /** 지금 커뮤니티의 링크 상태를 듣고 단계를 가린다. 표면이 없으면(웹·테스트) 아무것도 안 한다. */
@@ -99,7 +101,8 @@ export function useOperatorLinkWatch(): OperatorLinkView {
   }, [phase, link]);
 
   useEffect(() => { useOperatorLinkStore.setState({ phase, localAgentIds }); }, [phase, localAgentIds]);
-  return { link, phase, back, localAgentIds, community };
+  const clearBack = useCallback(() => setBack(null), []);
+  return { link, phase, back, localAgentIds, community, clearBack };
 }
 
 function useDuration(): (ms: number) => string {
@@ -107,7 +110,8 @@ function useDuration(): (ms: number) => string {
   return (ms) => {
     const min = Math.max(0, Math.floor(ms / 60_000));
     const h = Math.floor(min / 60);
-    return h > 0 ? t('opLink.dur.hm', { h, m: min % 60 }) : t('opLink.dur.m', { m: Math.max(1, min) });
+    if (h > 0) return min % 60 === 0 ? t('opLink.dur.h', { h }) : t('opLink.dur.hm', { h, m: min % 60 });
+    return t('opLink.dur.m', { m: Math.max(1, min) });
   };
 }
 
@@ -134,7 +138,15 @@ export function useOperatorLinkCard(view: OperatorLinkView, onOpenSettings: (sec
   const notifier = useMemo(() => createNotifier(), []);
   const focusSeq = useOperatorLinkStore((s) => s.focusSeq);
   const cardRef = useRef<HTMLDivElement | null>(null);
-  const { link, phase, back, localAgentIds, community } = view;
+  const { link, phase, back, localAgentIds, community, clearBack } = view;
+  // [지금 다시 시도] 누른 뒤 잠금 — 다음 serverLinkState·5초·retried:false 중 먼저 오는 것에 푼다.
+  const [retrying, setRetrying] = useState(false);
+  useEffect(() => { setRetrying(false); }, [link]);
+  useEffect(() => {
+    if (!retrying) return undefined;
+    const timer = setTimeout(() => setRetrying(false), 5_000);
+    return () => clearTimeout(timer);
+  }, [retrying]);
   const time = new Intl.DateTimeFormat(locale, { hour: 'numeric', minute: '2-digit' });
   const at = (ms: number | null): string | null => {
     if (ms === null) return null;
@@ -158,6 +170,10 @@ export function useOperatorLinkCard(view: OperatorLinkView, onOpenSettings: (sec
     return () => clearInterval(timer);
   }, [back, backDoneAt, running, total]);
 
+  const backGone = back !== null && phase === 'ok'
+    && ((backDoneAt !== null && now - backDoneAt >= LINK_BACK_HOLD_MS) || now - back.upAtMs >= BACK_MAX_MS);
+  useEffect(() => { if (backGone) clearBack(); }, [backGone, clearBack]);
+
   const key = link ? linkDismissKey(link) : null;
   // 오래 끊김은 OS 알림 1회(같은 열쇠로는 다시 안 보낸다).
   useEffect(() => {
@@ -171,18 +187,17 @@ export function useOperatorLinkCard(view: OperatorLinkView, onOpenSettings: (sec
   });
 
   if (back && phase === 'ok') {
-    const doneLong = backDoneAt !== null && now - backDoneAt >= LINK_BACK_HOLD_MS;
-    if (doneLong || now - back.upAtMs >= BACK_MAX_MS) return null;
+    if (backGone) return null;
     const from = at(back.downSinceMs);
     const to = at(back.upAtMs);
     const line = from && to
       ? t('opLink.back.line', { dur: dur(back.upAtMs - back.downSinceMs), from, to })
       : t('opLink.back.lineNoTime', { dur: dur(back.upAtMs - back.downSinceMs) });
     return (
-      <div key="op-link" role="status" data-testid="op-link-back"
+      <div key="op-link" role="status" aria-atomic="false" data-testid="op-link-back"
         className="pointer-events-auto rounded-card border border-border border-l-4 border-l-success bg-surface-raised px-3 py-2.5 shadow-float">
         <p className="text-body font-semibold text-fg"><span className="text-success">✓</span> {t('opLink.back.title')}</p>
-        <p className="mt-0.5 truncate text-meta text-fg-muted" title={line}>
+        <p className="mt-0.5 line-clamp-2 break-words text-meta text-fg-muted" title={line}>
           {line}{total > 0 ? ` · ${t('opLink.back.runners', { n: Math.min(running, total), total })}` : ''}
         </p>
         {total > 0 && (
@@ -204,7 +219,7 @@ export function useOperatorLinkCard(view: OperatorLinkView, onOpenSettings: (sec
       <div key="op-link" ref={cardRef} tabIndex={-1} role="status" data-testid="op-link-retry"
         className="pointer-events-auto rounded-card border border-border border-l-4 border-l-warning bg-surface-raised px-3 py-2.5 shadow-float outline-none">
         <p className="text-body font-semibold text-fg"><span className="text-warning">⚠</span> {t('opLink.retry.title')}</p>
-        <p className="mt-0.5 truncate text-meta text-fg-muted" title={line}>{line}</p>
+        <p className="mt-0.5 line-clamp-2 break-words text-meta text-fg-muted" title={line}>{line}</p>
         <p className="text-meta text-fg-subtle">{t('opLink.retry.hint')}</p>
       </div>
     );
@@ -216,16 +231,19 @@ export function useOperatorLinkCard(view: OperatorLinkView, onOpenSettings: (sec
     ? t('opLink.long.line', { what, since, dur: forDur, attempts: link.attempts })
     : t('opLink.long.lineNoSince', { what, attempts: link.attempts });
   return (
-    <div key="op-link" ref={cardRef} tabIndex={-1} role="alert" data-testid="op-link-long"
+    <div key="op-link" ref={cardRef} tabIndex={-1} data-testid="op-link-long"
       className="pointer-events-auto rounded-card border border-border border-l-4 border-l-danger bg-surface-raised px-3 py-2.5 shadow-float outline-none focus-visible:ring-2 focus-visible:ring-accent">
-      <p className="text-body font-semibold text-fg"><span className="text-danger">⛔</span> {title}</p>
-      <p className="mt-0.5 truncate text-meta text-fg-muted" title={line}>{line}</p>
+      <p role="alert" className="text-body font-semibold text-fg"><span className="text-danger">⛔</span> {title}</p>
+      <p className="mt-0.5 line-clamp-2 break-words text-meta text-fg-muted" title={line}>{line}</p>
       <p className="mt-1 text-meta text-fg"><span className="font-semibold">{t('opLink.do.label')}</span> {t(linkActionKey(link.reason))}</p>
       <div className="mt-2 flex items-center gap-1.5">
-        <button type="button" data-testid="op-link-retry-now"
-          className="rounded-row bg-accent px-2 py-1 text-meta font-medium text-fg-on-strong hover:bg-accent-hover"
-          onClick={() => { void retryOperatorLinkNow(community); }}>
-          {t('opLink.retryNow')}
+        <button type="button" data-testid="op-link-retry-now" disabled={retrying} aria-busy={retrying}
+          className="rounded-row bg-accent px-2 py-1 text-meta font-medium text-fg-on-strong hover:bg-accent-hover disabled:cursor-default disabled:opacity-60"
+          onClick={() => {
+            setRetrying(true);
+            void retryOperatorLinkNow(community).then((retried) => { if (!retried) setRetrying(false); });
+          }}>
+          {retrying ? t('opLink.retrying') : t('opLink.retryNow')}
         </button>
         <button type="button" data-testid="op-link-details"
           className="rounded-row px-2 py-1 text-meta text-fg-muted hover:bg-surface-hover"

@@ -758,6 +758,8 @@ export const ko = {
   'opLink.back.runners': '러너 다시 띄우는 중 {n}/{total}',
   'opLink.dur.m': '{m}분',
   'opLink.dur.hm': '{h}시간 {m}분',
+  'opLink.dur.h': '{h}시간',
+  'opLink.retrying': '다시 시도하는 중…',
   'opLink.chip.retry': '다시 붙는 중',
   'opLink.chip.long': '멈춤 · 연결 끊김',
   'opLink.chip.longTitle': '이 맥이 서버와 끊김 — 눌러서 카드 보기',
