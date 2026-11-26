@@ -71,7 +71,7 @@ class PlanChip extends StatelessWidget {
   final PlanCounts progress;
   final bool compact;
 
-  /// 「멈춤?」 단계 수 — 서버의 추정이라 노란 글자로 덧붙인다(면은 주지 않는다). 모르면 0.
+  /// 「멈춤?」 단계 수 — 서버의 추정이라 노란 글자로 덧붙인다(면은 주지 않는다). 모르면 0. 막힘처럼 낱말로 쓴다(「· 멈춤? n」).
   final int stalled;
 
   /// 칩 하나가 차지하는 폭(말줄임 없을 때) — 좁은 요약 줄이 무엇을 줄일지 정할 때 쓴다.
@@ -119,7 +119,7 @@ class PlanChip extends StatelessWidget {
               TextSpan(children: [
                 TextSpan(text: label),
                 if (stalled > 0)
-                  TextSpan(text: ' ${compact ? '?$stalled' : t.planChipStalled(stalled)}', style: TextStyle(color: k.warning)),
+                  TextSpan(text: ' ${t.planChipStalled(stalled)}', style: TextStyle(color: k.warning)),
               ]),
               key: stalled > 0 ? const Key('plan-chip-label-stalled') : null,
               maxLines: 1,
@@ -1931,7 +1931,11 @@ class _StallBox extends StatelessWidget {
           decoration: BoxDecoration(color: k.surfaceRaised, borderRadius: BorderRadius.circular(HarkroomRadius.row)),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(t.planStallTitle, style: TextStyle(color: k.warning, fontSize: HarkroomType.meta, fontWeight: FontWeight.w600)),
-            Text('• ${t.planStallSignals(planStallClock(stall.since, now))}', key: Key('plan-stall-signals-$stepId'), style: meta),
+            // 한글은 글자마다 끊길 수 있다 — 신호 항목(「열린 위임 0」)을 조각으로 나눠 항목 사이에서만 줄이 바뀌게 한다.
+            Wrap(key: Key('plan-stall-signals-$stepId'), children: [
+              for (final (i, piece) in _stallPieces('• ${t.planStallSignals(planStallClock(stall.since, now))}').indexed)
+                Text(piece, softWrap: i == 0, style: meta),
+            ]),
             if (woken != null && manager != null && manager!.isAgent)
               Text('• ${t.planStallWoke(planStallClock(woken, now), '@${manager!.handle}')}', key: Key('plan-stall-woke-$stepId'), style: meta),
             Text(t.planStallHint, style: TextStyle(color: k.fgSubtle, fontSize: HarkroomType.meta)),
@@ -1940,6 +1944,18 @@ class _StallBox extends StatelessWidget {
       ),
     );
   }
+}
+
+/// 신호 줄을 줄바꿈 단위로 가른다 — 머리말(「…부터 신호 없음:」)과 ` · ` 로 나뉜 항목들. 항목 안의 공백은 끊기지 않는 공백으로 바꾸고,
+/// 구분점은 앞 항목 끝에 붙여 줄이 구분점으로 시작하지 않게 한다. 머리말만 길면 꺾일 수 있다.
+List<String> _stallPieces(String line) {
+  final colon = line.indexOf(': ');
+  final head = colon < 0 ? null : line.substring(0, colon + 1);
+  final items = (colon < 0 ? line : line.substring(colon + 2)).split(' · ');
+  return [
+    if (head != null) '$head ',
+    for (var i = 0; i < items.length; i++) '${items[i].replaceAll(' ', '\u00A0')}${i < items.length - 1 ? '\u00A0· ' : ''}',
+  ];
 }
 
 /// 맨 위 「멈춤? n」 칩 — 점선 테두리에 면이 없다(추정). 누르면 그 단계들을 문서 순서로 돌아가며 간다.

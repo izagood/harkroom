@@ -572,8 +572,8 @@ void main() {
     testWidgets('멈춤?: 머리 칩·진행 칩 뒤의 칩·제목 아래 꼬리표가 서고, 막힘과 겹치면 막힘만. 누르면 까닭을 편다', (tester) async {
       final s = _Server()..fallback = () => _json({'plan': stalledPlan()});
       await open(tester, s);
-      // 시트 머리의 좁은 칩 「2/7 · 막힘 1 ?1」.
-      expect(tester.widget<Text>(find.byKey(const Key('plan-chip-label-stalled'))).textSpan!.toPlainText(), '2/7 · 막힘 1 ?1');
+      // 시트 머리의 좁은 칩 — 막힘처럼 낱말로 쓴다.
+      expect(tester.widget<Text>(find.byKey(const Key('plan-chip-label-stalled'))).textSpan!.toPlainText(), '2/7 · 막힘 1 · 멈춤? 1');
       final chip = find.byKey(const Key('plan-chip-stalled'));
       expect(chip, findsOneWidget);
       expect(tester.getTopLeft(chip).dx, greaterThan(tester.getTopLeft(find.byKey(const Key('plan-chip-active'))).dx));
@@ -597,7 +597,13 @@ void main() {
       await tester.tap(find.byKey(const Key('plan-stall-toggle-s3')));
       await tester.pump();
       expect(find.byKey(const Key('plan-stall-s3')), findsOneWidget);
-      expect(tester.widget<Text>(find.byKey(const Key('plan-stall-signals-s3'))).data, contains('부터 신호 없음: 열린 위임 0'));
+      // 신호 줄은 항목 사이에서만 끊긴다 — 머리말 + 항목 다섯, 항목은 줄바꿈 없는 조각이고 구분점으로 시작하지 않는다.
+      final pieces = tester.widgetList<Text>(find.descendant(of: find.byKey(const Key('plan-stall-signals-s3')), matching: find.byType(Text))).toList();
+      expect(pieces.length, 6);
+      expect(pieces.first.data, endsWith('부터 신호 없음: '));
+      expect(pieces[1].data, '열린\u00A0위임\u00A00\u00A0· ');
+      expect(pieces.last.data, 'PR\u00A0감시\u00A00');
+      expect(pieces.skip(1).every((p) => p.softWrap == false && !p.data!.startsWith('·')), isTrue);
       expect(find.byKey(const Key('plan-stall-woke-s3')), findsNothing);
       await tester.tap(find.byKey(const Key('plan-stall-toggle-s3')));
       await tester.pump();
