@@ -282,6 +282,21 @@ pub fn serve_main(args: &[String], env_home: Option<String>) -> (String, i32) {
                         }
                     })
                 },
+                // 링크 상태(안 A) — 링크가 없으면(등록 전) null.
+                link_state: {
+                    let slot = std::sync::Arc::clone(&link_slot);
+                    Box::new(move || {
+                        let slot = slot.lock().unwrap_or_else(|e| e.into_inner());
+                        slot.as_ref().map(|h| h.state.snapshot().to_json())
+                    })
+                },
+                retry_now: {
+                    let slot = std::sync::Arc::clone(&link_slot);
+                    Box::new(move || {
+                        let slot = slot.lock().unwrap_or_else(|e| e.into_inner());
+                        slot.as_ref().map(|h| h.link.retry_now()).unwrap_or(false)
+                    })
+                },
             });
             println!(
                 "{}",
@@ -1138,8 +1153,30 @@ pub fn spawn_server_link(
     let handle_link = link.clone();
     let mut opts = ServerLinkOptions::new(base_url.clone(), token, hello, on_frame);
     let url_open = base_url.clone();
+    // 링크 상태(안 A) — 바뀔 때마다 앱에 `serverLinkState` 로 흘리고, `serverLinkGet` 이 이 칸을 읽는다.
+    use crate::server_link::Clock as _;
+    let link_state = std::sync::Arc::new(crate::link_state::LinkState::new(
+        &base_url,
+        SystemClock.now_ms(),
+    ));
+    let handle_link_state = std::sync::Arc::clone(&link_state);
+    let emit: std::sync::Arc<dyn Fn(crate::link_state::LinkSnapshot) + Send + Sync> = {
+        let weak = std::sync::Arc::downgrade(&state);
+        std::sync::Arc::new(move |snap: crate::link_state::LinkSnapshot| {
+            if let Some(st) = weak.upgrade() {
+                st.broadcast_event("serverLinkState", snap.to_json());
+            }
+        })
+    };
+    let (open_ls, open_emit) = (std::sync::Arc::clone(&link_state), emit.clone());
+    let (close_ls, close_emit) = (std::sync::Arc::clone(&link_state), emit.clone());
+    let (wait_ls, wait_emit) = (link_state, emit);
+    opts.on_wait = Some(Box::new(move |delay_ms: u64| {
+        wait_emit(wait_ls.waiting(SystemClock.now_ms() + delay_ms));
+    }));
     opts.on_open = Some(Box::new(move || {
         eprintln!("서버에 붙었다: {url_open}");
+        open_emit(open_ls.opened(SystemClock.now_ms()));
         open_frames.reset_synced();
         lock_claims(&open_claims).on_open();
         // 소유자는 붙을 때마다 새로 읽는다(TS selfOwner) — 그 사이 온 personal assign 은 답을 기다린다.
@@ -1163,7 +1200,12 @@ pub fn spawn_server_link(
     }));
     opts.on_close = Some(Box::new(move |reason: &str| {
         close_frames.reset_synced();
-        eprintln!("서버와 끊겼다: {base_url} — {reason}")
+        eprintln!("서버와 끊겼다: {base_url} — {reason}");
+        // 멈추는 길(`stopped`)은 끊김이 아니다 — 프로세스가 내려간다.
+        if reason != "stopped" {
+            let (why, code) = crate::ws_dialer::classify_failure(reason);
+            close_emit(close_ls.failed(SystemClock.now_ms(), why, code));
+        }
     }));
     let thread = std::thread::Builder::new()
         .name("server-link".into())
@@ -1175,6 +1217,7 @@ pub fn spawn_server_link(
         _thread: thread,
         link: handle_link,
         token: handle_token,
+        state: handle_link_state,
     })
 }
 
@@ -1184,6 +1227,8 @@ pub struct LinkHandle {
     _thread: std::thread::JoinHandle<()>,
     pub link: crate::server_link::ServerLink,
     pub token: crate::op_token::SharedToken,
+    /// 링크 상태(안 A) — `serverLinkGet` 이 읽는다.
+    pub state: std::sync::Arc<crate::link_state::LinkState>,
 }
 
 impl LinkHandle {

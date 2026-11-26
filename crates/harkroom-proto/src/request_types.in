@@ -42,4 +42,6 @@
 "terminalSubscribe",
 "terminalUnsubscribe",
 "terminalInput",
-"terminalResize"]
+"terminalResize",
+"serverLinkGet",
+"serverLinkRetryNow"]

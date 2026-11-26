@@ -39,6 +39,11 @@ pub trait Dialer: Send {
 pub trait Clock: Send {
     fn now_ms(&self) -> u64;
     fn sleep_ms(&self, ms: u64);
+    /// 재접속 대기 — `wake` 가 참이 되면 일찍 깬다([지금 다시 시도], 안 A). 기본은 그냥 잔다(시험 시계).
+    fn sleep_interruptible(&self, ms: u64, wake: &dyn Fn() -> bool) {
+        let _ = wake;
+        self.sleep_ms(ms);
+    }
 }
 
 pub struct SystemClock;
@@ -51,6 +56,19 @@ impl Clock for SystemClock {
     }
     fn sleep_ms(&self, ms: u64) {
         std::thread::sleep(Duration::from_millis(ms));
+    }
+    fn sleep_interruptible(&self, ms: u64, wake: &dyn Fn() -> bool) {
+        let end = std::time::Instant::now() + Duration::from_millis(ms);
+        loop {
+            if wake() {
+                return;
+            }
+            let now = std::time::Instant::now();
+            if now >= end {
+                return;
+            }
+            std::thread::sleep((end - now).min(Duration::from_millis(200)));
+        }
     }
 }
 
@@ -105,6 +123,8 @@ pub struct ServerLinkOptions {
     pub on_frame: Box<dyn Fn(ServerToOperatorFrame) + Send>,
     pub on_open: Option<Box<dyn Fn() + Send>>,
     pub on_close: Option<CloseHook>,
+    /// 다음 접속 시도까지 잘 ms(안 A — 앱의 「30초마다 다시 시도」).
+    pub on_wait: Option<Box<dyn Fn(u64) + Send>>,
     pub initial_backoff_ms: u64,
     pub silence_ms: u64,
 }
@@ -123,6 +143,7 @@ impl ServerLinkOptions {
             on_frame,
             on_open: None,
             on_close: None,
+            on_wait: None,
             initial_backoff_ms: 1_000,
             silence_ms: 75_000,
         }
@@ -147,6 +168,8 @@ pub struct ServerLink {
     stopped: Arc<AtomicBool>,
     /// 지금 연결을 내리고 다시 붙으라(s9b 다시 등록). 접속 직전에 지운다 — 새 연결을 잘못 끊지 않게.
     kick: Arc<AtomicBool>,
+    /// 재접속 대기를 건너뛰고 지금 붙어 보라(안 A [지금 다시 시도]). 접속 직전에 지운다.
+    retry_now: Arc<AtomicBool>,
     outbox: Arc<Mutex<Option<Sender<String>>>>,
 }
 
@@ -162,6 +185,7 @@ impl ServerLink {
             connected: Arc::new(AtomicBool::new(false)),
             stopped: Arc::new(AtomicBool::new(false)),
             kick: Arc::new(AtomicBool::new(false)),
+            retry_now: Arc::new(AtomicBool::new(false)),
             outbox: Arc::new(Mutex::new(None)),
         }
     }
@@ -177,6 +201,15 @@ impl ServerLink {
     /// 지금 연결을 닫고 다시 붙게 한다(멈추지 않는다). 다음 접속은 옵션의 토큰 칸에서 **그때의** 값을 읽는다.
     pub fn reconnect(&self) {
         self.kick.store(true, Ordering::SeqCst);
+    }
+
+    /// 끊겨 기다리는 중이면 대기를 건너뛰고 곧바로 다시 붙어 본다. 붙어 있으면 아무것도 안 한다(false).
+    pub fn retry_now(&self) -> bool {
+        if self.connected() {
+            return false;
+        }
+        self.retry_now.store(true, Ordering::SeqCst);
+        true
     }
 
     /// 보냈는가(큐에 넣었는가)까지다 — 안 붙어 있으면 false.
@@ -202,6 +235,7 @@ impl ServerLink {
         while !self.stopped.load(Ordering::SeqCst) {
             // 이 접속은 이미 지금 토큰을 읽는다 — 앞서 온 다시 붙기 요청은 다 이뤄졌다.
             self.kick.store(false, Ordering::SeqCst);
+            self.retry_now.store(false, Ordering::SeqCst);
             let reason = match dialer.dial(&url, &opts.token.get()) {
                 Err(e) => e,
                 Ok(mut conn) => {
@@ -220,7 +254,13 @@ impl ServerLink {
             // 다음 값을 먼저 정한다(TS 와 같은 순서).
             let delay = backoff;
             backoff = (backoff * 2).min(BACKOFF_CEILING_MS);
-            clock.sleep_ms(delay);
+            if let Some(cb) = &opts.on_wait {
+                cb(delay);
+            }
+            let (retry, stopped) = (&self.retry_now, &self.stopped);
+            clock.sleep_interruptible(delay, &|| {
+                retry.load(Ordering::SeqCst) || stopped.load(Ordering::SeqCst)
+            });
         }
     }
 
@@ -383,6 +423,19 @@ mod tests {
             wake_frames: None,
             work_claim: None,
         }
+    }
+
+    #[test]
+    fn system_clock_sleep_wakes_on_retry_now() {
+        let link = ServerLink::new();
+        assert!(link.retry_now());
+        let t = std::time::Instant::now();
+        let flag = link.retry_now.clone();
+        SystemClock.sleep_interruptible(30_000, &|| flag.load(Ordering::SeqCst));
+        assert!(t.elapsed() < Duration::from_secs(2));
+        link.connected.store(true, Ordering::SeqCst);
+        link.retry_now.store(false, Ordering::SeqCst);
+        assert!(!link.retry_now(), "붙어 있으면 다시 시도하지 않는다");
     }
 
     #[test]

@@ -779,12 +779,13 @@ pub mod p3 {
         pub payload: Value,
     }
 
-    pub const EVENT_NAMES: [&str; 5] = [
+    pub const EVENT_NAMES: [&str; 6] = [
         "runnerExit",
         "claudeLoginOutput",
         "codexLoginOutput",
         "terminalOutput",
         "terminalEnded",
+        "serverLinkState",
     ];
 
     /// 정본 `REQUEST_TYPES` 의 순서 그대로(목록 파일은 골든에서 옮겼고, 같은지 시험이 본다).
