@@ -84,6 +84,37 @@ export function planLists(plan: ThreadPlanView, me: string | null): Record<PlanC
   return out;
 }
 
+/**
+ * 「멈춤?」 단계(문서 순서) — 서버가 표시했고 **화면에서 진행(▶)으로 그리는** 줄만. 막힘·내 차례·끝과 겹치면 뺀다
+ * (막힘은 누가 적은 사실이고 멈춤은 추정이라, 겹치면 사실만 보인다). 시각을 못 읽는 표시는 버린다.
+ */
+export function planStalledIds(plan: ThreadPlanView, me: string | null): string[] {
+  const marks = plan.stalled;
+  if (!marks) return [];
+  return planStepOrder(plan.doc)
+    .filter((s) => Object.hasOwn(marks, s.id) && Number.isFinite(Date.parse(marks[s.id]!.since)) && stepKind(plan, s, me) === 'active')
+    .map((s) => s.id);
+}
+
+/** 「7시간」·「1일」 — 조용한 길이를 가장 큰 단위 하나로. 1시간이 안 되면 분. */
+export function quietSpanLabel(sinceMs: number, now: number, locale: string): string {
+  const mins = Math.max(0, Math.floor((now - sinceMs) / 60_000));
+  const unit = (n: number, u: 'minute' | 'hour' | 'day') => new Intl.NumberFormat(locale, { style: 'unit', unit: u, unitDisplay: 'long' }).format(n);
+  if (mins < 60) return unit(mins, 'minute');
+  const hours = Math.floor(mins / 60);
+  return hours < 24 ? unit(hours, 'hour') : unit(Math.floor(hours / 24), 'day');
+}
+
+/** 「11:02」, 날짜가 오늘이 아니면 「11-24 16:40」 꼴(그 언어의 월·일). */
+export function stallClockLabel(atMs: number, now: number, locale: string): string {
+  const at = new Date(atMs);
+  const today = new Date(now);
+  const sameDay = at.getFullYear() === today.getFullYear() && at.getMonth() === today.getMonth() && at.getDate() === today.getDate();
+  return new Intl.DateTimeFormat(locale, {
+    ...(sameDay ? {} : { month: 'numeric', day: 'numeric' }), hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).format(at);
+}
+
 /** 이 단계를 앞 단계로 둔 막힌 단계(문서 순서) — 내 차례 줄의 「막힌 n건이 기다린다」. */
 export function stepWaiters(plan: ThreadPlanView, stepId: string): string[] {
   return planStepOrder(plan.doc).filter((s) => s.dependsOn.includes(stepId) && stepState(plan, s) === 'blocked').map((s) => s.id);

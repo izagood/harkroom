@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
-import type { PlanGroup, PlanStep, ThreadPlanProgress, ThreadPlanView } from '@harkroom/shared';
+import type { PlanGroup, PlanStep, ThreadPlanProgress, ThreadPlanStall, ThreadPlanView } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { getExternalOpener } from '../lib/openExternal';
 import type { PlanStartDone } from '../lib/api';
 import {
   crossGroupTitle, groupFacts, isPlanStale, nextCycleIndex, PLAN_CHIP_KINDS, planFlow, planFlowVisible, planLists,
-  planReadyStepIds, planPills, planStartClean, planTitleOf, takePlanAskHelp, planTone, prUrl, stepAssignee,
+  planReadyStepIds, planPills, planStalledIds, planStartClean, planTitleOf, quietSpanLabel, stallClockLabel, takePlanAskHelp, planTone, prUrl, stepAssignee,
   stepGoTargets, stepKind, stepStartState, stepWaiters, stepWhy, stepsOf,
   type PlanChipKind, type PlanPill, type PlanRowKind,
 } from '../lib/threadPlan';
@@ -62,7 +62,7 @@ export function PlanBody({ plan, headActions, onLeave, onOpenMessage, onAsked }:
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [whyOpen, setWhyOpen] = useState<Record<string, boolean>>({});
   const [flash, setFlash] = useState<string | null>(null);
-  const [cycle, setCycle] = useState<{ kind: PlanChipKind; index: number } | null>(null);
+  const [cycle, setCycle] = useState<{ kind: PlanChipKind | 'stalled'; index: number } | null>(null);
   const [flowAll, setFlowAll] = useState(false);
   const flashTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(flashTimer.current), []);
@@ -90,6 +90,14 @@ export function PlanBody({ plan, headActions, onLeave, onOpenMessage, onAsked }:
   };
 
   const lists = planLists(plan, me);
+  const stalledIds = planStalledIds(plan, me);
+  // 「멈춤?」 표시는 판 번호(rev)를 올리지 않고 바뀐다 — 판이 그대로여도 본문이 설 때 한 번, 서 있는 동안 가끔 다시 받는다.
+  useEffect(() => {
+    const load = () => { void getController().loadThreadPlan(plan.rootId).catch(() => {}); };
+    load();
+    const timer = setInterval(load, STALL_REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [plan.rootId]);
   const pills = planPills(plan, me);
   const pillOf = new Map(pills.map((p) => [p.id, p]));
   const layers = planFlow(plan.doc) ?? [];
@@ -112,6 +120,12 @@ export function PlanBody({ plan, headActions, onLeave, onOpenMessage, onAsked }:
     if (index < 0) return;
     setCycle({ kind, index });
     goTo(ids[index]!, kind === 'blocked');
+  };
+  const pressStalled = () => {
+    const index = nextCycleIndex(stalledIds.length, cycle?.kind === 'stalled' ? cycle.index : null);
+    if (index < 0) return;
+    setCycle({ kind: 'stalled', index });
+    goTo(stalledIds[index]!);
   };
   const pressPill = (p: PlanPill) => {
     if (p.state === 'blocked') {
@@ -139,7 +153,7 @@ export function PlanBody({ plan, headActions, onLeave, onOpenMessage, onAsked }:
     if (onOpenMessage) onOpenMessage(id);
     else void getController().openMessage(id).catch(() => {});
   };
-  const shared: RowActions = { plan, me, flash, whyOpen, goTo, goToMessage, ask, human, started, startFor, setStartFor, onStarted,
+  const shared: RowActions = { plan, me, flash, whyOpen, stalled: new Set(stalledIds), goTo, goToMessage, ask, human, started, startFor, setStartFor, onStarted,
     toggleWhy: (id) => setWhyOpen((w) => ({ ...w, [id]: !w[id] })) };
   const loose = stepsOf(plan.doc, null);
 
@@ -152,6 +166,7 @@ export function PlanBody({ plan, headActions, onLeave, onOpenMessage, onAsked }:
           <span className="truncate text-meta text-fg-muted">
             {plan.progress.done}/{plan.progress.total}
             {plan.progress.blocked > 0 && <span className="text-state-stuck"> {t('plan.chip.blocked', { n: plan.progress.blocked })}</span>}
+            {stalledIds.length > 0 && <span data-testid="plan-head-stalled" className="text-warning"> {t('plan.chip.stalled', { n: stalledIds.length })}</span>}
           </span>
           <span className="ml-auto" />
           {headActions}
@@ -181,10 +196,14 @@ export function PlanBody({ plan, headActions, onLeave, onOpenMessage, onAsked }:
           </div>
         )}
         <div data-testid="plan-chips" className="flex flex-wrap gap-1.5 py-1.5">
-          {PLAN_CHIP_KINDS.map((kind) => (
+          {PLAN_CHIP_KINDS.flatMap((kind) => [
             <SummaryChip key={kind} kind={kind} n={lists[kind].length} visiting={cycle?.kind === kind ? cycle.index + 1 : null}
-              onPress={() => pressChip(kind)} />
-          ))}
+              onPress={() => pressChip(kind)} />,
+            // 진행의 일부라 진행 칩 바로 뒤에 둔다. 평소엔 없어야 할 상태라 0 이면 흐린 칩이 아니라 아예 없다.
+            kind === 'active' && stalledIds.length > 0 && (
+              <StalledChip key="stalled" n={stalledIds.length} visiting={cycle?.kind === 'stalled' ? cycle.index + 1 : null} onPress={pressStalled} />
+            ),
+          ])}
           {human && readyIds.length >= 2 && (
             <button type="button" data-testid="plan-start-all" aria-expanded={startFor === 'all'} onClick={() => setStartFor(startFor === 'all' ? null : 'all')}
               className="inline-flex h-6 items-center rounded-full border border-state-active px-2.5 text-meta font-semibold text-state-active hover:bg-state-active-surface">
@@ -239,6 +258,8 @@ interface RowActions {
   flash: string | null;
   ask: (stepId: string) => void;
   whyOpen: Record<string, boolean>;
+  /** 「멈춤?」으로 그릴 단계. */
+  stalled: ReadonlySet<string>;
   goTo: (id: string, why?: boolean) => void;
   goToMessage: (id: string) => void;
   toggleWhy: (id: string) => void;
@@ -302,6 +323,8 @@ function StepRow({ step, actions, indent = false }: { step: PlanStep; actions: R
   const accounts = useActiveStore((st) => st.accounts);
   const account = assignee ? accounts[assignee] : undefined;
   const open = !!whyOpen[step.id];
+  const locale = useLocale();
+  const stall = actions.stalled.has(step.id) ? plan.stalled?.[step.id] : undefined;
   const targets = stepGoTargets(step);
   const startState = human ? stepStartState(plan, step, me, (id) => accounts[id]?.kind === 'human') : 'none';
   const note = started[step.id];
@@ -338,6 +361,14 @@ function StepRow({ step, actions, indent = false }: { step: PlanStep; actions: R
           <RowParts parts={[
             kind === 'done' && <span className="font-semibold text-success">{t('plan.row.done')}</span>,
             kind === 'active' && <span className="font-semibold text-state-active">{t('plan.state.active')}</span>,
+            // 추정이라 물음표·점선이다. 막힘(빨간 실선·면)과 색·선·면이 모두 다르다.
+            stall && (
+              <button type="button" data-testid="plan-stall-toggle" aria-expanded={open} aria-label={t('plan.state.stalled')} onClick={() => toggleWhy(step.id)}
+                className="rounded-row border border-dashed border-warning-border px-1 font-semibold text-warning hover:brightness-95">
+                {t('plan.row.stalled')} {open ? '⌃' : '›'}
+              </button>
+            ),
+            stall && <span data-testid="plan-stall-quiet" className="text-warning">{t('plan.row.quietFor', { ago: quietSpanLabel(Date.parse(stall.since), Date.now(), locale) })}</span>,
             kind === 'mine' && <span className="font-semibold text-accent-text">{t('plan.row.mine')}</span>,
             kind === 'ready' && <span data-testid="plan-ready">{hasDeps ? t('plan.readyAfter') : t('plan.ready')}</span>,
             kind !== 'mine' && account && <Assignee account={account} me={me} />,
@@ -387,6 +418,7 @@ function StepRow({ step, actions, indent = false }: { step: PlanStep; actions: R
       </div>
       {startFor === step.id && <PlanStartBox plan={plan} stepIds={[step.id]} onClose={() => setStartFor(null)} onStarted={onStarted} />}
       {kind === 'blocked' && open && <WhyBox step={step} actions={actions} />}
+      {stall && open && <StallBox stall={stall} managerId={plan.doc.managerId ?? null} />}
     </div>
   );
 }
@@ -425,6 +457,49 @@ function WhyBox({ step, actions }: { step: PlanStep; actions: RowActions }) {
       })}
       {why.deps.length === 0 && why.links.length === 0 && <div data-testid="plan-why-none" className="text-fg-subtle">{t('plan.why.none')}</div>}
     </div>
+  );
+}
+
+/** 판이 그대로여도 「멈춤?」 표시를 다시 받는 간격. */
+const STALL_REFRESH_MS = 5 * 60_000;
+
+/**
+ * 「조용한 까닭」 상자 — 서버가 본 것: 언제부터 신호가 없었나, 관리자를 언제 깨웠나. 깨움 줄은 서버가 깨운 때를 줬고
+ * 관리자가 이 커뮤니티의 에이전트일 때만 선다(관리자가 없거나 사람이면 표시만 있다).
+ */
+function StallBox({ stall, managerId }: { stall: ThreadPlanStall; managerId: string | null }) {
+  const t = useT();
+  const locale = useLocale();
+  const manager = useActiveStore((s) => (managerId && Object.hasOwn(s.accounts, managerId) ? s.accounts[managerId] : undefined));
+  const now = Date.now();
+  const woken = stall.wokenAt ? Date.parse(stall.wokenAt) : NaN;
+  return (
+    <div data-testid="plan-stall" className="mb-1 ml-8 mr-1.5 rounded-row border border-dashed border-warning-border bg-surface-raised px-2.5 py-1.5 text-meta">
+      <div className="font-semibold text-warning">{t('plan.stall.title')}</div>
+      <ul className="list-disc pl-4 text-fg-muted">
+        <li data-testid="plan-stall-signals">{t('plan.stall.signals', { since: stallClockLabel(Date.parse(stall.since), now, locale) })}</li>
+        {Number.isFinite(woken) && manager?.kind === 'agent' && (
+          <li data-testid="plan-stall-woke">{t('plan.stall.woke', { at: stallClockLabel(woken, now, locale), who: `@${manager.handle}` })}</li>
+        )}
+      </ul>
+      <div className="text-fg-subtle">{t('plan.stall.hint')}</div>
+    </div>
+  );
+}
+
+/** 맨 위 「멈춤? n」 칩 — 점선 테두리에 면이 없다(추정). 누르면 그 단계들을 문서 순서로 돌아가며 간다. */
+function StalledChip({ n, visiting, onPress }: { n: number; visiting: number | null; onPress: () => void }) {
+  const t = useT();
+  return (
+    <button type="button" data-testid="plan-chip-stalled" title={t('plan.stall.title')} onClick={onPress}
+      className="inline-flex h-6 items-center gap-1 rounded-full border border-dashed border-warning-border pl-1 pr-2.5 text-meta font-semibold text-warning hover:brightness-95">
+      <svg aria-hidden="true" viewBox="0 0 18 18" width={14} height={14} className="shrink-0">
+        <circle cx="9" cy="9" r="7.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeDasharray="2.6 2" />
+        <text x="9" y="12.6" textAnchor="middle" fontSize="10" fontWeight="700" fill="currentColor">?</text>
+      </svg>
+      {t('plan.sum.stalled', { n })}
+      {visiting !== null && <span data-testid="plan-chip-stalled-cycle" className="font-normal"> · {t('plan.sum.cycle', { i: visiting, n })}</span>}
+    </button>
   );
 }
 

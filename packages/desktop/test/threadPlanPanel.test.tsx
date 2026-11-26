@@ -70,11 +70,13 @@ describe('버튼', () => {
     expect(loadThreadPlan).toHaveBeenCalledTimes(1);
   });
 
-  it('rev 가 같으면 다시 받지 않고, 다르면 받는다', () => {
+  it('rev 가 같으면 버튼은 다시 받지 않고, 다르면 받는다. 열린 본문은 설 때 한 번 받는다(멈춤? 표시는 rev 없이 바뀐다)', () => {
     const { rerender } = render(<ThreadPlanButton rootId="r1" progress={row} />);
-    expect(loadThreadPlan).toHaveBeenCalledTimes(0);
-    rerender(<ThreadPlanButton rootId="r1" progress={{ ...row, rev: 1 }} />);
     expect(loadThreadPlan).toHaveBeenCalledTimes(1);
+    rerender(<ThreadPlanButton rootId="r1" progress={row} />);
+    expect(loadThreadPlan).toHaveBeenCalledTimes(1);
+    rerender(<ThreadPlanButton rootId="r1" progress={{ ...row, rev: 1 }} />);
+    expect(loadThreadPlan).toHaveBeenCalledTimes(2);
   });
 
   it('계획이 있으면 열린 채 시작하고, 닫으면 그 스레드는 닫힘을 기억한다. ✕·버튼·Esc 로 닫는다. 부모에게 알린다', () => {
