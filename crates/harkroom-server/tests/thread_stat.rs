@@ -157,3 +157,101 @@ async fn thread_stat_matches_lateral() {
             .unwrap();
     assert_eq!((left, left_p), (0, 0));
 }
+
+const INSERT_REPLY: &str = "insert into message(channel_id, thread_root_id, author_id, body, kind, meta, created_at) \
+  values ($1::uuid, $2::uuid, $3::uuid, 'x', 'user', '{}', timestamptz '2026-01-01 00:00:00+00' + make_interval(secs => $4)) \
+  returning id::text";
+
+/// 같은 뿌리에서 답글 넣기와 지우기(soft delete → `thread_stat_recount`)가 겹쳐도 교착이 없고, 집계가 다시 센 값과 같다.
+#[tokio::test]
+async fn thread_stat_recount_races_with_insert() {
+    let Ok(url) = std::env::var("HARKROOM_TEST_DATABASE_URL") else {
+        eprintln!("skip: HARKROOM_TEST_DATABASE_URL unset");
+        return;
+    };
+    let db = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(16)
+        .connect(&url)
+        .await
+        .unwrap();
+    let alice = one(&db, "insert into account(handle, display_name, kind, login_id) values ($1, $1, 'human', $1) returning id::text", "tsr_alice").await;
+    let bob = one(&db, "insert into account(handle, display_name, kind, login_id) values ($1, $1, 'human', $1) returning id::text", "tsr_bob").await;
+    let ch = one(
+        &db,
+        "insert into channel(name, kind) values ($1, 'standard') returning id::text",
+        "thread-stat-race",
+    )
+    .await;
+    let root = say(&db, &ch, None, Some(&alice), "user", 0).await;
+    let gone = say(&db, &ch, Some(&root), Some(&alice), "user", 1).await;
+
+    // 1) 넣기 tx 가 커밋 전에 thread_stat 줄을 잡고 있는 동안 지우기가 온다. 지우기의 recount 는 잠금을 기다렸다가
+    //    넣은 답글까지 보고 세야 한다(잠금 전 스냅숏으로 세면 1 모자란다).
+    let mut t1 = db.begin().await.unwrap();
+    sqlx::query_scalar::<_, String>(INSERT_REPLY)
+        .bind(&ch)
+        .bind(&root)
+        .bind(&bob)
+        .bind(2f64)
+        .fetch_one(&mut *t1)
+        .await
+        .unwrap();
+    let del = {
+        let db = db.clone();
+        let gone = gone.clone();
+        tokio::spawn(async move {
+            sqlx::query("update message set deleted_at = now() where id = $1::uuid")
+                .bind(&gone)
+                .execute(&db)
+                .await
+        })
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    assert!(
+        !del.is_finished(),
+        "recount 가 thread_stat 잠금을 기다리지 않았다"
+    );
+    t1.commit().await.unwrap();
+    del.await.unwrap().expect("지우기가 실패했다");
+    let s = same(&db, &root, "넣기 커밋 전에 온 지우기").await;
+    assert_eq!((s.0, s.1, s.3.len()), (1, 1, 1));
+
+    // 2) 여러 넣기·지우기를 동시에 — 교착 오류 없이 끝나고 집계 = 다시 센 값.
+    let mut ids = Vec::new();
+    for i in 0..20 {
+        let who = if i % 2 == 0 { &alice } else { &bob };
+        ids.push(say(&db, &ch, Some(&root), Some(who), "user", 10 + i).await);
+    }
+    let mut jobs = Vec::new();
+    for (i, id) in ids.into_iter().enumerate() {
+        let db = db.clone();
+        let (ch, root) = (ch.clone(), root.clone());
+        let who = if i % 2 == 0 {
+            bob.clone()
+        } else {
+            alice.clone()
+        };
+        jobs.push(tokio::spawn(async move {
+            let mut tx = db.begin().await?;
+            sqlx::query("update message set deleted_at = now() where id = $1::uuid")
+                .bind(&id)
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query_scalar::<_, String>(INSERT_REPLY)
+                .bind(&ch)
+                .bind(&root)
+                .bind(&who)
+                .bind(100f64 + i as f64)
+                .fetch_one(&mut *tx)
+                .await?;
+            tx.commit().await
+        }));
+    }
+    for j in jobs {
+        j.await
+            .unwrap()
+            .expect("넣기·지우기 동시 tx 가 실패했다(교착?)");
+    }
+    let s = same(&db, &root, "넣기·지우기 동시").await;
+    assert_eq!((s.0, s.1, s.3.len()), (21, 21, 2));
+}
