@@ -39,6 +39,7 @@ class HarkroomTokens extends ThemeExtension<HarkroomTokens> {
     required this.dangerSurface,
     required this.warning,
     required this.warningSurface,
+    required this.warningBorder,
     required this.saved,
     required this.savedSurface,
     required this.success,
@@ -108,6 +109,9 @@ class HarkroomTokens extends ThemeExtension<HarkroomTokens> {
   final Color dangerSurface;
   final Color warning;
   final Color warningSurface;
+
+  /// 경고 상자·추정 표시의 선(데스크톱 `warning-border` 와 같은 값).
+  final Color warningBorder;
   /// **담아 둔 글**의 띠·글자(데스크톱 `--app-saved`, B안 2026-10-14). 강조(주황)·경고(노랑)와
   /// 겹치지 않는 남보라 — 담김은 나를 막는 것이 아니라 내가 붙인 표시라 강조를 쓰지 않는다.
   final Color saved;
@@ -163,6 +167,7 @@ class HarkroomTokens extends ThemeExtension<HarkroomTokens> {
     dangerSurface: Color(0xFFFDECEA),
     warning: Color(0xFF8A5A00),
     warningSurface: Color(0xFFFFF1CC),
+    warningBorder: Color(0xFFE9C76A),
     saved: Color(0xFF4F46C8),
     savedSurface: Color(0xFFEFEEFC),
     success: Color(0xFF1B7D45),
@@ -207,6 +212,7 @@ class HarkroomTokens extends ThemeExtension<HarkroomTokens> {
     dangerSurface: Color(0xFF3A1D1B),
     warning: Color(0xFFF0B43C),
     warningSurface: Color(0xFF33290F),
+    warningBorder: Color(0xFF5E4A1C),
     saved: Color(0xFFA9A3FF),
     savedSurface: Color(0xFF23213A),
     success: Color(0xFF5CCF86),

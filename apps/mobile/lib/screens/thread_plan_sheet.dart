@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../api/api_error.dart';
+import '../api/models.dart';
 import '../api/thread_plan.dart';
 import '../i18n/i18n.dart';
 import '../state/app_scope.dart';
@@ -65,10 +66,13 @@ class PlanSummaryLayout {
 /// 계획 칩(D2) — 「계획 n/N」 + 작은 막대. **막힘만 빨강**이고 「· 막힘 n」 글자를 함께 단다.
 /// [compact] 는 시트 머리처럼 「계획」 글자와 막대를 뺀 꼴이다. 단계가 없으면 부르는 쪽이 그리지 않는다.
 class PlanChip extends StatelessWidget {
-  const PlanChip({super.key, required this.progress, this.compact = false});
+  const PlanChip({super.key, required this.progress, this.compact = false, this.stalled = 0});
 
   final PlanCounts progress;
   final bool compact;
+
+  /// 「멈춤?」 단계 수 — 서버의 추정이라 노란 글자로 덧붙인다(면은 주지 않는다). 모르면 0. 막힘처럼 낱말로 쓴다(「· 멈춤? n」).
+  final int stalled;
 
   /// 칩 하나가 차지하는 폭(말줄임 없을 때) — 좁은 요약 줄이 무엇을 줄일지 정할 때 쓴다.
   static double widthOf(BuildContext context, PlanCounts p) {
@@ -97,7 +101,11 @@ class PlanChip extends StatelessWidget {
     final base = compact ? '${p.done}/${p.total}' : t.planChip(p.done, p.total);
     final label = p.blocked > 0 ? '$base ${t.planChipBlocked(p.blocked)}' : base;
     return Semantics(
-      label: [t.planChipSemantics(p.done, p.total), if (p.blocked > 0) t.planBlockedSemantics(p.blocked)].join(', '),
+      label: [
+        t.planChipSemantics(p.done, p.total),
+        if (p.blocked > 0) t.planBlockedSemantics(p.blocked),
+        if (stalled > 0) t.planStalledSemantics(stalled),
+      ].join(', '),
       excludeSemantics: true,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
@@ -107,8 +115,13 @@ class PlanChip extends StatelessWidget {
         ),
         child: Row(mainAxisSize: MainAxisSize.min, children: [
           Flexible(
-            child: Text(
-              label,
+            child: Text.rich(
+              TextSpan(children: [
+                TextSpan(text: label),
+                if (stalled > 0)
+                  TextSpan(text: ' ${t.planChipStalled(stalled)}', style: TextStyle(color: k.warning)),
+              ]),
+              key: stalled > 0 ? const Key('plan-chip-label-stalled') : null,
               maxLines: 1,
               softWrap: false,
               overflow: TextOverflow.ellipsis,
@@ -398,8 +411,8 @@ const double planSheetMin = 0.2;
 /// 계획 시트를 연다. [opener] 는 시트를 연 쪽의 context 다 — 글·연결 스레드로 갈 때 시트를 닫은 뒤 그 쌓기에 민다.
 Future<void> openThreadPlanSheet(BuildContext opener, String rootId, {String? focusStepId}) {
   final app = AppScope.read(opener);
-  // 버튼이 못 받았으면(실패·아직 안 옴) 여기서 다시 부른다. 받아 둔 판이 있으면 그대로 연다.
-  if (app.threadPlans[rootId] == null) unawaited(app.loadThreadPlan(rootId));
+  // 열 때마다 다시 받는다 — 「멈춤?」 표시는 판 번호 없이 바뀌어서, 받아 둔 판만 보면 나타나지 않는다. 받아 둔 판이 있으면 그것으로 먼저 연다.
+  unawaited(app.loadThreadPlan(rootId));
   final dark = Theme.of(opener).brightness == Brightness.dark;
   return showModalBottomSheet<void>(
     context: opener,
@@ -441,6 +454,9 @@ class _PlanSheetState extends State<_PlanSheet> {
   String? _flashId;
   int _flashNo = 0;
   ({PlanRowKind kind, int index})? _cycle;
+
+  /// 「멈춤?」 칩의 차례. 다른 칩을 누르면 지운다.
+  int? _stallCycle;
   final Map<String, ({String who, String? messageId})> _started = {};
   bool _managerFailed = false;
 
@@ -553,7 +569,17 @@ class _PlanSheetState extends State<_PlanSheet> {
     final index = nextCycleIndex(ids.length, _cycle?.kind == kind ? _cycle!.index : null);
     if (index < 0) return;
     _cycle = (kind: kind, index: index);
+    _stallCycle = null;
     _goTo(plan, ids[index], why: kind == PlanRowKind.blocked);
+  }
+
+  void _pressStalled(ThreadPlanView plan, String? me) {
+    final ids = planStalledIds(plan, me);
+    final index = nextCycleIndex(ids.length, _stallCycle);
+    if (index < 0) return;
+    _cycle = null;
+    _stallCycle = index;
+    _goTo(plan, ids[index]);
   }
 
   void _pressPill(ThreadPlanView plan, PlanPill p, String? me) {
@@ -656,6 +682,8 @@ class _PlanSheetState extends State<_PlanSheet> {
                   app: app,
                   me: me,
                   cycle: _cycle,
+                  stallCycle: _stallCycle,
+                  onStalled: () => _pressStalled(plan!, me),
                   managerFailed: _managerFailed,
                   onEditManager: () => unawaited(_pickManager(plan!)),
                   onStartAll: () => unawaited(_openStart(plan!, planReadyStepIds(plan, me), bulk: true)),
@@ -830,7 +858,7 @@ class _PlanSheetState extends State<_PlanSheet> {
 
 class _SheetHead extends StatefulWidget {
   const _SheetHead({
-    super.key, required this.plan, required this.app, required this.me, required this.cycle,
+    super.key, required this.plan, required this.app, required this.me, required this.cycle, required this.stallCycle, required this.onStalled,
     required this.onChip, required this.onPill, required this.onEditManager, required this.onStartAll, required this.managerFailed,
   });
 
@@ -838,6 +866,8 @@ class _SheetHead extends StatefulWidget {
   final AppState app;
   final String? me;
   final ({PlanRowKind kind, int index})? cycle;
+  final int? stallCycle;
+  final VoidCallback onStalled;
   final void Function(Map<PlanRowKind, List<String>>, PlanRowKind) onChip;
   final ValueChanged<PlanPill> onPill;
   final VoidCallback onEditManager;
@@ -890,7 +920,9 @@ class _SheetHeadState extends State<_SheetHead> {
           Expanded(
             child: Align(
               alignment: Alignment.centerLeft,
-              child: plan != null && plan.progress.total > 0 ? PlanChip(progress: plan.progress, compact: true) : null,
+              child: plan != null && plan.progress.total > 0
+                  ? PlanChip(progress: plan.progress, compact: true, stalled: planStalledIds(plan, widget.me).length)
+                  : null,
             ),
           ),
           IconButton(
@@ -978,7 +1010,7 @@ class _SheetHeadState extends State<_SheetHead> {
                 scrollDirection: Axis.horizontal,
                 padding: const EdgeInsets.only(right: 24),
                 child: Row(children: [
-                  for (final kind in planChipKinds)
+                  for (final kind in planChipKinds) ...[
                     Padding(
                       padding: const EdgeInsets.only(right: 6),
                       child: _SummaryChip(
@@ -988,6 +1020,17 @@ class _SheetHeadState extends State<_SheetHead> {
                         onTap: () => widget.onChip(lists, kind),
                       ),
                     ),
+                    // 진행의 일부라 진행 칩 바로 뒤에 둔다. 평소엔 없어야 할 상태라 0 이면 흐린 칩이 아니라 아예 없다.
+                    if (kind == PlanRowKind.active && planStalledIds(plan, widget.me).isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(right: 6),
+                        child: _StalledChip(
+                          n: planStalledIds(plan, widget.me).length,
+                          visiting: widget.stallCycle == null ? null : widget.stallCycle! + 1,
+                          onTap: widget.onStalled,
+                        ),
+                      ),
+                  ],
                   if (planReadyStepIds(plan, widget.me).length >= 2)
                     InkWell(
                       key: const Key('plan-start-all'),
@@ -1390,6 +1433,8 @@ class _StepRow extends StatelessWidget {
       if (kind == PlanRowKind.blocked)
         _RowLink(key: Key('plan-why-toggle-${step.id}'), text: whyOpen ? t.planWhyCollapse : t.planWhyToggle, color: k.stateStuck, onTap: onToggleWhy),
     ];
+    // 「멈춤?」 — 진행으로 그리는 줄에만(막힘·내 차례와 겹치면 그 사실만 보인다).
+    final stall = kind == PlanRowKind.active ? plan.stalled[step.id] : null;
     final node = plan.derived[step.id];
     final row = Container(
       key: Key('plan-step-${step.id}'),
@@ -1421,6 +1466,9 @@ class _StepRow extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: meta(k.stateStuck),
                 ),
+              // 꼬리표는 제목 아래 첫 줄이다 — 좁은 폭에서 담당·링크와 한 줄에 두면 「신호 없음」이 잘린다.
+              if (stall != null)
+                _StallLine(stepId: step.id, quiet: DateTime.now().toUtc().difference(stall.since), open: whyOpen, onTap: onToggleWhy),
               if (parts.isNotEmpty)
                 Wrap(
                   key: Key('plan-step-sub-${step.id}'),
@@ -1465,6 +1513,7 @@ class _StepRow extends StatelessWidget {
             Padding(padding: const EdgeInsets.only(left: 4, top: 2), child: ExcludeSemantics(child: Text('›', style: TextStyle(color: k.fgSubtle, fontSize: HarkroomType.body)))),
         ]),
         if (kind == PlanRowKind.blocked && whyOpen) _WhyBox(plan: plan, step: step, me: me, onGo: (id) => onGo(id, false), onMessage: onMessage),
+        if (stall != null && whyOpen) _StallBox(stepId: step.id, stall: stall, manager: plan.managerId == null ? null : app.accounts[plan.managerId]),
       ]),
     );
     if (press == null) return row;
@@ -1808,6 +1857,145 @@ class _WhyBox extends StatelessWidget {
         if (why.deps.isEmpty && why.links.isEmpty)
           Text(t.planWhyNone, key: Key('plan-why-none-${step.id}'), style: TextStyle(color: k.fgSubtle, fontSize: HarkroomType.meta)),
       ]),
+    );
+  }
+}
+
+/// 줄의 「멈춤?」 꼬리표 + 「n시간째 신호 없음」 — 점선·노랑·면 없음(추정). 누르면 「조용한 까닭」을 줄 아래에 편다.
+class _StallLine extends StatelessWidget {
+  const _StallLine({required this.stepId, required this.quiet, required this.open, required this.onTap});
+
+  final String stepId;
+  final Duration quiet;
+  final bool open;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.t;
+    final k = context.tokens;
+    final style = TextStyle(color: k.warning, fontSize: HarkroomType.meta, height: 1.4);
+    return Semantics(
+      button: true,
+      expanded: open,
+      excludeSemantics: true,
+      label: '${t.planStateStalled}, ${t.planQuietFor(quiet)}',
+      onTap: onTap,
+      child: InkWell(
+        key: Key('plan-stall-toggle-$stepId'),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 3),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            CustomPaint(
+              foregroundPainter: _DashedBorder(color: k.warningBorder, radius: HarkroomRadius.sm + 1),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 5),
+                child: Text('${t.planStalled} ${open ? '⌃' : '›'}', style: style.copyWith(fontWeight: FontWeight.w600)),
+              ),
+            ),
+            const SizedBox(width: 6),
+            Flexible(child: Text(t.planQuietFor(quiet), key: Key('plan-stall-quiet-$stepId'), maxLines: 1, softWrap: false, overflow: TextOverflow.ellipsis, style: style)),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+/// 「조용한 까닭」 상자 — 서버가 본 것: 언제부터 신호가 없었나, 관리자를 언제 깨웠나. 깨움 줄은 서버가 깨운 때를 줬고
+/// 관리자가 이 커뮤니티의 에이전트일 때만 선다(관리자가 없거나 사람이면 표시만 있다).
+class _StallBox extends StatelessWidget {
+  const _StallBox({required this.stepId, required this.stall, required this.manager});
+
+  final String stepId;
+  final PlanStall stall;
+  final AccountView? manager;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.t;
+    final k = context.tokens;
+    final now = DateTime.now();
+    final meta = TextStyle(color: k.fgMuted, fontSize: HarkroomType.meta);
+    final woken = stall.wokenAt;
+    return Container(
+      key: Key('plan-stall-$stepId'),
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: 6, left: 28),
+      child: CustomPaint(
+        foregroundPainter: _DashedBorder(color: k.warningBorder, radius: HarkroomRadius.row),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.fromLTRB(10, 6, 10, 6),
+          decoration: BoxDecoration(color: k.surfaceRaised, borderRadius: BorderRadius.circular(HarkroomRadius.row)),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(t.planStallTitle, style: TextStyle(color: k.warning, fontSize: HarkroomType.meta, fontWeight: FontWeight.w600)),
+            // 한글은 글자마다 끊길 수 있다 — 신호 항목(「열린 위임 0」)을 조각으로 나눠 항목 사이에서만 줄이 바뀌게 한다.
+            Wrap(key: Key('plan-stall-signals-$stepId'), children: [
+              for (final (i, piece) in _stallPieces('• ${t.planStallSignals(planStallClock(stall.since, now))}').indexed)
+                Text(piece, softWrap: i == 0, style: meta),
+            ]),
+            if (woken != null && manager != null && manager!.isAgent)
+              Text('• ${t.planStallWoke(planStallClock(woken, now), '@${manager!.handle}')}', key: Key('plan-stall-woke-$stepId'), style: meta),
+            Text(t.planStallHint, style: TextStyle(color: k.fgSubtle, fontSize: HarkroomType.meta)),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+/// 신호 줄을 줄바꿈 단위로 가른다 — 머리말(「…부터 신호 없음:」)과 ` · ` 로 나뉜 항목들. 항목 안의 공백은 끊기지 않는 공백으로 바꾸고,
+/// 구분점은 앞 항목 끝에 붙여 줄이 구분점으로 시작하지 않게 한다. 머리말만 길면 꺾일 수 있다.
+List<String> _stallPieces(String line) {
+  final colon = line.indexOf(': ');
+  final head = colon < 0 ? null : line.substring(0, colon + 1);
+  final items = (colon < 0 ? line : line.substring(colon + 2)).split(' · ');
+  return [
+    if (head != null) '$head ',
+    for (var i = 0; i < items.length; i++) '${items[i].replaceAll(' ', '\u00A0')}${i < items.length - 1 ? '\u00A0· ' : ''}',
+  ];
+}
+
+/// 맨 위 「멈춤? n」 칩 — 점선 테두리에 면이 없다(추정). 누르면 그 단계들을 문서 순서로 돌아가며 간다.
+class _StalledChip extends StatelessWidget {
+  const _StalledChip({required this.n, required this.visiting, required this.onTap});
+
+  final int n;
+  final int? visiting;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.t;
+    final k = context.tokens;
+    final label = visiting == null ? t.planSumStalled(n) : '${t.planSumStalled(n)} · ${t.planSumCycle(visiting!, n)}';
+    return Semantics(
+      button: true,
+      excludeSemantics: true,
+      label: t.planStalledSemantics(n),
+      onTap: onTap,
+      child: InkWell(
+        key: const Key('plan-chip-stalled'),
+        customBorder: const StadiumBorder(),
+        onTap: onTap,
+        // 칩 모양은 작아도 누르는 자리는 44 다.
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: HarkroomSize.row),
+          child: Align(
+            widthFactor: 1,
+            heightFactor: 1,
+            child: CustomPaint(
+              foregroundPainter: _DashedBorder(color: k.warningBorder, radius: HarkroomRadius.full),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(9, 3, 10, 3),
+                child: Text('? $label', style: TextStyle(color: k.warning, fontSize: HarkroomType.meta, fontWeight: FontWeight.w600)),
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

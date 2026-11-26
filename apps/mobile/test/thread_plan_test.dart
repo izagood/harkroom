@@ -525,6 +525,121 @@ void main() {
       return app;
     }
 
+    /// 진행 단계 s3 을 에이전트 담당으로 바꾸고 「멈춤?」 표시를 얹은 판.
+    Map<String, Object?> stalledPlan({Map<String, Object?>? stalled, String? managerId}) {
+      final j = _planJson();
+      final doc = j['doc']! as Map<String, Object?>;
+      for (final st in (doc['steps']! as List).cast<Map<String, Object?>>()) {
+        if (st['id'] == 's3') st['assigneeId'] = _agent;
+      }
+      if (managerId != null) doc['managerId'] = managerId;
+      final since = DateTime.now().toUtc().subtract(const Duration(hours: 7, minutes: 5)).toIso8601String();
+      j['stalled'] = stalled ?? {'s3': {'since': since, 'wokenAt': null}, 's1': {'since': since, 'wokenAt': null}};
+      return j;
+    }
+
+    test('멈춤? 판정: 진행으로 그리는 줄만 세고, 시각을 못 읽는 표시는 버린다', () {
+      final since = DateTime.utc(2026, 11, 25, 2).toIso8601String();
+      final p = _view(stalledPlan(stalled: {
+        's3': {'since': since, 'wokenAt': 'nope'}, // 진행(에이전트 담당)
+        's1': {'since': since, 'wokenAt': null}, // 막힘 — 막힘만 보인다
+        's6': {'since': since, 'wokenAt': null}, // 끝
+        's4': {'since': 'nope', 'wokenAt': null},
+        'zz': {'since': since, 'wokenAt': null},
+      }));
+      expect(planStalledIds(p, 'me-1'), ['s3']);
+      expect(p.stalled['s3']!.wokenAt, isNull);
+      expect(p.stalled.containsKey('s4'), isFalse);
+      expect(planStalledIds(_view(), 'me-1'), isEmpty);
+      // 내 차례(담당이 나)면 멈춤이 아니다.
+      expect(planStalledIds(p, _agent), isEmpty);
+      final now = DateTime(2026, 11, 25, 17, 2);
+      expect(planStallClock(DateTime(2026, 11, 25, 11, 2), now), '11:02');
+      expect(planStallClock(DateTime(2026, 11, 24, 16, 40), now), '11-24 16:40');
+      expect(stringsFor('ko').planQuietFor(const Duration(hours: 7, minutes: 5)), '7시간째 신호 없음');
+      expect(stringsFor('ko').planQuietFor(const Duration(hours: 30)), '1일째 신호 없음');
+      expect(stringsFor('en').planQuietFor(const Duration(hours: 1)), 'No signal for 1 hour');
+      expect(stringsFor('en').planQuietFor(const Duration(minutes: -3)), 'No signal for 0 minutes');
+    });
+
+    testWidgets('멈춤?: 없으면 칩·꼬리표가 없다', (tester) async {
+      await open(tester, _Server());
+      expect(find.byKey(const Key('plan-chip-stalled')), findsNothing);
+      expect(find.byKey(const Key('plan-chip-label-stalled')), findsNothing);
+      expect(find.byKey(const Key('plan-stall-toggle-s3')), findsNothing);
+    });
+
+    testWidgets('멈춤?: 머리 칩·진행 칩 뒤의 칩·제목 아래 꼬리표가 서고, 막힘과 겹치면 막힘만. 누르면 까닭을 편다', (tester) async {
+      final s = _Server()..fallback = () => _json({'plan': stalledPlan()});
+      await open(tester, s);
+      // 시트 머리의 좁은 칩 — 막힘처럼 낱말로 쓴다.
+      expect(tester.widget<Text>(find.byKey(const Key('plan-chip-label-stalled'))).textSpan!.toPlainText(), '2/7 · 막힘 1 · 멈춤? 1');
+      final chip = find.byKey(const Key('plan-chip-stalled'));
+      expect(chip, findsOneWidget);
+      expect(tester.getTopLeft(chip).dx, greaterThan(tester.getTopLeft(find.byKey(const Key('plan-chip-active'))).dx));
+      expect(tester.getTopLeft(chip).dx, lessThan(tester.getTopLeft(find.byKey(const Key('plan-chip-blocked'))).dx));
+      // 줄: 진행 표지 그대로, 줄 바탕 없음, 꼬리표는 담당 줄보다 위.
+      expect((tester.widget<Container>(find.byKey(const Key('plan-step-s3'))).decoration), isNull);
+      expect(find.byKey(const Key('plan-stall-toggle-s3')), findsOneWidget);
+      expect(find.byKey(const Key('plan-stall-toggle-s1')), findsNothing);
+      expect(tester.widget<Text>(find.byKey(const Key('plan-stall-quiet-s3'))).data, '7시간째 신호 없음');
+      expect(tester.getTopLeft(find.byKey(const Key('plan-stall-toggle-s3'))).dy, lessThan(tester.getTopLeft(find.byKey(const Key('plan-step-sub-s3'))).dy));
+      expect(find.bySemanticsLabel('멈춤일 수 있음, 7시간째 신호 없음'), findsOneWidget);
+      // 칩을 누르면 그 단계로 가고 차례가 붙는다.
+      await tester.tap(chip);
+      await tester.pump();
+      expect(find.text('? 멈춤? 1 · 1/1'), findsOneWidget);
+      expect(find.byKey(const ValueKey('plan-flash-s3-1')), findsOneWidget);
+      await tester.pump(const Duration(seconds: 3));
+      // 꼬리표를 누르면 「조용한 까닭」 — 관리자가 없으면 깨움 줄이 없다.
+      await tester.ensureVisible(find.byKey(const Key('plan-stall-toggle-s3')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('plan-stall-toggle-s3')));
+      await tester.pump();
+      expect(find.byKey(const Key('plan-stall-s3')), findsOneWidget);
+      // 신호 줄은 항목 사이에서만 끊긴다 — 머리말 + 항목 다섯, 항목은 줄바꿈 없는 조각이고 구분점으로 시작하지 않는다.
+      final pieces = tester.widgetList<Text>(find.descendant(of: find.byKey(const Key('plan-stall-signals-s3')), matching: find.byType(Text))).toList();
+      expect(pieces.length, 6);
+      expect(pieces.first.data, endsWith('부터 신호 없음: '));
+      expect(pieces[1].data, '열린\u00A0위임\u00A00\u00A0· ');
+      expect(pieces.last.data, 'PR\u00A0감시\u00A00');
+      expect(pieces.skip(1).every((p) => p.softWrap == false && !p.data!.startsWith('·')), isTrue);
+      expect(find.byKey(const Key('plan-stall-woke-s3')), findsNothing);
+      await tester.tap(find.byKey(const Key('plan-stall-toggle-s3')));
+      await tester.pump();
+      expect(find.byKey(const Key('plan-stall-s3')), findsNothing);
+    });
+
+    testWidgets('멈춤?: 깨움 줄은 깨운 때가 있고 관리자가 에이전트일 때만', (tester) async {
+      final since = DateTime.now().toUtc().subtract(const Duration(hours: 7)).toIso8601String();
+      final woken = DateTime.now().toUtc().subtract(const Duration(hours: 1)).toIso8601String();
+      final mark = {'s3': {'since': since, 'wokenAt': woken}};
+      for (final (managerId, shown) in [(_agent, true), ('pat', false), (null, false)]) {
+        final s = _Server()..fallback = () => _json({'plan': stalledPlan(stalled: mark, managerId: managerId)});
+        await open(tester, s);
+        await tester.ensureVisible(find.byKey(const Key('plan-stall-toggle-s3')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const Key('plan-stall-toggle-s3')));
+        await tester.pump();
+        expect(find.byKey(const Key('plan-stall-s3')), findsOneWidget);
+        expect(find.byKey(const Key('plan-stall-woke-s3')), shown ? findsOneWidget : findsNothing, reason: '$managerId');
+        if (shown) expect(tester.widget<Text>(find.byKey(const Key('plan-stall-woke-s3'))).data, contains('@builder'));
+        await tester.pumpWidget(const SizedBox());
+      }
+    });
+
+    testWidgets('멈춤?: 시트를 열 때마다 판을 다시 받는다(표시는 판 번호 없이 바뀐다)', (tester) async {
+      final s = _Server();
+      await open(tester, s);
+      final before = s.planGets;
+      Navigator.of(tester.element(find.byKey(const Key('plan-sheet'))), rootNavigator: true).pop();
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('plan-button-open')));
+      await tester.pumpAndSettle();
+      await _settle(tester);
+      expect(s.planGets, before + 1);
+    });
+
     testWidgets('78% 로 열고, 끌어 올리면 약 93%, 끌어 내리면 닫힌다', (tester) async {
       await open(tester, _Server());
       double frac() => tester.getSize(find.byKey(const Key('plan-sheet'))).height / tester.view.physicalSize.height * 3;

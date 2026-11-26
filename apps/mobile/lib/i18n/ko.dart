@@ -1002,6 +1002,31 @@ class StringsKo implements Strings {
   @override
   String get planStateHidden => '볼 수 없음';
   @override
+  String get planStalled => '멈춤?';
+  @override
+  String planSumStalled(int n) => '멈춤? $n';
+  @override
+  String planChipStalled(int n) => '· 멈춤? $n';
+  @override
+  String planStalledSemantics(int n) => '멈춤일 수 있음 $n개';
+  @override
+  String get planStateStalled => '멈춤일 수 있음';
+  @override
+  String planQuietFor(Duration quiet) {
+    final m = quiet.isNegative ? 0 : quiet.inMinutes;
+    final span = m < 60 ? '$m분' : (m < 24 * 60 ? '${m ~/ 60}시간' : '${m ~/ (24 * 60)}일');
+    return '$span째 신호 없음';
+  }
+
+  @override
+  String get planStallTitle => '조용한 까닭 — 서버가 본 것';
+  @override
+  String planStallSignals(String since) => '$since부터 신호 없음: 열린 위임 0 · 도는 턴 0 · 열린 카드 0 · 예약 0 · PR 감시 0';
+  @override
+  String planStallWoke(String at, String who) => '$at 관리자 $who 깨움';
+  @override
+  String get planStallHint => '실제로 기다리는 중이면 관리자가 막힘+까닭으로 바꾸면 이 표시가 사라집니다.';
+  @override
   String get newMessageDmFailed => 'DM 을 열지 못했다.';
   @override
   String get unreadOnlyEmpty => '새로 온 것이 없다.';

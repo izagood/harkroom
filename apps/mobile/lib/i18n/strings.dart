@@ -828,6 +828,22 @@ abstract class Strings {
   String get planStateReady;
   String get planStateHidden;
 
+  /// 「멈춤?」 — 진행 중인데 오래 신호가 없다는 **서버의 추정**이다. 사실이 아니라서 물음표를 뗄 수 없다.
+  String get planStalled;
+  String planSumStalled(int n);
+  String planChipStalled(int n);
+  String planStalledSemantics(int n);
+
+  /// 낭독: 「멈춤일 수 있음」.
+  String get planStateStalled;
+
+  /// 「7시간째 신호 없음」 — 가장 큰 단위 하나.
+  String planQuietFor(Duration quiet);
+  String get planStallTitle;
+  String planStallSignals(String since);
+  String planStallWoke(String at, String who);
+  String get planStallHint;
+
   /// DM 을 열지 못했을 때.
   String get newMessageDmFailed;
 
@@ -2027,4 +2043,14 @@ Map<String, String> stringsToMap(Strings s) => {
       'planStateWaiting': s.planStateWaiting,
       'planStateReady': s.planStateReady,
       'planStateHidden': s.planStateHidden,
+      'planStalled': s.planStalled,
+      'planSumStalled': s.planSumStalled(1),
+      'planChipStalled': s.planChipStalled(1),
+      'planStalledSemantics': s.planStalledSemantics(1),
+      'planStateStalled': s.planStateStalled,
+      'planQuietFor': s.planQuietFor(const Duration(hours: 7)),
+      'planStallTitle': s.planStallTitle,
+      'planStallSignals': s.planStallSignals('{since}'),
+      'planStallWoke': s.planStallWoke('{at}', '{who}'),
+      'planStallHint': s.planStallHint,
     };
