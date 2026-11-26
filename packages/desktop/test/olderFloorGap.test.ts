@@ -8,7 +8,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useActiveStore as useAppStore } from '../src/state/communities';
-import { Controller, FIRST_PAGE_LIMIT, INITIAL_HISTORY_LIMIT, FEED_PAGE_LIMIT } from '../src/state/controller';
+import { Controller, FIRST_PAGE_LIMIT, INITIAL_HISTORY_LIMIT, FEED_PAGE_LIMIT, FEED_HEAD_BEFORE } from '../src/state/controller';
 import { fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';
 
 beforeEach(() => useAppStore.getState().reset());
@@ -17,13 +17,13 @@ const rows = (lo: number, hi: number) =>
   Array.from({ length: hi - lo + 1 }, (_, i) => msg(`m${lo + i}`, 'c1', lo + i, `글 ${lo + i}`, 'u2'));
 type Opts = { since?: number; before?: number; limit?: number; feed?: boolean };
 const befores = (fn: ReturnType<typeof vi.fn>) =>
-  (fn.mock.calls as unknown as Array<[string, Opts | undefined]>).map(([, o]) => o?.before).filter((b) => b !== undefined);
+  (fn.mock.calls as unknown as Array<[string, Opts | undefined]>).map(([, o]) => o?.before).filter((b) => b !== undefined && b !== FEED_HEAD_BEFORE);
 
 describe('이전 메시지의 아래 끝', () => {
   it('스레드로 들어온 옛 뿌리가 있어도 최신 구간의 아래 끝부터 묻는다', async () => {
     let fail = true;
     const messages = vi.fn(async (_c: string, o?: Opts) => {
-      if (o?.before === undefined) return { messages: rows(951, 1000), hasMore: true };
+      if (o?.before === undefined || o.before === FEED_HEAD_BEFORE) return { messages: rows(951, 1000), hasMore: true };
       if (fail) { fail = false; throw new Error('timeout'); }
       return { messages: rows(900, 950), hasMore: true };
     });
@@ -46,7 +46,7 @@ describe('이전 메시지의 아래 끝', () => {
   it('이전 메시지 받기가 실패해도 던지지 않고 실패를 적는다', async () => {
     let backfilled = false;
     const messages = vi.fn(async (_c: string, o?: Opts) => {
-      if (o?.before === undefined) return { messages: rows(951, 1000), hasMore: true };
+      if (o?.before === undefined || o.before === FEED_HEAD_BEFORE) return { messages: rows(951, 1000), hasMore: true };
       if (!backfilled) { backfilled = true; return { messages: rows(501, 950), hasMore: true }; }
       throw new Error('timeout');
     });
@@ -65,7 +65,7 @@ describe('이전 메시지의 아래 끝', () => {
 describe('새 창 열기', () => {
   it('첫 페이지를 받고 본문 줄을 뒤에서 채운다', async () => {
     const messages = vi.fn(async (_c: string, o?: Opts) =>
-      (o?.before === undefined ? { messages: rows(951, 1000), hasMore: true } : { messages: rows(501, 950), hasMore: true }));
+      ((o?.before === undefined || o.before === FEED_HEAD_BEFORE) ? { messages: rows(951, 1000), hasMore: true } : { messages: rows(501, 950), hasMore: true }));
     const c = new Controller(fakeApi({ messages: messages as never }), fakeWsFactory().makeWs);
     await c.start();
     await c.loadChannelForWindow('c1');

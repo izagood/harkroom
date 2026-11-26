@@ -47,7 +47,7 @@ describe('채널 열기의 왕복 수', () => {
     // `markChannelRead` 는 아직 gate 에 걸려 있다.
     await c.openChannel('c1');
 
-    expect(messages).toHaveBeenCalledTimes(1);
+    expect(messages).toHaveBeenCalledTimes(2); // 첫 페이지 = 본문 줄 머리 + 최신 행, 두 요청이다(`requestFirstPage`).
     expect(markChannelRead).toHaveBeenCalledWith('c1', 7);
     // 메시지는 이미 화면에 있다 — 이것이 "기다릴 이유가 없다"의 근거다.
     expect(useAppStore.getState().messages['c1']).toHaveLength(1);

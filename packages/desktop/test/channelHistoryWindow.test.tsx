@@ -23,7 +23,7 @@ import { render, screen, cleanup, fireEvent, waitFor, act } from '@testing-libra
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { usePrefsStore } from '../src/state/prefsStore';
 import {
-  setController, Controller, FIRST_PAGE_LIMIT, INITIAL_HISTORY_LIMIT, type Controller as C, FEED_PAGE_LIMIT } from '../src/state/controller';
+  setController, Controller, FIRST_PAGE_LIMIT, INITIAL_HISTORY_LIMIT, type Controller as C, FEED_PAGE_LIMIT, FEED_HEAD_BEFORE } from '../src/state/controller';
 import { ChannelPane } from '../src/components/ChannelPane';
 import { acc, chan, fakeApi, fakeWsFactory, msg, scheduledApiStub } from './helpers/fakeApi';
 
@@ -42,8 +42,10 @@ describe('채널 히스토리 창', () => {
 
     await c.openChannel('c1');
     // 첫 화면은 작게 받아 바로 그리고, 나머지는 첫 창(INITIAL_HISTORY_LIMIT)까지 뒤에서 채운다.
-    expect(messages).toHaveBeenNthCalledWith(1, 'c1', { since: 0, limit: FIRST_PAGE_LIMIT });
-    expect(messages).toHaveBeenNthCalledWith(2, 'c1', { before: 1, limit: FEED_PAGE_LIMIT, feed: true });
+    // 첫 페이지는 본문 줄 머리와 최신 행을 함께 묻는다(`requestFirstPage`).
+    expect(messages).toHaveBeenNthCalledWith(1, 'c1', { before: FEED_HEAD_BEFORE, limit: FIRST_PAGE_LIMIT, feed: true });
+    expect(messages).toHaveBeenNthCalledWith(2, 'c1', { since: 0, limit: FIRST_PAGE_LIMIT });
+    expect(messages).toHaveBeenNthCalledWith(3, 'c1', { before: 1, limit: FEED_PAGE_LIMIT, feed: true });
     // 값도 못 박는다: `toHaveBeenCalledWith` 는 `limit: undefined` 를 "없음"과 같게 보므로,
     // 상한을 지운 판본에서도 위 줄만으로는 초록이 된다(서버 기본값은 200 이다).
     expect(INITIAL_HISTORY_LIMIT).toBeGreaterThan(200);
