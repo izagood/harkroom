@@ -663,9 +663,66 @@ export class Controller {
     }).finally(() => {
       this.backfills.delete(channelId);
       this.setChannelFlag('backfilling', channelId, false);
+      // 뒤채움이 끝났는데도 본문이 화면을 못 채우면 스스로 이어 받는다(`autoFillOlder`).
+      if (!this.stopped) this.swallow(this.autoFillOlder(channelId));
     });
     this.backfills.set(channelId, run);
     this.setChannelFlag('backfilling', channelId, true);
+  }
+
+  /** 자동 이어 받기가 실패 뒤 다시 묻는 간격 — 이 수가 곧 재시도 횟수다(`autoFillOlder`). */
+  static AUTO_OLDER_BACKOFF_MS: readonly number[] = [1_000, 2_000, 4_000];
+  /** 한 번의 자동 이어 받기가 성공한 페이지를 몇 장까지 잇는가 — 서버가 줄을 안 주고 `hasMore` 만 말해도 끝없이 돌지 않게. */
+  private static readonly AUTO_OLDER_MAX_PAGES = 10;
+  /** 자동 이어 받기가 도는 채널. 같은 채널에서 둘이 겹쳐 같은 구간을 묻지 않게. */
+  private autoFilling = new Set<string>();
+
+  /** 본문에 서는 줄 수 — `ChannelPane` 이 본문에 그리는 것과 같은 기준(최상위·채널에도 올린 답글). */
+  private feedRowCount(channelId: string): number {
+    return (this.store.getState().messages[channelId] ?? []).filter((m) => !m.threadRootId || m.alsoInChannel).length;
+  }
+
+  /**
+   * **본문이 화면을 못 채우면 스스로 이전 메시지를 이어 받는다**(2026-11-27, 규모 검토 B).
+   *
+   * 「이전 메시지」는 스크롤이 맨 위에 닿거나 사람이 「다시 시도」를 눌러야 불렸다. 그런데 본문 줄이 0 개(최신 행이 전부
+   * 답글이고 뒤채움이 시한에 걸린 채널)면 스크롤할 높이가 없어 그 손짓이 생기지 않는다 — 일시적인 실패 한 번이
+   * **영구 빈 화면**이 됐다. 그래서 본문 줄이 첫 페이지 목표(`FIRST_PAGE_LIMIT`)보다 적고 과거가 남았으면(`hasMore`)
+   * `loadOlder` 를 직접 부른다. 실패하면 `AUTO_OLDER_BACKOFF_MS` 간격으로 그 횟수만큼만 다시 묻고, 그래도 안 되면
+   * 멈춘다 — 「다시 시도」 줄(`olderFailed`)은 그대로 서고 수동 경로도 그대로다.
+   *
+   * `retryFailed` 는 채널을 **다시 열 때**다 — 본문이 차 있어도 이전 받기가 실패해 있었으면(`olderFailed`) 한 번 다시
+   * 묻는다. 다시 열 때는 증분(`pullSince`)만 하던 탓에 실패가 열 때마다 그대로 남았다.
+   */
+  private async autoFillOlder(channelId: string, opts: { retryFailed?: boolean } = {}): Promise<void> {
+    if (this.stopped || this.autoFilling.has(channelId)) return;
+    this.autoFilling.add(channelId);
+    try {
+      let failures = 0;
+      // 뒤채움이 방금 실패하고 불렀으면 그 실패가 첫 번째다 — 곧바로 또 묻지 않고 간격을 둔다.
+      // 다시 열 때(`retryFailed`)는 사람의 새 손짓이므로 바로 한 번 묻는다.
+      let failed = !opts.retryFailed && !!this.store.getState().olderFailed[channelId];
+      for (let pages = 0; pages < Controller.AUTO_OLDER_MAX_PAGES; ) {
+        if (failed) {
+          if (failures >= Controller.AUTO_OLDER_BACKOFF_MS.length) return;
+          const wait = Controller.AUTO_OLDER_BACKOFF_MS[failures]!;
+          failures++;
+          await new Promise<void>((resolve) => setTimeout(resolve, wait));
+        }
+        if (this.stopped) return;
+        const s = this.store.getState();
+        if (!s.hasMore[channelId]) return;
+        // 본문이 차 있어도, 실패를 풀려고 도는 중이거나 다시 열 때 실패해 있었으면 묻는다.
+        const retrying = failed || (!!opts.retryFailed && pages === 0 && failures === 0);
+        if (this.feedRowCount(channelId) >= FIRST_PAGE_LIMIT && !(retrying && s.olderFailed[channelId])) return;
+        await this.loadOlder(channelId);
+        if (this.stopped) return;
+        failed = !!this.store.getState().olderFailed[channelId];
+        if (!failed) { failures = 0; pages++; }
+      }
+    } finally {
+      this.autoFilling.delete(channelId);
+    }
   }
 
   /**
@@ -1559,7 +1616,13 @@ export class Controller {
     // 그때 글을 보내면 접두가 안 붙는다 — 채널이 안 열리는 것보다 낫다.
     this.swallow(this.loadChannelAutoMentions(channelId));
     // 이미 연 채널이면 증분을 **끝까지** 받는다(`pullSince`) — 한 페이지로 자르면 틈이 남는다.
-    if (since > 0) { await this.pullSinceOpened(channelId, since); this.settleReadPosition(channelId); return; }
+    if (since > 0) {
+      await this.pullSinceOpened(channelId, since);
+      this.settleReadPosition(channelId);
+      // 다시 열 때 이전 받기가 실패해 있었거나 본문이 비었으면 뒤채움을 다시 돌린다(`autoFillOlder`).
+      this.swallow(this.autoFillOlder(channelId, { retryFailed: true }));
+      return;
+    }
     const page = await this.firstPage(channelId);
     this.loadedChannels.add(channelId);
     // 첫 페이지는 "가장 오래된 줄부터 최신까지"를 말한다 — 그 뒤 소켓으로 오는 새 글도 이 안이다.
@@ -2002,6 +2065,7 @@ export class Controller {
     if (since === 0 && page.messages.length) this.addCoverage(channelId, Math.min(...page.messages.map((m) => m.seq)), Infinity);
     this.store.getState().upsertMessages(channelId, page.messages, page.asOf);
     if (since > 0 && this.staleSinceReconnect.has(channelId)) await this.refreshLatestPage(channelId);
+    if (since > 0) this.swallow(this.autoFillOlder(channelId, { retryFailed: true }));
     // 증분 응답은 `hasMore` 를 말할 자격이 없다 — 근거는 `openChannel` 의 같은 자리.
     if (since === 0) {
       this.store.getState().set({ hasMore: { ...this.store.getState().hasMore, [channelId]: page.hasMore } });
@@ -3558,7 +3622,13 @@ export class Controller {
     this.swallow(this.loadChannelAutoMentions(channelId));
     // 읽음 처리(`settleReadPosition`)는 **두 갈래 모두** 거친다 — 증분 갈래에서 빠뜨리면 뒤로·앞으로
     // 간 채널의 배지가 남는다(security F1, 2026-10-06).
-    if (since > 0) { await this.pullSinceOpened(channelId, since); this.settleReadPosition(channelId); return; }
+    if (since > 0) {
+      await this.pullSinceOpened(channelId, since);
+      this.settleReadPosition(channelId);
+      // 다시 열 때 이전 받기가 실패해 있었거나 본문이 비었으면 뒤채움을 다시 돌린다(`autoFillOlder`).
+      this.swallow(this.autoFillOlder(channelId, { retryFailed: true }));
+      return;
+    }
     const page = await this.firstPage(channelId);
     this.loadedChannels.add(channelId);
     if (page.messages.length) this.addCoverage(channelId, Math.min(...page.messages.map((m) => m.seq)), Infinity);
