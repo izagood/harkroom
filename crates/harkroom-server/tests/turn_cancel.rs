@@ -343,7 +343,7 @@ async fn turn_cancel_answers_like_ts() {
     assert_eq!(au[0].1.as_deref(), Some(a.as_str()));
     assert_eq!(
         au[0].2,
-        json!({ "sessionId": sa1, "channelId": ch, "via": "delegator" })
+        json!({ "sessionId": sa1, "channelId": ch, "threadRootId": root, "via": "delegator" })
     );
 
     // ── a 의 의무가 닫혔으니 남은 팀원은 b 뿐 — 다시 눌러도 a 는 대상이 아니다 ──

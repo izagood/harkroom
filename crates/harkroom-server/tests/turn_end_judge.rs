@@ -827,27 +827,16 @@ async fn on_mode_closes_only_settled_roots() {
     assert_eq!(all.len(), 3, "{all:?}");
     assert_eq!(all[2], (parent_of_child.clone(), false));
     assert!(all[0].1 && all[1].1, "닫힌 뿌리 둘은 그대로다");
-    // 열린 하위 위임이 있는 동안 옛 턴의 판정은 기다림이다. 위임이 닫힌 뒤 다시 판정해도 닫힌 뿌리는 그대로이고,
-    // 새 뿌리를 대신 닫지 않는다(새 뿌리는 그 뿌리로 온 턴이 닫는다).
+    // 옛 턴을 다시 판정해도 닫힌 뿌리는 그대로이고(`closed`), 뒤에 선 새 뿌리를 대신 닫지 않는다 — 새 뿌리는 그 뿌리로 온 턴이 닫는다.
     let j = e.rejudge(&t).await;
-    assert_eq!(
-        (j.verdict, j.closed, j.skip),
-        (Verdict::WaitingOnChild, false, None)
-    );
-    sqlx::query("update team_delegation_item set outcome = 'reported', closed_at = now() where delegation_id = $1::uuid")
-        .bind(&deleg)
-        .execute(&e.admin)
-        .await
-        .unwrap();
+    assert_eq!((j.closed, j.skip), (false, Some(Skip::Closed)));
+    assert_eq!(st(e.state(&parent_of_child).await), open());
     assert_eq!(
         delegation_closed_with(&e.w, &deleg, None, "reported", None)
             .await
             .unwrap(),
         1
     );
-    let j = e.rejudge(&t).await;
-    assert_eq!((j.closed, j.skip), (false, Some(Skip::Closed)));
-    assert_eq!(st(e.state(&parent_of_child).await), open());
 
     // ⑨ 작업을 못 찾은 판정(`work=none`) — 닫을 것이 없다. 사건도 작업 행도 만들지 않는다.
     let t = e.turn().await;
