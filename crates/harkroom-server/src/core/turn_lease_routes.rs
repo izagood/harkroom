@@ -215,10 +215,15 @@ pub async fn issue(
                 cause_message_id: cause.clone(),
                 work: passed_work,
             });
-            no_store(ok_json(&json!({ "lease": {
+            let mut lease = json!({
                 "id": i.lease_id, "token": i.token, "channelId": i.channel_id,
                 "threadRootId": i.thread_root_id, "expiresAt": i.expires_at,
-            }})))
+            });
+            // DC — 다시 부르기가 켜져 있으면 알린다(러너가 담당 쪽 대리 실패를 건너뛴다). 꺼져 있으면 칸을 싣지 않는다(답 모양 그대로).
+            if super::delegation_recall::recalling() {
+                lease[super::delegation_recall::LEASE_FIELD] = json!(true);
+            }
+            no_store(ok_json(&json!({ "lease": lease })))
         }
     }
 }

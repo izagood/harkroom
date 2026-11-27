@@ -174,6 +174,9 @@ pub struct TurnLease {
     pub id: String,
     pub token: String,
     pub expires_at: String,
+    /// 서버가 말없이 끝난 위임 담당을 다시 부른다(`lease.delegationRecall: true`) — 러너는 담당 쪽 대리 실패 줄을 건너뛴다.
+    /// 칸이 없거나(옛 서버·꺼짐) 참이 아니면 `false`.
+    pub delegation_recall: bool,
 }
 
 impl std::fmt::Debug for TurnLease {
@@ -182,6 +185,7 @@ impl std::fmt::Debug for TurnLease {
             .field("id", &self.id)
             .field("token", &"<redacted>")
             .field("expires_at", &self.expires_at)
+            .field("delegation_recall", &self.delegation_recall)
             .finish()
     }
 }
@@ -425,6 +429,11 @@ impl<L: RunnerLink> HarkroomRestClient<L> {
                 id,
                 token,
                 expires_at,
+                delegation_recall: lease
+                    .as_ref()
+                    .and_then(|l| l.get("delegationRecall"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
             }),
             _ => LeaseOutcome::None,
         }
@@ -870,6 +879,8 @@ mod tests {
         };
         assert_eq!(l.token, "s3cr3t");
         assert!(!format!("{l:?}").contains("s3cr3t"));
+        // DC — 칸이 없으면(옛 서버·꺼짐) 다시 부르기 알림은 없다.
+        assert!(!l.delegation_recall);
         assert_eq!(
             last(&f).2,
             Some(json!({"causeMessageId":"m1","claimHolder":"h1"}))
@@ -1123,5 +1134,36 @@ mod tests {
                 Some(json!({"slugs":["s"]}))
             )
         );
+    }
+
+    /// DC — 임대 답의 `delegationRecall` 은 참(bool)일 때만 알림이다. 글자·숫자·거짓은 알림이 아니다.
+    #[test]
+    fn lease_recall_signal_is_true_only_for_a_boolean_true() {
+        for (raw, want) in [
+            (
+                r#"{"lease":{"id":"l","token":"t","expiresAt":"x","delegationRecall":true}}"#,
+                true,
+            ),
+            (
+                r#"{"lease":{"id":"l","token":"t","expiresAt":"x","delegationRecall":false}}"#,
+                false,
+            ),
+            (
+                r#"{"lease":{"id":"l","token":"t","expiresAt":"x","delegationRecall":"true"}}"#,
+                false,
+            ),
+            (
+                r#"{"lease":{"id":"l","token":"t","expiresAt":"x","delegationRecall":1}}"#,
+                false,
+            ),
+            (r#"{"lease":{"id":"l","token":"t","expiresAt":"x"}}"#, false),
+        ] {
+            let f = Fake::with(&[(200, raw)]);
+            let c = HarkroomRestClient::new(&f);
+            let LeaseOutcome::Lease(l) = c.issue_turn_lease("m1", &|_| {}, None, None) else {
+                panic!("{raw}")
+            };
+            assert_eq!(l.delegation_recall, want, "{raw}");
+        }
     }
 }

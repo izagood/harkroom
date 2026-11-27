@@ -337,7 +337,7 @@ where
             clock: now_i64,
             probe_ms: PROBE_MS,
         };
-        let after = after_source_owned(AfterConfig {
+        let mut after_inner = after_source_owned(AfterConfig {
             key: key.clone(),
             me_id: c.me_id.clone(),
             channel_id: target.channel_id.clone(),
@@ -364,6 +364,16 @@ where
             harness,
             home: home.clone(),
             promise,
+        });
+        // DC — 서버가 말없이 끝난 위임 담당을 다시 부른다고 임대 답으로 알렸으면, 담당 쪽 대리 실패 줄(끝 보고 누락)을 남기지 않는다.
+        // 그 줄은 위임을 실패로 닫아 서버의 다시 부르기를 막는다. 알림이 없으면(옛 서버·꺼짐·임대 없음) 그대로 남긴다.
+        let recall_cause = target.mention_id.clone();
+        let after: crate::mention_call::AfterSource<'a> = Box::new(move |a, rows| {
+            let mut data = after_inner(a, rows);
+            data.plan = data
+                .plan
+                .without_report_missed_if(book.server_recalls(&recall_cause));
+            data
         });
         // 그 스레드의 작업 폴더(정본 `resolveWorkspaceDir`) — 새 스레드마다 다른 폴더, 같은 스레드는 같은 폴더. 짓지 못하면 이 멘션은
         // 띄우지 않는다: 준비 구간 패닉은 몸통 지킴(L3a)이 장부·자리·임대를 놓는다(다음 폴이 다시 받는다).
