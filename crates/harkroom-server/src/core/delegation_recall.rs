@@ -198,10 +198,10 @@ pub fn decide(verdict: Verdict, c: &Candidate) -> Step {
     }
 }
 
-/// 대기 줄 본문. 멘션은 풀리지 않는다(`no_mentions`).
+/// 대기 줄 본문. 멘션은 풀리지 않는다(`no_mentions`). 줄 주인이 담당으로 그려지므로 「서버가」를 앞머리에 둔다(좁은 폭에서 잘려도 남게).
 pub fn recall_body(attempt: i32) -> String {
     format!(
-        "넘겨받은 일이 보고 없이 끝나 다시 부른다({attempt}/{RECALL_MAX}) — 끝났으면 message.report, 막혔으면 message.fail, \
+        "보고 없이 끝나 서버가 다시 부름({attempt}/{RECALL_MAX}) — 끝났으면 message.report, 막혔으면 message.fail, \
          기다릴 것이 있으면 turn.wake 나 message.ask 로 남긴다"
     )
 }
@@ -368,7 +368,8 @@ pub async fn schedule(
         st,
         &c.channel_id,
         agent,
-        false,
+        // 작성자는 담당 에이전트다 — 사람 글 갈래(남의 열린 예약 깨우기·사람 위임 키 잇기)를 타지 않는다.
+        true,
         &input,
         None,
         &audience,
@@ -494,6 +495,7 @@ mod tests {
     fn wait_line_is_a_plain_wake_line_with_a_recall_piece() {
         let body = recall_body(2);
         assert!(body.contains("(2/2)"));
+        assert!(body.starts_with("보고 없이 끝나 서버가 다시 부름"));
         assert!(!body.contains('@'));
         let meta = recall_meta("d1", 2, &body, "2026-01-01T00:02:00.000Z");
         assert_eq!(meta["kind"], "wake");

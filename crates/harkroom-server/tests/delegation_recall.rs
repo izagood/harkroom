@@ -107,6 +107,23 @@ async fn silent_delegate_is_recalled_twice_then_blocked_and_the_lead_is_told_onc
     )
     .await;
 
+    // 같은 스레드에 위임자가 걸어 둔 열린 예약 — 다시 부르기 줄은 사람 글이 아니므로 이 예약을 깨우지 않아야 한다.
+    let lead_wait = one(
+        &admin,
+        "insert into message(channel_id, author_id, body, kind, thread_root_id, meta) \
+         values ($1::uuid, $2::uuid, 'wait', 'wake', $3::uuid, '{\"kind\":\"wake\",\"wake\":{\"reason\":\"wait\"}}'::jsonb) \
+         returning id::text",
+        &[&ch, &lead, &root],
+    )
+    .await;
+    run(
+        &admin,
+        "insert into agent_wake(account_id, channel_id, message_id, wake_at) \
+         values ($1::uuid, $2::uuid, $3::uuid, now() + interval '1 hour')",
+        &[&lead, &ch, &lead_wait],
+    )
+    .await;
+
     // ① 읽기만(그림자) — 불렀을 것을 돌려주고 아무것도 적지 않는다. 담당이 아닌 계정·매듭지은 턴은 대상이 아니다.
     let (c, step) = peek(&admin, &root, &delegate, Verdict::Silent)
         .await
@@ -175,6 +192,27 @@ async fn silent_delegate_is_recalled_twice_then_blocked_and_the_lead_is_told_onc
             &admin,
             "select count(*) from inbox where account_id = $1::uuid",
             &[&delegate]
+        )
+        .await,
+        0
+    );
+
+    // 위임자의 열린 예약은 그대로다 — 띄워지지 않았고, 닫힌 시각도 없고, 위임자 inbox 에 깨움 줄도 없다.
+    assert_eq!(
+        count(
+            &admin,
+            "select count(*) from agent_wake w join message m on m.id = w.message_id \
+              where w.message_id = $1::uuid and w.fired_at is null and not (m.meta->'wake' ? 'canceledAt')",
+            &[&lead_wait],
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        count(
+            &admin,
+            "select count(*) from inbox where account_id = $1::uuid",
+            &[&lead]
         )
         .await,
         0
