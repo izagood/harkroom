@@ -94,6 +94,7 @@ pub mod device_allow;
 pub mod dm_open;
 pub mod events;
 pub mod exec_combo;
+pub mod exec_combo_routes;
 pub mod grant_decide;
 pub mod grant_reads;
 pub mod implicit_delegation;
