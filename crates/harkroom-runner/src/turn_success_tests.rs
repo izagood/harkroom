@@ -212,3 +212,24 @@ fn watch_missed_reason_is_masked_and_mentions_defused() {
     assert!(!n.contains(pat) && !n.contains(&secret), "{n}");
     assert_eq!(n.lines().count(), 2, "사유는 한 줄로");
 }
+
+/// DC — 서버가 다시 부르면 끝 보고 누락 실패 줄만 빠진다. 감시 끊김·침묵 갈래는 그대로다.
+#[test]
+fn server_recall_drops_only_the_report_missed_line() {
+    let t = SuccessTarget {
+        delegated_by: true,
+        ..SuccessTarget::default()
+    };
+    let p = plan(&[reply(11)], None, t);
+    assert!(p.delegation_report_missed);
+    assert_eq!(p.without_report_missed_if(false), p);
+    let dropped = p.without_report_missed_if(true);
+    assert!(!dropped.delegation_report_missed);
+    assert_eq!(
+        AfterTurnPlan {
+            delegation_report_missed: true,
+            ..dropped
+        },
+        p
+    );
+}

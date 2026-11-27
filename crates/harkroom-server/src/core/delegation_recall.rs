@@ -198,6 +198,14 @@ pub fn decide(verdict: Verdict, c: &Candidate) -> Step {
     }
 }
 
+/// 다시 부르기가 켜져(`on`) 실제로 부르는 중인가 — 임대 발급 답이 러너에 알린다(DC). `shadow`·꺼짐은 `false`.
+pub fn recalling() -> bool {
+    CONFIG.get().is_some_and(|c| c.post.is_some())
+}
+
+/// 임대 발급 답에 싣는 칸 이름(DC) — 참일 때만 싣는다. 러너는 이 칸이 참이면 담당 쪽 대리 실패 줄을 건너뛴다.
+pub const LEASE_FIELD: &str = "delegationRecall";
+
 /// 대기 줄 본문. 멘션은 풀리지 않는다(`no_mentions`). 줄 주인이 담당으로 그려지므로 「서버가」를 앞머리에 둔다(좁은 폭에서 잘려도 남게).
 pub fn recall_body(attempt: i32) -> String {
     format!(
@@ -518,6 +526,13 @@ mod tests {
         assert!(CANDIDATE_LOCKED_SQL.ends_with("for update of i"));
         // 임대 표는 읽는 칸만 — 토큰 칸은 닿지 않는다.
         assert!(!CANDIDATE_SQL.contains("token"));
+    }
+
+    #[test]
+    fn lease_signal_is_off_until_recall_is_enabled_with_a_post_state() {
+        // 이 시험 프로세스는 켜지 않는다 — 꺼짐·shadow 는 알리지 않는다(러너가 대리 실패를 그대로 남긴다).
+        assert!(!recalling());
+        assert_eq!(LEASE_FIELD, "delegationRecall");
     }
 
     #[test]

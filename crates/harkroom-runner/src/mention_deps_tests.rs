@@ -154,6 +154,7 @@ fn lease_outcomes_fold_to_state() {
                 id: "L1".into(),
                 token: "tok".into(),
                 expires_at: "x".into(),
+                delegation_recall: false,
             })),
             ..Io::default()
         },

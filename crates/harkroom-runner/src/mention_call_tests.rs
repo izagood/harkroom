@@ -576,6 +576,7 @@ fn each_attempt_notes_its_own_account_folder_transcript() {
             id: "l1".into(),
             token: "t".into(),
             expires_at: "x".into(),
+            delegation_recall: false,
         },
     );
     let mut fold = noting_outcome(

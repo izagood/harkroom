@@ -53,6 +53,7 @@ fn lease_goes_to_operator_and_release_ends_that_cause_once() {
             id: "lease-1".into(),
             token: "tok-secret-value".into(),
             expires_at: "x".into(),
+            delegation_recall: false,
         },
     );
     assert_eq!(
@@ -90,6 +91,7 @@ fn lease() -> TurnLease {
         id: "l".into(),
         token: "t".into(),
         expires_at: "x".into(),
+        delegation_recall: false,
     }
 }
 
@@ -154,6 +156,7 @@ fn lease_of(id: &str) -> TurnLease {
         id: id.into(),
         token: "tok".into(),
         expires_at: "x".into(),
+        delegation_recall: false,
     }
 }
 
@@ -325,4 +328,25 @@ fn lease_dir_only_for_held_cause_with_safe_id() {
         book.release(c);
     }
     bare.release("m1");
+}
+
+/// DC — 서버가 다시 부르기를 알린 임대만 「서버가 다시 부른다」로 읽는다. 알림 없는 임대·거절·모르는 멘션은 아니다(대리 실패를 남긴다).
+#[test]
+fn server_recall_is_read_only_from_a_held_lease_that_said_so() {
+    let op = Operator::default();
+    let book = LeaseBook::default();
+    let mut h = LinkHooks::new(&op, &book, Sched::default(), "k".into(), || 1);
+    h.lease_issued("plain", lease());
+    h.lease_issued(
+        "recall",
+        TurnLease {
+            delegation_recall: true,
+            ..lease()
+        },
+    );
+    h.lease_declined("declined");
+    assert!(!book.server_recalls("plain"));
+    assert!(book.server_recalls("recall"));
+    assert!(!book.server_recalls("declined"));
+    assert!(!book.server_recalls("unknown"));
 }

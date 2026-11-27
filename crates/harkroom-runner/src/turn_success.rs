@@ -140,6 +140,14 @@ pub struct AfterTurnPlan {
 impl AfterTurnPlan {
     /// 침묵 갈래를 혼자 꺼진 턴으로 바꾼다 — `quit` 은 [`crate::silent_notice::quit_before_finishing`] 의 답이다.
     /// 정본은 침묵 갈래(발화·새 예약 없음) 앞에서만 이 판정을 본다. 다른 갈래(하위 에이전트 거둠·예약만 건 턴·발화)는 그대로다.
+    /// 서버가 말없이 끝난 위임 담당을 다시 부르면(DC) 끝 보고 누락 실패 줄을 남기지 않는다 — 다른 갈래는 그대로다.
+    pub fn without_report_missed_if(mut self, server_recalls: bool) -> Self {
+        if server_recalls {
+            self.delegation_report_missed = false;
+        }
+        self
+    }
+
     pub fn quit_early_if(mut self, quit: bool) -> Self {
         if quit && self.silent == SilentPath::SilentTurn {
             self.silent = SilentPath::QuitEarly;

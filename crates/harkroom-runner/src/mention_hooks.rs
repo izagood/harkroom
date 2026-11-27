@@ -79,6 +79,8 @@ struct Entry {
     /// 받은 임대에만 선다. 칸이 빠지면(놓기·패닉 풀림) 떨어지며 멈춘다(`Timer` 의 Drop).
     beat: Option<Timer>,
     lease_id: Option<String>,
+    /// 서버가 이 임대의 턴을 다시 부른다고 알렸다(DC) — 담당 쪽 대리 실패 줄을 건너뛴다.
+    server_recall: bool,
     transcripts: BTreeSet<PathBuf>,
 }
 
@@ -122,9 +124,22 @@ impl LeaseBook {
                 booked: b,
                 beat,
                 lease_id: lease_id.map(str::to_string),
+                server_recall: false,
                 transcripts: BTreeSet::new(),
             },
         );
+    }
+    /// 서버가 다시 부르기를 알린 임대로 적는다(DC). 장부에 없는 멘션이면 버린다.
+    fn mark_server_recall(&self, cause: &str) {
+        if let Some(e) = self.map().get_mut(cause) {
+            e.server_recall = true;
+        }
+    }
+    /// 그 멘션의 임대에 서버가 다시 부르기를 알렸나(DC) — 받은 임대(`Held`)일 때만. 장부에 없으면 `false`(대리 실패를 남긴다).
+    pub fn server_recalls(&self, cause: &str) -> bool {
+        self.map()
+            .get(cause)
+            .is_some_and(|e| e.booked == Booked::Held && e.server_recall)
     }
     /// 이 멘션의 턴이 쓴 기록 파일을 적는다(정본 `noteTranscript`) — 놓을 때 가린다. 장부에 없는 멘션이면 버린다.
     pub fn note_transcript(&self, cause: &str, path: PathBuf) {
@@ -299,6 +314,9 @@ impl<O: LeaseHandoff, S: SchedulerHooks> MentionHooks for LinkHooks<'_, O, S> {
         self.operator
             .lease(cause, &lease.id, &lease.token, &lease.expires_at);
         self.book.put(cause, Booked::Held, Some(&lease.id));
+        if lease.delegation_recall {
+            self.book.mark_server_recall(cause);
+        }
         self.cause = Some(cause.to_string());
         self.log("턴 임대를 받아 오퍼레이터에 맡겼다");
     }
