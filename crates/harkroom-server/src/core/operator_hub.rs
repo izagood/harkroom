@@ -45,6 +45,7 @@ const OPERATOR_TYPES: &[&str] = &[
     "work.claim",
     "work.renew",
     "work.release",
+    "work.pull",
 ];
 const SERVER_TYPES: &[&str] = &[
     "assign",
@@ -64,6 +65,7 @@ const SERVER_TYPES: &[&str] = &[
     "wake",
     "work.claimed",
     "work.renewed",
+    "work.pulled",
 ];
 const NO_RUNNER_ID: &[&str] = &[
     "hello",
@@ -80,6 +82,8 @@ const NO_RUNNER_ID: &[&str] = &[
     "work.release",
     "work.claimed",
     "work.renewed",
+    "work.pull",
+    "work.pulled",
     "assign",
     "unassign",
     "assign.synced",
@@ -127,7 +131,7 @@ fn parse(raw: &str, known: &[&str]) -> Option<Map<String, Value>> {
     // 잡기(I2b): 답을 짝지을 `requestId`, 놓기는 `workId`.
     if matches!(
         ty.as_str(),
-        "work.claim" | "work.renew" | "work.claimed" | "work.renewed"
+        "work.claim" | "work.renew" | "work.claimed" | "work.renewed" | "work.pull" | "work.pulled"
     ) && !frame.get("requestId").is_some_and(Value::is_string)
     {
         return None;

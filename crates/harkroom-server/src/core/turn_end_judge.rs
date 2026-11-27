@@ -598,6 +598,17 @@ pub async fn judge_with(
     if let Some(t) = &judged.target {
         let p = payload(lease_id, &judged);
         work::append_event(pool, &t.work_id, EVENT_TURN_JUDGED, Some(agent_id), &p).await?;
+        // I2d — 닫지 않은 뿌리가 `running` 이면 `waiting` 으로(스위치 `HARKROOM_WORK_RUN`). 닫는 길과는 따로다.
+        if t.root && !judged.closed && super::work_run::running_on() {
+            super::work_run::turn_waits(
+                pool,
+                &t.work_id,
+                agent_id,
+                lease_id,
+                judged.verdict.as_str(),
+            )
+            .await?;
+        }
     }
     Ok(Some(judged))
 }

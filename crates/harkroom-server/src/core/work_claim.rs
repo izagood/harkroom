@@ -4,7 +4,8 @@
 //! - **자격은 문장이 판정한다.** 그 작업의 담당 에이전트가 이 오퍼레이터의 허용 표(`agent_operator_allow`)에 있고, 오퍼레이터가
 //!   회수되지 않았고, 개인 자격증명 에이전트면 기기 소유자가 에이전트 소유자와 같아야 한다(`device_allow` 의 읽기 판정과 같은 규칙).
 //!   부르는 쪽이 넘긴 값으로 자격을 넓힐 수 없다 — `agents` 인자는 후보를 **좁히기만** 한다.
-//! - **잡을 수 있는 작업**: 담당이 있고, 상태가 `open` 이고, 살아 있는 줄이 없고, 앞 작업(`after_work_id`)이 닫혔고, 같은 뿌리에서
+//! - **잡을 수 있는 작업**: 담당이 있고, 안 닫혔고(`open`·`running`·`waiting` — 턴이 서면 뿌리가 `running` 이 되므로 `open` 만 보면
+//!   두 번째 글부터 못 잡는다), 살아 있는 줄이 없고, 앞 작업(`after_work_id`)이 닫혔고, 같은 뿌리에서
 //!   경로가 겹치는 작업을 누가 쥐고 있지 않다. 담당이 빈 작업(누가 돌릴지 정해지지 않은 과제)은 이 단계에서 잡지 않는다.
 //! - **순서**: 사람이 시킨 작업 먼저, 그다음 만든 시각.
 //! - **뿌리마다 한 줄로 선다.** 경로 겹침은 「다른 줄」을 보는 조건이라 행 잠금만으로는 두 쪽이 서로의 아직 안 적힌 줄을 못 본다.
@@ -18,8 +19,12 @@
 //! - 이 모듈은 `work.state` 를 바꾸지 않고 `work_event` 도 적지 않는다 — 상태를 옮기는 일은 잡는 쪽을 잇는 단계가 정한다.
 //! - **잡은 줄은 기록이다.** `work_claim` 을 권한·순서·머지 같은 판정의 근거로 읽는 코드를 두지 않는다 — 누가 무엇을 할 수 있는지는
 //!   지금처럼 허용 표와 각 길의 문지기가 정한다. 작업 상태가 정본이 되기 전에는 이 줄이 「그 일이 돌고 있다」는 뜻도 아니다.
+//! - **좁히지 않은 잡기(pull, I2d)**: [`pull_with`]. 스레드로 좁히지 않는 대신 「할 일이 있는 작업」만 후보다(담당의 인박스에 그
+//!   스레드의 안 읽힌 글이 있다) — 할 일 없는 열린 작업을 잡고 → 러너가 빈손으로 반납하고 → 또 잡는 고리를 만들지 않는다.
+//!   스위치 `HARKROOM_WORK_PULL`(기본 꺼짐)과 [`WORK_PULL_PRIVILEGES`] 가 더 든다.
+//! - **턴 잇기(I2d)**: 러너가 턴 임대를 받으며 넘긴 (작업, 횟수)에 그 임대 id 를 적는다([`note_lease_with`]) — 기록용이다.
 //! - 스위치 `HARKROOM_WORK_CLAIM`(`on`·`1`·`true` 만 켬, 기본 꺼짐). 부르는 곳은 오퍼레이터 프레임 처리기
-//!   ([`super::work_claim_frames`]) 하나다.
+//!   ([`super::work_claim_frames`])와 턴 임대 발급([`super::work_run`])이다.
 use super::wake_deliver::is_uuid_shaped;
 use sqlx::PgPool;
 
@@ -72,6 +77,8 @@ pub enum Refusal {
     Disabled,
     /// id 모양이 아니거나 너무 많다.
     BadRequest,
+    /// 좁히지 않은 잡기(pull)가 꺼져 있다(스위치 또는 권한). 좁힌 잡기는 그대로다.
+    PullDisabled,
 }
 
 impl Refusal {
@@ -79,6 +86,7 @@ impl Refusal {
         match self {
             Refusal::Disabled => "work_claim_disabled",
             Refusal::BadRequest => "invalid_request",
+            Refusal::PullDisabled => "work_pull_disabled",
         }
     }
 }
@@ -148,7 +156,7 @@ macro_rules! entitled {
 /// `$3` 이 작업 하나로 좁히기(null 이면 안 좁힘), `$4` 이 스레드의 작업으로 좁히기(null 이면 안 좁힘). 좁히기는 후보를 줄이기만
 /// 한다 — 자격 술어는 그대로 붙는다.
 macro_rules! candidate {
-    () => {
+    ($extra:expr) => {
         concat!(
             "from work w \
              join agent_operator_allow al on al.agent_id = w.assignee_account_id and al.operator_id = $1::uuid \
@@ -156,8 +164,9 @@ macro_rules! candidate {
              join account a on a.id = w.assignee_account_id \
              left join agent_config cfg on cfg.account_id = w.assignee_account_id \
              left join account rq on rq.id = w.requester_account_id \
-            where w.state = 'open' and w.closed_at is null and ",
+            where w.state in ('open', 'running', 'waiting') and w.closed_at is null and ",
             entitled!(),
+            $extra,
             " and ($2::uuid[] is null or w.assignee_account_id = any($2::uuid[])) \
               and ($3::uuid is null or w.id = $3::uuid) \
               and ($4::uuid is null or w.thread_root_id = $4::uuid) \
@@ -178,7 +187,44 @@ macro_rules! candidate {
 }
 
 /// 후보 보기 — 잠그지 않고 「지금 잡을 수 있는 가장 앞 작업」과 그 뿌리를 읽는다. 인자는 [`candidate!`] 의 `$1`~`$4`(`$3` 은 null).
-pub const CANDIDATE_SQL: &str = concat!("select w.id::text, w.root_id::text ", candidate!());
+pub const CANDIDATE_SQL: &str = concat!("select w.id::text, w.root_id::text ", candidate!(""));
+
+/// 좁히지 않은 잡기(pull)에만 붙는 조건 — **할 일이 있는 작업만** 후보다:
+/// ① 담당의 인박스에 그 스레드의 안 읽힌 글이 있다(러너가 떠서 당길 것이 있다 — 없으면 러너가 빈손으로 반납하고 같은 줄을 또 잡는
+///   고리가 생긴다) ② 최근에 잡혔던 줄은 잡힌 횟수에 비례해 쉰다([`PULL_BACKOFF_STEP_SECS`] × 횟수, 많아야 [`PULL_BACKOFF_MAX_STEPS`] 배) —
+///   러너가 못 뜨는 작업을 임대가 풀릴 때마다 되잡지 않게.
+macro_rules! pull_only {
+    () => {
+        " and exists ( \
+                select 1 from inbox ib join message im on im.id = ib.message_id \
+                 where ib.account_id = w.assignee_account_id and ib.read_at is null \
+                   and coalesce(im.thread_root_id, im.id) = w.thread_root_id) \
+          and not exists ( \
+                select 1 from work_claim pb where pb.work_id = w.id \
+                   and pb.claimed_at > now() - make_interval(secs => least(pb.attempts, 20) * 30)) "
+    };
+}
+
+/// 되잡기 간격의 한 걸음(초)과 걸음 수 상한 — [`pull_only!`] 의 숫자와 같다(시험이 맞춘다).
+pub const PULL_BACKOFF_STEP_SECS: i32 = 30;
+pub const PULL_BACKOFF_MAX_STEPS: i32 = 20;
+/// 한 번의 `work.pull` 에 잡는 작업 수 상한.
+pub const PULL_MAX: usize = 8;
+
+/// [`CANDIDATE_SQL`] 의 pull 판 — [`pull_only!`] 가 더 붙는다.
+pub const PULL_CANDIDATE_SQL: &str = concat!(
+    "select w.id::text, w.root_id::text ",
+    candidate!(pull_only!())
+);
+
+/// pull 에 더 드는 권한(쓰기 역할) — 안 읽힌 글 읽기. 없으면 pull 만 꺼진다(좁힌 잡기는 그대로).
+pub const WORK_PULL_PRIVILEGES: &[(&str, &str)] = &[
+    ("inbox.account_id", "SELECT"),
+    ("inbox.message_id", "SELECT"),
+    ("inbox.read_at", "SELECT"),
+    ("message.id", "SELECT"),
+    ("message.thread_root_id", "SELECT"),
+];
 
 /// 뿌리 잠금 — `$1` 뿌리 작업 id. 트랜잭션이 끝날 때 풀린다. 같은 뿌리의 잡기는 이 줄에서 차례를 기다린다.
 /// 두 번째 인자는 이 잠금만의 이름표다(다른 advisory lock 과 키가 겹치지 않게).
@@ -189,26 +235,33 @@ pub const ROOT_LOCK_SQL: &str =
 /// `$5` 러너 칸 세대, `$6` 임대 길이(초). 조건을 처음부터 다시 본다(잠금을 기다리는 사이 바뀌었을 수 있다).
 /// `pick` 이 그 작업 행을 잠근다(다른 쪽이 잠근 행은 건너뛴다). `ins` 는 살아 있는 줄이 없을 때만 적는다.
 /// 돌려주는 줄: 고른 작업 + 적혔으면 횟수·만료(안 적혔으면 null — 겹쳐 잡다 진 것).
-pub const CLAIM_SQL: &str = concat!(
-    "with pick as ( \
-       select w.id, w.assignee_account_id as agent_id, w.channel_id, w.thread_root_id, w.root_id ",
-    candidate!(),
-    " for update of w skip locked \
-     ), ins as ( \
-       insert into work_claim (work_id, agent_id, operator_id, slot_generation, mode, lease_expires_at) \
-       select p.id, p.agent_id, $1::uuid, $5::bigint, 'pull', now() + make_interval(secs => $6::int) from pick p \
-       on conflict (work_id) do update \
-          set agent_id = excluded.agent_id, operator_id = excluded.operator_id, \
-              slot_generation = excluded.slot_generation, mode = excluded.mode, turn_id = null, \
-              claimed_at = now(), renewed_at = now(), lease_expires_at = excluded.lease_expires_at, \
-              released_at = null, release_reason = null, attempts = work_claim.attempts + 1 \
-        where work_claim.released_at is not null or work_claim.lease_expires_at <= now() \
-       returning work_id, attempts, lease_expires_at \
-     ) \
-     select p.id::text, p.agent_id::text, p.channel_id::text, p.thread_root_id::text, p.root_id::text, i.attempts, ",
-    crate::iso!("i.lease_expires_at"),
-    " from pick p left join ins i on i.work_id = p.id"
-);
+macro_rules! claim_sql {
+    ($extra:expr) => {
+        concat!(
+            "with pick as ( \
+               select w.id, w.assignee_account_id as agent_id, w.channel_id, w.thread_root_id, w.root_id ",
+            candidate!($extra),
+            " for update of w skip locked \
+             ), ins as ( \
+               insert into work_claim (work_id, agent_id, operator_id, slot_generation, mode, lease_expires_at) \
+               select p.id, p.agent_id, $1::uuid, $5::bigint, 'pull', now() + make_interval(secs => $6::int) from pick p \
+               on conflict (work_id) do update \
+                  set agent_id = excluded.agent_id, operator_id = excluded.operator_id, \
+                      slot_generation = excluded.slot_generation, mode = excluded.mode, turn_id = null, \
+                      claimed_at = now(), renewed_at = now(), lease_expires_at = excluded.lease_expires_at, \
+                      released_at = null, release_reason = null, attempts = work_claim.attempts + 1 \
+                where work_claim.released_at is not null or work_claim.lease_expires_at <= now() \
+               returning work_id, attempts, lease_expires_at \
+             ) \
+             select p.id::text, p.agent_id::text, p.channel_id::text, p.thread_root_id::text, p.root_id::text, i.attempts, ",
+            crate::iso!("i.lease_expires_at"),
+            " from pick p left join ins i on i.work_id = p.id"
+        )
+    };
+}
+pub const CLAIM_SQL: &str = claim_sql!("");
+/// [`CLAIM_SQL`] 의 pull 판 — 잠금 안에서도 [`pull_only!`] 를 다시 본다.
+pub const PULL_CLAIM_SQL: &str = claim_sql!(pull_only!());
 
 /// 묶어서 갱신 — 이 오퍼레이터(`$1`)가 쥔 살아 있는 줄 가운데 `$3`(작업)·`$4`(그 작업을 잡을 때 받은 횟수) 짝이 맞는 것만
 /// 만료를 민다. 돌려주는 것은 갱신된 작업 id. 이미 만료됐거나, 다시 잡혀 횟수가 달라졌거나, 그 사이 자격(허용 표·회수·개인
@@ -243,6 +296,17 @@ pub const RELEASE_SQL: &str = concat!(
 pub const NOTE_TURN_SQL: &str = concat!(
     "update work_claim c set turn_id = $3::uuid \
       where c.work_id = $2::uuid and c.operator_id = $1::uuid and c.attempts = $4::int and ",
+    live!("c")
+);
+
+/// 턴 임대에 잇기(I2d) — 러너가 임대를 받으며 넘긴 (작업, 횟수)의 줄에 그 임대 id 를 적는다. [`NOTE_TURN_SQL`] 의 조건에 더해
+/// 줄의 에이전트가 임대의 에이전트(`$5`)이고 작업의 스레드가 임대의 스레드(`$6`)일 때만 닿는다 — 러너가 남의 줄·다른 스레드의
+/// 작업을 자기 턴에 잇지 못한다. 기록용이다.
+pub const NOTE_LEASE_SQL: &str = concat!(
+    "update work_claim c set turn_id = $3::uuid \
+      where c.work_id = $2::uuid and c.operator_id = $1::uuid and c.attempts = $4::int \
+        and c.agent_id = $5::uuid \
+        and exists (select 1 from work w where w.id = c.work_id and w.thread_root_id = $6::uuid) and ",
     live!("c")
 );
 
@@ -347,9 +411,32 @@ pub async fn claim_narrowed_with(
     {
         return Ok(Err(Refusal::BadRequest));
     }
+    claim_one(
+        pool,
+        (CANDIDATE_SQL, CLAIM_SQL),
+        operator_id,
+        slot_generation,
+        lease,
+        agents,
+        thread_root_id,
+    )
+    .await
+    .map(Ok)
+}
+
+/// 후보 하나를 골라 잡는다 — `sql` 은 (후보 보기, 잡는 문장) 짝이다(좁힌 잡기 또는 pull). 인자는 이미 본 것으로 친다.
+async fn claim_one(
+    pool: &PgPool,
+    sql: (&'static str, &'static str),
+    operator_id: &str,
+    slot_generation: i64,
+    lease: Option<i32>,
+    agents: Option<&[String]>,
+    thread_root_id: Option<&str>,
+) -> sqlx::Result<Option<Claimed>> {
     for _ in 0..RACE_RETRIES {
         // ① 잠그지 않고 후보와 그 뿌리를 본다.
-        let cand: Option<(String, String)> = sqlx::query_as(CANDIDATE_SQL)
+        let cand: Option<(String, String)> = sqlx::query_as(sql.0)
             .bind(operator_id)
             .bind(agents)
             .bind(None::<&str>)
@@ -357,7 +444,7 @@ pub async fn claim_narrowed_with(
             .fetch_optional(pool)
             .await?;
         let Some((cand_id, root_id)) = cand else {
-            return Ok(Ok(None));
+            return Ok(None);
         };
         // ② 그 뿌리의 줄에 서고 ③ 조건을 다시 보며 적는다. 트랜잭션이 끝나면 잠금이 풀린다.
         let mut tx = pool.begin().await?;
@@ -365,7 +452,7 @@ pub async fn claim_narrowed_with(
             .bind(&root_id)
             .execute(&mut *tx)
             .await?;
-        let row: Option<ClaimRow> = sqlx::query_as(CLAIM_SQL)
+        let row: Option<ClaimRow> = sqlx::query_as(sql.1)
             .bind(operator_id)
             .bind(agents)
             .bind(&cand_id)
@@ -385,7 +472,7 @@ pub async fn claim_narrowed_with(
             Some(lease_expires_at),
         )) = row
         {
-            return Ok(Ok(Some(Claimed {
+            return Ok(Some(Claimed {
                 work_id,
                 agent_id,
                 channel_id,
@@ -393,11 +480,88 @@ pub async fn claim_narrowed_with(
                 root_id,
                 attempts,
                 lease_expires_at,
-            })));
+            }));
         }
         // 줄을 기다리는 사이 그 후보를 못 잡게 됐다(남이 잡았거나 겹치는 작업이 먼저 잡혔다) — 다시 고른다.
     }
-    Ok(Ok(None))
+    Ok(None)
+}
+
+/// 좁히지 않은 잡기(I2d pull) — 이 오퍼레이터가 돌릴 수 있고 **할 일이 있는** 작업을 앞에서부터 많아야 `max` 개([`PULL_MAX`] 로 자른다)
+/// 잡는다. `agents` 는 후보를 좁히기만 한다. 자격·순서·경로 겹침은 좁힌 잡기와 같은 문장이 판정한다. `on` 은 잡기 스위치와
+/// pull 스위치·권한을 함께 본 값이다.
+pub async fn pull_with(
+    pool: &PgPool,
+    on: bool,
+    operator_id: &str,
+    slot_generation: i64,
+    lease: Option<i32>,
+    agents: Option<&[String]>,
+    max: usize,
+) -> sqlx::Result<Result<Vec<Claimed>, Refusal>> {
+    if !on {
+        return Ok(Err(Refusal::PullDisabled));
+    }
+    if !is_uuid_shaped(operator_id) || slot_generation < 0 || !agents.is_none_or(ids_ok) || max == 0
+    {
+        return Ok(Err(Refusal::BadRequest));
+    }
+    let mut out = Vec::new();
+    for _ in 0..max.min(PULL_MAX) {
+        let got = claim_one(
+            pool,
+            (PULL_CANDIDATE_SQL, PULL_CLAIM_SQL),
+            operator_id,
+            slot_generation,
+            lease,
+            agents,
+            None,
+        )
+        .await?;
+        match got {
+            Some(c) => out.push(c),
+            None => break,
+        }
+    }
+    Ok(Ok(out))
+}
+
+/// pull 스위치(`HARKROOM_WORK_PULL`, `on`·`1`·`true` 만 켬, 기본 꺼짐) — 잡기 스위치가 켜져 있을 때만 뜻이 있다.
+pub(crate) fn pull_switch_from_env() -> bool {
+    switch_on(crate::env_once::get(&crate::env_once::WORK_PULL))
+}
+
+/// 러너가 턴 임대를 받으며 넘긴 줄에 그 임대를 적는다([`NOTE_LEASE_SQL`]) — 적었으면 `true`.
+pub async fn note_lease_with(
+    pool: &PgPool,
+    on: bool,
+    operator_id: &str,
+    held: &Held,
+    lease_id: &str,
+    agent_id: &str,
+    thread_root_id: &str,
+) -> sqlx::Result<Result<bool, Refusal>> {
+    if !on {
+        return Ok(Err(Refusal::Disabled));
+    }
+    if ![operator_id, lease_id, agent_id, thread_root_id]
+        .iter()
+        .all(|s| is_uuid_shaped(s))
+        || !held_ok(std::slice::from_ref(held))
+    {
+        return Ok(Err(Refusal::BadRequest));
+    }
+    let n = sqlx::query(NOTE_LEASE_SQL)
+        .bind(operator_id)
+        .bind(&held.work_id)
+        .bind(lease_id)
+        .bind(held.attempts)
+        .bind(agent_id)
+        .bind(thread_root_id)
+        .execute(pool)
+        .await?
+        .rows_affected();
+    Ok(Ok(n == 1))
 }
 
 /// 오퍼레이터가 아직 쥐고 있다고 말한 작업들의 임대를 민다. 돌려주는 것은 실제로 갱신된 작업 id — 빠진 것은 잃은 줄이다.
@@ -535,7 +699,7 @@ mod tests {
 
     #[test]
     fn every_write_is_bound_to_the_operator_and_a_live_row() {
-        for sql in [RENEW_SQL, RELEASE_SQL, NOTE_TURN_SQL] {
+        for sql in [RENEW_SQL, RELEASE_SQL, NOTE_TURN_SQL, NOTE_LEASE_SQL] {
             assert!(sql.contains("c.operator_id = $1::uuid"), "{sql}");
             assert!(
                 sql.contains("c.released_at is null and c.lease_expires_at > now()"),
@@ -544,13 +708,22 @@ mod tests {
         }
         // 펜싱: 갱신·놓기·턴 적기는 잡을 때 받은 횟수가 같을 때만 닿는다.
         assert!(RENEW_SQL.contains("c.attempts = h.attempts"));
-        for sql in [RELEASE_SQL, NOTE_TURN_SQL] {
+        for sql in [RELEASE_SQL, NOTE_TURN_SQL, NOTE_LEASE_SQL] {
             assert!(sql.contains("c.attempts = $4::int"), "{sql}");
         }
+        // 턴 잇기는 줄의 에이전트·작업의 스레드가 임대와 같을 때만 닿는다.
+        assert!(NOTE_LEASE_SQL.contains("c.agent_id = $5::uuid"));
+        assert!(NOTE_LEASE_SQL.contains("w.thread_root_id = $6::uuid"));
         // 잡는 문장과 갱신은 허용 표·회수·개인 자격증명 규칙을 스스로 본다.
         assert!(CLAIM_SQL.contains("al.operator_id = $1::uuid"));
         assert!(RENEW_SQL.contains("al.agent_id = c.agent_id and al.operator_id = c.operator_id"));
-        for sql in [CANDIDATE_SQL, CLAIM_SQL, RENEW_SQL] {
+        for sql in [
+            CANDIDATE_SQL,
+            CLAIM_SQL,
+            RENEW_SQL,
+            PULL_CANDIDATE_SQL,
+            PULL_CLAIM_SQL,
+        ] {
             assert!(sql.contains("o.revoked_at is null"), "{sql}");
             assert!(sql.contains("a.deleted_at is null"), "{sql}");
             assert!(
@@ -573,6 +746,24 @@ mod tests {
         // 후보 보기는 아무것도 잠그지 않고, 뿌리 잠금은 트랜잭션과 함께 풀린다.
         assert!(!CANDIDATE_SQL.contains("for update"));
         assert!(ROOT_LOCK_SQL.contains("pg_advisory_xact_lock"));
+    }
+
+    #[test]
+    fn pull_only_takes_work_with_unread_input_and_backs_off() {
+        for sql in [PULL_CANDIDATE_SQL, PULL_CLAIM_SQL] {
+            // 자격은 좁힌 잡기와 같은 문장이다 — 인증된 연결의 오퍼레이터 허용 표.
+            assert!(sql.contains("al.operator_id = $1::uuid"), "{sql}");
+            assert!(sql.contains("ib.account_id = w.assignee_account_id and ib.read_at is null"));
+            assert!(sql.contains("coalesce(im.thread_root_id, im.id) = w.thread_root_id"));
+            assert!(sql.contains(&format!(
+                "least(pb.attempts, {PULL_BACKOFF_MAX_STEPS}) * {PULL_BACKOFF_STEP_SECS}"
+            )));
+        }
+        // 좁힌 잡기는 인박스를 읽지 않는다(권한이 없어도 돈다).
+        for sql in [CANDIDATE_SQL, CLAIM_SQL] {
+            assert!(!sql.contains("inbox"), "{sql}");
+        }
+        assert_eq!(Refusal::PullDisabled.code(), "work_pull_disabled");
     }
 
     #[test]

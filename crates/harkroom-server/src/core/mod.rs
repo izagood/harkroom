@@ -196,6 +196,7 @@ pub mod wake_preempt;
 pub mod work;
 pub mod work_claim;
 pub mod work_claim_frames;
+pub mod work_run;
 pub mod work_shadow;
 pub mod ws;
 

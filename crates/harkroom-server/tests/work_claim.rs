@@ -239,10 +239,10 @@ async fn eligibility_and_order() {
     let rows = claim_rows(a, &t).await;
     assert_eq!(rows, 0);
 
-    // 잡을 수 없는 것들: 담당 없음 · 허용 표에 없는 에이전트 · 이미 도는 작업 · 닫힌 작업.
+    // 잡을 수 없는 것들: 담당 없음 · 허용 표에 없는 에이전트 · 닫힌 작업.
+    // (`running`·`waiting` 은 I2d 부터 잡을 수 있다 — `pull_takes_only_work_with_unread_input` 이 본다.)
     work(a, &t, None, Some(&owner), "open", 60).await;
     work(a, &t, Some(&unlisted), Some(&owner), "open", 60).await;
-    work(a, &t, Some(&agent), Some(&owner), "running", 60).await;
     work(a, &t, Some(&agent), Some(&owner), "done", 60).await;
     let personal_work = work(a, &t, Some(&personal), Some(&agent), "open", 20).await;
     let human_work = work(a, &t, Some(&agent), Some(&owner), "open", 5).await;
@@ -867,4 +867,379 @@ async fn frames_narrow_by_thread_and_pass_attempts_through() {
     .await
     .unwrap();
     assert_eq!(oldest["work"]["workId"], old);
+}
+
+/// 그 스레드에 글 하나를 올리고 `to` 의 인박스에 안 읽힌 줄을 넣는다. 돌려주는 것은 글 id.
+async fn unread(admin: &PgPool, (channel, root): &(String, String), by: &str, to: &str) -> String {
+    let m: String = sqlx::query_scalar(
+        "insert into message(channel_id, author_id, body, kind, thread_root_id) \
+         values ($1::uuid, $2::uuid, 'hi', 'user', $3::uuid) returning id::text",
+    )
+    .bind(channel)
+    .bind(by)
+    .bind(root)
+    .fetch_one(admin)
+    .await
+    .unwrap();
+    sqlx::query(
+        "insert into inbox (account_id, message_id, reason) values ($1::uuid, $2::uuid, 'mention')",
+    )
+    .bind(to)
+    .bind(&m)
+    .execute(admin)
+    .await
+    .unwrap();
+    m
+}
+
+#[tokio::test]
+async fn pull_takes_only_work_with_unread_input() {
+    use harkroom_server::core::work_claim::{PULL_MAX, WORK_PULL_PRIVILEGES, pull_with};
+    let Some(db) = db().await else { return };
+    let a = &db.admin;
+    let missing = harkroom_server::write::missing_in(&db.w, WORK_PULL_PRIVILEGES, &[])
+        .await
+        .unwrap();
+    assert!(missing.is_empty(), "{missing:?}");
+    let owner = account(a, "human", "wc8-owner").await;
+    let agent = account(a, "agent", "wc8-agent").await;
+    let other = account(a, "agent", "wc8-other").await;
+    let op = operator(a, &owner, "wc8-op").await;
+    let stranger_op = operator(a, &owner, "wc8-stranger").await;
+    allow(a, &agent, &op).await;
+    let (t_idle, t_open, t_wait, t_run, t_other) = (
+        thread(a, &owner, "wc8-idle").await,
+        thread(a, &owner, "wc8-open").await,
+        thread(a, &owner, "wc8-wait").await,
+        thread(a, &owner, "wc8-run").await,
+        thread(a, &owner, "wc8-other").await,
+    );
+    // 할 일 없는 옛 열린 작업 — 가장 오래됐지만 pull 은 잡지 않는다(잡으면 러너가 빈손으로 반납하고 또 잡는 고리가 된다).
+    work(a, &t_idle, Some(&agent), Some(&owner), "open", 90).await;
+    let w_open = work(a, &t_open, Some(&agent), Some(&owner), "open", 30).await;
+    let w_wait = work(a, &t_wait, Some(&agent), Some(&owner), "waiting", 20).await;
+    let w_run = work(a, &t_run, Some(&agent), Some(&owner), "running", 10).await;
+    // 허용 표에 없는 에이전트의 작업은 안 읽힌 글이 있어도 못 잡는다.
+    work(a, &t_other, Some(&other), Some(&owner), "open", 95).await;
+    for (t, to) in [
+        (&t_open, &agent),
+        (&t_wait, &agent),
+        (&t_run, &agent),
+        (&t_other, &other),
+    ] {
+        unread(a, t, &owner, to).await;
+    }
+
+    // 꺼져 있으면(스위치 또는 권한) 아무것도 잡지 않는다.
+    let off = pull_with(&db.w, false, &op, 1, None, None, 4)
+        .await
+        .unwrap();
+    assert_eq!(off, Err(Refusal::PullDisabled));
+    assert_eq!(
+        pull_with(&db.w, true, &op, 1, None, None, 0).await.unwrap(),
+        Err(Refusal::BadRequest)
+    );
+    // 자격 없는 오퍼레이터는 빈 목록.
+    let none = pull_with(&db.w, true, &stranger_op, 1, None, None, 4)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(none.is_empty());
+
+    // 빈 칸 2개 → 앞에서부터 2개만. 상태가 waiting·running 이어도 안 읽힌 글이 있으면 후보다.
+    let two = pull_with(&db.w, true, &op, 1, None, None, 2)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        two.iter().map(|c| c.work_id.as_str()).collect::<Vec<_>>(),
+        [w_open.as_str(), w_wait.as_str()]
+    );
+    let rest = pull_with(&db.w, true, &op, 1, None, None, PULL_MAX + 50)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        rest.iter().map(|c| c.work_id.as_str()).collect::<Vec<_>>(),
+        [w_run.as_str()]
+    );
+    assert_eq!(claim_rows(a, &t_idle).await, 0);
+    assert_eq!(claim_rows(a, &t_other).await, 0);
+    // 잡아도 작업 상태는 그대로다.
+    let st: String = sqlx::query_scalar("select state from work where id = $1::uuid")
+        .bind(&w_open)
+        .fetch_one(a)
+        .await
+        .unwrap();
+    assert_eq!(st, "open");
+
+    // 놓아도 바로 되잡지 않는다(잡힌 횟수 × 30초 쉰다) — 러너가 못 뜨는 작업을 되풀이해 잡지 않는다.
+    assert_eq!(
+        release_with(&db.w, true, &op, &held(&w_open, 1), ReleaseReason::Released)
+            .await
+            .unwrap(),
+        Ok(true)
+    );
+    assert!(
+        pull_with(&db.w, true, &op, 1, None, None, 4)
+            .await
+            .unwrap()
+            .unwrap()
+            .is_empty()
+    );
+    sqlx::query(
+        "update work_claim set claimed_at = now() - interval '31 seconds' where work_id = $1::uuid",
+    )
+    .bind(&w_open)
+    .execute(a)
+    .await
+    .unwrap();
+    let again = pull_with(&db.w, true, &op, 1, None, None, 4)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(again.len(), 1);
+    assert_eq!(
+        (again[0].work_id.as_str(), again[0].attempts),
+        (w_open.as_str(), 2)
+    );
+    // 글을 읽으면(러너가 당겼다) 더는 후보가 아니다.
+    assert_eq!(
+        release_with(&db.w, true, &op, &held(&w_open, 2), ReleaseReason::Released)
+            .await
+            .unwrap(),
+        Ok(true)
+    );
+    sqlx::query(
+        "update work_claim set claimed_at = now() - interval '10 minutes' where work_id = $1::uuid",
+    )
+    .bind(&w_open)
+    .execute(a)
+    .await
+    .unwrap();
+    sqlx::query("update inbox set read_at = now() where account_id = $1::uuid")
+        .bind(&agent)
+        .execute(a)
+        .await
+        .unwrap();
+    assert!(
+        pull_with(&db.w, true, &op, 1, None, None, 4)
+            .await
+            .unwrap()
+            .unwrap()
+            .is_empty()
+    );
+
+    // 프레임: 꺼진 pull 은 `work_pull_disabled`, 잡기까지 꺼져 있으면 `work_claim_disabled`.
+    use harkroom_server::core::work_claim_frames::handle_with;
+    let ask = frame(
+        serde_json::json!({"type": "work.pull", "requestId": "p1", "slotGeneration": 1, "max": 2}),
+    );
+    assert_eq!(
+        handle_with(&db.w, true, false, &op, &ask).await.unwrap()["error"],
+        "work_pull_disabled"
+    );
+    assert_eq!(
+        handle_with(&db.w, false, true, &op, &ask).await.unwrap()["error"],
+        "work_claim_disabled"
+    );
+    let ok = handle_with(&db.w, true, true, &op, &ask).await.unwrap();
+    assert_eq!(ok["type"], "work.pulled");
+    assert!(
+        ok["works"].as_array().unwrap().is_empty() && ok.get("error").is_none(),
+        "{ok}"
+    );
+}
+
+/// 턴 임대 한 줄(그 에이전트 × 그 스레드, 살아 있음). 돌려주는 것은 임대 id.
+async fn lease(
+    admin: &PgPool,
+    agent: &str,
+    op: &str,
+    (channel, root): &(String, String),
+    cause: &str,
+) -> String {
+    sqlx::query_scalar(
+        "insert into secret_turn_lease (token_hash, agent_id, operator_id, cause_message_id, channel_id, thread_root_id, expires_at) \
+         values (md5(random()::text || clock_timestamp()::text), $1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::uuid, now() + interval '10 minutes') \
+         returning id::text",
+    )
+    .bind(agent)
+    .bind(op)
+    .bind(cause)
+    .bind(channel)
+    .bind(root)
+    .fetch_one(admin)
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn turn_start_notes_the_claim_and_moves_the_root() {
+    use harkroom_server::core::work_run::{Started, turn_started_with, turn_waits};
+    let Some(db) = db().await else { return };
+    let a = &db.admin;
+    let owner = account(a, "human", "wc9-owner").await;
+    let agent = account(a, "agent", "wc9-agent").await;
+    let other = account(a, "agent", "wc9-other").await;
+    let op = operator(a, &owner, "wc9-op").await;
+    let other_op = operator(a, &owner, "wc9-other-op").await;
+    allow(a, &agent, &op).await;
+    allow(a, &other, &op).await;
+    let t = thread(a, &owner, "wc9-ch").await;
+    let t2 = thread(a, &owner, "wc9-ch2").await;
+    let w = work(a, &t, Some(&agent), Some(&owner), "open", 5).await;
+    let foreign = work(a, &t2, Some(&other), Some(&owner), "open", 5).await;
+    let cause = unread(a, &t, &owner, &agent).await;
+    let c = claim_next_with(
+        &db.w,
+        true,
+        &op,
+        0,
+        None,
+        Some(std::slice::from_ref(&agent)),
+    )
+    .await
+    .unwrap()
+    .unwrap()
+    .unwrap();
+    assert_eq!(c.work_id, w);
+    let cf = claim_next_with(
+        &db.w,
+        true,
+        &op,
+        0,
+        None,
+        Some(std::slice::from_ref(&other)),
+    )
+    .await
+    .unwrap()
+    .unwrap()
+    .unwrap();
+    assert_eq!(cf.work_id, foreign);
+    let l = lease(a, &agent, &op, &t, &cause).await;
+    let started = |work: Option<Held>, operator: &str| Started {
+        lease_id: l.clone(),
+        agent_id: agent.clone(),
+        operator_id: operator.to_string(),
+        thread_root_id: t.1.clone(),
+        cause_message_id: cause.clone(),
+        work,
+    };
+    let turn_of = |id: String| async move {
+        sqlx::query_scalar::<_, Option<String>>(
+            "select turn_id::text from work_claim where work_id = $1::uuid",
+        )
+        .bind(id)
+        .fetch_one(a)
+        .await
+        .unwrap()
+    };
+    let state_of = |id: String| async move {
+        sqlx::query_scalar::<_, String>("select state from work where id = $1::uuid")
+            .bind(id)
+            .fetch_one(a)
+            .await
+            .unwrap()
+    };
+
+    // 적지 못하는 것들: 틀린 횟수 · 남의 오퍼레이터 · 다른 에이전트·다른 스레드의 줄(자기 턴에 남의 작업을 잇지 못한다).
+    for (held_row, operator) in [
+        (held(&w, 2), op.as_str()),
+        (held(&w, 1), other_op.as_str()),
+        (held(&foreign, 1), op.as_str()),
+    ] {
+        let r = turn_started_with(a, false, true, &started(Some(held_row), operator))
+            .await
+            .unwrap();
+        assert_eq!(r, (false, false));
+    }
+    assert_eq!(turn_of(w.clone()).await, None);
+    assert_eq!(turn_of(foreign.clone()).await, None);
+    // 둘 다 꺼져 있으면 아무것도 안 한다.
+    assert_eq!(
+        turn_started_with(a, false, false, &started(Some(held(&w, 1)), &op))
+            .await
+            .unwrap(),
+        (false, false)
+    );
+    assert_eq!(state_of(w.clone()).await, "open");
+
+    // 맞는 줄이면 임대 id 가 적히고(기록), 상태 스위치가 켜져 있으면 뿌리가 running 이 된다.
+    let r = turn_started_with(a, true, true, &started(Some(held(&w, 1)), &op))
+        .await
+        .unwrap();
+    assert_eq!(r, (true, true));
+    assert_eq!(turn_of(w.clone()).await.as_deref(), Some(l.as_str()));
+    assert_eq!(state_of(w.clone()).await, "running");
+    // 되풀이해도 사건은 한 줄이다(이미 running).
+    assert_eq!(
+        turn_started_with(a, true, false, &started(None, &op))
+            .await
+            .unwrap(),
+        (false, false)
+    );
+    let events: Vec<serde_json::Value> = sqlx::query_scalar(
+        "select payload from work_event where work_id = $1::uuid and kind = 'state' order by id",
+    )
+    .bind(&w)
+    .fetch_all(a)
+    .await
+    .unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["from"], "open");
+    assert_eq!(events[0]["to"], "running");
+    assert_eq!(events[0]["leaseId"], l);
+
+    // 살아 있는 임대가 있는 동안에는 waiting 으로 옮기지 않는다.
+    assert!(
+        !turn_waits(a, &w, &agent, &l, "waiting_on_wake")
+            .await
+            .unwrap()
+    );
+    sqlx::query("update secret_turn_lease set ended_at = now() where id = $1::uuid")
+        .bind(&l)
+        .execute(a)
+        .await
+        .unwrap();
+    // 남의 작업은 못 옮긴다.
+    assert!(
+        !turn_waits(a, &w, &other, &l, "waiting_on_wake")
+            .await
+            .unwrap()
+    );
+    assert!(
+        turn_waits(a, &w, &agent, &l, "waiting_on_wake")
+            .await
+            .unwrap()
+    );
+    assert_eq!(state_of(w.clone()).await, "waiting");
+    assert!(
+        !turn_waits(a, &w, &agent, &l, "waiting_on_wake")
+            .await
+            .unwrap()
+    );
+    // 다음 턴이 서면 다시 running(작업 id 를 안 넘긴 옛 러너도 — 스레드의 열린 작업으로 찾는다).
+    assert_eq!(
+        turn_started_with(a, true, true, &started(None, &op))
+            .await
+            .unwrap(),
+        (false, true)
+    );
+    assert_eq!(state_of(w.clone()).await, "running");
+    // 닫힌 작업은 다시 열지 않는다.
+    sqlx::query("update work set state = 'done', closed_at = now() where id = $1::uuid")
+        .bind(&w)
+        .execute(a)
+        .await
+        .unwrap();
+    assert_eq!(
+        turn_started_with(a, true, false, &started(Some(held(&w, 1)), &op))
+            .await
+            .unwrap(),
+        (false, false)
+    );
+    assert_eq!(state_of(w.clone()).await, "done");
+    // 남의 스레드 작업은 상태도 그대로다.
+    assert_eq!(state_of(foreign.clone()).await, "open");
 }

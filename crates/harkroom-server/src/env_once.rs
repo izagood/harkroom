@@ -37,6 +37,10 @@ env_once! {
     PIECE_VERDICT = "HARKROOM_PIECE_VERDICT";
     /// 판에서 잡기 스위치(`work_claim::switch_on`).
     WORK_CLAIM = "HARKROOM_WORK_CLAIM";
+    /// 좁히지 않은 잡기 스위치(`work_claim::pull_switch_from_env`).
+    WORK_PULL = "HARKROOM_WORK_PULL";
+    /// 턴이 서고 끝날 때 뿌리 작업 상태 옮기기 스위치(`work_run::switch_from_env`).
+    WORK_RUN = "HARKROOM_WORK_RUN";
     /// 에이전트별 동시 턴 상한(`turn_cap::parse_cap`).
     AGENT_TURN_CAP = "HARKROOM_AGENT_TURN_CAP";
     /// 하위 결과 모으기 스위치(`split_collect::enabled`).
