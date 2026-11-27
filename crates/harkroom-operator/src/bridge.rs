@@ -484,11 +484,24 @@ impl RunnerLinkHandler for LinkHandler {
             let post = |p: &str, body: String| self.server_post(agent_id, p, body);
             crate::turn_secrets::mount_for(&lease, root, &post, &|l| eprintln!("{l}"), name)
         };
-        if let Some(r) =
-            crate::provider_lane_mount::mount(agent_id, &req, kind, &lane_of, &lane_mount, &|l| {
-                eprintln!("{l}")
-            })
-        {
+        // 그 턴의 실행 조합(J2c 「나」) — 임대만 서버에 보낸다. 주소·비밀은 서버가 임대의 스레드에서 고른다.
+        let combo_mount = |cause: &str| -> Result<crate::turn_secrets::ComboMount, String> {
+            let lease = lock(&self.leases).lookup_for(runner_id, agent_id, Some(cause));
+            let (Some(lease), Some(root)) = (lease, self.secrets.as_ref()) else {
+                return Err("no_lease".into());
+            };
+            let post = |p: &str, body: String| self.server_post(agent_id, p, body);
+            crate::turn_secrets::mount_combo(&lease, root, &post, &|l| eprintln!("{l}"))
+        };
+        if let Some(r) = crate::provider_lane_mount::mount(
+            agent_id,
+            &req,
+            kind,
+            &combo_mount,
+            &lane_of,
+            &lane_mount,
+            &|l| eprintln!("{l}"),
+        ) {
             return Some(r);
         }
         // 비밀 도구(TS turnSecrets — run.ts 순서: turnSlots → providerLaneMount → turnSecrets). 값은 임대 폴더로만 나간다.
@@ -1261,6 +1274,9 @@ mod tests {
             let body = if url.ends_with("/agent/secrets/reveal") {
                 // "sk-lane-value"
                 r#"{"secret":{"id":"sec-1","name":"lane-key","kind":"text","version":1},"valueBase64":"c2stbGFuZS12YWx1ZQ=="}"#
+            } else if url.ends_with(crate::turn_secrets::COMBO_CREDENTIAL_PATH) {
+                // 조합 줄이 없는 스레드 — 로컬 설정 길로 간다.
+                r#"{"comboId":null,"kind":"none","accountPool":null}"#
             } else {
                 "{}"
             };
@@ -1372,12 +1388,17 @@ mod tests {
         // 남의 에이전트로는 그 임대를 못 쓴다.
         let other = fwd("/agent/provider-lane/mount", json!({"cause":"c1"}));
         assert_eq!(status_of(h.on_request("r1", "a2", other, relay)), 409);
-        // 서버에는 reveal 만 나갔다(마운트 길 자체는 안 나간다).
-        assert!(
-            tr.0.lock()
-                .unwrap()
-                .iter()
-                .all(|u| u.ends_with("/agent/secrets/reveal"))
+        // 서버에는 조합 물음과 reveal 만 나갔다(마운트 길 자체는 안 나간다). 조합 물음이 먼저다.
+        let urls = tr.0.lock().unwrap().clone();
+        assert_eq!(
+            urls,
+            vec![
+                format!(
+                    "https://h.example{}",
+                    crate::turn_secrets::COMBO_CREDENTIAL_PATH
+                ),
+                "https://h.example/agent/secrets/reveal".to_string(),
+            ]
         );
         // 턴 끝 — 임대 폴더째 지운다.
         h.on_notice("r1", "a1", json!({"type":"secret.leaseEnded","cause":"c1"}));

@@ -11,10 +11,13 @@
 //!    0600 으로 쓴다(`turn_secrets::mount_for`). 답은 `{lane: {baseUrl, path}}` — 값은 응답에 싣지 않는다.
 //!    - relay 에서만(브릿지·hook·wrapper 는 403 — 브릿지는 하네스가 띄운 것이라 모델이 고를 수 있다).
 //!    - 요청 본문은 `cause` 하나만 읽는다. base URL·비밀 이름은 로컬 설정에서만 온다(security ⓓ).
+//!    - 그 턴 스레드에 **실행 조합 줄**이 있으면(J2c) 로컬 설정보다 먼저다: 그 턴 임대만 서버에 보내 주소와 값을 받는다
+//!      (`turn_secrets::mount_combo`). 조합이 있는데 쓸 수 없으면 실패다 — 로컬 설정의 키로 대신 돌리지 않는다.
 //!    - 설정이 없거나 틀리면 `{lane: null}`(200). 러너는 lane 으로 떴는데 이 답이면 턴을 멈춘다.
 //!    - 실패는 코드만: 임대 없음 409 `no_lease`, 그 밖 502 `<code>`. 로그에 이름·주소·값을 찍지 않는다.
 //!    - 사슬에서 `turn_secrets` **앞**에 선다(TS run.ts 순서).
 use crate::local_agents::ProviderLane;
+use crate::turn_secrets::ComboMount;
 use crate::turn_slots::TURN_SLOTS_PATH;
 use harkroom_proto::p1::{RunnerLinkKind, RunnerLinkRequest, RunnerLinkResponse};
 use serde_json::{Value, json};
@@ -101,6 +104,7 @@ pub fn mount(
     agent_id: &str,
     req: &RunnerLinkRequest,
     from: RunnerLinkKind,
+    combo_for: &dyn Fn(&str) -> Result<ComboMount, String>,
     lane_of: &dyn Fn() -> Option<ProviderLane>,
     mount_for: &dyn Fn(&str, &str) -> Result<PathBuf, String>,
     log: &dyn Fn(&str),
@@ -122,6 +126,33 @@ pub fn mount(
     let Some(cause) = cause else {
         return Some(refuse(req, 400, "bad_request"));
     };
+    let failed = |raw: &str| {
+        // 형식 밖 코드(서버가 낸 긴 글·경로 등)는 `unavailable` 로 접는다 — 로그·응답에 원문을 싣지 않는다.
+        let code = mount_failure_code(raw);
+        // 거절 코드는 비밀이 아니다 — 러너가 실패 통지에 싣는다. 이름·주소는 찍지 않는다.
+        log(&format!(
+            "provider-lane: agent={agent_id} 비밀을 못 꺼냈다 — {code}"
+        ));
+        let status = if code == "no_lease" { 409 } else { 502 };
+        Some(refuse(req, status, &code))
+    };
+    // 그 턴의 실행 조합을 먼저 본다(J2c 「나」) — 주소·비밀은 서버가 그 턴 임대에서 고른다. 조합 줄이 없을 때만 로컬 설정 길이다.
+    // 조합이 있는데 쓸 수 없으면(거절·서버 안 닿음·풀 조합) 로컬 설정의 키로 대신 돌리지 않는다.
+    match combo_for(&cause) {
+        Ok(ComboMount::Key { base_url, path }) => {
+            return Some(answer(
+                req,
+                200,
+                json!({"lane": {"baseUrl": base_url, "path": path.to_string_lossy()}}),
+            ));
+        }
+        Ok(ComboMount::None) => {}
+        // 임대가 없으면 조합을 물을 수 없다 — 로컬 설정도 없으면 지금까지처럼 `{lane: null}` 이다.
+        Err(raw) if raw == "no_lease" && lane_of().is_none() => {
+            return Some(answer(req, 200, json!({"lane": null})));
+        }
+        Err(raw) => return failed(&raw),
+    }
     let Some(lane) = lane_of() else {
         return Some(answer(req, 200, json!({"lane": null})));
     };
@@ -131,16 +162,7 @@ pub fn mount(
             200,
             json!({"lane": {"baseUrl": lane.base_url, "path": path.to_string_lossy()}}),
         )),
-        Err(raw) => {
-            // 형식 밖 코드(서버가 낸 긴 글·경로 등)는 `unavailable` 로 접는다 — 로그·응답에 원문을 싣지 않는다.
-            let code = mount_failure_code(&raw);
-            // 거절 코드는 비밀이 아니다 — 러너가 실패 통지에 싣는다. 이름·주소는 찍지 않는다.
-            log(&format!(
-                "provider-lane: agent={agent_id} 비밀을 못 꺼냈다 — {code}"
-            ));
-            let status = if code == "no_lease" { 409 } else { 502 };
-            Some(refuse(req, status, &code))
-        }
+        Err(raw) => failed(&raw),
     }
 }
 
@@ -188,6 +210,14 @@ mod tests {
             base_url: "https://g.example.com/anthropic".into(),
             secret_name: "lane-key".into(),
         })
+    }
+
+    fn no_combo(_: &str) -> Result<ComboMount, String> {
+        Ok(ComboMount::None)
+    }
+
+    fn never_combo(_: &str) -> Result<ComboMount, String> {
+        panic!("조합을 물으면 안 된다")
     }
 
     struct Ports(bool);
@@ -267,9 +297,15 @@ mod tests {
             // 본문의 다른 칸(주소·이름)은 읽지 않는다.
             r#"{"cause":"c1","secretName":"evil","baseUrl":"https://evil.example.com"}"#,
         );
-        let (s, b) = parts(mount("a", &req, RunnerLinkKind::Relay, &lane, &mf, &|l| {
-            lines.borrow_mut().push(l.into())
-        }));
+        let (s, b) = parts(mount(
+            "a",
+            &req,
+            RunnerLinkKind::Relay,
+            &no_combo,
+            &lane,
+            &mf,
+            &|l| lines.borrow_mut().push(l.into()),
+        ));
         assert_eq!(s, 200);
         assert_eq!(
             b,
@@ -292,7 +328,7 @@ mod tests {
             RunnerLinkKind::Hook,
             RunnerLinkKind::Wrapper,
         ] {
-            let (s, b) = parts(mount("a", &ok, k, &no_lane, &never, &log));
+            let (s, b) = parts(mount("a", &ok, k, &never_combo, &no_lane, &never, &log));
             assert_eq!((s, b["error"]["code"].as_str()), (403, Some("forbidden")));
         }
         // cause 없음·빔·너무 김 → 400.
@@ -305,7 +341,15 @@ mod tests {
             long.as_str(),
         ] {
             let r = fwd("POST", PROVIDER_LANE_MOUNT_PATH, body);
-            let (s, _) = parts(mount("a", &r, RunnerLinkKind::Relay, &lane, &never, &log));
+            let (s, _) = parts(mount(
+                "a",
+                &r,
+                RunnerLinkKind::Relay,
+                &never_combo,
+                &lane,
+                &never,
+                &log,
+            ));
             assert_eq!(s, 400, "{body}");
         }
         // 설정 없음 → {lane:null}, 마운트 안 함.
@@ -313,6 +357,7 @@ mod tests {
             "a",
             &ok,
             RunnerLinkKind::Relay,
+            &no_combo,
             &|| None,
             &never,
             &log,
@@ -320,7 +365,18 @@ mod tests {
         assert_eq!((s, b), (200, json!({"lane": null})));
         // 다른 메서드·길은 지나간다.
         let get = fwd("GET", PROVIDER_LANE_MOUNT_PATH, "{}");
-        assert!(mount("a", &get, RunnerLinkKind::Relay, &lane, &never, &log).is_none());
+        assert!(
+            mount(
+                "a",
+                &get,
+                RunnerLinkKind::Relay,
+                &never_combo,
+                &lane,
+                &never,
+                &log
+            )
+            .is_none()
+        );
     }
 
     #[test]
@@ -333,9 +389,15 @@ mod tests {
         ] {
             let lines = RefCell::new(Vec::<String>::new());
             let mf = |_: &str, _: &str| -> Result<PathBuf, String> { Err(code.into()) };
-            let (s, b) = parts(mount("a", &ok, RunnerLinkKind::Relay, &lane, &mf, &|l| {
-                lines.borrow_mut().push(l.into())
-            }));
+            let (s, b) = parts(mount(
+                "a",
+                &ok,
+                RunnerLinkKind::Relay,
+                &no_combo,
+                &lane,
+                &mf,
+                &|l| lines.borrow_mut().push(l.into()),
+            ));
             assert_eq!(s, want);
             assert_eq!(b, json!({"error": {"code": code}}));
             // 로그에 비밀 이름·주소가 없다.
@@ -361,9 +423,15 @@ mod tests {
         ] {
             let lines = RefCell::new(Vec::<String>::new());
             let mf = |_: &str, _: &str| -> Result<PathBuf, String> { Err(raw.into()) };
-            let (s, b) = parts(mount("a", &ok, RunnerLinkKind::Relay, &lane, &mf, &|l| {
-                lines.borrow_mut().push(l.into())
-            }));
+            let (s, b) = parts(mount(
+                "a",
+                &ok,
+                RunnerLinkKind::Relay,
+                &no_combo,
+                &lane,
+                &mf,
+                &|l| lines.borrow_mut().push(l.into()),
+            ));
             assert_eq!(
                 (s, b),
                 (502, json!({"error": {"code": "unavailable"}})),
@@ -374,5 +442,90 @@ mod tests {
             }
         }
         assert_eq!(mount_failure_code(&"a".repeat(64)), "a".repeat(64));
+    }
+
+    #[test]
+    fn combo_key_wins_over_local_config_and_local_is_never_read() {
+        let never = |_: &str, _: &str| -> Result<PathBuf, String> {
+            panic!("로컬 길로 가면 안 된다")
+        };
+        let no_lane =
+            || -> Option<ProviderLane> { panic!("로컬 설정을 읽으면 안 된다") };
+        let seen = RefCell::new(Vec::<String>::new());
+        let combo = |c: &str| {
+            seen.borrow_mut().push(c.into());
+            Ok(ComboMount::Key {
+                base_url: "https://combo.example.com/v1".into(),
+                path: PathBuf::from("/state/turn-secrets/lease-1/sec-9"),
+            })
+        };
+        // 본문의 다른 칸(조합 id·주소·이름)은 읽지 않는다 — 조합 물음에는 cause 만 간다.
+        let req = fwd(
+            "POST",
+            PROVIDER_LANE_MOUNT_PATH,
+            r#"{"cause":"c1","comboId":"x","baseUrl":"https://evil.example.com","secretName":"evil"}"#,
+        );
+        let (s, b) = parts(mount(
+            "a",
+            &req,
+            RunnerLinkKind::Relay,
+            &combo,
+            &no_lane,
+            &never,
+            &|_| {},
+        ));
+        assert_eq!(s, 200);
+        assert_eq!(
+            b,
+            json!({"lane": {"baseUrl": "https://combo.example.com/v1", "path": "/state/turn-secrets/lease-1/sec-9"}})
+        );
+        assert_eq!(*seen.borrow(), vec!["c1".to_string()]);
+    }
+
+    #[test]
+    fn combo_refusal_never_falls_back_to_local_key() {
+        let never = |_: &str, _: &str| -> Result<PathBuf, String> {
+            panic!("로컬 키로 대신 돌리면 안 된다")
+        };
+        let ok = fwd("POST", PROVIDER_LANE_MOUNT_PATH, r#"{"cause":"c1"}"#);
+        for (raw, status, code) in [
+            ("combo_not_allowed", 502, "combo_not_allowed"),
+            ("combo_unusable", 502, "combo_unusable"),
+            ("combo_mode_mismatch", 502, "combo_mode_mismatch"),
+            ("combo_bad_url", 502, "combo_bad_url"),
+            ("not_granted", 502, "not_granted"),
+            ("unavailable", 502, "unavailable"),
+            ("lease_invalid", 502, "lease_invalid"),
+            // 로컬 설정이 있는 러너는 임대가 없으면 지금처럼 409 다.
+            ("no_lease", 409, "no_lease"),
+            ("https://combo.example.com/v1", 502, "unavailable"),
+        ] {
+            let lines = RefCell::new(Vec::<String>::new());
+            let combo = |_: &str| -> Result<ComboMount, String> { Err(raw.into()) };
+            let (s, b) = parts(mount(
+                "a",
+                &ok,
+                RunnerLinkKind::Relay,
+                &combo,
+                &lane,
+                &never,
+                &|l| lines.borrow_mut().push(l.into()),
+            ));
+            assert_eq!((s, b), (status, json!({"error": {"code": code}})), "{raw}");
+            let l = lines.borrow().join("\n");
+            assert!(!l.contains("example.com") && !l.contains("lane-key"), "{l}");
+        }
+        // 임대도 로컬 설정도 없으면 지금까지처럼 `{lane: null}`.
+        let combo = |_: &str| -> Result<ComboMount, String> { Err("no_lease".into()) };
+        let (s, b) = parts(mount(
+            "a",
+            &ok,
+            RunnerLinkKind::Relay,
+            &combo,
+            &|| None,
+            &never,
+            &|_| {},
+        ));
+        assert_eq!((s, b), (200, json!({"lane": null})));
     }
 }
