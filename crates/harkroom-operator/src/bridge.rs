@@ -1463,6 +1463,184 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// 키 조합 스레드라고 답하는 가짜 서버(J2c 「가」·「나」). 받은 요청을 그대로 적어 둔다.
+    #[derive(Default)]
+    struct ComboTransport(Mutex<Vec<ComboCall>>);
+    /// (메서드, 주소, 머리말, 본문)
+    type ComboCall = (String, String, Vec<(String, String)>, String);
+    impl Transport for ComboTransport {
+        fn send(
+            &self,
+            method: &str,
+            url: &str,
+            headers: &[(String, String)],
+            body: Option<Vec<u8>>,
+        ) -> Result<HttpReply, String> {
+            self.0.lock().unwrap().push((
+                method.into(),
+                url.into(),
+                headers.to_vec(),
+                String::from_utf8(body.unwrap_or_default()).unwrap(),
+            ));
+            let body = if url.ends_with(crate::turn_secrets::COMBO_CREDENTIAL_PATH) {
+                // "sk-combo-value"
+                r#"{"comboId":"c1","kind":"key","baseUrl":"https://combo.example.com/v1","secret":{"id":"sec-9","name":"combo-key","kind":"text","version":1},"valueBase64":"c2stY29tYm8tdmFsdWU="}"#
+            } else {
+                r#"{"comboId":"c1","kind":"key","accountPool":null}"#
+            };
+            Ok(HttpReply {
+                status: 200,
+                content_type: "application/json".into(),
+                body: body.into(),
+            })
+        }
+    }
+
+    /// 러너 모드(`lane`)와 조합을 견주는 판정 재료 — 막은 물음을 적어 둔다. 로컬 설정은 없다.
+    struct ComboLane {
+        lane: std::sync::atomic::AtomicBool,
+        blocked: Mutex<Vec<crate::assignments::ComboWant>>,
+    }
+    impl LanePorts for ComboLane {
+        fn mismatch(&self, _: &str, _: &str) -> bool {
+            false
+        }
+        fn combo_gate(&self, _: &str, _: &str, want: &crate::assignments::ComboWant) -> bool {
+            let lane = self.lane.load(std::sync::atomic::Ordering::SeqCst);
+            let block = match want {
+                crate::assignments::ComboWant::Local => false,
+                crate::assignments::ComboWant::Key => !lane,
+                crate::assignments::ComboWant::Pool(_) => lane,
+            };
+            if block {
+                self.blocked.lock().unwrap().push(want.clone());
+            }
+            block
+        }
+        fn note_mode(&self, _: &str, _: bool) {}
+        fn lane_of(&self, _: &str) -> Option<crate::local_agents::ProviderLane> {
+            None
+        }
+    }
+
+    /// J2c-2 사슬: 키 조합 스레드의 턴 칸은 구독 풀 러너에게 409(자리 안 잡음)이고, 키 모드 러너는 지나가 그 턴 임대로
+    /// 조합 키를 받는다. 서버에는 스레드 id 물음과 임대뿐 — 값은 임대 폴더에만 있고 턴 끝에 지워진다(security N3·N4).
+    #[test]
+    fn combo_key_thread_blocks_pool_runner_then_mounts_for_key_runner() {
+        const THREAD: &str = "0b1c2d3e-4f50-4a61-8b72-9c8d7e6f5a40";
+        let dir = std::env::temp_dir().join(format!("hk-combo-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let tr = Arc::new(ComboTransport::default());
+        let (_srv, _tr0, b) = bridge();
+        let lane = Arc::new(ComboLane {
+            lane: std::sync::atomic::AtomicBool::new(false),
+            blocked: Mutex::new(Vec::new()),
+        });
+        let cell: Arc<OnceLock<Arc<dyn LanePorts>>> = Arc::new(OnceLock::new());
+        let _ = cell.set(lane.clone());
+        let h = LinkHandler {
+            mux: Arc::clone(&b.mux),
+            hub: Arc::clone(&b.hub),
+            transport: tr.clone(),
+            base_url: "https://h.example".into(),
+            token: "op".into(),
+            turn_keys: Arc::new(Mutex::new(TurnKeyLedger::new(|| 0, |_| {}))),
+            slots: Arc::new(Mutex::new(TurnSlots::new(Some(1), || 0, |_| {}))),
+            leases: Arc::new(Mutex::new(TurnLeases::new(|| 0))),
+            secrets: Some(crate::turn_secrets::SecretsRoot { root: dir.clone() }),
+            peek: Arc::new(TurnPeek::new(|| 0)),
+            merge: None,
+            poll_stopped: Arc::new(OnceLock::new()),
+            cleanup_owners: Arc::new(OnceLock::new()),
+            lane: cell,
+            work_claims: Arc::new(OnceLock::new()),
+            lane_gate_log: GateLog::default(),
+        };
+        let relay = RunnerLinkKind::Relay;
+        let take = fwd("/agent/turn-slots", json!({"key": format!("ch/{THREAD}")}));
+        // 구독 풀 러너 — 409 lane_pending.
+        match h.on_request("r1", "a1", take.clone(), relay) {
+            Some(RunnerLinkResponse::HttpResponse {
+                status: 409, body, ..
+            }) => {
+                let v: Value = serde_json::from_str(&body).unwrap();
+                assert_eq!(v["error"]["code"], "lane_pending");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            *lane.blocked.lock().unwrap(),
+            vec![crate::assignments::ComboWant::Key]
+        );
+        // 물음은 그 스레드 id 로, 에이전트 자격으로 한 번 나갔다.
+        {
+            let calls = tr.0.lock().unwrap();
+            assert_eq!(calls.len(), 1);
+            let (m, u, hd, _) = &calls[0];
+            assert_eq!(m, "GET");
+            assert_eq!(
+                u,
+                &format!("https://h.example/agent/exec-combo?threadRootId={THREAD}")
+            );
+            assert!(
+                hd.iter()
+                    .any(|(k, v)| k == crate::forward::AGENT_HEADER && v == "a1")
+            );
+        }
+        // 키 모드로 다시 뜬 러너 — 지나간다. 앞 409 가 자리를 잡지 않았으니 상한 1 안에 든다.
+        lane.lane.store(true, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(status_of(h.on_request("r2", "a1", take, relay)), 200);
+        // 그 턴 임대로 조합 키를 받는다 — 로컬 설정이 없어도 된다.
+        h.on_notice(
+            "r2",
+            "a1",
+            json!({"type":"secret.lease","cause":"c1","leaseId":"L1","token":"tk","expiresAt":"2099-01-01T00:00:00.000Z"}),
+        );
+        // 러너가 본문에 끼운 조합·주소·비밀 이름은 읽지 않는다.
+        let m = fwd(
+            "/agent/provider-lane/mount",
+            json!({"cause":"c1","comboId":"evil","baseUrl":"https://evil.example.com","secretName":"other"}),
+        );
+        let body = match h.on_request("r2", "a1", m.clone(), relay) {
+            Some(RunnerLinkResponse::HttpResponse {
+                status: 200, body, ..
+            }) => body,
+            other => panic!("{other:?}"),
+        };
+        assert!(!body.contains("sk-combo-value"), "{body}");
+        let v: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["lane"]["baseUrl"], "https://combo.example.com/v1");
+        let path = std::path::PathBuf::from(v["lane"]["path"].as_str().unwrap());
+        assert_eq!(path, dir.join("L1").join("sec-9"));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "sk-combo-value");
+        {
+            let calls = tr.0.lock().unwrap();
+            let (m, u, _, sent) = calls.last().unwrap();
+            assert_eq!(m, "POST");
+            assert!(u.ends_with(crate::turn_secrets::COMBO_CREDENTIAL_PATH));
+            let sent: Value = serde_json::from_str(sent).unwrap();
+            assert_eq!(sent["leaseId"], "L1");
+            let keys: Vec<&String> = sent.as_object().unwrap().keys().collect();
+            assert!(
+                !keys
+                    .iter()
+                    .any(|k| ["comboId", "baseUrl", "secretName"].contains(&k.as_str())),
+                "{keys:?}"
+            );
+        }
+        // 물러난 옛 러너(다른 러너 id)는 그 임대로 경로를 받지 못한다 — 임대도 로컬 설정도 없어 `{lane:null}` 이다.
+        match h.on_request("r1", "a1", m, relay) {
+            Some(RunnerLinkResponse::HttpResponse {
+                status: 200, body, ..
+            }) => assert_eq!(body, r#"{"lane":null}"#),
+            other => panic!("{other:?}"),
+        }
+        // 턴 끝 — 임대 폴더째 지운다.
+        h.on_notice("r2", "a1", json!({"type":"secret.leaseEnded","cause":"c1"}));
+        assert!(!dir.join("L1").exists(), "턴 끝에 조합 키 파일이 남았다");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// 판정 재료가 걸리기 전(serve 배선 전)에는 새 턴 자리를 막고, 마운트는 `{lane:null}` 이다.
     #[test]
     fn unwired_lane_blocks_new_slots_fail_closed() {
