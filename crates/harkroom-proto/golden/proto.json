@@ -325,6 +325,10 @@
     "agentId": "00000000-aaaa-4bbb-8ccc-000000000001"
    },
    {
+    "type": "runner.parked",
+    "agentId": "00000000-aaaa-4bbb-8ccc-000000000001"
+   },
+   {
     "type": "capabilities",
     "capabilities": {
      "harnesses": [

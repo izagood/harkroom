@@ -422,6 +422,7 @@ mod tests {
             update_channel: None,
             wake_frames: None,
             work_claim: None,
+            pool_agents: None,
         }
     }
 

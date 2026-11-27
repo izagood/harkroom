@@ -790,6 +790,13 @@ pub fn spawn_server_link(
                 reason: None,
                 agent_id: None,
             });
+            // 풀 에이전트의 러너가 스스로 끝났다(코드 0) — 서버에 「깨움이 오면 다시 띄우는 에이전트」라고 알린다. 서버는 이것으로
+            // 러너가 내려간 풀 에이전트를 부를 수 있는 대상으로 본다(알리지 않으면 「접속 안 함」으로 막힌다).
+            if exit.code == Some(0) && frames.is_pool(&exit.agent_id) {
+                let _ = exit_link.send(&OperatorToServerFrame::RunnerParked {
+                    agent_id: exit.agent_id.clone(),
+                });
+            }
             // 78 의 사유(로그인 풀림·PAT 거절·하네스 부재)는 로그 꼬리로만 가린다 — 판정은 한 곳(TS run.ts onExit).
             let reason = crate::runner_log::runner_exit_reason(&exit.tail_lines);
             frames.on_runner_exit(&exit.agent_id, exit.code, reason);
@@ -922,15 +929,21 @@ pub fn spawn_server_link(
     let hello_mux = std::sync::Arc::clone(&mux);
     let labels = crate::hello::device_labels(app_launched, update_channel.as_deref());
     let assign_gen = hello_gen.clone();
+    let hello_frames = std::sync::Arc::clone(&frames);
     let hello = Box::new(move || {
         hello_gen.bump();
-        crate::hello::build_hello_labeled(
+        let mut hello = crate::hello::build_hello_labeled(
             caps(),
             announce_of(&runners_state.runners),
             hello_mux.sessions(),
             version.as_deref(),
             &labels,
-        )
+        );
+        // 다시 붙을 때 — 서버는 앞 연결에서 들은 풀 에이전트를 잊었다. 지금 배정된 풀 에이전트를 다시 알린다(처음 붙을 때는 비어 있다).
+        if let OperatorToServerFrame::Hello { pool_agents, .. } = &mut hello {
+            *pool_agents = Some(hello_frames.pool_agents()).filter(|v| !v.is_empty());
+        }
+        hello
     });
     let frame_mux = std::sync::Arc::clone(&mux);
     let open_frames = std::sync::Arc::clone(&frames);

@@ -79,6 +79,7 @@ const p2OperatorToServer = [
   { type: 'runner.started', agentId: ID, runnerId: RUNNER },
   { type: 'runner.exited', runnerId: RUNNER, code: null },
   { type: 'runner.exited', runnerId: RUNNER, code: 78, reason: 'credential', agentId: ID },
+  { type: 'runner.parked', agentId: ID },
   { type: 'capabilities', capabilities: caps },
   { type: 'status', status: { turns: { running: 1, max: 4 } } },
   { type: 'status', status: { turns: { running: 0, max: null } }, machine: 'f'.repeat(64) },

@@ -7,7 +7,7 @@
 //! 프레임 파서는 TS `parseOperatorFrame` 처럼 **얕다**: `type` 이 아는 것인지·다중화 키 `runnerId` 가 있는지만 본다.
 //! 박동 본문(`status`)은 `parse_operator_status` 가 허용한 칸만 골라 새로 만든다(H5 — 토큰·경로 같은 값이 실려 와도 들지 않는다).
 use serde_json::{Map, Value, json};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::{broadcast, mpsc};
@@ -27,6 +27,7 @@ const OPERATOR_TYPES: &[&str] = &[
     "capabilities",
     "runner.started",
     "runner.exited",
+    "runner.parked",
     "runner.announce",
     "session.started",
     "session.updated",
@@ -69,6 +70,7 @@ const SERVER_TYPES: &[&str] = &[
 ];
 const NO_RUNNER_ID: &[&str] = &[
     "hello",
+    "runner.parked",
     "capabilities",
     "status",
     "upgrade.progress",
@@ -120,7 +122,9 @@ fn parse(raw: &str, known: &[&str]) -> Option<Map<String, Value>> {
     {
         return None;
     }
-    if ty == "agent.restart" && !frame.get("agentId").is_some_and(Value::is_string) {
+    if matches!(ty.as_str(), "agent.restart" | "runner.parked")
+        && !frame.get("agentId").is_some_and(Value::is_string)
+    {
         return None;
     }
     if matches!(ty.as_str(), "wake" | "wake.ack")
@@ -532,6 +536,9 @@ struct LiveOperator {
     capabilities: Option<Value>,
     /// hello 에 `wakeFrames: true` 가 있었는가(E2a) — 없으면 `wake` 프레임을 보내지 않는다. 새 연결은 hello 전까지 false.
     wake_frames: bool,
+    /// 이 연결이 「깨움으로 러너를 빌려 띄운다」고 알린 풀 에이전트(hello 의 `poolAgents` · `runner.parked`). 연결이 바뀌면 비운다.
+    /// 알림일 뿐이다 — 그 에이전트가 이 오퍼레이터에 배정됐는지는 읽는 쪽이 `agent_assignment` 로 따로 본다.
+    pool_agents: HashSet<String>,
     /// runnerId → agentId.
     runners: HashMap<String, String>,
     /// 마지막 박동(허용한 칸만 + `receivedAt`).
@@ -691,6 +698,7 @@ impl OperatorHub {
                     tx,
                     capabilities: None,
                     wake_frames: false,
+                    pool_agents: HashSet::new(),
                     runners: HashMap::new(),
                     status: None,
                 },
@@ -753,6 +761,15 @@ impl OperatorHub {
                     self.cap_event(id, entry.capabilities.as_ref());
                     // 정확히 `true` 일 때만 — 다른 값·없음은 「못 받는다」.
                     entry.wake_frames = frame.get("wakeFrames") == Some(&Value::Bool(true));
+                    entry.pool_agents = frame
+                        .get("poolAgents")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|a| short_text(Some(a), 64))
+                        .take(MAX_STATUS_AGENTS)
+                        .map(str::to_owned)
+                        .collect();
                     entry.runners.clear();
                     for r in frame
                         .get("runners")
@@ -790,6 +807,13 @@ impl OperatorHub {
                     ) {
                         entry.runners.insert(rid.to_owned(), aid.to_owned());
                         refusals.remove(aid);
+                    }
+                }
+                "runner.parked" => {
+                    if let Some(aid) = short_text(frame.get("agentId"), 64)
+                        && entry.pool_agents.len() < MAX_STATUS_AGENTS
+                    {
+                        entry.pool_agents.insert(aid.to_owned());
                     }
                 }
                 "runner.exited" => {
@@ -847,6 +871,15 @@ impl OperatorHub {
             Some(e) if e.wake_frames => e.tx.send(OpOut::Text(frame.to_string())).is_ok(),
             _ => false,
         }
+    }
+
+    /// 이 오퍼레이터가 붙어 있고, `wake` 프레임을 받으며, 그 에이전트를 풀 에이전트로 알렸는가 — 그러면 러너가 내려가 있어도
+    /// 깨움이 러너를 띄운다. 배정 여부는 보지 않는다(부르는 쪽이 `agent_assignment` 에서 읽은 오퍼레이터를 넘긴다).
+    pub fn wakes_pool_agent(&self, operator_id: &str, agent_id: &str) -> bool {
+        self.lock()
+            .live
+            .get(operator_id)
+            .is_some_and(|e| e.wake_frames && e.pool_agents.contains(agent_id))
     }
 
     pub fn is_online(&self, operator_id: &str) -> bool {
@@ -968,6 +1001,49 @@ mod tests {
         let (tx, _rx2) = mpsc::unbounded_channel();
         let _reg2 = hub.add_operator("op", tx);
         assert!(!hub.send_wake("op", &wake));
+    }
+
+    #[test]
+    fn pool_agents_are_known_only_from_this_connection_and_need_wake_frames() {
+        let hello = |extra: &str| {
+            format!(
+                r#"{{"type":"hello","protocol":1,"capabilities":{{}},"runners":[],"sessions":[]{extra}}}"#
+            )
+        };
+        assert!(parse_operator_frame(r#"{"type":"runner.parked","agentId":"a1"}"#).is_some());
+        assert!(parse_operator_frame(r#"{"type":"runner.parked"}"#).is_none());
+        assert!(parse_operator_frame(r#"{"type":"runner.parked","agentId":7}"#).is_none());
+        // hello 전·알리지 않은 에이전트·다른 오퍼레이터는 아니다.
+        let (hub, reg, _rx) = hub_with("op");
+        assert!(!hub.wakes_pool_agent("op", "a1"));
+        hub.on_operator_message(&reg, &hello(r#","wakeFrames":true"#));
+        assert!(!hub.wakes_pool_agent("op", "a1"));
+        hub.on_operator_message(&reg, r#"{"type":"runner.parked","agentId":"a1"}"#);
+        assert!(hub.wakes_pool_agent("op", "a1"));
+        assert!(!hub.wakes_pool_agent("op", "a2"));
+        assert!(!hub.wakes_pool_agent("other", "a1"));
+        // 러너가 다시 떠도 풀 에이전트다(뜨는 동안에도 부를 수 있다).
+        hub.on_operator_message(
+            &reg,
+            r#"{"type":"runner.started","runnerId":"r1","agentId":"a1"}"#,
+        );
+        assert!(hub.wakes_pool_agent("op", "a1"));
+        // hello 는 목록을 통째로 바꾼다 — 틀린 값은 버린다.
+        hub.on_operator_message(
+            &reg,
+            &hello(r#","wakeFrames":true,"poolAgents":["a2",3,""]"#),
+        );
+        assert!(!hub.wakes_pool_agent("op", "a1"));
+        assert!(hub.wakes_pool_agent("op", "a2"));
+        // `wake` 프레임을 못 받는 연결이면 알렸어도 아니다(깨움이 닿지 않는다).
+        hub.on_operator_message(&reg, &hello(r#","poolAgents":["a2"]"#));
+        assert!(!hub.wakes_pool_agent("op", "a2"));
+        // 다시 붙으면(새 연결) 잊는다.
+        hub.on_operator_message(&reg, &hello(r#","wakeFrames":true,"poolAgents":["a2"]"#));
+        assert!(hub.wakes_pool_agent("op", "a2"));
+        let (tx, _rx2) = mpsc::unbounded_channel();
+        let _reg2 = hub.add_operator("op", tx);
+        assert!(!hub.wakes_pool_agent("op", "a2"));
     }
 
     fn hub_with(id: &str) -> (OperatorHub, Registration, mpsc::UnboundedReceiver<OpOut>) {
