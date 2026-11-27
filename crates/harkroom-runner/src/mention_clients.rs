@@ -102,12 +102,14 @@ impl<L: RunnerLink> AgentClients<L> {
     pub fn link_io<'a>(
         &'a self,
         claim_holder: Option<&'a str>,
+        thread_key: Option<&'a str>,
         log: &'a dyn Fn(&str),
     ) -> LinkIo<'a, L> {
         LinkIo {
             mcp: &self.mcp,
             rest: &self.rest,
             claim_holder,
+            thread_key,
             log,
         }
     }

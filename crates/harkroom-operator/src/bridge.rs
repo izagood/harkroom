@@ -14,6 +14,7 @@ use crate::turn_keys::TurnKeyLedger;
 use crate::turn_leases::{LeaseCall, TurnLeases};
 use crate::turn_peek::TurnPeek;
 use crate::turn_slots::TurnSlots;
+use crate::work_claims::WorkClaimsHandle;
 use crate::workspace_cleanup::owners::CleanupOwners;
 use harkroom_proto::p1::{RunnerLinkKind, RunnerLinkRequest, RunnerLinkResponse};
 use harkroom_proto::p2::OperatorToServerFrame;
@@ -126,6 +127,8 @@ pub struct LinkHandler {
     cleanup_owners: Arc<OnceLock<Arc<CleanupOwners>>>,
     /// API 키 연결(op-lane) 판정 재료 — serve 가 배정 조정기·로컬 설정에 건다. 비어 있으면 새 턴 자리를 막는다.
     lane: Arc<OnceLock<Arc<dyn LanePorts>>>,
+    /// 잡기 장부(I2d) — 턴 칸 답에 쥔 줄의 작업 id 를 싣고, 칸을 놓으면 턴이 끝났다고 적는다. serve 가 건다(없으면 아무 일도 없다).
+    work_claims: Arc<OnceLock<WorkClaimsHandle>>,
     /// lane 막기 로그(러너당 한 번).
     lane_gate_log: GateLog,
 }
@@ -463,8 +466,13 @@ impl RunnerLinkHandler for LinkHandler {
         ) {
             return Some(r);
         }
-        if let Some(r) = lock(&self.slots).maybe_handle(runner_id, &req, kind) {
-            return Some(r);
+        // 칸 잠금은 이 문장에서 놓는다 — 장부는 그 뒤에 잠근다(두 잠금을 겹쳐 쥐지 않는다).
+        let slot_answer = lock(&self.slots).maybe_handle(runner_id, &req, kind);
+        if let Some(r) = slot_answer {
+            return Some(match self.work_claims.get() {
+                Some(claims) => crate::work_claims::on_slot_answer(claims, agent_id, &req, r),
+                None => r,
+            });
         }
         // lane 마운트(TS run.ts 순서: turnSlots → providerLaneMount → turnSecrets). 설정은 부를 때마다 operator.json 에서 읽는다.
         let lane_of = || lane.and_then(|p| p.lane_of(agent_id));
@@ -582,6 +590,8 @@ pub struct Bridge {
     pub hub: Arc<LocalTerminalHub>,
     /// API 키 연결 판정 재료를 걸 자리(op-lane) — serve 가 배정 조정기를 세운 뒤 건다. 걸기 전에는 새 턴 자리를 막는다.
     pub lane: Arc<OnceLock<Arc<dyn LanePorts>>>,
+    /// 잡기 장부를 걸 자리(I2d) — serve 가 건다.
+    pub work_claims: Arc<OnceLock<WorkClaimsHandle>>,
 }
 
 /// 서버가 내린 로컬 직결 키를 허브에 넣는다(TS community.ts `applyLocal`). `local.view`·`local.writer` 가 아니면 false.
@@ -701,6 +711,7 @@ pub fn build_bridge(
     let poll_stopped: Arc<OnceLock<PollStoppedHook>> = Arc::new(OnceLock::new());
     let cleanup_owners: Arc<OnceLock<Arc<CleanupOwners>>> = Arc::new(OnceLock::new());
     let lane: Arc<OnceLock<Arc<dyn LanePorts>>> = Arc::new(OnceLock::new());
+    let work_claims: Arc<OnceLock<WorkClaimsHandle>> = Arc::new(OnceLock::new());
     let leases = Arc::new(Mutex::new(TurnLeases::system()));
     if let Some(root) = secrets.clone() {
         spawn_lease_sweeper(Arc::downgrade(&leases), root, LEASE_SWEEP_EVERY);
@@ -720,6 +731,7 @@ pub fn build_bridge(
         poll_stopped: Arc::clone(&poll_stopped),
         cleanup_owners: Arc::clone(&cleanup_owners),
         lane: Arc::clone(&lane),
+        work_claims: Arc::clone(&work_claims),
         lane_gate_log: GateLog::default(),
     });
     // 턴 열쇠 장부(s21b-3a) — 하네스의 bridge·hook·wrapper 소켓이 맡긴 열쇠로 붙는다.
@@ -732,6 +744,7 @@ pub fn build_bridge(
         cleanup_owners,
         hub,
         lane,
+        work_claims,
     }
 }
 
@@ -827,6 +840,7 @@ mod tests {
             poll_stopped: Arc::new(OnceLock::new()),
             cleanup_owners: Arc::new(OnceLock::new()),
             lane: lane_in_sync(),
+            work_claims: Arc::new(OnceLock::new()),
             lane_gate_log: GateLog::default(),
         };
         h.on_frame(
@@ -862,6 +876,7 @@ mod tests {
             poll_stopped: Arc::new(OnceLock::new()),
             cleanup_owners: Arc::new(OnceLock::new()),
             lane: lane_in_sync(),
+            work_claims: Arc::new(OnceLock::new()),
             lane_gate_log: GateLog::default(),
         };
         let call = |name: &str| -> RunnerLinkRequest {
@@ -922,6 +937,7 @@ mod tests {
             poll_stopped: Arc::new(OnceLock::new()),
             cleanup_owners: Arc::new(OnceLock::new()),
             lane: lane_in_sync(),
+            work_claims: Arc::new(OnceLock::new()),
             lane_gate_log: GateLog::default(),
         };
         let req: RunnerLinkRequest = serde_json::from_value(json!({
@@ -969,6 +985,7 @@ mod tests {
             poll_stopped: Arc::new(OnceLock::new()),
             cleanup_owners: Arc::new(OnceLock::new()),
             lane: lane_in_sync(),
+            work_claims: Arc::new(OnceLock::new()),
             lane_gate_log: GateLog::default(),
         };
         // 링크가 미리 채운 commandFiles 는 서버 머리에 실리지 않는다(사전 2).
@@ -1060,6 +1077,7 @@ mod tests {
             poll_stopped: Arc::new(OnceLock::new()),
             cleanup_owners: Arc::new(OnceLock::new()),
             lane: lane_in_sync(),
+            work_claims: Arc::new(OnceLock::new()),
             lane_gate_log: GateLog::default(),
         };
         let keys = json!({"turnId":"t1","keys":{"bridge":"a".repeat(64),"shell":"b".repeat(64)}});
@@ -1156,6 +1174,7 @@ mod tests {
             poll_stopped: hook,
             cleanup_owners: Arc::new(OnceLock::new()),
             lane: lane_in_sync(),
+            work_claims: Arc::new(OnceLock::new()),
             lane_gate_log: GateLog::default(),
         };
         // 본문에 다른 runnerId 를 실어도 세션 id(r1)로 간다.
@@ -1191,6 +1210,7 @@ mod tests {
             poll_stopped: Arc::new(OnceLock::new()),
             cleanup_owners: Arc::new(OnceLock::new()),
             lane: lane_in_sync(),
+            work_claims: Arc::new(OnceLock::new()),
             lane_gate_log: GateLog::default(),
         };
         h.on_notice(
@@ -1300,6 +1320,7 @@ mod tests {
             poll_stopped: Arc::new(OnceLock::new()),
             cleanup_owners: Arc::new(OnceLock::new()),
             lane: cell,
+            work_claims: Arc::new(OnceLock::new()),
             lane_gate_log: GateLog::default(),
         };
         let relay = RunnerLinkKind::Relay;
@@ -1383,6 +1404,7 @@ mod tests {
             poll_stopped: Arc::new(OnceLock::new()),
             cleanup_owners: Arc::new(OnceLock::new()),
             lane: Arc::new(OnceLock::new()),
+            work_claims: Arc::new(OnceLock::new()),
             lane_gate_log: GateLog::default(),
         };
         let relay = RunnerLinkKind::Relay;

@@ -39,6 +39,8 @@ pub struct LinkIo<'a, L: RunnerLink> {
     pub mcp: &'a HarkroomMcpClient<L>,
     pub rest: &'a HarkroomRestClient<L>,
     pub claim_holder: Option<&'a str>,
+    /// 이 턴의 스레드 키 — 턴 칸을 받을 때 넘겨받은 쥔 줄을 임대 발급에 싣는다(I2d). 없으면 싣지 않는다.
+    pub thread_key: Option<&'a str>,
     pub log: &'a dyn Fn(&str),
 }
 
@@ -66,8 +68,9 @@ impl<L: RunnerLink> MentionIo for LinkIo<'_, L> {
     }
     fn issue_lease(&mut self, cause: &str) -> LeaseOutcome {
         crate::call_timing::timed("POST /agent/turn-leases", || {
+            let work = self.thread_key.and_then(|k| self.rest.slot_work(k));
             self.rest
-                .issue_turn_lease(cause, self.log, self.claim_holder)
+                .issue_turn_lease(cause, self.log, self.claim_holder, work.as_ref())
         })
     }
 }
