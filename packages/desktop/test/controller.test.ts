@@ -292,15 +292,16 @@ describe('Controller', () => {
     await c.openChannel('c1');
     await vi.waitFor(() => expect(useAppStore.getState().messages.c1!.map((m) => m.id)).toEqual(['m5', 'm9']));
     // 뒤채움이 **끝난 뒤**에 과거를 묻는다 — 도는 중이면 `loadOlder` 는 그것에 합류하고 새로 묻지 않는다.
-    await vi.waitFor(() => expect(useAppStore.getState().backfilling.c1).toBeFalsy());
-    expect(useAppStore.getState().hasMore.c1).toBe(true);
-
-    await c.loadOlder();
+    // 본문이 두 줄뿐이라 화면을 못 채우므로 사람의 손짓 없이도 이어 받는다(`autoFillOlder`).
+    await vi.waitFor(() => expect(useAppStore.getState().hasMore.c1).toBe(false));
 
     const call = (api.messages as ReturnType<typeof vi.fn>).mock.calls.at(-1)!;
     expect(call[1]).toMatchObject({ before: 5, limit: 100, feed: true });
     expect(useAppStore.getState().messages.c1!.map((m) => m.id)).toEqual(['m1', 'm5', 'm9']);
-    expect(useAppStore.getState().hasMore.c1).toBe(false);
+    // 남은 것이 없으면 다시 불러도 묻지 않는다.
+    const n = (api.messages as ReturnType<typeof vi.fn>).mock.calls.length;
+    await c.loadOlder();
+    expect((api.messages as ReturnType<typeof vi.fn>).mock.calls.length).toBe(n);
   });
 
   it('does not ask for an older page when none remain', async () => {
