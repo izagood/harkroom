@@ -599,6 +599,17 @@ impl AssignmentFrames {
         lock(&self.assigned).contains(agent_id) && self.reconciler.is_pool(agent_id)
     }
 
+    /// 이 커뮤니티에 배정된 풀 에이전트들(정렬) — 좁히지 않은 잡기(I2d)가 이들로 청한다.
+    pub fn pool_agents(&self) -> Vec<String> {
+        let assigned: Vec<String> = lock(&self.assigned).iter().cloned().collect();
+        let mut v: Vec<String> = assigned
+            .into_iter()
+            .filter(|a| self.reconciler.is_pool(a))
+            .collect();
+        v.sort();
+        v
+    }
+
     /// TS `onRunnerExit` — 이 커뮤니티의 배정이면 조정기에(재기동 판단).
     pub fn on_runner_exit(&self, agent_id: &str, code: Option<i32>, reason: Option<&str>) {
         if lock(&self.assigned).contains(agent_id) {

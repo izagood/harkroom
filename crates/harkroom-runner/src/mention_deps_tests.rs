@@ -187,6 +187,7 @@ fn lease_rest_error_body_never_leaks() {
         mcp: &mcp,
         rest: &rest,
         claim_holder: None,
+        thread_key: None,
         log: &log,
     };
     let mut h = Hooks::default();
@@ -208,6 +209,57 @@ fn lease_rest_error_body_never_leaks() {
         "{all}"
     );
     assert!(h.events.is_empty());
+}
+
+struct WorkLink(std::sync::Mutex<Vec<(String, Option<String>)>>);
+impl RunnerLink for &WorkLink {
+    fn request(&self, req: LinkRequest) -> RunnerLinkResponse {
+        let (path, body) = match &req {
+            LinkRequest::Http { path, body, .. } => (path.clone(), body.clone()),
+            _ => (String::new(), None),
+        };
+        let answer = if path == "/agent/turn-slots" {
+            r#"{"max":4,"inUse":1,"work":{"workId":"w1","attempts":3}}"#
+        } else {
+            r#"{"leaseId":"L1","token":"example-token","expiresAt":"2026-01-01T00:00:00.000Z"}"#
+        };
+        self.0.lock().unwrap().push((path, body));
+        RunnerLinkResponse::HttpResponse {
+            id: "x".into(),
+            status: 200,
+            body: answer.into(),
+        }
+    }
+}
+
+/// I2d — 턴 칸을 받을 때 넘겨받은 쥔 줄은 **그 스레드 키의** 임대 발급에만 실린다.
+#[test]
+fn lease_request_carries_the_work_handed_with_the_slot_of_that_thread() {
+    let link = WorkLink(std::sync::Mutex::default());
+    let rest = HarkroomRestClient::new(&link);
+    let mcp = HarkroomMcpClient::new(&link, "t");
+    let log = |_: &str| {};
+    rest.acquire_turn_slot("c1/t1", None);
+    let lease_body = |key: Option<&str>| {
+        let mut io = LinkIo {
+            mcp: &mcp,
+            rest: &rest,
+            claim_holder: None,
+            thread_key: key,
+            log: &log,
+        };
+        io.issue_lease("m1");
+        let seen = link.0.lock().unwrap();
+        let (path, body) = seen.last().unwrap();
+        assert_eq!(path, "/agent/turn-leases");
+        serde_json::from_str::<serde_json::Value>(body.as_deref().unwrap()).unwrap()
+    };
+    assert_eq!(
+        lease_body(Some("c1/t1"))["work"],
+        serde_json::json!({"workId": "w1", "attempts": 3})
+    );
+    assert!(lease_body(Some("c1/other")).get("work").is_none());
+    assert!(lease_body(None).get("work").is_none());
 }
 
 /// 실행 파일 부재만 물러나기로 넘긴다 · 자리 놓기·감시 끝은 hooks 로.

@@ -45,7 +45,7 @@ fn prepare_link_and_watch_share_one_client() {
     let clients = AgentClients::new(&link, "t");
     let log = |_l: &str| {};
     let prep = clients.prepare_io();
-    let deps = clients.link_io(None, &log);
+    let deps = clients.link_io(None, None, &log);
     assert!(
         std::ptr::eq(prep.client, clients.mcp()),
         "준비 = 묶음의 MCP 손님"
@@ -67,7 +67,7 @@ fn another_agents_link_is_never_used() {
     let _b = AgentClients::new(&other, "t");
     let log = |_l: &str| {};
     a.prepare_io().thread_pages("c", "root", 0).unwrap();
-    let mut deps = a.link_io(None, &log);
+    let mut deps = a.link_io(None, None, &log);
     crate::mention_deps::MentionIo::mark_read(&mut deps, &[1]).unwrap();
     assert_eq!(*mine.tool_calls.lock().unwrap(), 2, "내 링크로만 갔다");
     assert_eq!(
@@ -102,7 +102,7 @@ fn call_site_clients_are_all_the_bundle() {
         &env,
         "",
     );
-    let deps = clients.link_io(None, &log);
+    let deps = clients.link_io(None, None, &log);
     let book = crate::mention_hooks::LeaseBook::default();
     let hooks =
         crate::mention_hooks::LinkHooks::new(*clients.link(), &book, NoSched, "k".into(), || 1);

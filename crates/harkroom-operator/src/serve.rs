@@ -758,6 +758,16 @@ pub fn spawn_server_link(
     let work_claims = std::sync::Arc::new(std::sync::Mutex::new(
         crate::work_claims::WorkClaims::default(),
     ));
+    // I2d — 러너 링크 쪽에도 건다(턴 칸 답에 쥔 줄의 작업 id 를 싣는다). 좁히지 않은 잡기는 스위치(`HARKROOM_WORK_PULL=on`, 기본 꺼짐).
+    let _ = bridge.work_claims.set(std::sync::Arc::clone(&work_claims));
+    if crate::work_claims::pull_enabled(
+        std::env::var(crate::work_claims::WORK_PULL_ENV)
+            .ok()
+            .as_deref(),
+    ) {
+        lock_claims(&work_claims).set_pull(true);
+        eprintln!("잡기(I2d): 좁히지 않은 잡기 켬 — 빈 칸만큼 판에서 잡는다");
+    }
     // 러너 종료 → 다중화기 잊기 · 서버에 `runner.exited` · 배정이면 조정기가 다시 띄울지 판단(TS run.ts onExit).
     {
         let frames = std::sync::Arc::clone(&frames);
@@ -945,10 +955,11 @@ pub fn spawn_server_link(
     );
     // 잡기 장부의 주기 일(답 기한·러너 없는 줄 놓기·갱신·비율 로그). 장부가 비어 있으면 아무것도 보내지 않는다. 프로세스와 함께 산다.
     {
-        let (claims, tick_link, tick_runners) = (
+        let (claims, tick_link, tick_runners, tick_frames) = (
             std::sync::Arc::clone(&work_claims),
             link.clone(),
             std::sync::Arc::clone(&state.runners),
+            std::sync::Arc::clone(&frames),
         );
         let _ = std::thread::Builder::new()
             .name("work-claims".into())
@@ -972,6 +983,24 @@ pub fn spawn_server_link(
                     }
                     if let Some(line) = t.log {
                         eprintln!("잡기(I2b): {line}");
+                    }
+                    if t.pull_off.is_some() {
+                        eprintln!(
+                            "잡기(I2d): work.pull 에 답이 없다(모르는 서버) — 이 연결에서는 pull 을 묻지 않는다"
+                        );
+                    }
+                    // I2d — 빈 칸만큼 판에서 잡는다(스위치). 턴 칸·배정 표는 장부 잠금 밖에서 읽는다.
+                    if lock_claims(&claims).pull_on() {
+                        let (in_use, max) = {
+                            let slots = crate::turn_slots::TurnSlots::process();
+                            let s = slots.lock().unwrap_or_else(|p| p.into_inner());
+                            (s.in_use(), s.max())
+                        };
+                        let agents = tick_frames.pool_agents();
+                        let f = lock_claims(&claims).pull(max, in_use, agents, now_ms());
+                        if let Some(f) = f {
+                            let _ = tick_link.send(&f);
+                        }
                     }
                 }
             });
@@ -1077,6 +1106,31 @@ pub fn spawn_server_link(
                         "잡기(I2b): 서버 스위치가 꺼져 있다 — 이 연결에서는 묻지 않는다(깨움으로 빌리는 길 그대로)"
                     ),
                     _ => {}
+                }
+                return;
+            }
+            harkroom_proto::p2::ServerToOperatorFrame::WorkPulled {
+                request_id,
+                works,
+                error,
+            } => {
+                let out = lock_claims(&frame_claims).on_pulled(
+                    request_id,
+                    works,
+                    error.as_deref(),
+                    now_ms(),
+                );
+                for f in &out.release {
+                    let _ = wake_link.send(f);
+                }
+                if out.off.is_some() {
+                    eprintln!(
+                        "잡기(I2d): 서버의 work.pull 스위치가 꺼져 있다 — 이 연결에서는 pull 을 묻지 않는다"
+                    );
+                }
+                // 잡힌 줄의 에이전트 러너를 빌려 띄운다(깨움과 같은 길 — 풀 에이전트가 아니면 아무 일도 없다).
+                for agent in &out.wake {
+                    frames.on_wake(agent);
                 }
                 return;
             }

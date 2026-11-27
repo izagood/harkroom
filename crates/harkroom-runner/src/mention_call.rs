@@ -205,8 +205,9 @@ fn run_mention_call_in<'scope, 'a: 'scope, L, S, H>(
         i.now,
     );
     // 이 멘션의 deps — 이 함수 안에서만 산다(정상·패닉 모두 여기서 떨어진다).
+    let lease_key = launch.thread_key.clone();
     let mut deps = MentionDeps::new(
-        clients.link_io(i.claim_holder, i.log),
+        clients.link_io(i.claim_holder, Some(&lease_key), i.log),
         hooks,
         target.channel_id.clone(),
         Some(target.thread_root_id.clone()),

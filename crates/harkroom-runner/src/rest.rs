@@ -232,6 +232,25 @@ pub enum ClaimOutcome {
     Unsupported,
 }
 
+/// 오퍼레이터가 판에서 잡아 쥔 줄(I2d) — 턴 임대 발급에 실어 서버가 그 줄에 턴을 적게 한다(기록).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SlotWork {
+    pub work_id: String,
+    pub attempts: i64,
+}
+
+/// 턴 칸 답(200) 본문의 `work{workId,attempts}`. 없거나 모양이 다르면 `None`(옛 오퍼레이터 · 쥔 줄 없음).
+fn parse_slot_work(body: &str) -> Option<SlotWork> {
+    let v: Value = serde_json::from_str(body).ok()?;
+    let w = v.get("work")?;
+    let work_id = w.get("workId")?.as_str()?;
+    let attempts = w.get("attempts")?.as_i64()?;
+    (!work_id.is_empty() && work_id.len() <= 64 && attempts >= 0).then(|| SlotWork {
+        work_id: work_id.to_string(),
+        attempts,
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SlotOutcome {
     Granted,
@@ -273,6 +292,8 @@ pub struct HarkroomRestClient<L: RunnerLink> {
     link: L,
     /// 지금 도는 턴의 열쇠 — 오퍼레이터가 바뀌면 다시 맡긴다(`re_register_turn_keys`). 디스크에 쓰지 않는다.
     open_turn_keys: Mutex<BTreeMap<String, OpenTurn>>,
+    /// 턴 칸을 받을 때 오퍼레이터가 넘긴 쥔 줄(스레드 키 → 작업 id · 횟수, I2d). 칸을 놓으면 지운다. 디스크에 쓰지 않는다.
+    slot_work: Mutex<BTreeMap<String, SlotWork>>,
 }
 
 impl<L: RunnerLink> HarkroomRestClient<L> {
@@ -280,6 +301,7 @@ impl<L: RunnerLink> HarkroomRestClient<L> {
         Self {
             link,
             open_turn_keys: Mutex::new(BTreeMap::new()),
+            slot_work: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -354,10 +376,15 @@ impl<L: RunnerLink> HarkroomRestClient<L> {
         cause_message_id: &str,
         log: &dyn Fn(&str),
         claim_holder: Option<&str>,
+        work: Option<&SlotWork>,
     ) -> LeaseOutcome {
         let mut body = json!({ "causeMessageId": cause_message_id });
         if let Some(h) = claim_holder.filter(|h| !h.is_empty()) {
             body["claimHolder"] = json!(h);
+        }
+        // I2d — 오퍼레이터가 쥔 줄을 넘겼으면 싣는다. 모르는 옛 서버는 버린다.
+        if let Some(w) = work {
+            body["work"] = json!({ "workId": w.work_id, "attempts": w.attempts });
         }
         let res = self.forward("POST", "/agent/turn-leases", Some(&body));
         if res.status != 200 || res.body.is_empty() {
@@ -533,18 +560,40 @@ impl<L: RunnerLink> HarkroomRestClient<L> {
         if let Some(k) = keep_free.filter(|k| *k > 0) {
             body["keepFree"] = json!(k);
         }
-        match self
-            .forward("POST", "/agent/turn-slots", Some(&body))
-            .status
-        {
-            200 => SlotOutcome::Granted,
+        let res = self.forward("POST", "/agent/turn-slots", Some(&body));
+        match res.status {
+            200 => {
+                let mut held = self.slot_work.lock().unwrap_or_else(|p| p.into_inner());
+                match parse_slot_work(&res.body) {
+                    Some(w) => {
+                        held.insert(key.to_string(), w);
+                    }
+                    None => {
+                        held.remove(key);
+                    }
+                }
+                SlotOutcome::Granted
+            }
             409 => SlotOutcome::Full,
             _ => SlotOutcome::Unsupported,
         }
     }
 
+    /// 그 스레드 키의 턴 칸을 받을 때 넘겨받은 쥔 줄(I2d). 없으면 `None`.
+    pub fn slot_work(&self, key: &str) -> Option<SlotWork> {
+        self.slot_work
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(key)
+            .cloned()
+    }
+
     /// 실패는 삼킨다 — 러너가 죽으면 오퍼레이터가 링크 끊김으로 돌려받는다.
     pub fn release_turn_slot(&self, key: &str) {
+        self.slot_work
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(key);
         self.forward(
             "POST",
             "/agent/turn-slots/release",
@@ -816,7 +865,7 @@ mod tests {
         let c = HarkroomRestClient::new(&f);
         let lines = Mutex::new(Vec::<String>::new());
         let log = |l: &str| lines.lock().unwrap().push(l.to_string());
-        let LeaseOutcome::Lease(l) = c.issue_turn_lease("m1", &log, Some("h1")) else {
+        let LeaseOutcome::Lease(l) = c.issue_turn_lease("m1", &log, Some("h1"), None) else {
             panic!()
         };
         assert_eq!(l.token, "s3cr3t");
@@ -826,18 +875,24 @@ mod tests {
             Some(json!({"causeMessageId":"m1","claimHolder":"h1"}))
         );
         assert_eq!(
-            c.issue_turn_lease("m1", &log, None),
+            c.issue_turn_lease("m1", &log, None, None),
             LeaseOutcome::LeaseUsed
         );
         assert_eq!(last(&f).2, Some(json!({"causeMessageId":"m1"})));
         assert_eq!(
-            c.issue_turn_lease("m1", &log, None),
+            c.issue_turn_lease("m1", &log, None, None),
             LeaseOutcome::Unreachable
         );
-        assert_eq!(c.issue_turn_lease("m1", &log, None), LeaseOutcome::None);
-        assert_eq!(c.issue_turn_lease("m1", &log, None), LeaseOutcome::None);
         assert_eq!(
-            c.issue_turn_lease("m1", &log, None),
+            c.issue_turn_lease("m1", &log, None, None),
+            LeaseOutcome::None
+        );
+        assert_eq!(
+            c.issue_turn_lease("m1", &log, None, None),
+            LeaseOutcome::None
+        );
+        assert_eq!(
+            c.issue_turn_lease("m1", &log, None, None),
             LeaseOutcome::Unreachable
         ); // 링크 없음
         let lines = lines.lock().unwrap();
@@ -882,6 +937,51 @@ mod tests {
         assert_eq!(c.api_grants(), Vec::<String>::new());
         assert!(!c.secret_create_granted());
         assert_eq!(c.merge_grant_info(), MergeGrantInfo::default());
+    }
+
+    #[test]
+    fn slot_work_is_kept_per_key_and_sent_with_the_lease_request() {
+        let lease =
+            r#"{"leaseId":"l1","token":"example-token","expiresAt":"2026-01-01T00:00:00.000Z"}"#;
+        let f = Fake::with(&[
+            (
+                200,
+                r#"{"max":4,"inUse":1,"work":{"workId":"w1","attempts":2}}"#,
+            ),
+            (200, r#"{"max":4,"inUse":2}"#),
+            (
+                200,
+                r#"{"max":4,"inUse":2,"work":{"workId":"","attempts":1}}"#,
+            ),
+            (200, lease),
+            (204, ""),
+            (200, lease),
+        ]);
+        let c = HarkroomRestClient::new(&f);
+        let log = |_: &str| {};
+        assert_eq!(c.acquire_turn_slot("c/t1", None), SlotOutcome::Granted);
+        assert_eq!(c.acquire_turn_slot("c/t2", None), SlotOutcome::Granted);
+        assert_eq!(c.acquire_turn_slot("c/t3", None), SlotOutcome::Granted);
+        let w = c.slot_work("c/t1");
+        assert_eq!(
+            w,
+            Some(SlotWork {
+                work_id: "w1".into(),
+                attempts: 2
+            })
+        );
+        // 쥔 줄이 없는 답 · 모양이 다른 답은 싣지 않는다.
+        assert_eq!((c.slot_work("c/t2"), c.slot_work("c/t3")), (None, None));
+        c.issue_turn_lease("m1", &log, None, w.as_ref());
+        assert_eq!(
+            last(&f).2,
+            Some(json!({"causeMessageId":"m1","work":{"workId":"w1","attempts":2}}))
+        );
+        // 칸을 놓으면 잊는다 — 다음 턴이 옛 줄을 싣지 않는다.
+        c.release_turn_slot("c/t1");
+        assert_eq!(c.slot_work("c/t1"), None);
+        c.issue_turn_lease("m2", &log, None, c.slot_work("c/t1").as_ref());
+        assert_eq!(last(&f).2, Some(json!({"causeMessageId":"m2"})));
     }
 
     #[test]
