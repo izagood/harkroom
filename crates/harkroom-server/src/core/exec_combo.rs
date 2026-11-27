@@ -1,4 +1,4 @@
-//! 실행 조합(J1) — 표 `exec_combo`·`agent_exec_combo`·`exec_key_link`(migration 185).
+//! 실행 조합(J1·J2a) — 표 `exec_combo`·`agent_exec_combo`·`exec_key_link`(migration 185·202).
 //!
 //! 「실행 조합」 = 하네스 × 모델 × effort × 자격(구독 계정 풀 이름 **또는** API 키 연결) + 단가 + 「승격 허용」 + 짧은 이름.
 //!
@@ -8,11 +8,13 @@
 //!   - 에이전트 허용 목록·기본 조합 = **그 에이전트의 소유자인 사람**. 사람인지는 [`is_human`] 이, 소유자인지는 쓰는 SQL 이
 //!     같은 문장에서 본다(`agent_config.owner_account_id`) — 검사와 쓰기 사이에 소유자가 바뀌어도 틈이 없다.
 //!   - 에이전트 계정·오퍼레이터 토큰으로 선 요청은 전부 거절한다. MCP 도구로는 내놓지 않는다.
-//! - 키 연결은 주소(https)와 **비밀 이름**만 담는다 — 키 값은 여기 없다. 연결을 만들거나 고치는 사람은 **자기 소유 비밀**만
-//!   가리킬 수 있다(`secret.owner_account_id`, 같은 문장에서 본다).
+//! - 키 연결은 주소(https)와 **비밀 id**(`secret_id`, 202)만 담는다 — 키 값은 여기 없다. 연결을 만들거나 고치는 사람은
+//!   **자기 소유 비밀**만 가리킬 수 있다(`secret.owner_account_id`, 같은 문장에서 본다). `secret_name` 은 그때 베낀 표시용
+//!   이름이고 판정에는 쓰지 않는다 — 비밀이 지워지면 `secret_id` 가 null 이 되고, 같은 이름의 새 비밀로 다시 이어지지 않는다.
 //! - 키 연결은 **그 비밀의 소유자 것**이다. 관리자라도 남의 비밀을 가리키는 연결은 고치지도, 지우지도, 조합에 꽂지도 못한다 —
 //!   조합을 만들거나 고칠 때 `key_link_id` 가 있으면 쓰는 사람이 그 연결이 가리키는 비밀의 소유자여야 한다(같은 문장에서 본다).
-//! - 켜는 곳은 [`enable`] 하나 — 쓰기 풀에 [`EXEC_COMBO_PRIVILEGES`] 가 다 있을 때만. 아직 HTTP 길에 붙이지 않았다(다음 조각).
+//! - 켜는 곳은 [`enable`] 하나 — 쓰기 풀에 [`EXEC_COMBO_PRIVILEGES`]·[`EXEC_COMBO_LOOKUP_PRIVILEGES`] 가 다 있을 때만.
+//!   HTTP 길은 [`super::exec_combo_routes`] 다(사람만).
 use crate::auth::{Account, Auth, Via};
 use serde_json::Value;
 use sqlx::PgPool;
@@ -32,6 +34,16 @@ pub const EXEC_COMBO_PRIVILEGES: &[(&str, &str)] = &[
     ("agent_exec_combo", "INSERT"),
     ("agent_exec_combo", "UPDATE"),
     ("agent_exec_combo", "DELETE"),
+];
+
+/// 소유자 판정·감사에 드는 권한 — 세 표 밖의 것. 비밀은 id·이름·소유자 칸만 읽는다(값·판은 읽지 않는다).
+pub const EXEC_COMBO_LOOKUP_PRIVILEGES: &[(&str, &str)] = &[
+    ("secret.id", "SELECT"),
+    ("secret.name", "SELECT"),
+    ("secret.owner_account_id", "SELECT"),
+    ("agent_config.account_id", "SELECT"),
+    ("agent_config.owner_account_id", "SELECT"),
+    ("audit_log", "INSERT"),
 ];
 
 static POOL: OnceLock<PgPool> = OnceLock::new();
@@ -111,15 +123,6 @@ fn label(s: &str, max: usize) -> Option<String> {
     let t = s.trim();
     (!t.is_empty() && t.chars().count() <= max && !t.chars().any(char::is_control))
         .then(|| t.to_owned())
-}
-
-/// 비밀 이름 꼴 — `secret.name` 의 check 와 같다(`^[a-z0-9][a-z0-9_-]{0,63}$`).
-pub fn secret_name_ok(s: &str) -> bool {
-    let b = s.as_bytes();
-    (1..=64).contains(&b.len())
-        && (b[0].is_ascii_lowercase() || b[0].is_ascii_digit())
-        && b.iter()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, b'_' | b'-'))
 }
 
 /// 키 연결 주소 — https 만, 사용자 정보·질의·조각 없음, 경로는 받는다. api connector 의 주소 검증을 그대로 쓴다.
@@ -213,7 +216,8 @@ impl ComboInput {
 pub struct KeyLinkInput {
     pub name: String,
     pub base_url: String,
-    pub secret_name: String,
+    /// 가리킬 비밀의 id — 이름으로는 받지 않는다.
+    pub secret_id: String,
 }
 
 impl KeyLinkInput {
@@ -223,14 +227,12 @@ impl KeyLinkInput {
                 .and_then(Value::as_str)
                 .ok_or(ComboError::Invalid(k))
         };
-        let secret_name = s("secretName")?;
-        if !secret_name_ok(secret_name) {
-            return Err(ComboError::Invalid("secretName"));
-        }
+        let secret_id = s("secretId")?;
+        uuid(secret_id, "secretId")?;
         Ok(Self {
             name: label(s("name")?, 64).ok_or(ComboError::Invalid("name"))?,
             base_url: base_url_ok(s("baseUrl")?).ok_or(ComboError::Invalid("baseUrl"))?,
-            secret_name: secret_name.to_owned(),
+            secret_id: secret_id.to_owned(),
         })
     }
 }
@@ -239,28 +241,32 @@ impl KeyLinkInput {
 // SQL
 // ---------------------------------------------------------------------------------------------
 
-/// 키 연결 목록. 비밀은 이름만 나간다.
+/// 키 연결 목록. 비밀은 id 와 이름만 나간다 — 이름은 지금 이름이고, 비밀이 지워졌으면(`secretId` null) 베껴 둔 옛 이름이다.
 pub const KEY_LINK_LIST_SQL: &str = concat!(
     "select coalesce(json_agg(json_build_object(\
-       'id', k.id, 'name', k.name, 'baseUrl', k.base_url, 'secretName', k.secret_name, \
+       'id', k.id, 'name', k.name, 'baseUrl', k.base_url, 'secretId', k.secret_id, \
+       'secretName', coalesce(s.name, k.secret_name), \
        'createdBy', k.created_by, 'createdAt', ",
     crate::iso!("k.created_at"),
-    ") order by k.name), '[]'::json)::text from exec_key_link k"
+    ") order by k.name), '[]'::json)::text \
+       from exec_key_link k left join secret s on s.id = k.secret_id"
 );
 
-/// 쓰는 사람(`$1`)이 그 비밀(`$4`)의 소유자일 때만 들어간다 — 남의 비밀 이름을 꽂지 못한다.
-pub const KEY_LINK_INSERT_SQL: &str = "insert into exec_key_link (name, base_url, secret_name, created_by) \
-     select $2, $3, $4, $1::uuid \
-      where exists (select 1 from secret s where s.name = $4 and s.owner_account_id = $1::uuid) \
+/// 쓰는 사람(`$1`)이 그 비밀(`$4`, id)의 소유자일 때만 들어간다 — 남의 비밀을 꽂지 못한다. 이름은 그 줄에서 베낀다.
+pub const KEY_LINK_INSERT_SQL: &str = "insert into exec_key_link (name, base_url, secret_id, secret_name, created_by) \
+     select $2, $3, s.id, s.name, $1::uuid \
+       from secret s where s.id = $4::uuid and s.owner_account_id = $1::uuid \
      returning id::text";
 
 /// 고칠 때는 소유자 검사가 둘이다 — 고치는 사람이 **지금 가리키는 비밀**(`cur`)과 **새로 가리킬 비밀**(`s`) 둘 다의 소유자여야 한다.
 /// 앞의 것이 없으면 남의 연결을 자기 비밀·자기 주소로 돌려 꽂을 수 있다.
+/// 가리키던 비밀이 지워진 연결(`secret_id` null)은 `cur` 가 없어 아무도 고치지 못한다 — 지우고 새로 만든다.
 pub const KEY_LINK_UPDATE_SQL: &str = "update exec_key_link k \
-        set name = $3, base_url = $4, secret_name = $5, updated_at = now() \
+        set name = $3, base_url = $4, secret_id = s.id, secret_name = s.name, updated_at = now() \
+       from secret s \
       where k.id = $2::uuid \
-        and exists (select 1 from secret cur where cur.name = k.secret_name and cur.owner_account_id = $1::uuid) \
-        and exists (select 1 from secret s where s.name = $5 and s.owner_account_id = $1::uuid) \
+        and s.id = $5::uuid and s.owner_account_id = $1::uuid \
+        and exists (select 1 from secret cur where cur.id = k.secret_id and cur.owner_account_id = $1::uuid) \
      returning k.id::text";
 
 pub const KEY_LINK_EXISTS_SQL: &str =
@@ -270,7 +276,7 @@ pub const KEY_LINK_EXISTS_SQL: &str =
 /// 관리자 누구나 치울 수 있다 — 남의 비밀이 **있는** 연결만 막는다.
 pub const KEY_LINK_DELETE_SQL: &str = "delete from exec_key_link k \
       where k.id = $2::uuid \
-        and not exists (select 1 from secret s where s.name = k.secret_name and s.owner_account_id <> $1::uuid)";
+        and not exists (select 1 from secret s where s.id = k.secret_id and s.owner_account_id <> $1::uuid)";
 
 macro_rules! combo_json {
     () => {
@@ -294,7 +300,7 @@ macro_rules! owns_agent {
 macro_rules! owns_key_link {
     ($link:literal, $actor:literal) => {
         concat!(
-            "exists (select 1 from exec_key_link k join secret s on s.name = k.secret_name \
+            "exists (select 1 from exec_key_link k join secret s on s.id = k.secret_id \
        where k.id = ",
             $link,
             "::uuid and s.owner_account_id = ",
@@ -435,7 +441,7 @@ pub async fn create_key_link(
         .bind(actor)
         .bind(&input.name)
         .bind(&input.base_url)
-        .bind(&input.secret_name)
+        .bind(&input.secret_id)
         .fetch_optional(pool)
         .await?
         .ok_or(ComboError::Forbidden)
@@ -455,7 +461,7 @@ pub async fn update_key_link(
         .bind(id)
         .bind(&input.name)
         .bind(&input.base_url)
-        .bind(&input.secret_name)
+        .bind(&input.secret_id)
         .fetch_optional(pool)
         .await?;
     if hit.is_some() {
@@ -731,7 +737,7 @@ mod tests {
         )
         .unwrap();
         let link = KeyLinkInput::parse(
-            &json!({"name": "k", "baseUrl": "https://api.example.com/v1", "secretName": "key"}),
+            &json!({"name": "k", "baseUrl": "https://api.example.com/v1", "secretId": id}),
         )
         .unwrap();
         let forbidden = |r: Result<(), ComboError>| matches!(r, Err(ComboError::Forbidden));
@@ -804,11 +810,10 @@ mod tests {
         // 고치기·지우기는 **지금 가리키는 비밀**의 소유자도 본다 — 남의 연결을 돌려 꽂거나 지우지 못한다.
         assert!(
             KEY_LINK_UPDATE_SQL
-                .contains("cur.name = k.secret_name and cur.owner_account_id = $1::uuid")
+                .contains("cur.id = k.secret_id and cur.owner_account_id = $1::uuid")
         );
         assert!(
-            KEY_LINK_DELETE_SQL
-                .contains("s.name = k.secret_name and s.owner_account_id <> $1::uuid")
+            KEY_LINK_DELETE_SQL.contains("s.id = k.secret_id and s.owner_account_id <> $1::uuid")
         );
     }
 
@@ -817,10 +822,7 @@ mod tests {
         // 조합에 키 연결을 꽂는 두 문장은 「쓰는 사람이 그 연결의 비밀 소유자」 조각을 같은 문장에 건다.
         for (sql, actor) in [(COMBO_INSERT_SQL, "$10"), (COMBO_UPDATE_SQL, "$11")] {
             assert!(sql.contains("$6::uuid is null or exists"), "{sql}");
-            assert!(
-                sql.contains("join secret s on s.name = k.secret_name"),
-                "{sql}"
-            );
+            assert!(sql.contains("join secret s on s.id = k.secret_id"), "{sql}");
             assert!(sql.contains("k.id = $6::uuid"), "{sql}");
             assert!(
                 sql.contains(&format!("s.owner_account_id = {actor}::uuid")),
@@ -831,16 +833,28 @@ mod tests {
         for sql in [KEY_LINK_LIST_SQL, KEY_LINK_INSERT_SQL, KEY_LINK_UPDATE_SQL] {
             assert!(!sql.contains("sealed") && !sql.contains("secret_version"));
         }
+        // 비밀은 **id 로만** 찾는다 — 이름으로 비밀을 고르는 문장이 없다(이름은 베끼기만 한다).
+        for sql in [
+            KEY_LINK_INSERT_SQL,
+            KEY_LINK_UPDATE_SQL,
+            KEY_LINK_DELETE_SQL,
+            COMBO_INSERT_SQL,
+            COMBO_UPDATE_SQL,
+        ] {
+            assert!(!sql.contains(".name = "), "{sql}");
+        }
     }
 
     #[test]
-    fn key_link_input_checks_url_and_secret_name() {
+    fn key_link_input_checks_url_and_secret_id() {
+        let sid = "00000000-0000-4000-8000-000000000009";
         let ok = |url: &str, secret: &str| {
-            KeyLinkInput::parse(&json!({"name": " k ", "baseUrl": url, "secretName": secret}))
+            KeyLinkInput::parse(&json!({"name": " k ", "baseUrl": url, "secretId": secret}))
         };
-        let v = ok("https://api.example.com/v1", "openai-key").unwrap();
+        let v = ok("https://api.example.com/v1", sid).unwrap();
         assert_eq!(v.name, "k");
         assert_eq!(v.base_url, "https://api.example.com/v1");
+        assert_eq!(v.secret_id, sid);
         for bad in [
             "http://api.example.com/v1",
             "https://user:pw@api.example.com",
@@ -851,20 +865,26 @@ mod tests {
             "",
         ] {
             assert!(
-                matches!(ok(bad, "k"), Err(ComboError::Invalid("baseUrl"))),
+                matches!(ok(bad, sid), Err(ComboError::Invalid("baseUrl"))),
                 "{bad}"
             );
         }
-        for bad in ["", "Key", "-key", "a b", "a/b", &"a".repeat(65)] {
+        // 비밀은 id 로만 받는다 — 이름을 넣으면 거절한다.
+        for bad in ["", "openai-key", "not-a-uuid"] {
             assert!(
                 matches!(
                     ok("https://api.example.com", bad),
-                    Err(ComboError::Invalid("secretName"))
+                    Err(ComboError::Invalid("secretId"))
                 ),
                 "{bad}"
             );
         }
-        assert!(secret_name_ok(&"a".repeat(64)));
+        assert!(matches!(
+            KeyLinkInput::parse(
+                &json!({"name": "k", "baseUrl": "https://api.example.com", "secretName": "key"})
+            ),
+            Err(ComboError::Invalid("secretId"))
+        ));
     }
 
     #[test]

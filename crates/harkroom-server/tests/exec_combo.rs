@@ -1,4 +1,4 @@
-//! J1 — 실행 조합·키 연결·에이전트 허용 목록의 쓰기 권한과 표 제약을 실제 스키마에서 본다(`core/exec_combo.rs`, migration 185).
+//! J1 — 실행 조합·키 연결·에이전트 허용 목록의 쓰기 권한과 표 제약을 실제 스키마에서 본다(`core/exec_combo.rs`, migration 185·202).
 //! `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `db-tests` 잡이 넘긴다).
 use harkroom_server::auth::{Account, Auth, Via};
 use harkroom_server::core::exec_combo::{self as ec, ComboError, ComboInput, KeyLinkInput};
@@ -44,13 +44,16 @@ async fn agent(pool: &PgPool, handle: &str, owner: &Account) -> Account {
     a
 }
 
-async fn secret(pool: &PgPool, name: &str, owner: &Account) {
-    sqlx::query("insert into secret(name, kind, owner_account_id) values ($1, 'text', $2::uuid)")
-        .bind(name)
-        .bind(&owner.id)
-        .execute(pool)
-        .await
-        .unwrap();
+/// 비밀을 만들고 그 id 를 돌려준다 — 키 연결은 비밀을 id 로 가리킨다(202).
+async fn secret(pool: &PgPool, name: &str, owner: &Account) -> String {
+    sqlx::query_scalar(
+        "insert into secret(name, kind, owner_account_id) values ($1, 'text', $2::uuid) returning id::text",
+    )
+    .bind(name)
+    .bind(&owner.id)
+    .fetch_one(pool)
+    .await
+    .unwrap()
 }
 
 fn session() -> Auth {
@@ -68,9 +71,9 @@ fn pool_combo(name: &str) -> ComboInput {
     .unwrap()
 }
 
-fn link_input(name: &str, secret_name: &str) -> KeyLinkInput {
+fn link_input(name: &str, secret_id: &str) -> KeyLinkInput {
     KeyLinkInput::parse(&json!({
-        "name": name, "baseUrl": "https://api.example.com/v1", "secretName": secret_name
+        "name": name, "baseUrl": "https://api.example.com/v1", "secretId": secret_id
     }))
     .unwrap()
 }
@@ -97,11 +100,12 @@ async fn exec_combo_writes_and_permissions() {
     let admin2 = mk(&pool, "xc-admin2", "human", "admin").await;
     let member = mk(&pool, "xc-member", "human", "member").await;
     let bot = agent(&pool, "xc-bot", &member).await;
-    secret(&pool, "xc-admin-key", &admin).await;
-    secret(&pool, "xc-member-key", &member).await;
+    let admin_key = secret(&pool, "xc-admin-key", &admin).await;
+    let member_key = secret(&pool, "xc-member-key", &member).await;
+    let no_key = "00000000-0000-4000-8000-00000000beef";
 
     // ① 관리자가 키 연결·조합을 만들고 목록에서 본다.
-    let link = ec::create_key_link(&pool, &admin, &s, &link_input("xc-link", "xc-admin-key"))
+    let link = ec::create_key_link(&pool, &admin, &s, &link_input("xc-link", &admin_key))
         .await
         .unwrap();
     let c1 = ec::create_combo(&pool, &admin, &s, &pool_combo("xc-one"))
@@ -143,7 +147,7 @@ async fn exec_combo_writes_and_permissions() {
             Err(ComboError::Forbidden)
         ));
         assert!(matches!(
-            ec::create_key_link(&pool, who, &s, &link_input("xc-no", "xc-member-key")).await,
+            ec::create_key_link(&pool, who, &s, &link_input("xc-no", &member_key)).await,
             Err(ComboError::Forbidden)
         ));
     }
@@ -182,8 +186,8 @@ async fn exec_combo_writes_and_permissions() {
         2
     );
 
-    // ④ 남의 비밀 이름으로는 키 연결을 만들지도, 고쳐 꽂지도 못한다. 없는 비밀도 같다.
-    for name in ["xc-member-key", "xc-nope"] {
+    // ④ 남의 비밀로는 키 연결을 만들지도, 고쳐 꽂지도 못한다. 없는 비밀도 같다.
+    for name in [member_key.as_str(), no_key] {
         assert!(matches!(
             ec::create_key_link(&pool, &admin, &s, &link_input("xc-steal", name)).await,
             Err(ComboError::Forbidden)
@@ -200,7 +204,7 @@ async fn exec_combo_writes_and_permissions() {
             &admin2,
             &s,
             &link,
-            &link_input("xc-link", "xc-admin-key")
+            &link_input("xc-link", &admin_key)
         )
         .await,
         Err(ComboError::Forbidden)
@@ -211,7 +215,7 @@ async fn exec_combo_writes_and_permissions() {
     );
 
     // ④-b 남의 키 연결은 조합에 꽂지도, 돌려 꽂지도, 지우지도 못한다(관리자여도).
-    secret(&pool, "xc-admin2-key", &admin2).await;
+    let admin2_key = secret(&pool, "xc-admin2-key", &admin2).await;
     // 만들기 — 남의 연결·없는 연결 둘 다 Forbidden.
     for (name, link_id) in [
         ("xc-steal-a", link.as_str()),
@@ -270,12 +274,12 @@ async fn exec_combo_writes_and_permissions() {
             &admin2,
             &s,
             &link,
-            &link_input("xc-link", "xc-admin2-key")
+            &link_input("xc-link", &admin2_key)
         )
         .await,
         Err(ComboError::Forbidden)
     ));
-    let spare = ec::create_key_link(&pool, &admin, &s, &link_input("xc-spare", "xc-admin-key"))
+    let spare = ec::create_key_link(&pool, &admin, &s, &link_input("xc-spare", &admin_key))
         .await
         .unwrap();
     for id in [&link, &spare] {
@@ -292,7 +296,7 @@ async fn exec_combo_writes_and_permissions() {
         .await
         .unwrap();
     // 자기 비밀의 연결은 자기 조합에 꽂는다. 가리키던 비밀이 지워진 연결은 다른 관리자가 치울 수 있다.
-    let own = ec::create_key_link(&pool, &admin2, &s, &link_input("xc-own", "xc-admin2-key"))
+    let own = ec::create_key_link(&pool, &admin2, &s, &link_input("xc-own", &admin2_key))
         .await
         .unwrap();
     let own_combo = ComboInput::parse(&json!({
@@ -312,14 +316,23 @@ async fn exec_combo_writes_and_permissions() {
         .await
         .unwrap();
     assert!(matches!(
-        ec::update_key_link(
-            &pool,
-            &admin,
-            &s,
-            &own,
-            &link_input("xc-own", "xc-admin-key")
-        )
-        .await,
+        ec::update_key_link(&pool, &admin, &s, &own, &link_input("xc-own", &admin_key)).await,
+        Err(ComboError::Forbidden)
+    ));
+    // 비밀이 지워진 연결은 id 가 비고 옛 이름만 남는다. 같은 이름의 비밀을 **다른 사람이** 새로 만들어도 다시 이어지지 않는다 —
+    // 그 연결은 누구의 조합에도 꽂히지 않는다.
+    let reborn = secret(&pool, "xc-admin2-key", &admin).await;
+    assert_ne!(reborn, admin2_key);
+    let orphan = ec::list_key_links(&pool, &admin, &s)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|l| l["id"] == own.as_str())
+        .unwrap();
+    assert!(orphan["secretId"].is_null());
+    assert_eq!(orphan["secretName"], "xc-admin2-key");
+    assert!(matches!(
+        ec::create_combo(&pool, &admin, &s, &own_combo).await,
         Err(ComboError::Forbidden)
     ));
     ec::delete_key_link(&pool, &admin, &s, &own).await.unwrap();
@@ -397,7 +410,7 @@ async fn exec_combo_writes_and_permissions() {
             .await
             .is_err()
     );
-    let link2 = ec::create_key_link(&pool, &admin, &s, &link_input("xc-link2", "xc-admin-key"))
+    let link2 = ec::create_key_link(&pool, &admin, &s, &link_input("xc-link2", &admin_key))
         .await
         .unwrap();
     assert!(

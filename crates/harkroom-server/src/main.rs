@@ -777,6 +777,32 @@ async fn main() {
         }
         _ => None,
     };
+    // J2a — 실행 조합 관리 길(`/exec/*`, 사람만). 쓰기 풀에 세 표와 소유자 판정 칸 권한이 다 있을 때만 붙인다.
+    // 새 기능이라 GRANT 가 늦어도 기동은 막지 않는다(`refuse_missing_grants` 를 부르지 않는다) — 이 길만 닫힌다.
+    let exec_combo = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::exec_combo as k;
+            let needed = [k::EXEC_COMBO_PRIVILEGES, k::EXEC_COMBO_LOOKUP_PRIVILEGES].concat();
+            match write::missing_in(w, &needed, &[]).await {
+                Ok(m) if m.is_empty() => {
+                    k::enable(w.clone());
+                    Some(w.clone())
+                }
+                Ok(m) => {
+                    eprintln!("front: exec combo off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: exec combo off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // S5.4 — API 연결 지우기(`DELETE /connectors/{id}`). 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 그 칸 권한이 다 있을 때만. PATCH 는 TS.
     let connectors_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -4321,6 +4347,20 @@ async fn main() {
             core_routes.router = core_routes.router.merge(me.router);
             core_routes.http.extend(me.http);
             core_routes.sockets.extend(me.sockets);
+        }
+        // J2a — 실행 조합 관리 길. 권한이 다 있을 때만.
+        if let Some(write) = exec_combo {
+            let xc = harkroom_server::core::exec_combo_routes::routes(
+                harkroom_server::core::exec_combo_routes::ExecComboState {
+                    write,
+                    trust: state.trust.clone(),
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(xc.router);
+            core_routes.http.extend(xc.http);
+            core_routes.sockets.extend(xc.sockets);
         }
         // S5.4 — API 연결 지우기. 권한이 다 있을 때만 — 아니면 TS 에 남는다.
         if let Some(write) = connectors_write {
