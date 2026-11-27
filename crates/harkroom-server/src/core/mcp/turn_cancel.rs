@@ -122,7 +122,7 @@ pub async fn answer(pool: &PgPool, rc: &RelayCore, me: &Account, args: &Value) -
                 actor_handle: Some(&me.handle),
                 target: Some(agent),
                 ip: None,
-                detail: json!({ "sessionId": sid, "channelId": a.channel, "via": "delegator" }),
+                detail: json!({ "sessionId": sid, "channelId": a.channel, "threadRootId": a.thread, "via": "delegator" }),
             },
         )
         .await;
