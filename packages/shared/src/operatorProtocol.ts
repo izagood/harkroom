@@ -59,6 +59,11 @@ export type OperatorToServerFrame =
    */
   | { type: 'runner.exited'; runnerId: string; code: number | null; reason?: string; agentId?: string }
   /**
+   * 풀 에이전트(`runnerPool: true`)의 러너가 할 일을 마치고 반납됐다 — 깨움(`wake`)이 오면 오퍼레이터가 다시 띄운다.
+   * 서버는 이 에이전트를 러너가 내려가 있어도 부를 수 있는 대상으로 본다(그 연결이 살아 있는 동안).
+   */
+  | { type: 'runner.parked'; agentId: string }
+  /**
    * 능력이 바뀌었다 — 소켓은 그대로 두고 능력만 새로 낸다(앱이 로컬 설정에 에이전트를
    * 넣거나 뺐을 때). hello 를 다시 보내면 서버가 러너 목록까지 교체하므로 따로 둔다.
    */
@@ -176,7 +181,7 @@ export type ServerToOperatorFrame =
     };
 
 const OPERATOR_TYPES = new Set<OperatorToServerFrame['type']>([
-  'hello', 'capabilities', 'runner.started', 'runner.exited', 'runner.announce', 'session.started', 'session.updated', 'session.ended',
+  'hello', 'capabilities', 'runner.started', 'runner.exited', 'runner.parked', 'runner.announce', 'session.started', 'session.updated', 'session.ended',
   'pty.output', 'pty.replay', 'interactive.opened', 'interactive.error', 'attention.required', 'status', 'upgrade.progress',
   'local.input', 'gh.report', 'gh.lines.result', 'wake.ack', 'work.claim', 'work.renew', 'work.release', 'work.pull',
 ]);
@@ -186,7 +191,7 @@ const SERVER_TYPES = new Set<ServerToOperatorFrame['type']>([
 ]);
 
 /** `hello` 와 배정 넷(`assign`·`unassign`·`assign.synced`·`agent.restart`)만 러너 밖의 말이다 — 나머지는 전부 `runnerId` 가 있어야 한다. */
-const NO_RUNNER_ID = new Set<string>(['hello', 'capabilities', 'status', 'upgrade.progress', 'gh.report', 'gh.lines.result', 'gh.lines.set', 'wake', 'wake.ack', 'work.claim', 'work.renew', 'work.release', 'work.pull', 'work.claimed', 'work.renewed', 'work.pulled', 'assign', 'unassign', 'assign.synced', 'agent.restart']);
+const NO_RUNNER_ID = new Set<string>(['hello', 'runner.parked', 'capabilities', 'status', 'upgrade.progress', 'gh.report', 'gh.lines.result', 'gh.lines.set', 'wake', 'wake.ack', 'work.claim', 'work.renew', 'work.release', 'work.pull', 'work.claimed', 'work.renewed', 'work.pulled', 'assign', 'unassign', 'assign.synced', 'agent.restart']);
 
 function parse(raw: string, known: Set<string>): Record<string, unknown> | null {
   let value: unknown;
@@ -195,7 +200,7 @@ function parse(raw: string, known: Set<string>): Record<string, unknown> | null 
   const frame = value as Record<string, unknown>;
   if (typeof frame.type !== 'string' || !known.has(frame.type)) return null;
   if (!NO_RUNNER_ID.has(frame.type) && typeof frame.runnerId !== 'string') return null;
-  if (frame.type === 'agent.restart' && typeof frame.agentId !== 'string') return null;
+  if ((frame.type === 'agent.restart' || frame.type === 'runner.parked') && typeof frame.agentId !== 'string') return null;
   // 버전이 틀린 모양이면 hello 를 버리지 않고 버전만 뗀다 — 버전 하나 때문에 배정·러너가 끊기면
   // 안 되고, 틀린 값을 기준으로 삼으면 멀쩡한 러너가 뒤처졌다고 뜬다. 없음은 "모른다"다.
   if (frame.type === 'hello' && 'version' in frame && !isVersionString(frame.version)) delete frame.version;

@@ -36,6 +36,34 @@ pub(super) const DEADLINE_DEFAULT: i64 = 10 * 60;
 /// TS `presence.online()` 의 DB 판 — 이 계정들 중 지금 접속한 것.
 pub(super) const ONLINE_SQL: &str = "select account_id::text from agent_presence where account_id = any($1::uuid[]) and expires_at > now()";
 
+/// 접속하지 않은 대상이 배정된 오퍼레이터 — 풀 에이전트 판정([`pool_wakeable`])에만 쓴다.
+pub(super) const ASSIGNED_SQL: &str = "select agent_id::text, operator_id::text from agent_assignment where agent_id = any($1::uuid[])";
+
+/// 러너가 내려가 있어도(접속 줄이 없어도) 부를 수 있는 풀 에이전트를 고른다 — `rows` 는 [`ASSIGNED_SQL`] 의 (에이전트, 배정된 오퍼레이터)다.
+/// 그 오퍼레이터가 지금 붙어 있고, `wake` 프레임을 받으며, 그 에이전트를 「깨움으로 러너를 빌려 띄우는 풀 에이전트」로 알렸을 때만이다.
+/// 풀 에이전트는 할 일이 없으면 러너를 반납해 접속 줄이 끊긴다 — 접속만 보면 부를 길이 없다(부름 → 깨움 → 러너 빌림으로 이어져야 한다).
+/// 허브가 없으면(소켓이 꺼진 프로세스) 아무도 고르지 않는다 — 예전처럼 접속한 대상만 부른다.
+pub(super) fn pool_wakeable(
+    hub: Option<&crate::core::operator_hub::OperatorHub>,
+    rows: Vec<(String, String)>,
+) -> Vec<String> {
+    let Some(hub) = hub else {
+        return Vec::new();
+    };
+    rows.into_iter()
+        .filter(|(agent, operator)| hub.wakes_pool_agent(operator, agent))
+        .map(|(agent, _)| agent)
+        .collect()
+}
+
+/// `ids` 중 `online` 에 없는 것(접속하지 않은 대상).
+pub(super) fn offline_of(ids: &[String], online: &[String]) -> Vec<String> {
+    ids.iter()
+        .filter(|id| !online.contains(id))
+        .cloned()
+        .collect()
+}
+
 /// 대상 문장은 골든으로 받는다(`golden/sql_fragments.json`).
 struct Sql {
     targets: String,
@@ -404,12 +432,23 @@ async fn write(
         };
         ids.push(m.0.clone());
     }
-    let online: Vec<String> = sqlx::query_scalar(ONLINE_SQL)
+    let mut online: Vec<String> = sqlx::query_scalar(ONLINE_SQL)
         .bind(&ids)
         .fetch_all(&st.read)
         .await
         .map_err(ts_err("online"))
         .ok()?;
+    // 러너를 반납한 풀 에이전트는 접속 줄이 없어도 부를 수 있다 — 못 읽으면 예전처럼 접속한 대상만 부른다.
+    let offline = offline_of(&ids, &online);
+    if !offline.is_empty() {
+        let rows: Vec<(String, String)> = sqlx::query_as(ASSIGNED_SQL)
+            .bind(&offline)
+            .fetch_all(&st.read)
+            .await
+            .unwrap_or_default();
+        let hub = crate::core::operator_hub::process_hub();
+        online.extend(pool_wakeable(hub.as_ref(), rows));
+    }
     let mut delegated: Vec<String> = Vec::new();
     let mut delegate_ids: Vec<String> = Vec::new();
     let mut unreachable: Vec<String> = Vec::new();
@@ -601,6 +640,34 @@ async fn write(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn parked_pool_agent_is_callable_without_presence() {
+        use crate::core::operator_hub::OperatorHub;
+        let ids = vec!["a1".to_string(), "a2".to_string(), "a3".to_string()];
+        assert_eq!(offline_of(&ids, &["a2".to_string()]), ["a1", "a3"]);
+        let rows = || {
+            vec![
+                ("a1".to_string(), "op".to_string()),
+                ("a3".to_string(), "op".to_string()),
+            ]
+        };
+        // 허브가 없으면(소켓이 꺼진 프로세스) 아무도 고르지 않는다.
+        assert!(pool_wakeable(None, rows()).is_empty());
+        let hub = OperatorHub::new();
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let reg = hub.add_operator("op", tx);
+        // 오퍼레이터가 붙어 있기만 해서는 아니다 — 풀 에이전트로 알린 것만이다.
+        hub.on_operator_message(
+            &reg,
+            r#"{"type":"hello","protocol":1,"capabilities":{},"runners":[],"sessions":[],"wakeFrames":true}"#,
+        );
+        assert!(pool_wakeable(Some(&hub), rows()).is_empty());
+        hub.on_operator_message(&reg, r#"{"type":"runner.parked","agentId":"a1"}"#);
+        assert_eq!(pool_wakeable(Some(&hub), rows()), ["a1"]);
+        // 다른 오퍼레이터에 배정된 에이전트는 이 오퍼레이터가 알렸어도 아니다(배정된 오퍼레이터의 알림만 본다).
+        assert!(pool_wakeable(Some(&hub), vec![("a1".to_string(), "op2".to_string())]).is_empty());
+    }
 
     #[test]
     fn dup_only_among_reachable_hands_to_ts() {

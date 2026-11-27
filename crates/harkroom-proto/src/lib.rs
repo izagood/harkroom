@@ -347,6 +347,14 @@ pub mod p2 {
             /// 잡기 프레임(`work.claim`·`work.renew`·`work.release`)을 보낼 줄 안다(I2b). 서버는 이 칸으로 무엇도 판정하지 않는다 — 알림일 뿐이다.
             #[serde(default, rename = "workClaim", skip_serializing_if = "Option::is_none")]
             work_claim: Option<bool>,
+            /// 이 오퍼레이터가 깨움으로 러너를 빌려 띄우는 풀 에이전트들(`runnerPool: true`). 서버는 이 에이전트를 러너가 내려가
+            /// 있어도 부를 수 있는 대상으로 본다. 비었으면 싣지 않는다 — 옛 서버는 모르는 칸을 버린다.
+            #[serde(
+                default,
+                rename = "poolAgents",
+                skip_serializing_if = "Option::is_none"
+            )]
+            pool_agents: Option<Vec<String>>,
         },
         #[serde(rename = "runner.started", rename_all = "camelCase")]
         RunnerStarted { agent_id: String, runner_id: String },
@@ -359,6 +367,9 @@ pub mod p2 {
             #[serde(default, skip_serializing_if = "Option::is_none")]
             agent_id: Option<String>,
         },
+        /// 풀 에이전트의 러너가 할 일을 마치고 반납됐다 — 깨움이 오면 다시 띄운다. 옛 서버는 모르는 프레임을 버린다.
+        #[serde(rename = "runner.parked", rename_all = "camelCase")]
+        RunnerParked { agent_id: String },
         #[serde(rename = "capabilities")]
         Capabilities { capabilities: Value },
         #[serde(rename = "status")]
@@ -523,11 +534,12 @@ pub mod p2 {
     }
 
     /// 정본의 `OPERATOR_TYPES`.
-    pub const OPERATOR_TO_SERVER_TYPES: [&str; 23] = [
+    pub const OPERATOR_TO_SERVER_TYPES: [&str; 24] = [
         "hello",
         "capabilities",
         "runner.started",
         "runner.exited",
+        "runner.parked",
         "runner.announce",
         "session.started",
         "session.updated",

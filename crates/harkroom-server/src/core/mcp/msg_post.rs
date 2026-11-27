@@ -1926,11 +1926,22 @@ pub async fn answer_call(
     let mut unreachable: Vec<String> = Vec::new();
     if expect != Expect::None {
         let all: Vec<String> = targets.agents.iter().map(|(id, _)| id.clone()).collect();
-        let online: Vec<String> = sqlx::query_scalar(super::delegate_gate::ONLINE_SQL)
+        let mut online: Vec<String> = sqlx::query_scalar(super::delegate_gate::ONLINE_SQL)
             .bind(&all)
             .fetch_all(&mut *conn)
             .await
             .ok()?;
+        // 러너를 반납한 풀 에이전트는 접속 줄이 없어도 부를 수 있다(부름 → 깨움 → 러너 빌림). 못 읽으면 예전처럼 접속한 대상만 부른다.
+        let offline = super::delegate_gate::offline_of(&all, &online);
+        if !offline.is_empty() {
+            let rows: Vec<(String, String)> = sqlx::query_as(super::delegate_gate::ASSIGNED_SQL)
+                .bind(&offline)
+                .fetch_all(&mut *conn)
+                .await
+                .unwrap_or_default();
+            let hub = crate::core::operator_hub::process_hub();
+            online.extend(super::delegate_gate::pool_wakeable(hub.as_ref(), rows));
+        }
         let (on, off): (Vec<_>, Vec<_>) = std::mem::take(&mut targets.agents)
             .into_iter()
             .partition(|(id, _)| online.contains(id));

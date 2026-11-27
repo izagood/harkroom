@@ -137,6 +137,8 @@ pub fn build_hello_labeled(
         wake_frames: Some(true),
         // I2b — 잡기 프레임을 보낼 줄 안다(실제로 보내는지는 서버 스위치와 그 에이전트의 `runnerPool` 이 정한다).
         work_claim: Some(true),
+        // 풀 에이전트 목록은 배정을 아는 쪽(serve)이 채운다 — 여기서는 비운다.
+        pool_agents: None,
     }
 }
 
@@ -184,6 +186,17 @@ pub fn read_login_path(shell: Option<&str>, timeout: Duration) -> Option<String>
 mod tests {
     use super::*;
     use std::sync::Arc;
+
+    #[test]
+    fn pool_agents_are_absent_until_filled_and_parked_frame_shape() {
+        let v = serde_json::to_value(build_hello(json!({}), vec![], vec![], None)).unwrap();
+        assert!(v.get("poolAgents").is_none());
+        let parked = serde_json::to_value(OperatorToServerFrame::RunnerParked {
+            agent_id: "a1".into(),
+        })
+        .unwrap();
+        assert_eq!(parked, json!({"type": "runner.parked", "agentId": "a1"}));
+    }
 
     #[test]
     fn device_labels_ride_hello_and_absent_ones_are_omitted() {
