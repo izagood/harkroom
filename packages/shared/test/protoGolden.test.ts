@@ -93,6 +93,8 @@ const p2OperatorToServer = [
   { type: 'work.renew', requestId: 'q3', held: [{ workId: ID, attempts: 2 }] },
   { type: 'work.renew', requestId: 'q4', leaseSecs: 60, held: [] },
   { type: 'work.release', workId: ID, attempts: 2, reason: 'released' },
+  { type: 'work.pull', requestId: 'q5', slotGeneration: 3, max: 2, leaseSecs: 120, agents: [ID] },
+  { type: 'work.pull', requestId: 'q6', slotGeneration: 0, max: 1 },
   { type: 'runner.announce', runnerId: RUNNER, sessions: [session] },
   { type: 'runner.announce', runnerId: RUNNER, sessions: [], caps: ['interactive'] as unknown as Extract<OperatorToServerFrame, { type: 'runner.announce' }>['caps'] },
   { type: 'session.started', runnerId: RUNNER, session },
@@ -135,6 +137,8 @@ const p2ServerToOperator = [
   { type: 'work.claimed', requestId: 'q2', work: { workId: ID, agentId: ID, channelId: ID, threadRootId: ID, rootId: ID, attempts: 2, leaseExpiresAt: '2026-01-01T00:00:00.000Z' } },
   { type: 'work.renewed', requestId: 'q3', workIds: [ID], leaseSecs: 90 },
   { type: 'work.renewed', requestId: 'q4', workIds: [], error: 'work_claim_disabled' },
+  { type: 'work.pulled', requestId: 'q5', works: [{ workId: ID, agentId: ID, channelId: ID, threadRootId: ID, rootId: ID, attempts: 1, leaseExpiresAt: '2026-01-01T00:00:00.000Z' }] },
+  { type: 'work.pulled', requestId: 'q6', works: [], error: 'work_pull_disabled' },
 ] satisfies ServerToOperatorFrame[];
 
 // ── P3 앱(Tauri) ↔ 오퍼레이터 소켓 — 봉투. 요청별 payload 타입은 S2 앞 PR 에서 Rust 로 옮긴다. ─────────────

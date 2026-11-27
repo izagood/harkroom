@@ -5,6 +5,8 @@
 //!   오퍼레이터를 가리키는 데 읽지 않는다.
 //! - **횟수(`attempts`)는 손대지 않는다.** 잡을 때 DB 가 준 값을 그대로 돌려주고, 갱신·놓기는 오퍼레이터가 보낸 값을 그대로 넘긴다 —
 //!   맞는지는 문장이 본다(펜싱).
+//! - `work.pull`(I2d)은 좁히지 않고 빈 칸 수만큼 잡아 `work.pulled` 로 답한다. 스위치(`HARKROOM_WORK_PULL`)나 권한이 없으면
+//!   `work_pull_disabled` — 오퍼레이터는 pull 만 그만두고 깨움으로 좁힌 잡기는 그대로 한다.
 //! - 좁히기(`agents`·`threadRootId`)는 후보를 줄이기만 한다. 자격은 잡는 문장이 판정한다.
 //! - **이 처리기는 `work.state` 를 바꾸지 않고, `work_claim` 을 권한·순서 판정에 읽지 않는다.** 잡은 줄은 기록이다
 //!   ([`super::work_claim`] 머리말).
@@ -33,6 +35,15 @@ pub struct ClaimRequest {
     pub lease_secs: Option<i32>,
     pub agents: Option<Vec<String>>,
     pub thread_root_id: Option<String>,
+}
+
+/// `work.pull` 본문(I2d).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PullRequest {
+    pub slot_generation: i64,
+    pub max: usize,
+    pub lease_secs: Option<i32>,
+    pub agents: Option<Vec<String>>,
 }
 
 /// `work.renew` 본문.
@@ -67,17 +78,33 @@ fn held_of(v: &Value) -> Option<Held> {
     })
 }
 
-/// `work.claim` 을 읽는다 — 틀린 모양이면 `None`.
-pub fn parse_claim(frame: &Map<String, Value>) -> Option<ClaimRequest> {
-    let agents = match frame.get("agents") {
-        None => None,
-        Some(Value::Array(a)) if a.len() <= IDS_MAX => Some(
+/// `agents` 칸 — 없으면 `Some(None)`, 글자 배열이면 `Some(Some(_))`, 그 밖은 `None`(틀린 모양).
+fn agents_of(frame: &Map<String, Value>) -> Option<Option<Vec<String>>> {
+    match frame.get("agents") {
+        None => Some(None),
+        Some(Value::Array(a)) if a.len() <= IDS_MAX => Some(Some(
             a.iter()
                 .map(|v| v.as_str().map(str::to_owned))
                 .collect::<Option<Vec<_>>>()?,
-        ),
-        Some(_) => return None,
-    };
+        )),
+        Some(_) => None,
+    }
+}
+
+/// `work.pull` 을 읽는다 — 틀린 모양이면 `None`. `max` 는 1 이상의 정수(상한은 코어가 자른다).
+pub fn parse_pull(frame: &Map<String, Value>) -> Option<PullRequest> {
+    let max = frame.get("max")?.as_u64().filter(|n| *n >= 1)?;
+    Some(PullRequest {
+        slot_generation: frame.get("slotGeneration")?.as_i64()?,
+        max: usize::try_from(max).unwrap_or(usize::MAX),
+        lease_secs: lease_of(frame)?,
+        agents: agents_of(frame)?,
+    })
+}
+
+/// `work.claim` 을 읽는다 — 틀린 모양이면 `None`.
+pub fn parse_claim(frame: &Map<String, Value>) -> Option<ClaimRequest> {
+    let agents = agents_of(frame)?;
     let thread_root_id = match frame.get("threadRootId") {
         None => None,
         Some(Value::String(s)) => Some(s.clone()),
@@ -114,16 +141,33 @@ pub fn parse_release(frame: &Map<String, Value>) -> Option<(Held, ReleaseReason)
     Some((held, ReleaseReason::parse(frame.get("reason")?.as_str()?)?))
 }
 
+fn item(c: &Claimed) -> Value {
+    json!({
+        "workId": c.work_id, "agentId": c.agent_id, "channelId": c.channel_id,
+        "threadRootId": c.thread_root_id, "rootId": c.root_id,
+        "attempts": c.attempts, "leaseExpiresAt": c.lease_expires_at,
+    })
+}
+
+/// pull 의 답 — 잡은 작업들. 하지 않았으면 `error` 와 빈 목록.
+pub fn pulled_frame(request_id: &str, outcome: Result<&[Claimed], &str>) -> Value {
+    match outcome {
+        Ok(works) => json!({
+            "type": "work.pulled", "requestId": request_id,
+            "works": works.iter().map(item).collect::<Vec<_>>(),
+        }),
+        Err(code) => json!({
+            "type": "work.pulled", "requestId": request_id, "works": [], "error": code,
+        }),
+    }
+}
+
 /// 잡기의 답 — 잡았으면 `work`, 잡을 것이 없으면 둘 다 없음, 하지 않았으면 `error`.
 pub fn claimed_frame(request_id: &str, outcome: Result<Option<&Claimed>, &str>) -> Value {
     let mut f = json!({"type": "work.claimed", "requestId": request_id});
     match outcome {
         Ok(Some(c)) => {
-            f["work"] = json!({
-                "workId": c.work_id, "agentId": c.agent_id, "channelId": c.channel_id,
-                "threadRootId": c.thread_root_id, "rootId": c.root_id,
-                "attempts": c.attempts, "leaseExpiresAt": c.lease_expires_at,
-            });
+            f["work"] = item(c);
         }
         Ok(None) => {}
         Err(code) => f["error"] = json!(code),
@@ -155,14 +199,50 @@ fn code_of<T>(r: sqlx::Result<Result<T, Refusal>>) -> Result<T, &'static str> {
 }
 
 /// 프레임 하나를 처리한다 — 보낼 답(없으면 `None`). `operator_id` 는 **인증된 연결의 값**이어야 한다. `on` 은 스위치와 권한을
-/// 함께 본 값이다.
+/// 함께 본 값이다. pull 은 꺼진 것으로 친다([`handle_with`]).
 pub async fn handle(
     pool: &PgPool,
     on: bool,
     operator_id: &str,
     frame: &Map<String, Value>,
 ) -> Option<Value> {
+    handle_with(pool, on, false, operator_id, frame).await
+}
+
+/// [`handle`] 에 pull 켬(`pull` — 잡기가 켜져 있고 pull 스위치·권한까지 있다)을 더한 것.
+pub async fn handle_with(
+    pool: &PgPool,
+    on: bool,
+    pull: bool,
+    operator_id: &str,
+    frame: &Map<String, Value>,
+) -> Option<Value> {
     match frame.get("type")?.as_str()? {
+        "work.pull" => {
+            let id = request_id(frame)?;
+            let Some(req) = parse_pull(frame) else {
+                return Some(pulled_frame(id, Err(Refusal::BadRequest.code())));
+            };
+            if !on {
+                return Some(pulled_frame(id, Err(Refusal::Disabled.code())));
+            }
+            let got = code_of(
+                work_claim::pull_with(
+                    pool,
+                    pull,
+                    operator_id,
+                    req.slot_generation,
+                    req.lease_secs,
+                    req.agents.as_deref(),
+                    req.max,
+                )
+                .await,
+            );
+            Some(pulled_frame(
+                id,
+                got.as_ref().map(Vec::as_slice).map_err(|c| *c),
+            ))
+        }
         "work.claim" => {
             let id = request_id(frame)?;
             let Some(req) = parse_claim(frame) else {
@@ -226,11 +306,31 @@ pub fn spawn(write: PgPool, hub: OperatorHub) {
                     false
                 }
             };
+        // I2d — 좁히지 않은 잡기는 잡기가 켜져 있고, pull 스위치가 켜져 있고, 안 읽힌 글을 읽을 권한이 있을 때만.
+        let pull = on
+            && work_claim::pull_switch_from_env()
+            && match crate::write::missing_in(&write, work_claim::WORK_PULL_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => true,
+                Ok(m) => {
+                    eprintln!("core: work pull off (missing {})", m.join(", "));
+                    false
+                }
+                Err(_) => {
+                    eprintln!("core: work pull off (privilege check failed)");
+                    false
+                }
+            };
+        if on {
+            eprintln!(
+                "core: work claim on (pull {})",
+                if pull { "on" } else { "off" }
+            );
+        }
         loop {
             match frames.recv().await {
                 // `operator_id` 는 허브가 그 소켓의 등록에서 꺼낸 값이다(프레임 본문이 아니다).
                 Ok((operator_id, frame)) => {
-                    if let Some(reply) = handle(&write, on, &operator_id, &frame).await {
+                    if let Some(reply) = handle_with(&write, on, pull, &operator_id, &frame).await {
                         hub.send(&operator_id, &reply);
                     }
                 }
@@ -369,6 +469,42 @@ mod tests {
         assert!(frames[1].get("work").is_none() && frames[1].get("error").is_none());
         assert_eq!(frames[2]["error"], "work_claim_disabled");
         assert_eq!(frames[4]["error"], "work_claim_disabled");
+    }
+
+    #[test]
+    fn pull_shapes_and_reply() {
+        let p = parse_pull(&obj(json!({"slotGeneration": 2, "max": 3, "agents": [W]}))).unwrap();
+        assert_eq!((p.slot_generation, p.max, p.lease_secs), (2, 3, None));
+        assert_eq!(p.agents.as_deref(), Some(&[W.to_string()][..]));
+        for bad in [
+            json!({"slotGeneration": 2}),
+            json!({"slotGeneration": 2, "max": 0}),
+            json!({"slotGeneration": 2, "max": -1}),
+            json!({"slotGeneration": 2, "max": "3"}),
+            json!({"max": 3}),
+            json!({"slotGeneration": 2, "max": 3, "agents": W}),
+        ] {
+            assert_eq!(parse_pull(&obj(bad.clone())), None, "{bad}");
+        }
+        let c = claimed();
+        let frames = [
+            pulled_frame("r", Ok(&[c.clone(), c.clone()])),
+            pulled_frame("r", Ok(&[])),
+            pulled_frame("r", Err(Refusal::PullDisabled.code())),
+        ];
+        for f in &frames {
+            assert!(parse_server_frame(&f.to_string()).is_some(), "{f}");
+            let p: p2::ServerToOperatorFrame = serde_json::from_value(f.clone()).unwrap();
+            assert_eq!(&serde_json::to_value(&p).unwrap(), f);
+        }
+        assert_eq!(frames[0]["works"].as_array().unwrap().len(), 2);
+        assert_eq!(frames[2]["error"], "work_pull_disabled");
+        let ask = json!({"type": "work.pull", "requestId": "r", "slotGeneration": 0, "max": 2});
+        assert!(parse_operator_frame(&ask.to_string()).is_some());
+        let _: p2::OperatorToServerFrame = serde_json::from_value(ask).unwrap();
+        assert!(
+            parse_operator_frame(r#"{"type":"work.pull","slotGeneration":0,"max":2}"#).is_none()
+        );
     }
 
     #[test]

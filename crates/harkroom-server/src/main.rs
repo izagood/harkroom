@@ -5655,6 +5655,7 @@ async fn open_write_pool() -> Option<sqlx::PgPool> {
             enable_measure(&pool).await;
             enable_work_shadow(&pool).await;
             enable_turn_end_judge(&pool).await;
+            enable_work_run(&pool).await;
             enable_device_allow(&pool).await;
             enable_work_route(&pool).await;
             enable_ledger_mandate(&pool).await;
@@ -5716,6 +5717,46 @@ async fn enable_work_shadow(pool: &sqlx::PgPool) {
             "front: work shadow off — privilege check failed ({})",
             e.as_database_error().map_or("io", |_| "db")
         ),
+    }
+}
+
+/// I2d 턴 ↔ 작업 잇기 — 임대가 설 때 잡은 줄에 턴을 적고(잡기 스위치 `HARKROOM_WORK_CLAIM`), 뿌리 작업을 `running`·`waiting` 으로
+/// 옮긴다(스위치 `HARKROOM_WORK_RUN`, 기본 꺼짐). 권한이 모자란 쪽은 켜지 않는다(나머지는 그대로 돈다).
+async fn enable_work_run(pool: &sqlx::PgPool) {
+    use harkroom_server::core::{work, work_claim, work_run};
+    let has = |m: Result<Vec<String>, sqlx::Error>, what: &str| match m {
+        Ok(m) if m.is_empty() => true,
+        Ok(m) => {
+            eprintln!("front: {what} off — missing privileges {m:?}");
+            false
+        }
+        Err(_) => {
+            eprintln!("front: {what} off — privilege check failed");
+            false
+        }
+    };
+    let note = work_claim::switch_from_env()
+        && has(
+            write::missing_in(pool, work_claim::WORK_CLAIM_PRIVILEGES, &[]).await,
+            "work claim turn note",
+        );
+    let run = work_run::switch_from_env()
+        && has(
+            write::missing_in(
+                pool,
+                work_run::WORK_RUN_PRIVILEGES,
+                work::WORK_SEQUENCE_PRIVILEGES,
+            )
+            .await,
+            "work run state",
+        );
+    if run || note {
+        eprintln!(
+            "front: work run — state moves {} · claim turn note {}",
+            if run { "on" } else { "off" },
+            if note { "on" } else { "off" }
+        );
+        work_run::enable(pool.clone(), run, note);
     }
 }
 

@@ -422,6 +422,22 @@
     "reason": "released"
    },
    {
+    "type": "work.pull",
+    "requestId": "q5",
+    "slotGeneration": 3,
+    "max": 2,
+    "leaseSecs": 120,
+    "agents": [
+     "00000000-aaaa-4bbb-8ccc-000000000001"
+    ]
+   },
+   {
+    "type": "work.pull",
+    "requestId": "q6",
+    "slotGeneration": 0,
+    "max": 1
+   },
+   {
     "type": "runner.announce",
     "runnerId": "r-00000000-0000-4000-8000-000000000002",
     "sessions": [
@@ -669,6 +685,27 @@
     "requestId": "q4",
     "workIds": [],
     "error": "work_claim_disabled"
+   },
+   {
+    "type": "work.pulled",
+    "requestId": "q5",
+    "works": [
+     {
+      "workId": "00000000-aaaa-4bbb-8ccc-000000000001",
+      "agentId": "00000000-aaaa-4bbb-8ccc-000000000001",
+      "channelId": "00000000-aaaa-4bbb-8ccc-000000000001",
+      "threadRootId": "00000000-aaaa-4bbb-8ccc-000000000001",
+      "rootId": "00000000-aaaa-4bbb-8ccc-000000000001",
+      "attempts": 1,
+      "leaseExpiresAt": "2026-01-01T00:00:00.000Z"
+     }
+    ]
+   },
+   {
+    "type": "work.pulled",
+    "requestId": "q6",
+    "works": [],
+    "error": "work_pull_disabled"
    }
   ]
  },

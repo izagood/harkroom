@@ -428,6 +428,18 @@ pub mod p2 {
             #[serde(default, skip_serializing_if = "Option::is_none")]
             thread_root_id: Option<String>,
         },
+        /// 좁히지 않고 판에서 잡는다(I2d pull) — 빈 칸 수(`max`)만큼, 할 일이 있는 작업을 앞에서부터. `agents` 는 후보를 좁히기만 한다.
+        /// 답은 `work.pulled`. 모르는 옛 서버는 버린다(답 없음).
+        #[serde(rename = "work.pull", rename_all = "camelCase")]
+        WorkPull {
+            request_id: String,
+            slot_generation: i64,
+            max: u32,
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            lease_secs: Option<i32>,
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            agents: Option<Vec<String>>,
+        },
         /// 쥔 임대를 묶어서 민다(I2b). `held` 의 횟수는 잡을 때 받은 값 그대로다. 답은 `work.renewed`.
         #[serde(rename = "work.renew", rename_all = "camelCase")]
         WorkRenew {
@@ -511,7 +523,7 @@ pub mod p2 {
     }
 
     /// 정본의 `OPERATOR_TYPES`.
-    pub const OPERATOR_TO_SERVER_TYPES: [&str; 22] = [
+    pub const OPERATOR_TO_SERVER_TYPES: [&str; 23] = [
         "hello",
         "capabilities",
         "runner.started",
@@ -534,6 +546,7 @@ pub mod p2 {
         "work.claim",
         "work.renew",
         "work.release",
+        "work.pull",
     ];
 
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -638,6 +651,15 @@ pub mod p2 {
             #[serde(default, skip_serializing_if = "Option::is_none")]
             error: Option<String>,
         },
+        /// `work.pull` 의 답(I2d) — 잡은 작업들(없으면 빈 목록). 하지 않았으면 `error`
+        /// (`work_pull_disabled`·`work_claim_disabled`·`invalid_request`·`unavailable`)와 빈 목록.
+        #[serde(rename = "work.pulled", rename_all = "camelCase")]
+        WorkPulled {
+            request_id: String,
+            works: Vec<WorkClaimedItem>,
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            error: Option<String>,
+        },
         /// `work.renew` 의 답(I2b) — 실제로 갱신된 작업 id(빠진 것은 잃은 줄)와 적용된 임대 길이.
         #[serde(rename = "work.renewed", rename_all = "camelCase")]
         WorkRenewed {
@@ -651,7 +673,7 @@ pub mod p2 {
     }
 
     /// 정본의 `SERVER_TYPES`.
-    pub const SERVER_TO_OPERATOR_TYPES: [&str; 17] = [
+    pub const SERVER_TO_OPERATOR_TYPES: [&str; 18] = [
         "assign",
         "unassign",
         "assign.synced",
@@ -669,6 +691,7 @@ pub mod p2 {
         "wake",
         "work.claimed",
         "work.renewed",
+        "work.pulled",
     ];
 }
 

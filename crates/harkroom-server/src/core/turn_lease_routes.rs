@@ -80,6 +80,20 @@ fn parse_issue(v: &Value) -> Option<(String, Option<String>)> {
     Some((cause.to_string(), holder))
 }
 
+/// `POST /agent/turn-leases` 본문의 선택 칸 `work: {workId, attempts}`(I2d) — 러너가 이 턴에 넘겨받은 잡은 줄. 모양이 틀리면
+/// 없는 것으로 친다(임대 발급을 막지 않는다 — 기록용 칸이다). 맞는 줄인지는 적는 문장이 본다.
+fn parse_work(v: &Value) -> Option<super::work_claim::Held> {
+    let w = v.as_object()?.get("work")?.as_object()?;
+    let work_id = w.get("workId")?.as_str().filter(|s| is_uuid(s))?;
+    let attempts = i32::try_from(w.get("attempts")?.as_i64()?)
+        .ok()
+        .filter(|n| *n >= 1)?;
+    Some(super::work_claim::Held {
+        work_id: work_id.to_string(),
+        attempts,
+    })
+}
+
 /// `/end`·`/renew` 본문의 `token`(1..200).
 fn parse_token(v: &Value) -> Option<String> {
     str_in(v.as_object()?.get("token")?, 1, 200).map(str::to_string)
@@ -128,6 +142,7 @@ pub async fn issue(
     let Some((cause, holder)) = v.as_ref().and_then(parse_issue) else {
         return bad_request("body: invalid");
     };
+    let passed_work = v.as_ref().and_then(parse_work);
     let issued = match lease::issue(
         &st.write,
         &agent_id,
@@ -191,6 +206,15 @@ pub async fn issue(
                 ),
             };
             record_audit(&st.write, entry).await;
+            // I2d — 잡은 줄에 이 턴을 적고(잡기 켬), 그 턴의 뿌리 작업을 running 으로(스위치). 요청 밖에서 돈다.
+            super::work_run::turn_started(super::work_run::Started {
+                lease_id: i.lease_id.clone(),
+                agent_id: agent_id.clone(),
+                operator_id: operator_id.clone(),
+                thread_root_id: i.thread_root_id.clone(),
+                cause_message_id: cause.clone(),
+                work: passed_work,
+            });
             no_store(ok_json(&json!({ "lease": {
                 "id": i.lease_id, "token": i.token, "channelId": i.channel_id,
                 "threadRootId": i.thread_root_id, "expiresAt": i.expires_at,
