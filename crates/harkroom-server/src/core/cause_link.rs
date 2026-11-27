@@ -18,8 +18,12 @@ const MODEL_FAMILIES: &[&str] = &["opus", "sonnet", "haiku", "fable", "gpt", "co
 
 struct Sql {
     verified: String,
+    /// 깨움 행 판(EC, [`super::wake_cause`]).
+    verified_wake: String,
     principal: String,
     reasons: String,
+    /// 깨움 행 판(EC).
+    reasons_wake: String,
     mandate: String,
     effective_model: String,
 }
@@ -36,8 +40,16 @@ fn sql() -> &'static Sql {
         };
         Sql {
             verified: frag("cause_verified_link"),
+            verified_wake: super::wake_cause::swap(
+                &frag("cause_verified_link"),
+                super::wake_cause::VERIFIED_LINK_SWAPS,
+            ),
             principal: frag("cause_principal"),
             reasons: frag("cause_reasons"),
+            reasons_wake: super::wake_cause::swap(
+                &frag("cause_reasons"),
+                super::wake_cause::BARE_SWAPS,
+            ),
             mandate: frag("cause_mandate"),
             effective_model: frag("effective_model"),
         }
@@ -45,6 +57,7 @@ fn sql() -> &'static Sql {
 }
 
 /// TS `verifiedCauseLink` — 그 원인이 이 작성자에게 최근(60분) inbox 를 만들었고 지워지지 않았을 때만 그 id.
+/// 스위치([`super::wake_cause::mode`])가 `on` 이면 깨움 행에서 읽고, `shadow` 면 나란히 돌려 갈릴 때만 적는다.
 pub async fn verified_cause_link(
     conn: &mut sqlx::PgConnection,
     author: &str,
@@ -52,10 +65,34 @@ pub async fn verified_cause_link(
     now_ms: i64,
     iso: fn(i64) -> String,
 ) -> Result<Option<String>, sqlx::Error> {
-    sqlx::query_scalar(sql().verified.as_str())
+    use super::wake_cause::{self, Switch};
+    let since = iso(now_ms - CAUSE_LINK_FRESH_MS);
+    let mode = wake_cause::mode();
+    let link = verified_link_from(conn, mode == Switch::On, author, cause, &since).await?;
+    if mode == Switch::Shadow {
+        let guarded = wake_cause::guard(conn).await;
+        let other = verified_link_from(conn, true, author, cause, &since).await;
+        wake_cause::release(conn, guarded, other.is_ok()).await;
+        let same = other.ok().map(|o| o == link);
+        wake_cause::note("verified_link", author, cause, same, json!(["link"]));
+    }
+    Ok(link)
+}
+
+/// [`verified_cause_link`] 의 문장 하나 — `wake` 면 깨움 행 판. `since` 는 신선도 하한(ISO).
+pub async fn verified_link_from(
+    conn: &mut sqlx::PgConnection,
+    wake: bool,
+    author: &str,
+    cause: &str,
+    since: &str,
+) -> Result<Option<String>, sqlx::Error> {
+    let s = sql();
+    let text = if wake { &s.verified_wake } else { &s.verified };
+    sqlx::query_scalar(text.as_str())
         .bind(cause)
         .bind(author)
-        .bind(iso(now_ms - CAUSE_LINK_FRESH_MS))
+        .bind(since)
         .fetch_optional(&mut *conn)
         .await
 }
@@ -77,12 +114,35 @@ pub async fn principal_for_agent_post(
 }
 
 /// TS `causeReasonsFor` — 그 원인 글로 이 에이전트에게 온 inbox 사유들(정렬·중복 없음).
+/// 스위치([`super::wake_cause::mode`])가 `on` 이면 깨움 행에서 읽고, `shadow` 면 나란히 돌려 갈릴 때만 적는다.
 pub async fn cause_reasons(
     conn: &mut sqlx::PgConnection,
     agent: &str,
     cause: &str,
 ) -> Result<Vec<String>, sqlx::Error> {
-    sqlx::query_scalar(sql().reasons.as_str())
+    use super::wake_cause::{self, Switch};
+    let mode = wake_cause::mode();
+    let reasons = reasons_from(conn, mode == Switch::On, agent, cause).await?;
+    if mode == Switch::Shadow {
+        let guarded = wake_cause::guard(conn).await;
+        let other = reasons_from(conn, true, agent, cause).await;
+        wake_cause::release(conn, guarded, other.is_ok()).await;
+        let same = other.ok().map(|o| o == reasons);
+        wake_cause::note("reasons", agent, cause, same, json!(["reasons"]));
+    }
+    Ok(reasons)
+}
+
+/// [`cause_reasons`] 의 문장 하나 — `wake` 면 깨움 행 판.
+pub async fn reasons_from(
+    conn: &mut sqlx::PgConnection,
+    wake: bool,
+    agent: &str,
+    cause: &str,
+) -> Result<Vec<String>, sqlx::Error> {
+    let s = sql();
+    let text = if wake { &s.reasons_wake } else { &s.reasons };
+    sqlx::query_scalar(text.as_str())
         .bind(agent)
         .bind(cause)
         .fetch_all(&mut *conn)

@@ -94,9 +94,54 @@ const RECENT_SQL: &str = "select count(*)::int from audit_log where action in ('
 const AUDIT_SQL: &str = "insert into audit_log (action, actor_id, target, detail) \
      values ('grant.delegate.denied', $1::uuid, $2, $3::jsonb)";
 /// TS 원인 확인(security F1) — 그 글이 이 에이전트를 1시간 안에 깨웠어야 원인이다. 줄이 있으면 TS 몫(즉시 유효 판정·시스템 줄).
-const CAUSE_SQL: &str = "select 1 from message m where m.id = $1::uuid and m.deleted_at is null \
+pub const CAUSE_SQL: &str = "select 1 from message m where m.id = $1::uuid and m.deleted_at is null \
      and exists (select 1 from inbox i where i.account_id = $2::uuid and i.message_id = m.id \
                  and i.created_at > now() - interval '60 minutes')";
+/// [`CAUSE_SQL`] 의 깨움 행 판(EC, [`crate::core::wake_cause`]) — 표 이름만 다르다.
+pub fn cause_wake_sql() -> &'static str {
+    static S: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    S.get_or_init(|| {
+        crate::core::wake_cause::swap(CAUSE_SQL, crate::core::wake_cause::VERIFIED_LINK_SWAPS)
+    })
+}
+
+/// 그 글이 이 에이전트를 1시간 안에 깨웠나 — `wake` 면 깨움 행에서 읽는다.
+pub async fn cause_woke(
+    read: &sqlx::PgPool,
+    wake: bool,
+    agent: &str,
+    cause: &str,
+) -> sqlx::Result<bool> {
+    let text = if wake { cause_wake_sql() } else { CAUSE_SQL };
+    let hit: Option<i32> = sqlx::query_scalar(text)
+        .bind(cause)
+        .bind(agent)
+        .fetch_optional(read)
+        .await?;
+    Ok(hit.is_some())
+}
+
+/// 스위치([`crate::core::wake_cause::mode`])대로 [`cause_woke`] 를 읽는다. `shadow` 면 답은 inbox 문장이고 갈릴 때만 적는다.
+async fn cause_woke_checked(read: &sqlx::PgPool, agent: &str, cause: &str) -> sqlx::Result<bool> {
+    use crate::core::wake_cause::{self, Switch};
+    let mode = wake_cause::mode();
+    let hit = cause_woke(read, mode == Switch::On, agent, cause).await?;
+    if mode == Switch::Shadow {
+        let same = cause_woke(read, true, agent, cause)
+            .await
+            .ok()
+            .map(|o| o == hit);
+        wake_cause::note(
+            "grant_cause",
+            agent,
+            cause,
+            same,
+            serde_json::json!(["woke"]),
+        );
+    }
+    Ok(hit)
+}
+
 /// TS 위임 줄 upsert(대기 — `suspended_at`·`pending_approval`).
 const UPSERT_SQL: &str = "insert into account_grant (account_id, capability, scope, granted_by, expires_at, limits, delegate_depth, \
        write_needs_human_cause, parent_grant_id, suspended_at, suspend_reason) \
@@ -559,13 +604,7 @@ pub async fn answer(
         if !crate::core::msg_read::is_uuid(c) {
             return None;
         }
-        let hit: Option<i32> = sqlx::query_scalar(CAUSE_SQL)
-            .bind(c)
-            .bind(&me.id)
-            .fetch_optional(read)
-            .await
-            .ok()?;
-        if hit.is_some() {
+        if cause_woke_checked(read, &me.id, c).await.ok()? {
             return None;
         }
     }

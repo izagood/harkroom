@@ -50,6 +50,8 @@ pub const TURN_LEASE_PRIVILEGES: &[(&str, &str)] = &[
 
 struct Sql {
     cause: String,
+    /// 같은 문장의 깨움 행 판(EC, [`super::wake_cause`]).
+    cause_wake: String,
     used: String,
     prior: String,
     claim_moved: String,
@@ -88,12 +90,18 @@ fn sql() -> &'static Sql {
         else {
             panic!("turn_lease_consts: six numbers");
         };
-        Sql {
-            cause: format!(
+        let cause = |inner: &str| {
+            format!(
                 "select c.\"channelId\"::text, c.\"threadRootId\"::text, c.\"mandateId\"::text, c.\"principalId\"::text, \
-                   (extract(epoch from c.\"inboxAt\") * 1000)::int8 from ({}) c",
-                frag("turn_lease_cause")
-            ),
+                   (extract(epoch from c.\"inboxAt\") * 1000)::int8 from ({inner}) c"
+            )
+        };
+        Sql {
+            cause: cause(&frag("turn_lease_cause")),
+            cause_wake: cause(&super::wake_cause::swap(
+                &frag("turn_lease_cause"),
+                super::wake_cause::LEASE_CAUSE_SWAPS,
+            )),
             used: frag("turn_lease_used"),
             prior: format!(
                 "select p.id::text, p.\"operatorId\"::text, p.ended, p.\"lastBeat\"::text, \
@@ -192,7 +200,7 @@ pub enum Issue {
 }
 
 /// 원인 글 한 줄: 채널·스레드·위임장·principal·인박스 시각(epoch ms).
-type CauseRow = (String, String, Option<String>, Option<String>, i64);
+pub type CauseRow = (String, String, Option<String>, Option<String>, i64);
 /// 앞 임대: id·오퍼레이터·끝남·마지막 박동(글자·epoch ms)·이 부름의 행 수.
 type PriorRow = (String, String, bool, String, i64, i64);
 
@@ -203,6 +211,77 @@ async fn tx_now(tx: &mut sqlx::PgConnection) -> Result<(String, i64), sqlx::Erro
     )
     .fetch_one(tx)
     .await
+}
+
+/// 원인 글 한 줄을 읽는다 — `wake` 면 깨움 행 문장으로(EC). 시험이 두 문장을 같은 DB 에서 견준다.
+pub async fn cause_row(
+    conn: &mut sqlx::PgConnection,
+    wake: bool,
+    agent_id: &str,
+    cause_message_id: &str,
+    min_inbox: &str,
+) -> Result<Option<CauseRow>, sqlx::Error> {
+    let s = sql();
+    let text = if wake { &s.cause_wake } else { &s.cause };
+    sqlx::query_as(text.as_str())
+        .bind(agent_id)
+        .bind(cause_message_id)
+        .bind(min_inbox)
+        .fetch_optional(&mut *conn)
+        .await
+}
+
+/// 두 원인 줄에서 갈린 칸 이름(둘 다 없으면 빈 목록).
+pub fn cause_diff(inbox: Option<&CauseRow>, wake: Option<&CauseRow>) -> Vec<&'static str> {
+    match (inbox, wake) {
+        (None, None) => Vec::new(),
+        (Some(_), None) => vec!["wake_missing"],
+        (None, Some(_)) => vec!["inbox_missing"],
+        (Some(a), Some(b)) => [
+            ("channel", a.0 != b.0),
+            ("thread", a.1 != b.1),
+            ("mandate", a.2 != b.2),
+            ("principal", a.3 != b.3),
+            ("at", a.4 != b.4),
+        ]
+        .into_iter()
+        .filter_map(|(k, d)| d.then_some(k))
+        .collect(),
+    }
+}
+
+/// 스위치([`super::wake_cause::mode`])대로 원인 줄을 읽는다. `shadow` 면 답은 inbox 문장이고, 깨움 행 문장은 savepoint 안에서
+/// 나란히 돌려 갈린 칸만 적는다 — 그 문장이 실패해도 발급 트랜잭션은 그대로다.
+async fn cause_row_checked(
+    conn: &mut sqlx::PgConnection,
+    agent_id: &str,
+    cause_message_id: &str,
+    min_inbox: &str,
+) -> Result<Option<CauseRow>, sqlx::Error> {
+    use super::wake_cause::{self, Switch};
+    let mode = wake_cause::mode();
+    let row = cause_row(
+        conn,
+        mode == Switch::On,
+        agent_id,
+        cause_message_id,
+        min_inbox,
+    )
+    .await?;
+    if mode == Switch::Shadow {
+        let guarded = wake_cause::guard(conn).await;
+        let other = cause_row(conn, true, agent_id, cause_message_id, min_inbox).await;
+        wake_cause::release(conn, guarded, other.is_ok()).await;
+        let diff = other.ok().map(|o| cause_diff(row.as_ref(), o.as_ref()));
+        wake_cause::note(
+            "lease_cause",
+            agent_id,
+            cause_message_id,
+            diff.as_ref().map(Vec::is_empty),
+            serde_json::json!(diff.unwrap_or_default()),
+        );
+    }
+    Ok(row)
 }
 
 /// TS `issueTurnLease`. `claim_holder` 는 묻는 러너의 스레드 임대 holder(옛 러너는 없다).
@@ -227,12 +306,7 @@ pub async fn issue(
             .bind(s.inbox_max_age_ms as f64 / 1000.0)
             .fetch_one(&mut *tx)
             .await?;
-    let row: Option<CauseRow> = sqlx::query_as(s.cause.as_str())
-        .bind(agent_id)
-        .bind(cause_message_id)
-        .bind(&min_inbox)
-        .fetch_optional(&mut *tx)
-        .await?;
+    let row = cause_row_checked(&mut tx, agent_id, cause_message_id, &min_inbox).await?;
     let Some((channel_id, thread_root_id, mandate_id, principal_id, inbox_ms)) = row else {
         tx.rollback().await?;
         return Ok(Issue::NotInvoked);

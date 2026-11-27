@@ -359,17 +359,20 @@ pub async fn flush_updates(
             continue;
         }
         // 읽지 않은 update 는 (위임자, 위임) 당 하나.
-        sqlx::query(
+        let dropped: Vec<i64> = sqlx::query_scalar(
             "delete from inbox x using message m \
               where x.account_id = $1::uuid and x.reason = 'delegation_update' and x.read_at is null \
-                and m.id = x.message_id and m.thread_root_id = $2::uuid and m.author_id = $3::uuid and x.message_id <> $4::uuid",
+                and m.id = x.message_id and m.thread_root_id = $2::uuid and m.author_id = $3::uuid and x.message_id <> $4::uuid \
+              returning x.id",
         )
         .bind(&lead)
         .bind(&root)
         .bind(&delegate)
         .bind(&message)
-        .execute(&mut *conn)
+        .fetch_all(&mut *conn)
         .await?;
+        // 지운 줄의 깨움도 닫는다 — 갈음된 부름이 깨움 행에만 열려 남지 않게.
+        crate::core::wake_write::cancel_deleted(conn, &dropped).await;
         let converted = sqlx::query(
             "update inbox set reason = 'delegation_update' \
               where account_id = $1::uuid and message_id = $2::uuid and reason in ('mention', 'delegation_update')",

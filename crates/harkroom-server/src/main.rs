@@ -92,6 +92,7 @@ async fn main() {
     }
     let write = open_write_pool().await;
     enable_wake_source(&pool).await;
+    enable_wake_cause(&pool, write.as_ref()).await;
     if let (Some(hash), false) = (&claim, claim_seeded) {
         seed_claim_with_write_pool(write.as_ref(), hash).await;
     }
@@ -5962,6 +5963,49 @@ async fn enable_wake_source(read: &sqlx::PgPool) {
             e.as_database_error().map_or("io", |_| "db")
         ),
     }
+}
+
+/// EC 임대·사슬 판정 이전. `HARKROOM_WAKE_CAUSE` 가 `shadow`·`on` 이 아니면 켜지 않는다. 깨움 행 같이 쓰기가 꺼져 있거나,
+/// 판정 문장이 도는 두 풀(읽기·쓰기) 가운데 하나라도 깨움 표 칸 권한이 없으면 켜지 않는다 — 그때 판정은 지금처럼 inbox 를 읽는다.
+async fn enable_wake_cause(read: &sqlx::PgPool, write: Option<&sqlx::PgPool>) {
+    use harkroom_server::core::{wake_cause, wake_write};
+    let switch = wake_cause::switch_from_env();
+    if switch == wake_cause::Switch::Off {
+        return;
+    }
+    if !wake_write::enabled() {
+        eprintln!("front: wake cause off — wake write is off");
+        return;
+    }
+    let Some(write) = write else {
+        eprintln!("front: wake cause off — no write pool");
+        return;
+    };
+    for (name, pool) in [("read", read), ("write", write)] {
+        match write::missing_in(pool, wake_cause::WAKE_CAUSE_PRIVILEGES, &[]).await {
+            Ok(m) if m.is_empty() => {}
+            Ok(m) => {
+                eprintln!("front: wake cause off — {name} pool missing privileges {m:?}");
+                return;
+            }
+            Err(e) => {
+                eprintln!(
+                    "front: wake cause off — privilege check failed ({})",
+                    e.as_database_error().map_or("io", |_| "db")
+                );
+                return;
+            }
+        }
+    }
+    eprintln!(
+        "front: wake cause {}",
+        if switch == wake_cause::Switch::On {
+            "on"
+        } else {
+            "shadow"
+        }
+    );
+    wake_cause::enable(switch);
 }
 
 /// B2 글 → 작업 라우팅. `HARKROOM_WORK_ROUTE=off` 거나 권한이 모자라면 켜지 않는다 — 기록만 빠지고 글 올리기는 그대로 돈다.
