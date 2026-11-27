@@ -185,7 +185,7 @@ const SAVE: &str =
     "update agent_config set agent_pickable_models = $2::jsonb where account_id = $1::uuid";
 const HELD: &str = "select t.thread_root_id::text, m.channel_id::text, t.model, t.effort
  from thread_agent_model t join message m on m.id = t.thread_root_id
- where t.agent_id = $1::uuid and t.set_by_kind = 'agent'
+ where t.agent_id = $1::uuid and t.set_by_kind = 'agent' and t.combo_id is null
  for update of t";
 
 /// TS `clearOutside` 의 지우기 — 잠근 행 중 목록 밖인 것만, 다시 `set_by_kind = 'agent'` 를 조건에 둔다.

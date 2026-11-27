@@ -65,7 +65,7 @@ pub(crate) const UPSERT_SQL: &str = "insert into thread_agent_model (thread_root
      values ($1::uuid, $2::uuid, $3, $4, $5, $6::uuid, 'human') \
      on conflict (thread_root_id, agent_id) do update set \
        harness = excluded.harness, model = excluded.model, effort = excluded.effort, \
-       set_by = excluded.set_by, set_by_kind = excluded.set_by_kind, set_at = now()";
+       set_by = excluded.set_by, set_by_kind = excluded.set_by_kind, combo_id = null, set_at = now()";
 /// TS `getThreadAgentModel` — `COLS`·`FROM` 과 `normalize`(setAt → `toISOString()` 꼴), 칸 순서 그대로.
 const ROW_SQL: &str = concat!(
     "select json_build_object(",

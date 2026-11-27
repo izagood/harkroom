@@ -238,7 +238,8 @@ pub(super) async fn answer_artifact(
 }
 
 /// zod `AGENT_MODELS_ARG` 한 칸 — `{ agentId: uuid, model?: string(≤MODEL_ID_MAX)|null, effort?: string(≤64)|null }`.
-pub(crate) type Pick = (String, Option<String>, Option<String>);
+/// 넷째는 J2b 의 `comboId`(실행 조합, uuid) — 도구 스키마는 `agent.call` 에만 이 칸을 둔다(다른 도구는 스키마 문지기가 막는다).
+pub(crate) type Pick = (String, Option<String>, Option<String>, Option<String>);
 
 pub(crate) fn parse_picks(v: &Value) -> Option<Vec<Pick>> {
     let a = v.as_array()?;
@@ -260,10 +261,15 @@ pub(crate) fn parse_picks(v: &Value) -> Option<Vec<Pick>> {
                 .as_str()
                 .filter(|s| is_uuid(s))?
                 .to_owned();
+            let combo = match o.get("comboId") {
+                None => None,
+                Some(v) => Some(v.as_str().filter(|s| is_uuid(s))?.to_owned()),
+            };
             Some((
                 id,
                 axis(o, "model", cause_link::MODEL_ID_MAX)?,
                 axis(o, "effort", 64)?,
+                combo,
             ))
         })
         .collect()
@@ -293,9 +299,20 @@ pub async fn picks_refusal(st: &PostState, me: &Account, args: &Value) -> Option
 /// 자기 조각([`super::delegate_gate`])도 같은 판정을 쓴다.
 pub(crate) async fn check_picks(st: &PostState, picks: &[Pick]) -> Option<Option<String>> {
     use crate::core::thread_model_set::{axis_valid, check_offered, clean_axis};
-    for (agent, model, effort) in picks {
+    for (agent, model, effort, combo) in picks {
         let model = clean_axis(model.as_deref(), cause_link::MODEL_ID_MAX);
         let effort = clean_axis(effort.as_deref(), 64);
+        // 조합을 고른 줄 — 모델·effort 를 같이 줄 수 없다. 허용 목록 판정은 글과 같은 tx 의 `apply` 가 한다
+        // (하네스 능력 스냅숏은 보지 않는다 — 조합은 사람이 만들고 소유자가 허용한 것이다).
+        if combo.is_some() {
+            if model.is_some() || effort.is_some() {
+                return Some(Some(err(
+                    "combo_with_model",
+                    "comboId 와 model·effort 를 함께 줄 수 없다 — 조합이 모델·effort 를 정한다",
+                )));
+            }
+            continue;
+        }
         if model.is_none() && effort.is_none() {
             continue;
         }
@@ -337,10 +354,11 @@ pub async fn answer_picks(
     let a = parse(&rest)?;
     let picks: Vec<Pick> = raw
         .into_iter()
-        .map(|(agent_id, model, effort)| Pick {
+        .map(|(agent_id, model, effort, combo_id)| Pick {
             agent_id,
             model: clean_axis(model.as_deref(), cause_link::MODEL_ID_MAX),
             effort: clean_axis(effort.as_deref(), 64),
+            combo_id,
         })
         .collect();
     let hook = AgentPicks::new(&a.channel, a.post.thread_root.as_deref(), &me.id, picks);
@@ -2051,10 +2069,11 @@ pub async fn answer_call(
         let picks = picks
             .iter()
             .map(
-                |(agent_id, model, effort)| crate::core::agent_model_picks::Pick {
+                |(agent_id, model, effort, combo_id)| crate::core::agent_model_picks::Pick {
                     agent_id: agent_id.clone(),
                     model: clean_axis(model.as_deref(), cause_link::MODEL_ID_MAX),
                     effort: clean_axis(effort.as_deref(), 64),
+                    combo_id: combo_id.clone(),
                 },
             )
             .collect();
@@ -2243,10 +2262,17 @@ mod tests {
         );
         assert_eq!(
             parse_picks(&json!([{ "agentId": C, "model": "m", "effort": null }])),
-            Some(vec![(C.to_owned(), Some("m".to_owned()), None)])
+            Some(vec![(C.to_owned(), Some("m".to_owned()), None, None)])
         );
         assert!(parse_picks(&json!([{ "agentId": "x" }])).is_none());
         assert!(parse_picks(&json!([{ "agentId": C, "effort": "e".repeat(65) }])).is_none());
+        // J2b — comboId 는 uuid 만. null·uuid 아닌 글자는 받지 않는다.
+        assert_eq!(
+            parse_picks(&json!([{ "agentId": C, "comboId": C }])),
+            Some(vec![(C.to_owned(), None, None, Some(C.to_owned()))])
+        );
+        assert!(parse_picks(&json!([{ "agentId": C, "comboId": "x" }])).is_none());
+        assert!(parse_picks(&json!([{ "agentId": C, "comboId": null }])).is_none());
         assert!(parse_picks(&json!(vec![json!({ "agentId": C }); 9])).is_none());
         // 빈 agentModels 는 고를 것이 없어 없는 것과 같다.
         assert!(parse(&json!({ "channelId": C, "body": "x", "agentModels": [] })).is_some());

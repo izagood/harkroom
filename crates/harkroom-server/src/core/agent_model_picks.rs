@@ -4,6 +4,11 @@
 //! 판정 순서(TS 와 같다, 고른 것마다): `self_pick`(403) → `not_called`(403) → `bad_model_value`(400) → 허용 목록
 //! `not_pickable`(403, 풀기는 건너뛴다) → 사람이 정한 행 `human_pinned`(409). 모두 지나면 실제로 바뀌는 것만 세어
 //! 스레드 상한(`model_change_limit`, 429)을 본다.
+//!
+//! J2b — 고른 것에 `comboId`(실행 조합)가 있으면 허용 목록은 `agent_pickable_models` 가 아니라 그 에이전트의
+//! `agent_exec_combo` 다([`combo_verdict`]): 기능이 꺼졌으면 `combo_off`(409) → 목록에 없으면 `combo_not_allowed`(403) →
+//! 조합의 하네스가 그 에이전트의 지금 하네스와 다르면 `combo_harness_mismatch`(403). 지나면 조합의 model·effort 를 그 줄에
+//! 베끼고 `combo_id` 를 같이 적는다. 사람이 정한 행·스레드 상한은 그대로 본다.
 use super::msg_post::Rejection;
 use super::pickable_models::Entry;
 use super::thread_model_set::axis_valid;
@@ -37,12 +42,57 @@ pub struct Pick {
     pub agent_id: String,
     pub model: Option<String>,
     pub effort: Option<String>,
+    /// 실행 조합(J2b). 있으면 model·effort 는 비어 온다 — [`apply`] 가 조합에서 채운다.
+    pub combo_id: Option<String>,
 }
 
 impl Pick {
     pub fn clearing(&self) -> bool {
-        self.model.is_none() && self.effort.is_none()
+        self.model.is_none() && self.effort.is_none() && self.combo_id.is_none()
     }
+}
+
+/// 허용 목록에서 읽은 조합 한 줄 — (조합 하네스, model, effort, 그 에이전트의 지금 하네스).
+pub type ComboRow = (String, String, Option<String>, String);
+
+/// 조합 고르기 판정(DB 없이). `enabled` 는 조합 기능이 켜졌는가, `row` 는 그 에이전트 허용 목록에서 찾은 줄.
+/// 지나면 그 줄에 적을 (model, effort).
+pub fn combo_verdict(
+    enabled: bool,
+    row: Option<&ComboRow>,
+) -> Result<(String, Option<String>), Rejection> {
+    if !enabled {
+        return Err(reject(
+            409,
+            "combo_off",
+            "실행 조합 기능이 켜져 있지 않다 — 모델·effort 로 고르거나 사람에게 넘겨라",
+        ));
+    }
+    let Some((harness, model, effort, agent_harness)) = row else {
+        return Err(reject(
+            403,
+            "combo_not_allowed",
+            "그 에이전트의 허용 목록에 없는 실행 조합이다 — 소유자가 허용한 조합만 고른다",
+        ));
+    };
+    if harness != agent_harness {
+        return Err(reject(
+            403,
+            "combo_harness_mismatch",
+            format!(
+                "그 조합의 하네스({harness})가 에이전트의 지금 하네스({agent_harness})와 다르다"
+            ),
+        ));
+    }
+    // 조합에서 베낀 값도 스레드 줄의 값 규칙을 지난다 — 러너는 이 값을 다시 검사하지 않고 하네스 인자로 넘긴다.
+    if !axis_valid(Some(model)) || !axis_valid(effort.as_deref()) {
+        return Err(reject(
+            400,
+            "combo_bad_value",
+            "그 조합의 model·effort 값이 허용되는 꼴이 아니다 — 사람이 조합을 고쳐야 한다",
+        ));
+    }
+    Ok((model.clone(), effort.clone()))
 }
 
 fn reject(status: u16, code: &str, message: impl Into<String>) -> Rejection {
@@ -154,12 +204,12 @@ pub fn pickable_verdict(pickable: &[Entry], p: &Pick) -> Option<Rejection> {
     None
 }
 
-/// 지금 행(`set_by_kind`, model, effort). 사람이 정했으면 `human_pinned`.
-pub type Existing = (String, Option<String>, Option<String>);
+/// 지금 행(`set_by_kind`, model, effort, combo_id). 사람이 정했으면 `human_pinned`.
+pub type Existing = (String, Option<String>, Option<String>, Option<String>);
 
 pub fn pinned_verdict(row: Option<&Existing>) -> Option<Rejection> {
     match row {
-        Some((kind, _, _)) if kind == "human" => Some(human_pinned()),
+        Some((kind, _, _, _)) if kind == "human" => Some(human_pinned()),
         _ => None,
     }
 }
@@ -168,7 +218,9 @@ pub fn pinned_verdict(row: Option<&Existing>) -> Option<Rejection> {
 pub fn is_effective(p: &Pick, row: Option<&Existing>) -> bool {
     match row {
         None => !p.clearing(),
-        Some((_, m, e)) => p.clearing() || !(m == &p.model && e == &p.effort),
+        Some((_, m, e, c)) => {
+            p.clearing() || !(m == &p.model && e == &p.effort && c == &p.combo_id)
+        }
     }
 }
 
@@ -189,7 +241,7 @@ pub fn limit_verdict(used: i32, effective: usize) -> Option<Rejection> {
 
 const PICKABLE_SQL: &str =
     "select agent_pickable_models from agent_config where account_id = $1::uuid";
-const EXISTING_SQL: &str = "select set_by_kind, model, effort from thread_agent_model \
+const EXISTING_SQL: &str = "select set_by_kind, model, effort, combo_id::text from thread_agent_model \
      where thread_root_id = $1::uuid and agent_id = $2::uuid";
 const COUNT_SQL: &str =
     "select n from thread_agent_pick_count where thread_root_id = $1::uuid for update";
@@ -201,12 +253,19 @@ const ROOT_SQL: &str = "select 1 from message where id = $1::uuid and channel_id
      and thread_root_id is null and deleted_at is null";
 const AGENT_SQL: &str = "select a.kind, c.harness from account a left join agent_config c on c.account_id = a.id \
       where a.id = $1::uuid and a.deleted_at is null";
-const UPSERT_AGENT_SQL: &str = "insert into thread_agent_model (thread_root_id, agent_id, harness, model, effort, set_by, set_by_kind) \
-     values ($1::uuid, $2::uuid, $3, $4, $5, $6::uuid, 'agent') \
+const UPSERT_AGENT_SQL: &str = "insert into thread_agent_model (thread_root_id, agent_id, harness, model, effort, set_by, set_by_kind, combo_id) \
+     values ($1::uuid, $2::uuid, $3, $4, $5, $6::uuid, 'agent', $7::uuid) \
      on conflict (thread_root_id, agent_id) do update set \
        harness = excluded.harness, model = excluded.model, effort = excluded.effort, \
-       set_by = excluded.set_by, set_by_kind = excluded.set_by_kind, set_at = now() \
+       set_by = excluded.set_by, set_by_kind = excluded.set_by_kind, combo_id = excluded.combo_id, set_at = now() \
      where thread_agent_model.set_by_kind = 'agent'";
+/// 그 에이전트 허용 목록의 조합 한 줄 — 조합 하네스·model·effort 와 에이전트의 지금 하네스. 목록에 없으면 줄이 없다.
+/// `for share` 로 허용 줄과 조합 줄을 잡아, 같은 때 목록에서 빼거나 조합을 고치는 쓰기가 이 tx 뒤로 밀리게 한다
+/// (그 쓰기들은 뒤 문장에서 스레드 지정을 맞춘다 — `exec_combo::COMBO_THREADS_DROP_SQL`).
+pub const COMBO_ALLOWED_SQL: &str = "select c.harness, c.model, c.effort, coalesce(g.harness, 'claude-code') \
+       from agent_exec_combo a join exec_combo c on c.id = a.combo_id \
+       left join agent_config g on g.account_id = a.agent_id \
+      where a.agent_id = $1::uuid and a.combo_id = $2::uuid for share of a, c";
 
 /// 쓰기가 끝난 한 줄 — 바뀐 에이전트와 새 (model, effort)(풀기면 `None`). 시스템 줄·이벤트는 커밋 뒤 호출자 몫.
 pub type Change = (String, Option<(Option<String>, Option<String>)>);
@@ -232,11 +291,46 @@ pub async fn apply(
     picks: &[Pick],
     notified: &HashSet<String>,
 ) -> sqlx::Result<Result<Vec<Change>, Rejection>> {
+    // 조합을 고른 줄은 허용 목록에서 model·effort 를 채운 뒤 아래 판정을 그대로 지난다.
+    let mut resolved = Vec::with_capacity(picks.len());
     for p in picks {
         if let Some(r) = target_verdict(actor, notified, p) {
             return Ok(Err(r));
         }
-        if !p.clearing() {
+        let Some(combo) = p.combo_id.as_deref() else {
+            resolved.push(p.clone());
+            continue;
+        };
+        if p.model.is_some() || p.effort.is_some() {
+            return Ok(Err(reject(
+                400,
+                "combo_with_model",
+                "comboId 와 model·effort 를 함께 줄 수 없다 — 조합이 모델·effort 를 정한다",
+            )));
+        }
+        let enabled = super::exec_combo::pool().is_some();
+        let row: Option<ComboRow> = if enabled {
+            sqlx::query_as(COMBO_ALLOWED_SQL)
+                .bind(&p.agent_id)
+                .bind(combo)
+                .fetch_optional(&mut *tx)
+                .await?
+        } else {
+            None
+        };
+        match combo_verdict(enabled, row.as_ref()) {
+            Err(r) => return Ok(Err(r)),
+            Ok((model, effort)) => resolved.push(Pick {
+                agent_id: p.agent_id.clone(),
+                model: Some(model),
+                effort,
+                combo_id: Some(combo.to_owned()),
+            }),
+        }
+    }
+    let picks = &resolved[..];
+    for p in picks {
+        if !p.clearing() && p.combo_id.is_none() {
             let raw: Option<Option<Value>> = sqlx::query_scalar(PICKABLE_SQL)
                 .bind(&p.agent_id)
                 .fetch_optional(&mut *tx)
@@ -317,6 +411,7 @@ pub async fn apply(
             .bind(&p.model)
             .bind(&p.effort)
             .bind(actor)
+            .bind(&p.combo_id)
             .execute(&mut *tx)
             .await?
             .rows_affected();
@@ -414,6 +509,7 @@ mod tests {
             agent_id: B.into(),
             model: m.map(Into::into),
             effort: e.map(Into::into),
+            combo_id: None,
         }
     }
     fn code(r: Option<Rejection>) -> Option<(u16, String)> {
@@ -489,8 +585,8 @@ mod tests {
 
     #[test]
     fn pinned_effective_limit() {
-        let human: Existing = ("human".into(), Some("opus".into()), None);
-        let agent: Existing = ("agent".into(), Some("opus".into()), None);
+        let human: Existing = ("human".into(), Some("opus".into()), None, None);
+        let agent: Existing = ("agent".into(), Some("opus".into()), None, None);
         assert_eq!(
             code(pinned_verdict(Some(&human))),
             Some((409, "human_pinned".into()))
@@ -505,11 +601,75 @@ mod tests {
             Some(&agent)
         ));
         assert!(is_effective(&pick(Some("opus"), None), None));
+        // 같은 모델이라도 조합이 달라지면 바뀐 것이다.
+        let mut combo = pick(Some("opus"), None);
+        combo.combo_id = Some(A.into());
+        assert!(is_effective(&combo, Some(&agent)));
+        assert!(is_effective(&combo, None));
+        let held: Existing = ("agent".into(), Some("opus".into()), None, Some(A.into()));
+        assert!(!is_effective(&combo, Some(&held)));
+        assert!(is_effective(&pick(Some("opus"), None), Some(&held)));
         assert!(limit_verdict(0, 3).is_none());
         assert!(limit_verdict(2, 1).is_none());
         assert_eq!(
             code(limit_verdict(2, 2)),
             Some((429, "model_change_limit".into()))
         );
+    }
+
+    #[test]
+    fn combo_verdicts() {
+        let row: ComboRow = (
+            "claude-code".into(),
+            "opus".into(),
+            Some("high".into()),
+            "claude-code".into(),
+        );
+        assert_eq!(
+            combo_verdict(true, Some(&row)).unwrap(),
+            ("opus".to_owned(), Some("high".to_owned()))
+        );
+        let c =
+            |r: Result<(String, Option<String>), Rejection>| r.err().map(|r| (r.status, r.code));
+        assert_eq!(
+            c(combo_verdict(false, Some(&row))),
+            Some((409, "combo_off".into()))
+        );
+        assert_eq!(
+            c(combo_verdict(true, None)),
+            Some((403, "combo_not_allowed".into()))
+        );
+        let other: ComboRow = ("codex".into(), "m".into(), None, "claude-code".into());
+        assert_eq!(
+            c(combo_verdict(true, Some(&other))),
+            Some((403, "combo_harness_mismatch".into()))
+        );
+        // 조합에서 베낀 값도 값 규칙을 지난다 — `-` 로 시작하거나 공백이 든 값은 스레드 줄에 못 들어간다.
+        for (m, e) in [
+            ("-x", None),
+            ("a b", None),
+            ("opus", Some("-high")),
+            ("opus", Some("a b")),
+        ] {
+            let bad: ComboRow = (
+                "claude-code".into(),
+                m.into(),
+                e.map(str::to_owned),
+                "claude-code".into(),
+            );
+            assert_eq!(
+                c(combo_verdict(true, Some(&bad))),
+                Some((400, "combo_bad_value".into()))
+            );
+        }
+        // 조합만 고른 줄은 풀기가 아니다.
+        let mut p = pick(None, None);
+        assert!(p.clearing());
+        p.combo_id = Some(A.into());
+        assert!(!p.clearing());
+        // 허용 목록은 그 에이전트의 줄로만 읽는다 — 조합 표만 보고 통과시키지 않는다.
+        assert!(COMBO_ALLOWED_SQL.contains("from agent_exec_combo a"));
+        assert!(COMBO_ALLOWED_SQL.contains("a.agent_id = $1::uuid and a.combo_id = $2::uuid"));
+        assert!(UPSERT_AGENT_SQL.contains("combo_id = excluded.combo_id"));
     }
 }
