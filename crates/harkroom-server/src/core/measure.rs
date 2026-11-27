@@ -21,10 +21,7 @@ pub const KIND_CALL_MISSED: &str = "call.missed";
 pub const KIND_TEXT_WAKE_OFF: &str = "call.text_wake_off";
 /// 턴 하나의 토큰 — `value` 는 합, `detail` 에 harness·model·input·output·cacheRead·cacheWrite·messages·durationMs(모르는 칸은 없음). [`turn_tokens`].
 pub const KIND_TURN_TOKENS: &str = "turn.tokens";
-/// 팀 명단 갈래를 지난 위임 한 건(T1) — `value` 는 명단으로 지나간 팀원 중 호출 게이트였다면 막혔을 수,
-/// `detail.branch` 는 `gate_would_pass`·`gate_would_block`·`unknown`(판정 못 함). `message.delegate` 게이트.
-pub const KIND_TEAM_ROUTE: &str = "team.route";
-/// 세워진 의무 한 건(U3) — `ref_id` 는 위임 id, `detail.door` 는 어느 문(`call`·`delegate`·`mention`),
+/// 세워진 의무 한 건(U3) — `ref_id` 는 위임 id, `detail.door` 는 어느 문(`call`·`mention` — 옛 행에는 걷힌 위임 도구의 `delegate` 도 있다),
 /// `detail.expect` 는 닫는 조건(`report`·`reply`), `detail.expectOmitted` 는 `agent.call` 이 `expect` 를 비워 기본값으로 섰는가. 의무 없는 부름(`expect: "none"`)은 의무가 없어 적지 않는다.
 pub const KIND_OBLIGATION_CREATED: &str = "obligation.created";
 
@@ -198,44 +195,6 @@ pub fn text_wake_stripped(
             ..Event::default()
         });
     }
-}
-
-/// [`KIND_TEAM_ROUTE`] 한 줄의 갈래와 `detail` — `would_block` 은 게이트였다면 막혔을 수(`None` = 판정 못 함).
-pub fn team_route_event(
-    to: usize,
-    gated: usize,
-    would_block: Option<usize>,
-) -> (&'static str, Value) {
-    let branch = match would_block {
-        None => "unknown",
-        Some(0) => "gate_would_pass",
-        Some(_) => "gate_would_block",
-    };
-    (
-        branch,
-        json!({ "branch": branch, "to": to, "gated": gated, "skipped": to.saturating_sub(gated) }),
-    )
-}
-
-/// 팀 명단 갈래를 지난 위임 한 건. `to` 는 받는 쪽 수, `gated` 는 그중 호출 게이트를 거친 수.
-pub fn team_route(
-    lead: &str,
-    channel: &str,
-    root: &str,
-    to: usize,
-    gated: usize,
-    would_block: Option<usize>,
-) {
-    let (_, detail) = team_route_event(to, gated, would_block);
-    record(Event {
-        kind: KIND_TEAM_ROUTE,
-        account_id: Some(lead.to_string()),
-        channel_id: Some(channel.to_string()),
-        thread_root_id: Some(root.to_string()),
-        value: would_block.map(|n| n as i64),
-        detail: Some(detail),
-        ..Event::default()
-    });
 }
 
 /// 토큰 수 한 칸의 상한 — 넘는 값은 그 칸만 버린다(턴 하나가 이만큼 쓸 수 없다).
@@ -516,16 +475,6 @@ mod tests {
         // 본문이 없거나 `tokens` 칸이 없으면(옛 러너) 아무 일도 없다 — 기록이 꺼져 있어도 던지지 않는다.
         turn_tokens("a1", None);
         turn_tokens("a1", Some(&json!({})));
-    }
-
-    #[test]
-    fn team_route_branches() {
-        assert_eq!(team_route_event(2, 0, Some(0)).0, "gate_would_pass");
-        assert_eq!(team_route_event(2, 1, Some(1)).0, "gate_would_block");
-        let (branch, detail) = team_route_event(3, 1, None);
-        assert_eq!(branch, "unknown");
-        assert_eq!(detail["skipped"], 2);
-        assert_eq!(detail["branch"], "unknown");
     }
 
     #[test]

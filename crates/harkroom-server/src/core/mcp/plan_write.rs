@@ -313,7 +313,7 @@ enum Build {
     Item(Box<ItemPatch>),
     /// 잠근 판 `(doc, rev)` 에서 새 판을 만드는 함수(HTTP `plan/start`, S5.4 TP5b). `Err` 는 거절 코드.
     Custom(StartBuild),
-    /// TS `linkPlanGroup` 의 build — 부모 계획의 그룹을 위임 스레드에 잇는다(`message.delegate` 의 `planGroupId`, P6-5).
+    /// TS `linkPlanGroup` 의 build — 부모 계획의 그룹을 위임 스레드에 잇는다(`agent.call` 의 `planGroupId`, P6-5).
     LinkGroup { group: String, child: String },
     /// TS `completePlanStep` 의 build — 그 단계를 done 으로(`message.report` 의 `planStepId`).
     CompleteStep { step: String },
@@ -1062,7 +1062,7 @@ pub(crate) async fn complete_plan_step(
     }))
 }
 
-/// TS `linkPlanGroup` + `planHookOut` — `message.delegate` 의 `planRootId`·`planGroupId`(P6-5). 위임 글이 선 **뒤** 부모 계획
+/// TS `linkPlanGroup` + `planHookOut` — `agent.call` 의 `planRootId`·`planGroupId`(P6-5). 위임 글이 선 **뒤** 부모 계획
 /// (`parent`)의 그룹을 위임 스레드(`child`)에 잇고 도구 답의 `plan` 칸(JSON 글자)을 돌려준다. 부모 스레드는 다른 채널일 수 있어
 /// TS `writeThreadPlan` 처럼 루트(`not_found`·`not_root`)·가시성(`forbidden`)을 여기서 본다 — 거절도 `plan` 칸에 싣는다(위임은 이미 섰다).
 pub(crate) async fn link_plan_group(

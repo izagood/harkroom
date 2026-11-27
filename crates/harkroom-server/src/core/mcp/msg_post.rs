@@ -290,7 +290,7 @@ pub async fn picks_refusal(st: &PostState, me: &Account, args: &Value) -> Option
 }
 
 /// TS `preparePicks` 의 `axisValid`·`checkOffered` — `Some(Some(거절))`·`Some(None)`(지났다)·`None`(DB 오류).
-/// `message.delegate` 도 같은 판정을 쓴다.
+/// 자기 조각([`super::delegate_gate`])도 같은 판정을 쓴다.
 pub(crate) async fn check_picks(st: &PostState, picks: &[Pick]) -> Option<Option<String>> {
     use crate::core::thread_model_set::{axis_valid, check_offered, clean_axis};
     for (agent, model, effort) in picks {
@@ -1638,7 +1638,7 @@ fn call_key(raw: &str) -> String {
 enum Expect {
     /// 알리기 — 의무 없음. 적어야만 고른다(`expect: "none"`).
     None,
-    /// 담당의 `message.report`·`message.fail`·기한으로 닫히는 의무(`message.delegate` 와 같다). `expect` 를 비우면 이것이다.
+    /// 담당의 `message.report`·`message.fail`·기한으로 닫히는 의무. `expect` 를 비우면 이것이다.
     Report,
     /// 담당의 첫 답글로 닫히는 의무(묻기).
     Reply,
@@ -1855,7 +1855,7 @@ pub async fn answer_call(
         }
     }
     let mut targets = CallTargets::split(&to, &rows, &me.id, &teams);
-    // F1a 자기 쪼개기 — `to` 가 나 하나뿐인 `expect: "report"` 는 `message.delegate` 의 자기 조각 길 그대로 간다(스위치·게이트·쓰기가 한 벌).
+    // F1a 자기 쪼개기 — `to` 가 나 하나뿐인 `expect: "report"` 는 자기 조각 길([`super::delegate_gate`])로 간다(스위치·게이트·쓰기가 한 벌).
     if expect == Expect::Report
         && targets.agents.is_empty()
         && !targets.not_called.is_empty()
@@ -1891,7 +1891,7 @@ pub async fn answer_call(
         .await;
     }
     let refuse = |code: &str, msg: String, handles: Vec<String>| {
-        // `message.delegate` 의 `not_invokable` 과 같은 꼴 — `{ error: { code, message, handles } }`.
+        // 자기 조각의 `not_invokable` 과 같은 꼴 — `{ error: { code, message, handles } }`.
         super::respond::text_result(&format!(
             "{{\"error\":{{\"code\":{},\"message\":{},\"handles\":{}}}}}",
             Value::from(code),
@@ -1922,7 +1922,7 @@ pub async fn answer_call(
             names,
         ));
     }
-    // 의무는 접속한 담당에게만 선다(`message.delegate` 와 같다) — 접속하지 않은 대상은 부르지 않고 `notCalled` 에 싣는다.
+    // 의무는 접속한 담당에게만 선다 — 접속하지 않은 대상은 부르지 않고 `notCalled` 에 싣는다.
     let mut unreachable: Vec<String> = Vec::new();
     if expect != Expect::None {
         let all: Vec<String> = targets.agents.iter().map(|(id, _)| id.clone()).collect();
@@ -2017,7 +2017,7 @@ pub async fn answer_call(
         ));
     }
     a.post.body = body;
-    // 계획 잇기는 글 **뒤**라 되돌릴 수 없다 — 계획 쓰기 권한이 없으면 글을 쓰기 전에 물러난다(`message.delegate` 와 같다).
+    // 계획 잇기는 글 **뒤**라 되돌릴 수 없다 — 계획 쓰기 권한이 없으면 글을 쓰기 전에 물러난다.
     if plan.is_some() {
         use super::plan_write::{PLAN_WRITE_PRIVILEGES, PLAN_WRITE_SEQUENCE_PRIVILEGES};
         let missing = crate::write::missing_in(

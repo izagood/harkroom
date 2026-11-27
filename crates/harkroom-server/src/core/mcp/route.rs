@@ -287,22 +287,6 @@ pub async fn handle(
                 let (c, t) = (cause.as_deref(), turn.as_deref());
                 return super::turn_wake::answer(st, &me, &args, c, t, has_operator).await;
             }
-            if tool == "message.delegate" {
-                let st = writes.delegate.as_deref();
-                // 비지 않은 `agentModels` 는 하네스 목록(스냅숏)과 고르기 쓰기 권한이 다 있을 때만 Rust 가 고른다.
-                let picks_ok = writes.relay_moved && writes.agent_picks.is_some();
-                return super::delegate_gate::answer(
-                    &pool,
-                    st,
-                    picks_ok,
-                    &me,
-                    &args,
-                    cause.as_deref(),
-                    turn.as_deref(),
-                    has_operator,
-                )
-                .await;
-            }
             if let Some(r) =
                 super::grant_writes::answer(&pool, writes.grant.as_ref(), &me, tool, &args).await
             {
@@ -1010,8 +994,8 @@ mod tests {
     /// AC5 안전판 — `turn.cancel` 만 고르고, 다른 도구는 이 목록으로 Rust 에 오지 않는다.
     #[test]
     fn ts_tool_name_only_tools_call() {
-        let call = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"message.delegate","arguments":{"body":"secret"}}}"#;
-        assert_eq!(ts_tool_name(call).as_deref(), Some("message.delegate"));
+        let call = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"agent.call","arguments":{"body":"secret"}}}"#;
+        assert_eq!(ts_tool_name(call).as_deref(), Some("agent.call"));
         let list = br#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
         assert_eq!(ts_tool_name(list), None);
         let odd = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"a b\nc"}}"#;

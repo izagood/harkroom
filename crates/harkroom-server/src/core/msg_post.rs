@@ -347,8 +347,8 @@ pub(crate) struct Origin<'a> {
     /// 결과를 닫는 글(`meta.kind` 가 `failure`·`report`, C3b-2c). 작성자가 담당인 **안 닫힌** 위임 항목이 이 스레드에 있으면 TS
     /// `closeDelegationsForReply` 가 그 항목을 닫고 위임자를 깨운다.
     pub(crate) closes_delegation: bool,
-    /// MCP `message.delegate`(C3b-2c-4b) — 게이트를 지난 위임. 있으면 같은 tx 에서
-    /// 의무를 만든다(TS `createDelegation`, [`delegate_write`]). 위임 스위치 값이 없으면 v0 이다.
+    /// 자기 조각(F1a, `agent.call` 의 `to` 가 나 하나) — 게이트를 지난 위임. 있으면 같은 tx 에서
+    /// 의무를 만든다([`delegate_write`]). 위임 스위치 값이 없으면 v0 이다.
     pub(crate) delegation: Option<delegate_write::Plan<'a>>,
     /// MCP `agent.call` 의 의무 있는 부름(`expect: report|reply`, U1). 담당은 미리 정하지 않는다 — 이 글의 멘션 판정(담당별 호출 게이트 →
     /// 막힌 담당은 이번 턴을 깨운 사람 권한으로 다시 잼·하루 상한)을 지난 대상에게만 같은 tx 에서 의무를 만든다. 지난 대상이 없으면
@@ -867,7 +867,7 @@ pub(crate) async fn post_tx(
     if let (true, Some(t)) = (author_is_agent, origin.turn_id) {
         meta.insert("turnId".into(), Value::String(t.to_owned()));
     }
-    // 의무 있는 부름은 `message.delegate` 와 같은 꼴의 위임 글이다(`meta.kind = 'delegation'`) — 읽는 쪽이 한 가지로 본다.
+    // 의무 있는 부름은 위임 글이다(`meta.kind = 'delegation'`) — 읽는 쪽이 한 가지로 본다.
     if let (Some(o), Some(open)) = (&origin.call_obligation, &call_open) {
         meta.insert("kind".into(), Value::from("delegation"));
         meta.insert(
@@ -990,7 +990,7 @@ pub(crate) async fn post_tx(
     }
     // TS 암묵 위임(P4) — 회신권을 연 뒤, `thread_reply` 앞. 결과로 세는 에이전트 글(이 앞단이 맡는 글은 모두 `user` 다)이 부른,
     // inbox 가 실제로 간 계정 중 에이전트만 판정한다.
-    // TS 는 `meta.kind` 가 `delegation` 인 글(`message.delegate`)을 암묵 위임으로 보지 않는다 — 그 도구가 진짜 위임을 만든다.
+    // TS 는 `meta.kind` 가 `delegation` 인 글(의무 있는 `agent.call`)을 암묵 위임으로 보지 않는다 — 그 도구가 진짜 위임을 만든다.
     let delegation_meta = call_open.is_some()
         || origin.meta.get("kind").and_then(Value::as_str) == Some("delegation");
     // TS `input.kind !== 'system'` — 시스템 줄은 부름이 있어도 암묵 위임으로 보지 않는다.
@@ -1195,7 +1195,7 @@ pub(crate) async fn post_tx(
                 .await?;
         }
     }
-    // C3b-2c-4b `message.delegate` — `createDelegation`. TS 는 의무를 커밋 뒤 다른 tx 로 만들지만(그 사이 실패면 글만 남는다)
+    // 자기 조각·의무 있는 부름의 의무 — TS 는 의무를 커밋 뒤 다른 tx 로 만들지만(그 사이 실패면 글만 남는다)
     // 여기서는 같은 tx 다. 사슬 상한(TS `beforeCommit`)은 보지 않는다(O1).
     let delegation_id = match (&origin.delegation, v2) {
         (Some(plan), on) => Some(
@@ -1217,7 +1217,6 @@ pub(crate) async fn post_tx(
                 let plan = delegate_write::Plan {
                     delegate_ids: &ids,
                     deadline_at: o.deadline_at,
-                    team_id: None,
                     close_on: o.close_on,
                     plan_step_id: step.as_deref(),
                 };
@@ -1291,7 +1290,7 @@ pub(crate) async fn post_tx(
                 .await?;
         }
     }
-    // TS `message.delegate` — 넘겨받은 담당의 부름은 `createDelegation` 이 만들었다. 러너가 곧 폴하도록 따로 친다.
+    // 위임 글 — 넘겨받은 담당의 부름은 `createDelegation` 이 만들었다. 러너가 곧 폴하도록 따로 친다.
     if let Some(plan) = &origin.delegation {
         for a in plan.delegate_ids {
             crate::write::emit_event(&mut tx, &json!({ "type": "inbox.updated", "accountId": a }))
@@ -1319,7 +1318,8 @@ pub(crate) async fn post_tx(
         super::work_shadow::delegation_created(d);
         // U3 측정 — 어느 문·어느 `expect` 로 선 의무인가. 기록만.
         let (door, expect, omitted) = match (&origin.delegation, &origin.call_obligation) {
-            (Some(p), _) => ("delegate", p.close_on.as_str(), false),
+            // 자기 조각도 `agent.call` 로 들어온다 — 옛 위임 도구(문 `delegate`)는 걷혔다(U5).
+            (Some(p), _) => ("call", p.close_on.as_str(), false),
             (None, Some(o)) => ("call", o.close_on.as_str(), o.expect_omitted),
             (None, None) => ("delegate", "report", false),
         };

@@ -331,7 +331,7 @@ pub async fn apply(
     Ok(Ok(changes))
 }
 
-/// `message.post`·`message.delegate` 의 TS `beforeCommit: applyAgentPicks(…)` — 글과 같은 tx 에서 고르기를 판정·쓴다.
+/// `message.post`·`agent.call` 의 TS `beforeCommit: applyAgentPicks(…)` — 글과 같은 tx 에서 고르기를 판정·쓴다.
 /// 루트는 `threadRootId ?? 새 글 id`. 바뀐 줄은 [`AgentPicks::changes`] 로 꺼내 커밋 뒤 시스템 줄·이벤트를 낸다.
 #[derive(Debug)]
 pub(crate) struct AgentPicks {
@@ -339,7 +339,7 @@ pub(crate) struct AgentPicks {
     pub(crate) root: Option<String>,
     pub(crate) actor: String,
     pub(crate) picks: Vec<Pick>,
-    /// `notified` 에 더할 계정 — `message.delegate` 는 넘겨받는 팀원(TS `[...ctx.notified, ...delegates]`).
+    /// `notified` 에 더할 계정 — 자기 조각은 넘겨받는 담당(TS `[...ctx.notified, ...delegates]`).
     pub(crate) also_notified: Vec<String>,
     done: std::sync::Mutex<Option<(String, Vec<Change>)>>,
 }
@@ -356,7 +356,7 @@ impl AgentPicks {
         }
     }
 
-    /// `message.delegate` — 넘겨받는 팀원도 부른 것으로 센다.
+    /// 자기 조각 — 넘겨받는 담당도 부른 것으로 센다.
     pub(crate) fn also_notify(mut self, ids: &[String]) -> Self {
         self.also_notified = ids.to_vec();
         self

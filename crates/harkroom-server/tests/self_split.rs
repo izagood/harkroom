@@ -87,7 +87,7 @@ async fn self_piece_opens_without_team_and_keeps_siblings() {
     let alice = mk(&pool, "ss-alice", "human").await;
     let me = agent(&pool, "ss-me", &alice).await;
     let mate = agent(&pool, "ss-mate", &alice).await;
-    // 나는 내 팀의 팀장이자 팀원이다 — 그래도 자기 조각은 팀 명단 갈래를 타지 않는다.
+    // 나는 내 팀의 팀장이자 팀원이다 — 그래도 조각에 `team_id` 는 적히지 않는다.
     let team: String = sqlx::query_scalar(
         "insert into agent_team(name, created_by, invoke_scope, owner_account_id) \
          values ('ss-team', $1::uuid, 'owner', $1::uuid) returning id::text",
@@ -167,11 +167,9 @@ async fn self_piece_opens_without_team_and_keeps_siblings() {
         "{rows:?}"
     );
 
-    // 견줌: 팀원에게 넘기는 보통의 위임은 팀 명단 갈래 그대로다(`team_id` 가 적힌다).
-    let other = ask(&me, &["ss-mate"]).await.expect("answered");
-    assert!(other.contains("delegationId"), "{other}");
+    // 남에게 넘기는 것은 이 길의 일이 아니다(`agent.call` 의 멘션 판정이 맡는다) — 팀장이 팀원에게 넘겨도 답하지 않고 아무것도 쓰지 않는다.
+    assert!(ask(&me, &["ss-mate"]).await.is_none());
     let rows = pieces(&pool, &root).await;
-    assert_eq!(rows.len(), 3, "{rows:?}");
-    let to_mate = rows.iter().find(|r| r.2 == mate.id).expect("mate row");
-    assert_eq!(to_mate.1.as_deref(), Some(team.as_str()));
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    assert!(rows.iter().all(|r| r.2 != mate.id), "{rows:?}");
 }

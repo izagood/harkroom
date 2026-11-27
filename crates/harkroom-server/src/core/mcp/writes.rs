@@ -30,8 +30,6 @@ pub const SERVED: &[&str] = &[
     "message.post",
     // C3b-2c-1 — 표지 없는 실패. 글 쓰기 풀이 있을 때만(`message.post` 와 같은 권한).
     "message.fail",
-    // C3b-2c-4a — 위임의 게이트·상한 거절만(읽기만 한다). 지나면 TS.
-    "message.delegate",
     // C3b-2c-3 — 완료 보고(`planStepId` 없는 것). 같은 글 쓰기 풀이다 — 예약 접기 칸(`agent_wake.canceled_at`·대기 줄 meta)도 그 묶음에 있다.
     "message.report",
     // S5.4 A1 — 진행 한 줄·러너 알림 줄. 같은 글 쓰기 풀이다(`message.post` 와 같은 칸).
@@ -166,7 +164,7 @@ pub struct McpWrites {
     pub memory_body: Option<PgPool>,
     /// `message.post`(C1c-4c) — `msg_post::MESSAGE_POST_PRIVILEGES` + `MCP_POST_EXTRA_PRIVILEGES`. [`super::msg_post::answer`] 가 본다.
     pub post: Option<std::sync::Arc<crate::core::msg_post::PostState>>,
-    /// `message.delegate` 쓰기(C3b-2c-4b) — `post` 에 더해 `delegate_write::DELEGATE_WRITE_PRIVILEGES`. 없으면 게이트를 지난 위임은 TS 로.
+    /// 의무 쓰기(`agent.call` 의 `expect: report|reply`·자기 조각) — `post` 에 더해 `delegate_write::DELEGATE_WRITE_PRIVILEGES`. 없으면 의무 있는 부름을 받지 않는다.
     pub delegate: Option<std::sync::Arc<crate::core::msg_post::PostState>>,
     /// `turn.wake`(S5.4 A3) — `post` 에 더해 `turn_wake::TURN_WAKE_PRIVILEGES`. 없으면 TS 로(게시 전에).
     pub wake: Option<std::sync::Arc<crate::core::msg_post::PostState>>,

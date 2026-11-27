@@ -2190,7 +2190,7 @@ export type DelegationItemState = 'open' | 'reported' | 'failed' | 'closed' | 'd
 /** `closed` 의 까닭(164). 위임자가 닫았다·같은 담당에게 새로 넘겼다·결과 뒤 6시간 활동 없음·최대 수명 24시간. */
 export type DelegationClosedReason = 'delegator_close' | 'superseded' | 'idle' | 'max_age';
 
-/** 위임이 어떻게 생겼나(164). `delegate` 는 `message.delegate`, `mention` 은 에이전트가 에이전트를 맨 앞 멘션으로 부른 암묵 위임. */
+/** 위임이 어떻게 생겼나(164). `delegate` 는 도구로 넘긴 일(`agent.call` 의 의무 있는 부름), `mention` 은 에이전트가 에이전트를 맨 앞 멘션으로 부른 암묵 위임. */
 export type DelegationKind = 'delegate' | 'mention';
 
 /** PR 감시가 끝나는 때(164). `checks` 는 체크가 다 끝나면, `merged` 는 머지되거나 닫히면. */

@@ -57,7 +57,7 @@ X 이하이므로, 운영 서버가 X 이상이면 Stable 앱은 늘 붙는다. 
 | CI | check · macos-build · launch-smoke · finalize | 자동 | X 가 공개 릴리스이고 `latest.json` 에 서명이 있다 |
 | 하네스 격리 | `packages/agent/test/*.real.test.ts` 를 설치된 하네스 판으로 | 손(매일 e2e) | 전부 통과, 하네스 판을 기록 |
 | 하네스 매트릭스 | 구독·「API 키 연결」 시험 에이전트 전부에 멘션 → 러너 → 발화. 실패를 기대하는 에이전트는 실패 글 | 손(매일 e2e) | 모두 답하고, 러너 로그의 모델 줄이 설정과 같다. **모든 러너 호스트의 앱이 X** |
-| 위임 | A 가 B 에게 `message.delegate` → 결과가 A 의 스레드로 | 손 | 「✅ 만 달고 닫힘」 0건 |
+| 위임 | A 가 B 에게 `agent.call`(`expect: "report"`) → 결과가 A 의 스레드로 | 손 | 「✅ 만 달고 닫힘」 0건 |
 | wake | 60초 예약 → 같은 세션이 이어진다. 사람이 말하면 예약이 접힌다 | 손 | 이중 발화 0건, 접힌 사유가 실린다 |
 | 카드 | ask · askBundle 에 답하면 그 에이전트가 깬다 | 손 | 답이 그 에이전트의 턴을 띄운다 |
 | 머지 래퍼 | 시험 저장소 PR: 거절 → 카드 → 「이번 한 번」 → merged, `head_moved` · `ci_pending` | 손 | 결과 JSON 과 시스템 줄이 맞는다 |

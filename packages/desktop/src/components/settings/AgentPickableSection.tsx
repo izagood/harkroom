@@ -1,7 +1,7 @@
 /**
  * 에이전트 상세의 **"다른 에이전트가 고를 수 있는 모델"** 절(087, 소유자 승인 결정 3·9·11).
  *
- * 다른 에이전트가 이 에이전트를 부르며(`message.post`·`message.delegate` 의 `agentModels`) 그 스레드에서
+ * 다른 에이전트가 이 에이전트를 부르며(`message.post`·`agent.call` 의 `agentModels`) 그 스레드에서
  * 쓸 모델·effort 를 고를 수 있는데, **이 목록 안에서만**이다. 비면 못 고른다(opt-in 기본값).
  * 판정은 서버가 한다(`agentModelPicks.ts::applyAgentPicks`) — 이 화면은 목록을 고치고 저장할 뿐이다.
  *

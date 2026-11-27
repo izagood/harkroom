@@ -33,7 +33,7 @@ pub enum Callee {
 pub enum Route {
     /// 본문을 글쓴이가 그대로 적은 글(`message.post`·`progress`·`turn.wake`·REST).
     Text,
-    /// 도구가 만든 호출 — `agent.call`·`message.delegate`·`message.ask`·`message.report`/`fail`·서버 안쪽 서비스 호출(자동화 포함).
+    /// 도구가 만든 호출 — `agent.call`·`message.ask`·`message.report`/`fail`·서버 안쪽 서비스 호출(자동화 포함).
     Tool,
     /// 시스템 줄·서버 알림 줄·계획 자동 진행 깨움.
     System,

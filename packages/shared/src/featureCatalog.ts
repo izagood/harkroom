@@ -179,7 +179,6 @@ export const CATALOG_ELSEWHERE: Readonly<Record<string, string>> = {
   'message.read': '가이드 「이름이 아니라 id 로」 절·러너 턴 프롬프트(대화 줄)',
   'attachment.fetch': '러너 턴 프롬프트의 첨부 안내(첨부가 있는 턴에만, attachmentHowTo)',
   'agent.modelOptions': '러너 「다른 에이전트를 부를 때 agentModels」 문단',
-  'message.delegate': '별칭 — 러너는 더 가르치지 않는다(agent.call 의 expect report 로 옮김, U2). 받기는 별칭을 걷을 때 함께 걷는다',
   'agent.call': '러너 「동료 에이전트를 부르는 것」 문단·팀 블록(teamSection)·계획 관리자 줄',
   'delegation.close': '러너 위임 블록(delegationsBlock — 넘긴 쪽 줄, 위임 재설계 v1). 스위치 HARKROOM_DELEGATION_V2 가 켜진 서버만 등록한다',
   'permission.request': '러너 권한 요청 절(permissionSection, 권한이 있을 때만)',
