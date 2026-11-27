@@ -35,6 +35,9 @@ pub const KIND_LEDGER_MANDATE: &str = "ledger.mandate";
 /// 턴 끝 판정 한 건(I2c-a, 그림자) — `detail.verdict`(`work_shadow::Verdict`)·`detail.work`(작업을 찾은 길, 못 찾았으면 `none`)·
 /// `detail.closeBy`, `value` 는 뿌리 작업을 닫았을 것이면 1·아니면 0. `ref_id` 는 임대 id. `turn_end_judge::turn_ended`.
 pub const KIND_TURN_JUDGED: &str = "turn.judged";
+/// 에이전트별 동시 턴 상한에 막혀 기다린 잡기 — `value` 는 그때 다른 스레드에 쥔 살아 있는 임대 수, `detail.cap` 은 상한.
+/// (에이전트, 스레드)마다 1분에 한 번. `turn_cap::note_wait`.
+pub const KIND_TURN_CAP_WAIT: &str = "turn.cap_wait";
 
 /// 기록이 쓰는 권한 — homelab GRANT 와 같아야 한다. 없으면 `main.rs` 가 기록을 켜지 않는다(나머지는 그대로 돈다).
 pub const MEASURE_PRIVILEGES: &[(&str, &str)] =

@@ -185,6 +185,7 @@ pub mod thread_plan_read;
 pub mod thread_plan_start;
 pub mod thread_turns;
 pub mod tickets;
+pub mod turn_cap;
 pub mod turn_end_judge;
 pub mod turn_lease;
 pub mod turn_lease_routes;

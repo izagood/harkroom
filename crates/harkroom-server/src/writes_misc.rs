@@ -11,6 +11,7 @@
 //! 메모리 상태: 없다(`threadClaims.ts`·`pushRoutes.ts` 에 모듈 수준 Map·캐시 없음). 「내 것만」: 임대는 PAT 주인 에이전트 몫만 · 푸시는 지금 세션에
 //! 묶인 줄만. 순서는 TS 와 같다(본문 → preHandler → zod).
 use crate::auth::{Auth, RequireAccount, Via};
+use crate::core::turn_cap;
 use crate::directory::{internal, json_err, json_ok};
 use crate::lists::is_zod_uuid;
 use crate::routes::AppState;
@@ -98,7 +99,8 @@ async fn agent_claim_gate(req: Request) -> Result<(Body, crate::auth::Account), 
     Ok((body, me))
 }
 
-/// `POST /agent/thread-claims` — 잡기·하트비트. 남이 산 임대를 쥐었으면 409(`expiresAt` 실음). `cache-control: no-store`.
+/// `POST /agent/thread-claims` — 잡기·하트비트. 남이 산 임대를 쥐었으면 409(`expiresAt` 실음), 에이전트별 동시 턴 상한
+/// ([`turn_cap`])이 찼으면 409 `agent_turn_cap`. `cache-control: no-store`.
 pub async fn claim(State(st): State<AppState>, req: Request) -> Response {
     let (body, me) = tri!(agent_claim_gate(req).await);
     let Some(k) = parse_claim(&body, true) else {
@@ -106,43 +108,34 @@ pub async fn claim(State(st): State<AppState>, req: Request) -> Response {
     };
     let pool = tri!(write_pool(&st));
     db!(sqlx::query("delete from agent_thread_claim where agent_id = $1::uuid and expires_at < now() - interval '1 hour'").bind(&me.id).execute(pool).await);
-    let won: Option<String> = db!(sqlx::query_scalar(concat!(
-        "insert into agent_thread_claim (agent_id, channel_id, thread_root_id, holder, expires_at) \
-         values ($1::uuid, $2::uuid, $3::uuid, $4, now() + make_interval(secs => $5::int)) \
-         on conflict (agent_id, channel_id, thread_root_id) do update \
-           set holder = excluded.holder, expires_at = excluded.expires_at, \
-               claimed_at = case when agent_thread_claim.holder = excluded.holder then agent_thread_claim.claimed_at else now() end \
-           where agent_thread_claim.holder = excluded.holder or agent_thread_claim.expires_at <= now() \
-         returning ",
-        crate::iso!("expires_at")
-    ))
-    .bind(&me.id)
-    .bind(&k.channel)
-    .bind(&k.root)
-    .bind(&k.holder)
-    .bind(k.ttl as i32)
-    .fetch_optional(pool)
-    .await);
-    let mut r = match won {
-        Some(at) => json_ok(json!({ "claimed": true, "expiresAt": at }).to_string()),
-        None => {
-            let held: Option<String> = db!(sqlx::query_scalar(concat!(
-                "select ",
-                crate::iso!("expires_at"),
-                " from agent_thread_claim where agent_id = $1::uuid and channel_id = $2::uuid and thread_root_id = $3::uuid"
-            ))
-            .bind(&me.id)
-            .bind(&k.channel)
-            .bind(&k.root)
-            .fetch_optional(pool)
-            .await);
-            let body = json!({
-                "error": { "code": "thread_claimed", "message": "another runner of this agent holds this thread" },
-                "expiresAt": held,
-            });
-            let mut r = json_ok(body.to_string());
-            *r.status_mut() = StatusCode::CONFLICT;
-            r
+    let want = turn_cap::Want {
+        agent: &me.id,
+        channel: &k.channel,
+        root: &k.root,
+        holder: &k.holder,
+        ttl_secs: k.ttl as i32,
+    };
+    let conflict = |body: Value| {
+        let mut r = json_ok(body.to_string());
+        *r.status_mut() = StatusCode::CONFLICT;
+        r
+    };
+    let mut r = match db!(turn_cap::claim(pool, want, turn_cap::cap_from_env()).await) {
+        turn_cap::Outcome::Held(at) => {
+            json_ok(json!({ "claimed": true, "expiresAt": at }).to_string())
+        }
+        turn_cap::Outcome::Taken(held) => conflict(json!({
+            "error": { "code": "thread_claimed", "message": "another runner of this agent holds this thread" },
+            "expiresAt": held,
+        })),
+        // 에이전트별 동시 턴 상한 — 러너는 409 를 「지금은 못 잡는다」로 읽고 다음 폴에 다시 묻는다(인박스가 대기열).
+        turn_cap::Outcome::Capped { live, cap } => {
+            turn_cap::note_wait(&me.id, &k.channel, &k.root, live, cap);
+            conflict(json!({
+                "error": { "code": "agent_turn_cap", "message": "this agent already runs as many turns as its cap allows" },
+                "cap": cap,
+                "live": live,
+            }))
         }
     };
     r.headers_mut()

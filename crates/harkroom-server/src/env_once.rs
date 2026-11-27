@@ -37,6 +37,8 @@ env_once! {
     PIECE_VERDICT = "HARKROOM_PIECE_VERDICT";
     /// 판에서 잡기 스위치(`work_claim::switch_on`).
     WORK_CLAIM = "HARKROOM_WORK_CLAIM";
+    /// 에이전트별 동시 턴 상한(`turn_cap::parse_cap`).
+    AGENT_TURN_CAP = "HARKROOM_AGENT_TURN_CAP";
     /// 하위 결과 모으기 스위치(`split_collect::enabled`).
     SPLIT_COLLECT = "HARKROOM_SPLIT_COLLECT";
     /// 멈춤 판정 스위치(`loops::plan_progress::stall_mode`) — 읽기 답이 멈춘 단계를 싣는지에 쓴다.

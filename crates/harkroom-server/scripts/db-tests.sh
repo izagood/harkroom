@@ -129,6 +129,9 @@ WORK_CLAIM_GRANTS=(
   'insert, update on work_claim'
   'update on work'
 )
+TURN_CAP_GRANTS=(
+  'insert, update, delete on agent_thread_claim'
+)
 WORK_GRANTS=(
   'insert, update on work'
   'insert on work_event'
@@ -162,6 +165,7 @@ grants_for() {
     work) echo WORK_GRANTS ;;
     work_shadow) echo WORK_GRANTS ;;
     work_claim) echo WORK_CLAIM_GRANTS ;;
+    turn_cap) echo TURN_CAP_GRANTS ;;
     *) echo '' ;;
   esac
 }
@@ -170,7 +174,7 @@ TESTS=(auth perm operator loops wake outbox_listener retention mandate_idle perm
   turn_lease inbox_list decide_core_db card_state_db relay_live turn_settle turn_cancel health scheduled stale migrate delegation_deadline
   automation_grant claim_seed automation_sweep hook_debounce thread_status thread_plan db_retry deny_accounts invoke_gate deny_channels deny_reset work measure device_allow wake_mirror
   work_route team_route_gate self_split agent_call_team agent_call_expect self_serve piece_verdict exec_combo implicit_mention_obligation split_collect work_claim
-  memory_when memory_recall_event memory_set_similar thread_stat)
+  memory_when memory_recall_event memory_set_similar thread_stat turn_cap)
 if [ "$#" -gt 0 ]; then TESTS=("$@"); fi
 
 # 1. 틀 DB — Rust 마이그레이션 실행기로 한 번만 만든다.
