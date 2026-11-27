@@ -17,13 +17,14 @@ const ROOTS: i64 = 5_000;
 /// 그중 16 개에만 실린다 → 큰 스레드 16 개, 각 4,750 개.
 const BIG: i64 = 20;
 
-/// 쿼리별 버퍼 상한(shared hit + read 블록 수). 2026-11-27 실측(pg16): latest 11 · beforeFeed 122,444 · threadLatest 7,371 ·
-/// threadBefore 107 · has_older 1·3·113 · 검색 2,534·2,481. beforeFeed 가 큰 까닭은 본문 줄마다 그 스레드 답글을 전부 훑는
-/// `thread_state`·`thread_open`·`thread_last` LATERAL 이다 — 색인으로 줄이면 여기 상한도 새 실측에 맞춰 내린다.
+/// 쿼리별 버퍼 상한(shared hit + read 블록 수). 2026-11-27 실측(pg16, kind 부분 색인 뒤): latest 11 · beforeFeed 15,648 ·
+/// threadLatest 411 · threadBefore 107 · has_older 1·3·113 · 검색 2,489·2,481. 색인 전에는 beforeFeed 122,444 ·
+/// threadLatest 7,371 이었다 — 본문 줄마다 그 스레드 답글을 전부 훑던 `thread_state` LATERAL 이 다시 생기면 여기서 잡힌다.
+/// beforeFeed 에 남은 몫은 물음·실패·위임 줄의 힙 읽기와 실패 줄마다 그 뒤 답글을 보는 `NOT EXISTS` 다.
 const BUDGET: &[(&str, i64)] = &[
     ("latest", 40),
-    ("beforeFeed", 300_000),
-    ("threadLatest", 20_000),
+    ("beforeFeed", 40_000),
+    ("threadLatest", 1_200),
     ("threadBefore", 400),
     ("has_older_channel", 10),
     ("has_older_feed", 10),
