@@ -425,6 +425,13 @@ async fn unjudged_sweep_finds_only_delegations_no_turn_end_ever_judged() {
         .unwrap();
     assert_eq!(step, Step::Recall(1));
     assert_eq!(found(sweep().await.unwrap()), None);
+    // 임대는 다시 부르기보다 앞에서 끝난 것이어야 한다 — 기준 시각 뒤에 만료된 임대는 `lease_expired` 가 맞다.
+    run(
+        &admin,
+        "update secret_turn_lease set expires_at = now() - interval '20 minutes' where id = $1::uuid",
+        &[&lease],
+    )
+    .await;
     run(
         &admin,
         "update team_delegation_item set recalled_at = now() - interval '11 minutes' where delegation_id = $1::uuid",
@@ -432,6 +439,17 @@ async fn unjudged_sweep_finds_only_delegations_no_turn_end_ever_judged() {
     )
     .await;
     assert_eq!(found(sweep().await.unwrap()).as_deref(), Some("no_turn"));
+    // 다시 부른 뒤에 선 턴이 끝내기 없이 만료되면 `lease_expired` 로 잡힌다.
+    run(
+        &admin,
+        "update secret_turn_lease set expires_at = now() - interval '3 minutes' where id = $1::uuid",
+        &[&lease],
+    )
+    .await;
+    assert_eq!(
+        found(sweep().await.unwrap()).as_deref(),
+        Some("lease_expired")
+    );
 
     // ⑨ 막힘·결말이 난 항목은 잡지 않는다.
     run(
