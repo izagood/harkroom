@@ -743,4 +743,154 @@ async fn on_mode_closes_only_settled_roots() {
     assert_eq!(fresh_after, fresh_before - 1);
     // 되풀이해도 더 접지 않는다.
     assert_eq!(sweep(&e.w, age, 500).await.unwrap(), 0);
+
+    // ⑧ 닫힌 뿌리는 다시 열리지 않는다 — 뒤에 온 글도 새 위임도 **새 뿌리**를 세운다. 뒤 턴은 새 뿌리만 닫는다.
+    let roots = |thread: String| {
+        let admin = e.admin.clone();
+        let agent = e.agent.clone();
+        async move {
+            sqlx::query_as::<_, (String, bool)>(
+                "select id::text, closed_at is not null from work \
+                  where thread_root_id = $1::uuid and assignee_account_id = $2::uuid \
+                    and parent_id is null and delegation_id is null order by created_at, id",
+            )
+            .bind(&thread)
+            .bind(&agent)
+            .fetch_all(&admin)
+            .await
+            .unwrap()
+        }
+    };
+    let t = e.turn().await;
+    e.says(&t, "user", r#"{"kind":"report"}"#).await;
+    e.read(&e.agent, &t.cause).await;
+    assert!(e.finish(&t).await.closed);
+    assert_eq!(roots(t.cause.clone()).await, vec![(t.work.clone(), true)]);
+    // 뒤 글 → 새 뿌리(판정 `new`). 그 글의 턴이 답하고 끝나면 새 뿌리가 닫히고, 옛 뿌리는 닫힌 그대로다(닫힘 사건 한 줄).
+    let later = e.reply(&t.cause, &e.human, "{}", &e.agent).await;
+    let routed = route_with_mode(&e.w, &later, std::slice::from_ref(&e.agent), true)
+        .await
+        .unwrap();
+    let second = routed[0].0.clone();
+    assert_ne!(second, t.work);
+    assert_eq!(routed[0].1.as_str(), "new");
+    let (lease2, token2) = e.lease(&e.agent, &later).await;
+    e.read(&e.agent, &later).await;
+    e.says(&t, "user", "{}").await;
+    assert!(end(&e.w, &lease2, &token2, &e.agent).await.unwrap());
+    let j2 = judge_with(&e.w, &lease2, &e.agent, Mode::On)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        j2.target.as_ref().map(|x| (x.work_id.as_str(), x.root)),
+        Some((second.as_str(), true))
+    );
+    assert!(j2.closed);
+    assert_eq!(
+        roots(t.cause.clone()).await,
+        vec![(t.work.clone(), true), (second.clone(), true)]
+    );
+    let closes: i64 = sqlx::query_scalar(
+        "select count(*) from work_event where work_id = $1::uuid and kind = 'state'",
+    )
+    .bind(&t.work)
+    .fetch_one(&e.admin)
+    .await
+    .unwrap();
+    assert_eq!(closes, 1, "옛 뿌리는 한 번만 닫힌다");
+    // 새 위임 → 닫힌 뿌리 밑에 서지 않는다. 위임 쪽이 새 뿌리를 세우고 하위 작업을 그 밑에 둔다.
+    let deleg_msg = e
+        .reply(&t.cause, &e.agent, r#"{"kind":"delegation"}"#, &other)
+        .await;
+    let deleg = one(
+        &e.admin,
+        "insert into team_delegation(message_id, team_id, lead_account_id, channel_id, thread_root_id, deadline_at) \
+         values ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::uuid, now() + interval '1 hour') returning id::text",
+        &[&deleg_msg, &team, &e.agent, &e.ch, &t.cause],
+    )
+    .await;
+    sqlx::query("insert into team_delegation_item(delegation_id, delegate_account_id) values ($1::uuid, $2::uuid)")
+        .bind(&deleg)
+        .bind(&other)
+        .execute(&e.admin)
+        .await
+        .unwrap();
+    assert_eq!(delegation_created_with(&e.w, &deleg).await.unwrap(), 1);
+    let parent_of_child = one(
+        &e.admin,
+        "select parent_id::text from work where delegation_id = $1::uuid",
+        &[&deleg],
+    )
+    .await;
+    let all = roots(t.cause.clone()).await;
+    assert_eq!(all.len(), 3, "{all:?}");
+    assert_eq!(all[2], (parent_of_child.clone(), false));
+    assert!(all[0].1 && all[1].1, "닫힌 뿌리 둘은 그대로다");
+    // 열린 하위 위임이 있는 동안 옛 턴의 판정은 기다림이다. 위임이 닫힌 뒤 다시 판정해도 닫힌 뿌리는 그대로이고,
+    // 새 뿌리를 대신 닫지 않는다(새 뿌리는 그 뿌리로 온 턴이 닫는다).
+    let j = e.rejudge(&t).await;
+    assert_eq!(
+        (j.verdict, j.closed, j.skip),
+        (Verdict::WaitingOnChild, false, None)
+    );
+    sqlx::query("update team_delegation_item set outcome = 'reported', closed_at = now() where delegation_id = $1::uuid")
+        .bind(&deleg)
+        .execute(&e.admin)
+        .await
+        .unwrap();
+    assert_eq!(
+        delegation_closed_with(&e.w, &deleg, None, "reported", None)
+            .await
+            .unwrap(),
+        1
+    );
+    let j = e.rejudge(&t).await;
+    assert_eq!((j.closed, j.skip), (false, Some(Skip::Closed)));
+    assert_eq!(st(e.state(&parent_of_child).await), open());
+
+    // ⑨ 작업을 못 찾은 판정(`work=none`) — 닫을 것이 없다. 사건도 작업 행도 만들지 않는다.
+    let t = e.turn().await;
+    e.says(&t, "user", r#"{"kind":"report"}"#).await;
+    e.read(&e.agent, &t.cause).await;
+    sqlx::query("delete from work where id = $1::uuid")
+        .bind(&t.work)
+        .execute(&e.admin)
+        .await
+        .unwrap();
+    let j = e.finish(&t).await;
+    assert_eq!(j.verdict, Verdict::Settled);
+    assert_eq!(
+        (j.target, j.close, j.closed, j.skip),
+        (None, None, false, None)
+    );
+    assert!(roots(t.cause.clone()).await.is_empty());
+
+    // ⑩ 끝내기 없이 만료된 임대 — 판정 자리를 지나지 않는다(판정 없음, 뿌리는 열린 채). 오래되면 정리가 접는다.
+    let t = e.turn().await;
+    e.says(&t, "user", r#"{"kind":"report"}"#).await;
+    e.read(&e.agent, &t.cause).await;
+    sqlx::query(
+        "update secret_turn_lease set expires_at = now() - interval '1 minute' where id = $1::uuid",
+    )
+    .bind(&t.lease)
+    .execute(&e.admin)
+    .await
+    .unwrap();
+    assert!(
+        judge_with(&e.w, &t.lease, &e.agent, Mode::On)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(e.events(&t.work).await.is_empty());
+    assert_eq!(st(e.state(&t.work).await), open());
+    assert_eq!(
+        sweep(&e.w, age, 500).await.unwrap(),
+        0,
+        "아직 하루가 안 됐다"
+    );
+    old(t.work.clone()).await;
+    assert_eq!(sweep(&e.w, age, 500).await.unwrap(), 1);
+    assert_eq!(st(e.state(&t.work).await), (String::from("canceled"), true));
 }
