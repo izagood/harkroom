@@ -145,6 +145,28 @@ pub const BLOCK_SQL: &str = "update team_delegation_item \
 pub const NOTICE_EXISTS_SQL: &str = "select exists (select 1 from inbox where account_id = $1::uuid and message_id = $2::uuid \
        and reason = 'delegation_update' and read_at is null)";
 
+/// [`NOTICE_EXISTS_SQL`] 에서 깨움 행 판을 만들 때 쓰는 자리 — 「안 읽음」 조건.
+pub const NOTICE_UNREAD: &str = "read_at is null";
+
+/// 알림 중복 검사 문장 — 나머지 읽는 곳이 깨움 행을 볼 때([`super::wake_source::readers`])는 위임자가 에이전트면 그 줄의 깨움이
+/// 열려 있을 때만 「이미 있다」로 본다. 위임자가 사람이면 그대로다(사람은 깨움 행이 없다).
+pub fn notice_exists_sql() -> &'static str {
+    static S: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    S.get_or_init(|| {
+        if super::wake_source::readers() {
+            super::wake_source::with_open_for_agents(
+                NOTICE_EXISTS_SQL,
+                NOTICE_UNREAD,
+                "inbox.id",
+                "inbox.account_id",
+                "nw",
+            )
+        } else {
+            NOTICE_EXISTS_SQL.to_owned()
+        }
+    })
+}
+
 /// 위임자 알림 한 줄(`loops::delegation_deadline` 의 멈춤 알림과 같은 줄).
 pub const NOTICE_SQL: &str = "insert into inbox (account_id, message_id, reason) values ($1::uuid, $2::uuid, 'delegation_update')";
 
@@ -439,7 +461,7 @@ pub async fn commit_step(
                 .execute(&mut *tx)
                 .await?;
             if marked.rows_affected() > 0 && !c.stall_notified {
-                let exists: bool = sqlx::query_scalar(NOTICE_EXISTS_SQL)
+                let exists: bool = sqlx::query_scalar(notice_exists_sql())
                     .bind(&c.lead_id)
                     .bind(&c.message_id)
                     .fetch_one(&mut *tx)
@@ -589,6 +611,22 @@ async fn silent(cfg: &Config, thread: &str, agent: &str, case: Option<&'static s
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn notice_check_wake_statement_leaves_human_leads_alone() {
+        let sql = crate::core::wake_source::with_open_for_agents(
+            NOTICE_EXISTS_SQL,
+            NOTICE_UNREAD,
+            "inbox.id",
+            "inbox.account_id",
+            "nw",
+        );
+        assert!(sql.contains(
+            "read_at is null and (exists (select 1 from wake nw where nw.inbox_id = inbox.id"
+        ));
+        assert!(sql.contains("or not exists (select 1 from account nw_k where nw_k.id = inbox.account_id and nw_k.kind = 'agent'))"));
+        assert_eq!(notice_exists_sql(), NOTICE_EXISTS_SQL);
+    }
 
     fn cand(count: i32) -> Candidate {
         Candidate {

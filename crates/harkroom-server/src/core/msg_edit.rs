@@ -92,7 +92,12 @@ fn sql() -> &'static Sql {
             update: frag("edit_update"),
             already: format!(
                 "select a.account_id::text from ({}) a",
-                frag("edit_inbox_already")
+                super::wake_source::either_if_on(
+                    &frag("edit_inbox_already"),
+                    super::wake_source::BARE_FROM,
+                    " ei where ",
+                    1
+                )
             ),
             via_edit: frag("edit_via_edit"),
         }

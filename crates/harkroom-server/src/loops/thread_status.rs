@@ -85,7 +85,12 @@ fn sql() -> &'static Sql {
             "select human_ask::text, failure::text, denied_mention::text, agent_wait::text, open_wake::text, \
                     open_report_wake::text, pending_mention::text, last::text, agent_involved, channel_id::text \
                from ({}) f",
-            g("thread_status_facts")
+            crate::core::wake_source::either_if_on(
+                &g("thread_status_facts"),
+                crate::core::wake_source::FACTS_FROM,
+                " i join t ",
+                2
+            )
         );
         // 쓰기 문장(데이터를 바꾸는 WITH)은 감쌀 수 없다 — TS 문장이 글자 칸(`account_id::text`·`updated_at_iso`)을 함께 돌려준다.
         let upsert = g("thread_status_upsert");

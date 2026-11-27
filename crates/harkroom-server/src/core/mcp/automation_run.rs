@@ -139,7 +139,7 @@ pub async fn answer(
         return refuse("no_cause");
     };
     type W = (String, bool, bool, bool);
-    let Ok(who) = sqlx::query_as::<_, W>(super::reads3::RUN_OWNER_SQL)
+    let Ok(who) = sqlx::query_as::<_, W>(super::reads3::run_owner_sql())
         .bind(cause)
         .bind(&me.id)
         .fetch_optional(read)

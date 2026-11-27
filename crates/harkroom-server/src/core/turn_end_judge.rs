@@ -199,6 +199,18 @@ pub const CLOSE_CHECK_SQL: &str = "select w.state, w.closed_at is not null, \
     where w.id = $1::uuid and w.assignee_account_id = $2::uuid and w.parent_id is null and w.delegation_id is null \
       for update of w";
 
+/// [`CLOSE_CHECK_SQL`] 에서 깨움 행 판을 만들 때 쓰는 자리 — 「안 읽힌 글」 조건.
+pub const CLOSE_CHECK_UNREAD: &str = "i.read_at is null";
+
+/// 닫기 전 문장 — 나머지 읽는 곳이 깨움 행을 볼 때([`super::wake_source::readers`])는 안 읽힌 글 가운데 깨움이 열린 것만 센다
+/// (폴이 내줄 줄과 같다).
+fn close_check_sql() -> &'static str {
+    static S: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    S.get_or_init(|| {
+        super::wake_source::open_if_on(CLOSE_CHECK_SQL, CLOSE_CHECK_UNREAD, "i.id", "cw")
+    })
+}
+
 /// 뿌리 작업 닫기 — `$1` 작업, `$2` 끝난 상태. 뿌리이고 아직 안 닫혔을 때만 닿는다.
 pub const CLOSE_SQL: &str = "update work set state = $2, updated_at = now(), closed_at = now() \
     where id = $1::uuid and parent_id is null and delegation_id is null and closed_at is null";
@@ -512,7 +524,7 @@ pub async fn close_root(
         .bind(agent_id)
         .execute(&mut *tx)
         .await?;
-    let row: Option<(String, bool, bool, bool, bool)> = sqlx::query_as(CLOSE_CHECK_SQL)
+    let row: Option<(String, bool, bool, bool, bool)> = sqlx::query_as(close_check_sql())
         .bind(work_id)
         .bind(agent_id)
         .fetch_optional(&mut *tx)
@@ -651,6 +663,18 @@ pub async fn open_roots(pool: &PgPool) -> sqlx::Result<(i64, i64, i64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn close_check_wake_statement_counts_only_open_wakes() {
+        let sql =
+            crate::core::wake_source::with_open(CLOSE_CHECK_SQL, CLOSE_CHECK_UNREAD, "i.id", "cw");
+        assert!(sql.contains(
+            "i.read_at is null and exists (select 1 from wake cw where cw.inbox_id = i.id and cw.state in ('pending', 'delivered')))"
+        ));
+        assert!(sql.ends_with("for update of w"));
+        // 꺼져 있으면 그대로다.
+        assert_eq!(close_check_sql(), CLOSE_CHECK_SQL);
+    }
 
     fn facts(bits: u8) -> Facts {
         let b = |i: u8| bits & (1 << i) != 0;

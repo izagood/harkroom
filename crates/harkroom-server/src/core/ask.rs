@@ -303,13 +303,13 @@ async fn answer_ask_row(
     };
     // 글로 답했을 때(P5) 물어본 쪽이 그 글로 이미 깨었으면(`thread_reply`·멘션) 다시 깨우지 않는다(TS `skipWakeIfInboxFor`).
     let woken = match (skip_wake_if_inbox_for, author.as_deref()) {
-        (Some(m), Some(a)) => sqlx::query_scalar::<_, bool>(
-            "select exists(select 1 from inbox where account_id = $1::uuid and message_id = $2::uuid)",
-        )
-        .bind(a)
-        .bind(m)
-        .fetch_one(&mut *conn)
-        .await?,
+        (Some(m), Some(a)) => {
+            sqlx::query_scalar::<_, bool>(woken_sql())
+                .bind(a)
+                .bind(m)
+                .fetch_one(&mut *conn)
+                .await?
+        }
         _ => false,
     };
     if !woken {
@@ -911,9 +911,33 @@ pub fn routes(
     }
 }
 
+/// 물어본 쪽이 그 글로 이미 불렸는가 — `$1` 계정, `$2` 글.
+pub const WOKEN_SQL: &str =
+    "select exists(select 1 from inbox where account_id = $1::uuid and message_id = $2::uuid)";
+
+/// 돌릴 문장 — 나머지 읽는 곳이 깨움 행을 볼 때는 inbox 줄과 깨움 행을 함께 읽는다([`super::wake_source::EITHER`]).
+fn woken_sql() -> &'static str {
+    static S: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    S.get_or_init(|| {
+        super::wake_source::either_if_on(WOKEN_SQL, super::wake_source::BARE_FROM, " ei where ", 1)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn woken_wake_statement_reads_both_tables() {
+        let sql = crate::core::wake_source::either(
+            WOKEN_SQL,
+            crate::core::wake_source::BARE_FROM,
+            " ei where ",
+            1,
+        );
+        assert!(sql.ends_with(") ei where account_id = $1::uuid and message_id = $2::uuid)"));
+        assert_eq!(woken_sql(), WOKEN_SQL);
+    }
 
     fn card(extra: Value) -> Value {
         let mut m = json!({

@@ -182,7 +182,12 @@ fn sql() -> &'static Sql {
                 frag("bundle_item_root")
             ),
             update: format!("{} returning id::text", frag("bundle_items_update")),
-            gate: frag("gate_awaiting"),
+            gate: super::wake_source::either_if_on(
+                &frag("gate_awaiting"),
+                super::wake_source::GATE_AWAITING_FROM,
+                " i\n",
+                1,
+            ),
             push: frag("bundle_push"),
             mention: regex::Regex::new(&format!("<@[0-9a-f-]{{36}}>{JS_SPACE_CLASS}*"))
                 .expect("mention regex"),
