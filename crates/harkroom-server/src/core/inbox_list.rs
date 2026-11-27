@@ -21,6 +21,9 @@ struct Sql {
     unread: String,
     /// MCP `inbox.poll` 이 `lease` 를 줄 때(TS `skipLeased`) — 안 읽은 것 중 임대가 없거나 끝난 것만.
     unread_unleased: String,
+    /// 턴 원천이 깨움 행일 때(EB, [`crate::core::wake_source`]) — 위 둘에 「열린 깨움이 있는 줄만」을 더한 것.
+    unread_wake: String,
+    unread_unleased_wake: String,
     unread_since: String,
     since: String,
     newest: String,
@@ -66,6 +69,17 @@ fn skip_leased(branch: &str) -> String {
     )
 }
 
+/// 안 읽은 줄 갈래의 마지막 `order by i.id` 앞에 「열린 깨움이 있는 줄만」을 넣는다([`crate::core::wake_source::OPEN_WAKE_FILTER`]).
+fn open_wake(branch: &str) -> String {
+    let (head, tail) = branch
+        .rsplit_once("order by i.id")
+        .expect("list_inbox_unread ends with order by i.id");
+    format!(
+        "{head}{}\n     order by i.id{tail}",
+        crate::core::wake_source::OPEN_WAKE_FILTER
+    )
+}
+
 fn sql() -> &'static Sql {
     static S: OnceLock<Sql> = OnceLock::new();
     S.get_or_init(|| {
@@ -79,6 +93,8 @@ fn sql() -> &'static Sql {
         Sql {
             unread: wrap(&frag("list_inbox_unread")),
             unread_unleased: wrap(&skip_leased(&frag("list_inbox_unread"))),
+            unread_wake: wrap(&open_wake(&frag("list_inbox_unread"))),
+            unread_unleased_wake: wrap(&open_wake(&skip_leased(&frag("list_inbox_unread")))),
             unread_since: wrap(&frag("list_inbox_unreadSince")),
             since: wrap(&frag("list_inbox_since")),
             newest: wrap(&frag("list_inbox_newest")),
@@ -141,6 +157,8 @@ pub enum InboxQuery {
     Unread { since: Option<i64> },
     /// MCP `inbox.poll` 의 `lease` 폴 — 안 읽은 것 중 임대가 없거나 끝난 것만(TS `skipLeased`).
     UnreadUnleased,
+    /// 턴 원천이 깨움 행일 때의 에이전트 폴(EB) — 안 읽은 것 중 열린 깨움이 있는 것만. `unleased` 면 임대 걸린 줄도 뺀다.
+    UnreadWake { unleased: bool },
     /// `since` 만 — 그 id 뒤의 것 전부(읽은 것 포함).
     Since(i64),
     /// 둘 다 없음 — 최신 `limit` 줄(`before` 가 있으면 그 id 앞에서). 문장에는 `limit + 1` 을 넘긴다.
@@ -179,6 +197,14 @@ pub async fn list_inbox(
                 .bind(me)
                 .fetch_all(pool)
                 .await?
+        }
+        InboxQuery::UnreadWake { unleased } => {
+            let q = if unleased {
+                &s.unread_unleased_wake
+            } else {
+                &s.unread_wake
+            };
+            sqlx::query_as(q.as_str()).bind(me).fetch_all(pool).await?
         }
         InboxQuery::Unread { since: Some(n) } => {
             sqlx::query_as(s.unread_since.as_str())
@@ -694,6 +720,17 @@ mod tests {
                 && !s.unread_unleased.contains("$2")
                 && s.unread_unleased.ends_with("order by t.id")
         );
+        // 깨움 행 갈래(EB) — 옛 조건은 그대로, 열린 깨움 조건만 `order by i.id` 바로 앞에 더한다.
+        let filter = crate::core::wake_source::OPEN_WAKE_FILTER;
+        for (wake, base) in [
+            (&s.unread_wake, &s.unread),
+            (&s.unread_unleased_wake, &s.unread_unleased),
+        ] {
+            assert!(wake.contains(&format!("{filter}\n     order by i.id")));
+            assert_eq!(&wake.replace(&format!("{filter}\n     "), ""), base);
+            assert!(wake.contains("i.read_at is null") && !wake.contains("$2"));
+        }
+        assert!(!s.unread.contains(" wake w ") && !s.unread_unleased.contains(" wake w "));
         assert!(s.roster.contains("t.id = any($1::uuid[])"));
         assert!(s.handed.contains("d.message_id = any($1::uuid[])"));
         assert!(

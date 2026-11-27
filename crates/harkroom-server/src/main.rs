@@ -91,6 +91,7 @@ async fn main() {
         std::process::exit(1);
     }
     let write = open_write_pool().await;
+    enable_wake_source(&pool).await;
     if let (Some(hash), false) = (&claim, claim_seeded) {
         seed_claim_with_write_pool(write.as_ref(), hash).await;
     }
@@ -5922,6 +5923,30 @@ async fn enable_wake_write(pool: &sqlx::PgPool) {
         Ok(m) => eprintln!("front: wake write off — missing privileges {m:?}"),
         Err(e) => eprintln!(
             "front: wake write off — privilege check failed ({})",
+            e.as_database_error().map_or("io", |_| "db")
+        ),
+    }
+}
+
+/// EB 턴 원천 교체. `HARKROOM_WAKE_SOURCE` 가 `wake` 가 아니면 켜지 않는다. 깨움 행 같이 쓰기가 꺼져 있거나 읽기 풀에 깨움 표 권한이
+/// 없어도 켜지 않는다 — 그때 에이전트 폴은 지금처럼 inbox 로 답한다. `read` 는 폴이 쓰는 읽기 풀이다.
+async fn enable_wake_source(read: &sqlx::PgPool) {
+    use harkroom_server::core::{wake_source, wake_write};
+    if !wake_source::switch_from_env() {
+        return;
+    }
+    if !wake_write::enabled() {
+        eprintln!("front: wake source off — wake write is off");
+        return;
+    }
+    match write::missing_in(read, wake_source::WAKE_SOURCE_PRIVILEGES, &[]).await {
+        Ok(m) if m.is_empty() => {
+            eprintln!("front: wake source on");
+            wake_source::enable();
+        }
+        Ok(m) => eprintln!("front: wake source off — missing privileges {m:?}"),
+        Err(e) => eprintln!(
+            "front: wake source off — privilege check failed ({})",
             e.as_database_error().map_or("io", |_| "db")
         ),
     }
