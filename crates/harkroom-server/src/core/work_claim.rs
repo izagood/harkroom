@@ -59,7 +59,7 @@ pub fn switch_on(raw: Option<&str>) -> bool {
     )
 }
 
-pub(crate) fn switch_from_env() -> bool {
+pub fn switch_from_env() -> bool {
     switch_on(crate::env_once::get(&crate::env_once::WORK_CLAIM))
 }
 

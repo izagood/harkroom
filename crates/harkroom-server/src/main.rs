@@ -5735,7 +5735,7 @@ async fn enable_work_run(pool: &sqlx::PgPool) {
             false
         }
     };
-    let note = work_claim::switch_on(std::env::var("HARKROOM_WORK_CLAIM").ok().as_deref())
+    let note = work_claim::switch_from_env()
         && has(
             write::missing_in(pool, work_claim::WORK_CLAIM_PRIVILEGES, &[]).await,
             "work claim turn note",

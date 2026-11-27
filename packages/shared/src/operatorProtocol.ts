@@ -99,6 +99,11 @@ export type OperatorToServerFrame =
   /** 쥔 임대 하나를 놓는다(I2b). 답은 없다. */
   | { type: 'work.release'; workId: string; attempts: number; reason: 'done' | 'failed' | 'released' }
   /**
+   * 판에서 빈 칸 수(`max`)만큼 잡는다(I2d) — 스레드로 좁히지 않는다. `agents` 는 후보를 좁히기만 한다. 답은 `work.pulled`.
+   * 모르는 옛 서버는 버린다(답 없음).
+   */
+  | { type: 'work.pull'; requestId: string; slotGeneration: number; max: number; leaseSecs?: number; agents?: string[] }
+  /**
    * 러너가 링크에 붙을 때마다(재접속 포함) 자기 세션·능력을 다시 선언한다 — 옛 릴레이의
    * `announce` 그대로다(`runnerLink.ts`). 서버는 이 목록으로 그 러너의 세션을 **교체**한다.
    */
@@ -160,20 +165,28 @@ export type ServerToOperatorFrame =
       work?: { workId: string; agentId: string; channelId: string; threadRootId: string; rootId: string; attempts: number; leaseExpiresAt: string };
     }
   /** `work.renew` 의 답(I2b) — 실제로 갱신된 작업 id(빠진 것은 잃은 줄)와 적용된 임대 길이. */
-  | { type: 'work.renewed'; requestId: string; workIds: string[]; leaseSecs?: number; error?: string };
+  | { type: 'work.renewed'; requestId: string; workIds: string[]; leaseSecs?: number; error?: string }
+  /**
+   * `work.pull` 의 답(I2d) — 잡은 줄들(없으면 빈 배열). 하지 않았으면 `error`
+   * (`work_pull_disabled`·`invalid_request`·`unavailable`). `work_pull_disabled` 면 오퍼레이터는 pull 만 물러난다.
+   */
+  | {
+      type: 'work.pulled'; requestId: string; error?: string;
+      works: { workId: string; agentId: string; channelId: string; threadRootId: string; rootId: string; attempts: number; leaseExpiresAt: string }[];
+    };
 
 const OPERATOR_TYPES = new Set<OperatorToServerFrame['type']>([
   'hello', 'capabilities', 'runner.started', 'runner.exited', 'runner.announce', 'session.started', 'session.updated', 'session.ended',
   'pty.output', 'pty.replay', 'interactive.opened', 'interactive.error', 'attention.required', 'status', 'upgrade.progress',
-  'local.input', 'gh.report', 'gh.lines.result', 'wake.ack', 'work.claim', 'work.renew', 'work.release',
+  'local.input', 'gh.report', 'gh.lines.result', 'wake.ack', 'work.claim', 'work.renew', 'work.release', 'work.pull',
 ]);
 const SERVER_TYPES = new Set<ServerToOperatorFrame['type']>([
   'assign', 'unassign', 'assign.synced', 'agent.restart', 'runner.kill', 'pty.replay.request', 'pty.input', 'pty.resize', 'viewer.count', 'session.cancel', 'interactive.open',
-  'local.writer', 'local.view', 'gh.lines.set', 'wake', 'work.claimed', 'work.renewed',
+  'local.writer', 'local.view', 'gh.lines.set', 'wake', 'work.claimed', 'work.renewed', 'work.pulled',
 ]);
 
 /** `hello` 와 배정 넷(`assign`·`unassign`·`assign.synced`·`agent.restart`)만 러너 밖의 말이다 — 나머지는 전부 `runnerId` 가 있어야 한다. */
-const NO_RUNNER_ID = new Set<string>(['hello', 'capabilities', 'status', 'upgrade.progress', 'gh.report', 'gh.lines.result', 'gh.lines.set', 'wake', 'wake.ack', 'work.claim', 'work.renew', 'work.release', 'work.claimed', 'work.renewed', 'assign', 'unassign', 'assign.synced', 'agent.restart']);
+const NO_RUNNER_ID = new Set<string>(['hello', 'capabilities', 'status', 'upgrade.progress', 'gh.report', 'gh.lines.result', 'gh.lines.set', 'wake', 'wake.ack', 'work.claim', 'work.renew', 'work.release', 'work.pull', 'work.claimed', 'work.renewed', 'work.pulled', 'assign', 'unassign', 'assign.synced', 'agent.restart']);
 
 function parse(raw: string, known: Set<string>): Record<string, unknown> | null {
   let value: unknown;
