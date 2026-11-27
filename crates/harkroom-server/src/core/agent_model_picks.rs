@@ -84,6 +84,14 @@ pub fn combo_verdict(
             ),
         ));
     }
+    // 조합에서 베낀 값도 스레드 줄의 값 규칙을 지난다 — 러너는 이 값을 다시 검사하지 않고 하네스 인자로 넘긴다.
+    if !axis_valid(Some(model)) || !axis_valid(effort.as_deref()) {
+        return Err(reject(
+            400,
+            "combo_bad_value",
+            "그 조합의 model·effort 값이 허용되는 꼴이 아니다 — 사람이 조합을 고쳐야 한다",
+        ));
+    }
     Ok((model.clone(), effort.clone()))
 }
 
@@ -636,6 +644,24 @@ mod tests {
             c(combo_verdict(true, Some(&other))),
             Some((403, "combo_harness_mismatch".into()))
         );
+        // 조합에서 베낀 값도 값 규칙을 지난다 — `-` 로 시작하거나 공백이 든 값은 스레드 줄에 못 들어간다.
+        for (m, e) in [
+            ("-x", None),
+            ("a b", None),
+            ("opus", Some("-high")),
+            ("opus", Some("a b")),
+        ] {
+            let bad: ComboRow = (
+                "claude-code".into(),
+                m.into(),
+                e.map(str::to_owned),
+                "claude-code".into(),
+            );
+            assert_eq!(
+                c(combo_verdict(true, Some(&bad))),
+                Some((400, "combo_bad_value".into()))
+            );
+        }
         // 조합만 고른 줄은 풀기가 아니다.
         let mut p = pick(None, None);
         assert!(p.clearing());

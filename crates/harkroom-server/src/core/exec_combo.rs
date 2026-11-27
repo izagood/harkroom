@@ -196,11 +196,22 @@ impl ComboInput {
             Some(Value::Bool(b)) => *b,
             Some(_) => return Err(ComboError::Invalid("promoteAllowed")),
         };
+        // model·effort 는 스레드 줄로 베껴져 러너가 하네스 인자로 넘긴다 — 스레드 모델과 같은 값 규칙을 만들 때부터 건다.
+        let axis = |k: &'static str, v: Option<String>| {
+            if super::thread_model_set::axis_valid(v.as_deref()) {
+                Ok(v)
+            } else {
+                Err(ComboError::Invalid(k))
+            }
+        };
+        let model =
+            axis("model", Some(text("model", 128)?))?.ok_or(ComboError::Invalid("model"))?;
+        let effort = axis("effort", opt("effort", 32)?)?;
         Ok(Self {
             name: text("name", 64)?,
             harness: text("harness", 64)?,
-            model: text("model", 128)?,
-            effort: opt("effort", 32)?,
+            model,
+            effort,
             credential,
             input_price: price(body.get("inputPrice"), "inputPrice")?,
             output_price: price(body.get("outputPrice"), "outputPrice")?,
@@ -969,6 +980,23 @@ mod tests {
             ),
             Err(ComboError::Invalid("name"))
         ));
+        // model·effort 는 스레드 모델과 같은 값 규칙 — `-` 로 시작하거나 공백·`=` 이 든 값은 만들 때부터 막는다.
+        for bad in ["-x", "a b", "a=b", "--flag"] {
+            assert!(matches!(
+                with(json!({"accountPool": "main", "model": bad})),
+                Err(ComboError::Invalid("model"))
+            ));
+            assert!(matches!(
+                with(json!({"accountPool": "main", "effort": bad})),
+                Err(ComboError::Invalid("effort"))
+            ));
+        }
+        assert!(
+            with(
+                json!({"accountPool": "main", "model": "rro/openai/gpt-oss-120b", "effort": null})
+            )
+            .is_ok()
+        );
     }
 
     #[test]
