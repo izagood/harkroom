@@ -189,6 +189,17 @@ impl AssignmentDeps for SystemDeps {
         )
         .into()
     }
+    /// 러너가 그 이름으로 강제돼 떴을 때와 같은 env·같은 해석으로 잰다. HOME 을 모르면 거짓.
+    fn claude_pool_known(&self, name: &str) -> bool {
+        let Ok(home) = std::env::var("HOME") else {
+            return false;
+        };
+        harkroom_accounts::claude_named_pool_known(
+            name,
+            |k| std::env::var(k).ok(),
+            std::path::Path::new(&home),
+        )
+    }
     fn pool_room(&self, idle_pool_runners: &[String]) -> bool {
         let slots = crate::turn_slots::TurnSlots::process();
         let s = slots.lock().unwrap_or_else(|p| p.into_inner());

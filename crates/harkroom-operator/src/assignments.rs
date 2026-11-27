@@ -157,6 +157,11 @@ pub trait AssignmentDeps: Send + Sync {
     ) -> crate::runner_pick::AccountUse {
         crate::runner_pick::AccountUse::Unreadable
     }
+    /// 그 이름이 이 기기에 **설정된 이름 있는 계정 풀**인가(s34 J2c-2, security J1·B1). **기본은 거짓** — 모르면 받지 않는다.
+    /// `claude_account_use` 로 대신 재지 않는다: `pools.json` 이 없으면 그 해석은 강제 풀 이름을 보지 않는다.
+    fn claude_pool_known(&self, _name: &str) -> bool {
+        false
+    }
     fn signal(&self, agent_id: &str, sig: Sig) -> bool;
     fn is_alive(&self, agent_id: &str) -> bool;
     fn list_runners(&self) -> Vec<Value>;
@@ -798,9 +803,10 @@ impl AssignmentReconciler {
         true
     }
 
-    /// 그 계정 풀 이름이 이 기기에서 실제로 계정으로 풀리는가(security J1 — 서버가 준 이름을 꼴만 보고 받지 않는다).
-    pub fn pool_known(&self, agent_id: &str, name: &str) -> bool {
-        self.deps.claude_account_use(agent_id, Some(name)) == crate::runner_pick::AccountUse::Pool
+    /// 그 계정 풀 이름이 이 기기에 설정된 이름 있는 풀이고 계정이 있는가(security J1·B1 — 서버가 준 이름을 꼴만 보고
+    /// 받지 않고, 암묵 풀로 대신 돌게 두지도 않는다). 강제 풀 해석은 에이전트 배정을 보지 않아 `agent_id` 는 쓰지 않는다.
+    pub fn pool_known(&self, _agent_id: &str, name: &str) -> bool {
+        self.deps.claude_pool_known(name)
     }
 
     /// 배정된 풀 에이전트(`runnerPool: true`)인가 — 잡기(I2b)가 묻는다.
@@ -1049,6 +1055,8 @@ mod tests {
         /// `Some(false)` 면 node 가 없다(기본은 있음).
         node_missing: Mutex<bool>,
         account_use: Mutex<crate::runner_pick::AccountUse>,
+        /// 이 기기에 설정된 이름 있는 풀(J1).
+        known_pools: Mutex<Vec<String>>,
         /// 턴 칸이 찼다(풀 러너를 더 못 빌린다).
         pool_full: Mutex<bool>,
     }
@@ -1102,6 +1110,9 @@ mod tests {
             _forced_pool: Option<&str>,
         ) -> crate::runner_pick::AccountUse {
             *self.account_use.lock().unwrap()
+        }
+        fn claude_pool_known(&self, name: &str) -> bool {
+            self.known_pools.lock().unwrap().iter().any(|p| p == name)
         }
         fn is_alive(&self, agent_id: &str) -> bool {
             self.alive
@@ -1800,13 +1811,13 @@ mod tests {
         // 배정이 없는 에이전트: 조합 줄이 있으면 막고, 없으면 지금 그대로.
         assert!(r.combo_gate("x", "nobody", &ComboWant::Key));
         assert!(!r.combo_gate("x", "nobody", &ComboWant::Local));
-        // 풀 이름 허용(J1)은 이 기기에서 계정으로 풀릴 때만.
+        // 풀 이름 허용(J1)은 이 기기에 설정된 이름 있는 풀일 때만 — 넓은 판정(`claude_account_use`)이 「풀로 돈다」여도
+        // 그것만으로는 받지 않는다(B1: `pools.json` 없이 평평한 계정만 있는 기기).
         *f.account_use.lock().unwrap() = crate::runner_pick::AccountUse::Pool;
+        assert!(!r.pool_known("a1", "team"));
+        *f.known_pools.lock().unwrap() = vec!["team".into()];
         assert!(r.pool_known("a1", "team"));
-        *f.account_use.lock().unwrap() = crate::runner_pick::AccountUse::None;
-        assert!(!r.pool_known("a1", "team"));
-        *f.account_use.lock().unwrap() = crate::runner_pick::AccountUse::Unreadable;
-        assert!(!r.pool_known("a1", "team"));
+        assert!(!r.pool_known("a1", "other"));
     }
 
     #[test]
