@@ -65,11 +65,17 @@ pub const ALONG_SQL: &str = "insert into wake (account_id, message_id, channel_i
         and not exists (select 1 from wake w where w.inbox_id = i.id) \
      on conflict (inbox_id) do nothing";
 
-/// 같은 열쇠의 inbox 줄이 사유를 바꿨으면(위임 줄 바꿔 적기) 열린 깨움의 사유를 맞춘다.
+/// 같은 열쇠의 inbox 줄이 사유를 바꿨으면(위임 줄 바꿔 적기) 깨움의 사유를 맞춘다. 닫힌 깨움도 맞춘다 — 사유는 줄이
+/// 닫힌 뒤에도 판정이 읽는다(부른 사유·후속 보고 검사, [`super::wake_cause`]). 상태·닫힌 시각은 건드리지 않는다.
 pub const REASON_SQL: &str = "update wake w set reason = i.reason \
        from inbox i \
       where i.id = w.inbox_id and i.message_id = $1::uuid and i.account_id = any($2::uuid[]) \
-        and w.reason <> i.reason and w.state in ('pending', 'delivered')";
+        and w.reason <> i.reason";
+
+/// inbox 줄이 지워졌을 때(안 읽은 줄을 새 줄로 갈음) 그 줄의 열린 깨움을 `canceled` 로 닫는다 — 지워진 부름이 깨움 행에만
+/// 열린 채 남지 않게. `$1` 은 지워진 inbox 줄 id 들.
+pub const CANCEL_SQL: &str = "update wake set state = 'canceled', closed_at = now() \
+      where inbox_id = any($1::bigint[]) and state in ('pending', 'delivered')";
 
 /// 읽음 + 닫기 한 문장 — 계정 `$1` 의 inbox 줄 `$2` 를 읽음으로 바꾸고, 그 줄의 열린 깨움을 `done` 으로 닫는다.
 /// 돌려주는 수는 읽음으로 바뀐 inbox 줄 수다(옛 문장의 `rows_affected` 와 같다).
@@ -132,6 +138,43 @@ pub async fn write_now(conn: &mut PgConnection, message_id: &str, accounts: &[St
         }
     }
     let _ = sqlx::query("release savepoint wake_write")
+        .execute(&mut *conn)
+        .await;
+}
+
+/// inbox 줄을 지운 직후, 같은 트랜잭션(또는 같은 연결)에서 부른다. 꺼져 있으면 아무것도 하지 않는다. 던지지 않는다.
+pub async fn cancel_deleted(conn: &mut PgConnection, inbox_ids: &[i64]) {
+    if !enabled() || inbox_ids.is_empty() {
+        return;
+    }
+    cancel_now(conn, inbox_ids).await;
+}
+
+/// [`cancel_deleted`] 의 몸 — 스위치를 보지 않는다(시험이 직접 부른다). 트랜잭션 안이면 savepoint 로 감싸 실패가 번지지 않는다.
+pub async fn cancel_now(conn: &mut PgConnection, inbox_ids: &[i64]) {
+    let guarded = sqlx::query("savepoint wake_cancel")
+        .execute(&mut *conn)
+        .await
+        .is_ok();
+    let r = sqlx::query(CANCEL_SQL)
+        .bind(inbox_ids)
+        .execute(&mut *conn)
+        .await;
+    if let Err(e) = &r {
+        eprintln!("wake_write: cancel failed ({})", kind_of(e));
+    }
+    if !guarded {
+        return;
+    }
+    if r.is_err()
+        && sqlx::query("rollback to savepoint wake_cancel")
+            .execute(&mut *conn)
+            .await
+            .is_err()
+    {
+        return;
+    }
+    let _ = sqlx::query("release savepoint wake_cancel")
         .execute(&mut *conn)
         .await;
 }
@@ -219,7 +262,14 @@ mod tests {
     fn along_is_scoped_to_message_and_accounts() {
         assert!(ALONG_SQL.contains("i.message_id = $1::uuid and i.account_id = any($2::uuid[])"));
         assert!(REASON_SQL.contains("i.message_id = $1::uuid and i.account_id = any($2::uuid[])"));
-        assert!(REASON_SQL.contains("w.state in ('pending', 'delivered')"));
+        // 사유는 닫힌 깨움도 맞춘다(판정이 닫힌 뒤에도 읽는다) — 상태·닫힌 시각은 안 건드린다.
+        assert!(!REASON_SQL.contains("state"));
+        assert!(REASON_SQL.starts_with("update wake w set reason = i.reason "));
+        // 지워진 줄의 깨움은 열린 것만 닫는다.
+        assert!(
+            CANCEL_SQL
+                .contains("inbox_id = any($1::bigint[]) and state in ('pending', 'delivered')")
+        );
         // 작업은 그 스레드에서 그 계정이 맡은 열린 것만.
         assert!(ALONG_SQL.contains("k.assignee_account_id = i.account_id and k.closed_at is null"));
     }

@@ -1952,7 +1952,52 @@ pub const CAUSE_CHAIN_MAX_HOPS: i32 = 8;
 /// TS `CAUSE_CHAIN_ROOT_MAX_AGE_MS`(7일).
 pub const CAUSE_CHAIN_ROOT_MAX_AGE_MS: i64 = 7 * 86_400_000;
 
-const CHAIN_FOLLOWUP_SQL: &str = "select 1 from inbox where account_id = $1::uuid and message_id = $2::uuid and reason = 'delegation_followup' limit 1";
+pub const CHAIN_FOLLOWUP_SQL: &str = "select 1 from inbox where account_id = $1::uuid and message_id = $2::uuid and reason = 'delegation_followup' limit 1";
+
+/// [`CHAIN_FOLLOWUP_SQL`] 의 깨움 행 판(EC, [`super::wake_cause`]) — 표 이름만 다르다.
+pub fn chain_followup_wake_sql() -> &'static str {
+    static S: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    S.get_or_init(|| super::wake_cause::swap(CHAIN_FOLLOWUP_SQL, super::wake_cause::BARE_SWAPS))
+}
+
+/// 그 원인 글이 이 에이전트를 후속 보고로 깨웠나 — `wake` 면 깨움 행에서 읽는다.
+pub async fn chain_followup(
+    pool: &sqlx::PgPool,
+    wake: bool,
+    agent: &str,
+    cause: Option<&str>,
+) -> sqlx::Result<bool> {
+    let text = if wake {
+        chain_followup_wake_sql()
+    } else {
+        CHAIN_FOLLOWUP_SQL
+    };
+    let hit: Option<i32> = sqlx::query_scalar(text)
+        .bind(agent)
+        .bind(cause)
+        .fetch_optional(pool)
+        .await?;
+    Ok(hit.is_some())
+}
+
+/// 스위치([`super::wake_cause::mode`])대로 [`chain_followup`] 을 읽는다. `shadow` 면 답은 inbox 문장이고 갈릴 때만 적는다.
+async fn chain_followup_checked(
+    pool: &sqlx::PgPool,
+    agent: &str,
+    cause: Option<&str>,
+) -> sqlx::Result<bool> {
+    use super::wake_cause::{self, Switch};
+    let mode = wake_cause::mode();
+    let hit = chain_followup(pool, mode == Switch::On, agent, cause).await?;
+    if let (Switch::Shadow, Some(c)) = (mode, cause) {
+        let same = chain_followup(pool, true, agent, cause)
+            .await
+            .ok()
+            .map(|o| o == hit);
+        wake_cause::note("chain_followup", agent, c, same, json!(["followup"]));
+    }
+    Ok(hit)
+}
 
 /// TS `causeChainRoot` 의 재귀 문장($3 은 지금, 7일은 [`CAUSE_CHAIN_ROOT_MAX_AGE_MS`]).
 pub fn cause_chain_sql() -> &'static str {
@@ -2011,12 +2056,7 @@ async fn cause_chain_root(
     cause: Option<&str>,
     now: &str,
 ) -> sqlx::Result<Option<(String, Vec<String>)>> {
-    let followup: Option<i32> = sqlx::query_scalar(CHAIN_FOLLOWUP_SQL)
-        .bind(agent)
-        .bind(cause)
-        .fetch_optional(pool)
-        .await?;
-    if followup.is_some() {
+    if chain_followup_checked(pool, agent, cause).await? {
         return Ok(None);
     }
     let r: Option<(String, Vec<String>)> = sqlx::query_as(cause_chain_sql())

@@ -37,6 +37,11 @@ pub const KIND_TURN_JUDGED: &str = "turn.judged";
 pub const KIND_TURN_CAP_WAIT: &str = "turn.cap_wait";
 /// 줄이 차서 버린 턴 끝 판정 — `value` 는 그 1분 동안 버린 수. `turn_end_judge::turn_ended`.
 pub const KIND_TURN_JUDGE_DROPPED: &str = "turn.judge_dropped";
+/// 임대·사슬 판정 대조(EC, 그림자)에서 inbox 문장과 깨움 행 문장의 답이 갈린 한 건 — `detail.q` 는 문장 이름,
+/// `detail.diff` 는 갈린 칸 이름(깨움 행 문장이 실패했으면 `detail.error`). `ref_id` 는 원인 글 id. `wake_cause::note`.
+pub const KIND_WAKE_CAUSE_MISMATCH: &str = "wake.cause_mismatch";
+/// 같은 대조에서 답이 같았던 묶음 — `value` 는 묶음 크기(`wake_cause::SAME_BATCH`). 불일치 0 을 볼 때의 분모다.
+pub const KIND_WAKE_CAUSE_SAME: &str = "wake.cause_same";
 
 /// 기록이 쓰는 권한 — homelab GRANT 와 같아야 한다. 없으면 `main.rs` 가 기록을 켜지 않는다(나머지는 그대로 돈다).
 pub const MEASURE_PRIVILEGES: &[(&str, &str)] =
