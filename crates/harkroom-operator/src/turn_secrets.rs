@@ -189,6 +189,27 @@ fn with_lease(lease: &TurnLease, mut body: Map<String, Value>) -> String {
     Value::Object(out).to_string()
 }
 
+/// 서버가 준 값(`valueBase64`)을 그 임대 폴더에 `<secret id>` 이름의 0600 파일로 쓴다. 값은 쓰고 나서 지운다.
+fn write_value(
+    root: &SecretsRoot,
+    lease_id: &str,
+    secret: &Value,
+    value_b64: &str,
+) -> std::io::Result<PathBuf> {
+    let id = secret.get("id").and_then(Value::as_str).unwrap_or_default();
+    let dir = root.ensure_dir(lease_id)?;
+    if id.is_empty() || id.contains(['/', '\\', '\0']) || id == "." || id == ".." {
+        return Err(std::io::Error::other("bad secret id"));
+    }
+    let path = dir.join(id);
+    let mut bytes = base64::engine::general_purpose::STANDARD
+        .decode(value_b64.as_bytes())
+        .map_err(std::io::Error::other)?;
+    let r = SecretsRoot::write_new(&path, &bytes);
+    bytes.fill(0);
+    r.map(|()| path)
+}
+
 fn mount(cx: &Ctx<'_>, name: &str) -> Outcome {
     let mut b = Map::new();
     b.insert("name".into(), Value::String(name.into()));
@@ -219,20 +240,7 @@ fn mount(cx: &Ctx<'_>, name: &str) -> Outcome {
             });
         return Err(err(&code, &format!("secret not mounted: {code}")));
     };
-    let id = secret.get("id").and_then(Value::as_str).unwrap_or_default();
-    let mounted = (|| -> std::io::Result<PathBuf> {
-        let dir = cx.root.ensure_dir(&cx.lease.lease_id)?;
-        if id.is_empty() || id.contains(['/', '\\', '\0']) || id == "." || id == ".." {
-            return Err(std::io::Error::other("bad secret id"));
-        }
-        let path = dir.join(id);
-        let mut bytes = base64::engine::general_purpose::STANDARD
-            .decode(value_b64.as_bytes())
-            .map_err(std::io::Error::other)?;
-        let r = SecretsRoot::write_new(&path, &bytes);
-        bytes.fill(0);
-        r.map(|()| path)
-    })();
+    let mounted = write_value(cx.root, &cx.lease.lease_id, &secret, &value_b64);
     let path = match mounted {
         Ok(p) => p,
         Err(e) => {
@@ -301,6 +309,90 @@ pub fn mount_for(
             .and_then(Value::as_str)
             .unwrap_or("unavailable")
             .to_string()),
+    }
+}
+
+/// 서버의 조합 턴 답 길(J2c — `POST /agent/exec-combo/credential {leaseId, token}`).
+pub const COMBO_CREDENTIAL_PATH: &str = "/agent/exec-combo/credential";
+/// 서버가 준 키 조합 주소의 길이 상한(C5).
+const COMBO_BASE_URL_MAX: usize = 500;
+
+/// 그 턴의 조합 자격을 서버에 물은 결과([`mount_combo`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ComboMount {
+    /// 조합 줄이 없다(또는 그 길이 없는 옛 서버) — 로컬 설정 길을 그대로 쓴다.
+    None,
+    /// 키 조합 — 주소와 값 파일 경로(`<root>/<lease id>/<secret id>`, 0600).
+    Key { base_url: String, path: PathBuf },
+}
+
+/// 서버가 준 키 조합 주소를 오퍼레이터에서 한 번 더 본다(C5): `https` · 사용자 정보(`@`)·질의·조각 없음 · 호스트 있음 ·
+/// 500자 이하. 로컬 설정 주소와 같은 규칙([`crate::local_agents::normalize_provider_base_url`])에 `https` 만을 더한 것이다.
+pub fn combo_base_url_ok(raw: &str) -> Option<String> {
+    if raw.chars().count() > COMBO_BASE_URL_MAX || !raw.starts_with("https://") {
+        return None;
+    }
+    crate::local_agents::normalize_provider_base_url(raw).filter(|u| u.starts_with("https://"))
+}
+
+/// 조합 마운트(J2c 「나」) — 그 턴 임대만 서버에 보내고, 어느 스레드·조합·비밀인지는 서버가 임대에서 고른다. 키 조합이면
+/// 값을 그 임대 폴더에 0600 으로 쓰고 주소와 **경로만** 돌려준다. 실패는 코드 하나(주소·이름·값 없음).
+///
+/// - 풀 조합이면 `combo_mode_mismatch` — 키 모드 러너가 구독 풀 조합의 턴을 돌지 않는다(로컬 키로 대신 돌리지 않는다).
+/// - 서버가 안 닿으면 `unavailable`, 거절이면 서버 코드(`combo_*`·`not_granted`·`lease_invalid` …) 그대로.
+/// - 그 길이 없는 서버(404)는 조합 없음으로 본다 — 그 서버에는 조합 자격을 내주는 길이 없어 지금까지의 로컬 길뿐이다.
+pub fn mount_combo(
+    lease: &TurnLease,
+    root: &SecretsRoot,
+    post: Post<'_>,
+    log: &dyn Fn(&str),
+) -> Result<ComboMount, String> {
+    let (status, text) = match post(COMBO_CREDENTIAL_PATH, with_lease(lease, Map::new())) {
+        Ok(r) if r.0 != 0 => r,
+        _ => return Err("unavailable".into()),
+    };
+    if status == 404 {
+        return Ok(ComboMount::None);
+    }
+    let parsed: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+    if status != 200 {
+        return Err(parsed
+            .pointer("/error/code")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("http_{status}")));
+    }
+    match parsed.get("kind").and_then(Value::as_str) {
+        Some("none") => Ok(ComboMount::None),
+        Some("pool") => Err("combo_mode_mismatch".into()),
+        Some("key") => {
+            let base_url = parsed
+                .get("baseUrl")
+                .and_then(Value::as_str)
+                .and_then(combo_base_url_ok)
+                .ok_or_else(|| "combo_bad_url".to_string())?;
+            let secret = parsed.get("secret").filter(|s| s.is_object());
+            let value_b64 = parsed.get("valueBase64").and_then(Value::as_str);
+            let (Some(secret), Some(value_b64)) = (secret, value_b64) else {
+                return Err("combo_bad_answer".into());
+            };
+            let inside = root.dir_of(&lease.lease_id);
+            match write_value(root, &lease.lease_id, secret, value_b64) {
+                Ok(path)
+                    if inside
+                        .as_ref()
+                        .is_some_and(|d| path.parent() == Some(d.as_path())) =>
+                {
+                    Ok(ComboMount::Key { base_url, path })
+                }
+                Ok(_) => Err("mount_failed".into()),
+                Err(e) => {
+                    log(&format!("turn-secrets: 조합 키 마운트 실패 — {e}"));
+                    Err("mount_failed".into())
+                }
+            }
+        }
+        _ => Err("combo_bad_answer".into()),
     }
 }
 
@@ -1020,5 +1112,141 @@ mod tests {
                 && !valid_name("A")
                 && !valid_name(&"a".repeat(65))
         );
+    }
+
+    fn combo_answer(extra: Value) -> String {
+        let mut o = json!({"comboId": "C1", "kind": "key", "baseUrl": "https://combo.example.com/v1/",
+            "secret": {"id": "S9", "name": "k", "kind": "text", "filename": null, "version": 1},
+            "valueBase64": base64::engine::general_purpose::STANDARD.encode(fake_value())});
+        for (k, v) in extra.as_object().unwrap() {
+            o[k] = v.clone();
+        }
+        o.to_string()
+    }
+
+    #[test]
+    fn combo_mount_sends_lease_only_and_writes_key_into_lease_dir() {
+        let b = base("combo-ok");
+        let root = SecretsRoot {
+            root: b.join("turn-secrets"),
+        };
+        let seen = RefCell::new(Vec::new());
+        let post = |p: &str, body: String| {
+            seen.borrow_mut().push((p.to_string(), body));
+            Ok((200, combo_answer(json!({}))))
+        };
+        let got = mount_combo(&lease(), &root, &post, &|_| {}).unwrap();
+        let path = b.join("turn-secrets").join("L1").join("S9");
+        assert_eq!(
+            got,
+            ComboMount::Key {
+                base_url: "https://combo.example.com/v1".into(),
+                path: path.clone()
+            }
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), fake_value());
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        let (p, body) = seen.borrow()[0].clone();
+        assert_eq!(p, COMBO_CREDENTIAL_PATH);
+        assert_eq!(
+            serde_json::from_str::<Value>(&body).unwrap(),
+            json!({"leaseId": "L1", "token": "T1"})
+        );
+        let _ = std::fs::remove_dir_all(&b);
+    }
+
+    #[test]
+    fn combo_mount_none_pool_refusals_and_unreachable() {
+        let b = base("combo-no");
+        let root = SecretsRoot {
+            root: b.join("turn-secrets"),
+        };
+        let l = lease();
+        let run = |status: u16, body: String| {
+            let post = move |_: &str, _: String| Ok((status, body.clone()));
+            mount_combo(&l, &root, &post, &|_| {})
+        };
+        let none = r#"{"comboId":null,"kind":"none","accountPool":null}"#;
+        assert_eq!(run(200, none.into()), Ok(ComboMount::None));
+        // 그 길이 없는 서버 — 조합 없음.
+        assert_eq!(run(404, "{}".into()), Ok(ComboMount::None));
+        // 풀 조합 — 키 모드 러너가 돌지 않는다.
+        let pool = r#"{"comboId":"C2","kind":"pool","accountPool":"team"}"#;
+        assert_eq!(run(200, pool.into()), Err("combo_mode_mismatch".into()));
+        for (status, code) in [
+            (403, "combo_not_allowed"),
+            (403, "combo_unusable"),
+            (403, "combo_thread_mismatch"),
+            (403, "not_granted"),
+            (403, "lease_invalid"),
+            (429, "rate_limited"),
+        ] {
+            let body = json!({"error": {"code": code, "message": "x"}}).to_string();
+            assert_eq!(run(status, body), Err(code.to_string()));
+        }
+        assert_eq!(run(500, "oops".into()), Err("http_500".into()));
+        assert_eq!(run(0, String::new()), Err("unavailable".into()));
+        let down = |_: &str, _: String| Err("down".to_string());
+        assert_eq!(
+            mount_combo(&l, &root, &down, &|_| {}),
+            Err("unavailable".into())
+        );
+        // 답 꼴이 틀리면 막는다.
+        assert_eq!(run(200, "{}".into()), Err("combo_bad_answer".into()));
+        assert_eq!(
+            run(200, combo_answer(json!({"valueBase64": null}))),
+            Err("combo_bad_answer".into())
+        );
+        assert!(
+            !b.join("turn-secrets").join("L1").exists(),
+            "값 파일이 없다"
+        );
+        let _ = std::fs::remove_dir_all(&b);
+    }
+
+    #[test]
+    fn combo_mount_rechecks_the_server_url_and_writes_nothing_when_bad() {
+        let b = base("combo-url");
+        let root = SecretsRoot {
+            root: b.join("turn-secrets"),
+        };
+        let long = format!("https://combo.example.com/{}", "a".repeat(500));
+        for bad in [
+            "http://combo.example.com/v1",
+            "https://user@combo.example.com/v1",
+            "https://user:pw@combo.example.com",
+            "https:///v1",
+            "https://",
+            "https://combo.example.com/v1?x=1",
+            "https://combo.example.com/v1#f",
+            "http://127.0.0.1:8080",
+            " https://combo.example.com",
+            long.as_str(),
+        ] {
+            let lines = RefCell::new(Vec::<String>::new());
+            let post = |_: &str, _: String| Ok((200, combo_answer(json!({"baseUrl": bad}))));
+            let got = mount_combo(&lease(), &root, &post, &|x| {
+                lines.borrow_mut().push(x.into())
+            });
+            assert_eq!(got, Err("combo_bad_url".into()), "{bad}");
+            assert!(lines.borrow().is_empty(), "{bad}");
+        }
+        let post = |_: &str, _: String| Ok((200, combo_answer(json!({"baseUrl": 7}))));
+        assert_eq!(
+            mount_combo(&lease(), &root, &post, &|_| {}),
+            Err("combo_bad_url".into())
+        );
+        assert!(
+            !b.join("turn-secrets").join("L1").exists(),
+            "값 파일이 없다"
+        );
+        assert_eq!(
+            combo_base_url_ok("https://Combo.Example.com:443/v1/").as_deref(),
+            Some("https://combo.example.com/v1")
+        );
+        let _ = std::fs::remove_dir_all(&b);
     }
 }

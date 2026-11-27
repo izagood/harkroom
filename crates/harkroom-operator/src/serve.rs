@@ -739,6 +739,17 @@ pub fn spawn_server_link(
             fn mismatch(&self, runner_id: &str, agent_id: &str) -> bool {
                 self.frames.lane_mismatch(runner_id, agent_id)
             }
+            fn combo_gate(
+                &self,
+                runner_id: &str,
+                agent_id: &str,
+                want: &crate::assignments::ComboWant,
+            ) -> bool {
+                self.frames.combo_gate(runner_id, agent_id, want)
+            }
+            fn pool_known(&self, agent_id: &str, name: &str) -> bool {
+                self.frames.pool_known(agent_id, name)
+            }
             fn note_mode(&self, runner_id: &str, on: bool) {
                 self.frames.note_runner_lane(runner_id, on);
             }

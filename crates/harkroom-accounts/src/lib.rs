@@ -479,3 +479,35 @@ pub fn claude_account_use(
         Err(_) => ClaudeAccountUse::Unreadable,
     }
 }
+
+/// 강제 풀 이름이 **설정된 이름 있는 풀**인가 — 서버가 준 풀 이름을 받기 전에 묻는다(s34 J2c-2, security J1·B1).
+///
+/// [`claude_account_use`] 로는 이것을 알 수 없다: `pools.json` 이 없으면 해석이 강제 풀 이름을 보지 않고 뿌리 아래
+/// 계정(암묵 풀)을 돌려주므로, 어떤 이름이든 「풀로 돈다」가 된다. 여기서는 넷이 다 맞을 때만 참이다 —
+/// `pools.json` 이 있고 해석된다 · 그 이름이 풀 목록(뿌리 아래 디렉터리)에 있다 · 해석한 lane 의 풀이 그 이름이다 ·
+/// 계정이 하나 이상이다. 읽지 못하거나 해석이 `Err` 면 거짓(닫힌 쪽).
+pub fn claude_named_pool_known(
+    name: &str,
+    get: impl Fn(&str) -> Option<String>,
+    home: &Path,
+) -> bool {
+    if !is_account_name(name) {
+        return false;
+    }
+    let root = claude_accounts_root(&get, home);
+    let Ok(path) = claude_pools_file_path(&root, &get) else {
+        return false;
+    };
+    let Ok(bytes) = fs::read(&path) else {
+        return false;
+    };
+    if serde_json::from_str::<Value>(&String::from_utf8_lossy(&bytes)).is_err() {
+        return false;
+    }
+    let order = get("HARKROOM_CLAUDE_ACCOUNTS");
+    // 배정·기본 풀은 강제 풀 앞에서 보지 않는다 — 에이전트 id 는 결과에 닿지 않는다.
+    match load_claude_account_lane(&root, "", Some(name), order.as_deref(), &get) {
+        Ok(lane) => lane.pool.as_deref() == Some(name) && !lane.accounts.is_empty(),
+        Err(_) => false,
+    }
+}

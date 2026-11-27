@@ -286,6 +286,39 @@ impl LinkHandler {
 }
 
 impl LinkHandler {
+    /// 그 스레드의 실행 조합 종류를 서버에 묻는다(J2c 「가」) — 에이전트 자격 GET. 스레드 id 는 uuid 꼴로 걸러진 것만 온다.
+    /// 주소·머리말은 로그에 찍지 않는다. 안 닿으면 `unavailable`.
+    fn combo_kind(
+        &self,
+        agent_id: &str,
+        thread: Option<&str>,
+    ) -> Result<crate::assignments::ComboWant, String> {
+        let mut url = format!(
+            "{}{}",
+            self.base_url.trim_end_matches('/'),
+            crate::provider_lane_mount::COMBO_KIND_PATH
+        );
+        if let Some(t) = thread {
+            url.push_str("?threadRootId=");
+            url.push_str(t);
+        }
+        let headers = vec![
+            (
+                "authorization".to_string(),
+                format!("Bearer {}", self.token.get()),
+            ),
+            (
+                crate::forward::AGENT_HEADER.to_string(),
+                agent_id.to_string(),
+            ),
+        ];
+        let r = self
+            .transport
+            .send("GET", &url, &headers, None)
+            .map_err(|_| "unavailable".to_string())?;
+        crate::provider_lane_mount::parse_combo_kind(r.status, &r.body)
+    }
+
     /// 에이전트 자격으로 이 커뮤니티 서버에 JSON POST(오퍼레이터 자체 요청 — `command.check` 의 match).
     fn server_post(
         &self,
@@ -461,6 +494,7 @@ impl RunnerLinkHandler for LinkHandler {
             &req,
             kind,
             lane,
+            &|thread| self.combo_kind(agent_id, thread),
             &self.lane_gate_log,
             &|l| eprintln!("{l}"),
         ) {
@@ -484,11 +518,24 @@ impl RunnerLinkHandler for LinkHandler {
             let post = |p: &str, body: String| self.server_post(agent_id, p, body);
             crate::turn_secrets::mount_for(&lease, root, &post, &|l| eprintln!("{l}"), name)
         };
-        if let Some(r) =
-            crate::provider_lane_mount::mount(agent_id, &req, kind, &lane_of, &lane_mount, &|l| {
-                eprintln!("{l}")
-            })
-        {
+        // 그 턴의 실행 조합(J2c 「나」) — 임대만 서버에 보낸다. 주소·비밀은 서버가 임대의 스레드에서 고른다.
+        let combo_mount = |cause: &str| -> Result<crate::turn_secrets::ComboMount, String> {
+            let lease = lock(&self.leases).lookup_for(runner_id, agent_id, Some(cause));
+            let (Some(lease), Some(root)) = (lease, self.secrets.as_ref()) else {
+                return Err("no_lease".into());
+            };
+            let post = |p: &str, body: String| self.server_post(agent_id, p, body);
+            crate::turn_secrets::mount_combo(&lease, root, &post, &|l| eprintln!("{l}"))
+        };
+        if let Some(r) = crate::provider_lane_mount::mount(
+            agent_id,
+            &req,
+            kind,
+            &combo_mount,
+            &lane_of,
+            &lane_mount,
+            &|l| eprintln!("{l}"),
+        ) {
             return Some(r);
         }
         // 비밀 도구(TS turnSecrets — run.ts 순서: turnSlots → providerLaneMount → turnSecrets). 값은 임대 폴더로만 나간다.
@@ -798,10 +845,16 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push((method.into(), url.into(), headers.to_vec()));
+            // 문지기의 조합 물음(J2c 「가」)에는 조합 줄 없음으로 답한다.
+            let body = if url.contains(crate::provider_lane_mount::COMBO_KIND_PATH) {
+                r#"{"comboId":null,"kind":"none","accountPool":null}"#
+            } else {
+                r#"{"jsonrpc":"2.0","id":1,"result":{}}"#
+            };
             Ok(HttpReply {
                 status: 200,
                 content_type: "application/json".into(),
-                body: r#"{"jsonrpc":"2.0","id":1,"result":{}}"#.into(),
+                body: body.into(),
             })
         }
     }
@@ -1118,9 +1171,13 @@ mod tests {
             )),
             403
         );
+        // 서버에는 문지기의 조합 물음(J2c 「가」, relay 의 턴 칸마다 한 번)만 나갔다 — 턴 열쇠·칸 자체는 안 나간다.
         assert!(
-            tr.0.lock().unwrap().is_empty(),
-            "nothing reached the server"
+            tr.0.lock()
+                .unwrap()
+                .iter()
+                .all(|(m, u, _)| m == "GET" && u.starts_with("https://h.example/agent/exec-combo")),
+            "nothing but the combo question reached the server"
         );
         // relay 가 다시 붙으면 그 러너의 자리를 돌려받는다.
         h.on_relay_attach("r1");
@@ -1143,7 +1200,14 @@ mod tests {
             fwd("/agent/activity", json!({})),
             RunnerLinkKind::Relay,
         );
-        assert_eq!(tr.0.lock().unwrap().len(), 1);
+        // 조합 물음(GET)을 빼면 넘어간 것은 이 하나다.
+        let forwarded =
+            tr.0.lock()
+                .unwrap()
+                .iter()
+                .filter(|(m, _, _)| m != "GET")
+                .count();
+        assert_eq!(forwarded, 1);
     }
 
     /// security #1906 ③ — `runner.pollStopped` 은 링크 세션의 인증된 runner id 로만 러너 표에 간다. 서버로는 안 간다.
@@ -1261,6 +1325,12 @@ mod tests {
             let body = if url.ends_with("/agent/secrets/reveal") {
                 // "sk-lane-value"
                 r#"{"secret":{"id":"sec-1","name":"lane-key","kind":"text","version":1},"valueBase64":"c2stbGFuZS12YWx1ZQ=="}"#
+            } else if url.ends_with(crate::turn_secrets::COMBO_CREDENTIAL_PATH)
+                || url.contains("/agent/exec-combo?")
+                || url.ends_with(crate::provider_lane_mount::COMBO_KIND_PATH)
+            {
+                // 조합 줄이 없는 스레드 — 로컬 설정 길로 간다.
+                r#"{"comboId":null,"kind":"none","accountPool":null}"#
             } else {
                 "{}"
             };
@@ -1372,16 +1442,202 @@ mod tests {
         // 남의 에이전트로는 그 임대를 못 쓴다.
         let other = fwd("/agent/provider-lane/mount", json!({"cause":"c1"}));
         assert_eq!(status_of(h.on_request("r1", "a2", other, relay)), 409);
-        // 서버에는 reveal 만 나갔다(마운트 길 자체는 안 나간다).
-        assert!(
-            tr.0.lock()
-                .unwrap()
-                .iter()
-                .all(|u| u.ends_with("/agent/secrets/reveal"))
+        // 서버에는 조합 물음과 reveal 만 나갔다(마운트 길 자체는 안 나간다). 조합 물음이 먼저다.
+        let urls = tr.0.lock().unwrap().clone();
+        assert_eq!(
+            urls,
+            vec![
+                // 문지기가 턴 칸마다 조합 종류를 묻는다(열쇠가 uuid 꼴이 아니라 스레드 없이).
+                "https://h.example/agent/exec-combo".to_string(),
+                "https://h.example/agent/exec-combo".to_string(),
+                format!(
+                    "https://h.example{}",
+                    crate::turn_secrets::COMBO_CREDENTIAL_PATH
+                ),
+                "https://h.example/agent/secrets/reveal".to_string(),
+            ]
         );
         // 턴 끝 — 임대 폴더째 지운다.
         h.on_notice("r1", "a1", json!({"type":"secret.leaseEnded","cause":"c1"}));
         assert!(!dir.join("L1").exists(), "턴 끝에 키 파일이 남았다");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 키 조합 스레드라고 답하는 가짜 서버(J2c 「가」·「나」). 받은 요청을 그대로 적어 둔다.
+    #[derive(Default)]
+    struct ComboTransport(Mutex<Vec<ComboCall>>);
+    /// (메서드, 주소, 머리말, 본문)
+    type ComboCall = (String, String, Vec<(String, String)>, String);
+    impl Transport for ComboTransport {
+        fn send(
+            &self,
+            method: &str,
+            url: &str,
+            headers: &[(String, String)],
+            body: Option<Vec<u8>>,
+        ) -> Result<HttpReply, String> {
+            self.0.lock().unwrap().push((
+                method.into(),
+                url.into(),
+                headers.to_vec(),
+                String::from_utf8(body.unwrap_or_default()).unwrap(),
+            ));
+            let body = if url.ends_with(crate::turn_secrets::COMBO_CREDENTIAL_PATH) {
+                // "sk-combo-value"
+                r#"{"comboId":"c1","kind":"key","baseUrl":"https://combo.example.com/v1","secret":{"id":"sec-9","name":"combo-key","kind":"text","version":1},"valueBase64":"c2stY29tYm8tdmFsdWU="}"#
+            } else {
+                r#"{"comboId":"c1","kind":"key","accountPool":null}"#
+            };
+            Ok(HttpReply {
+                status: 200,
+                content_type: "application/json".into(),
+                body: body.into(),
+            })
+        }
+    }
+
+    /// 러너 모드(`lane`)와 조합을 견주는 판정 재료 — 막은 물음을 적어 둔다. 로컬 설정은 없다.
+    struct ComboLane {
+        lane: std::sync::atomic::AtomicBool,
+        blocked: Mutex<Vec<crate::assignments::ComboWant>>,
+    }
+    impl LanePorts for ComboLane {
+        fn mismatch(&self, _: &str, _: &str) -> bool {
+            false
+        }
+        fn combo_gate(&self, _: &str, _: &str, want: &crate::assignments::ComboWant) -> bool {
+            let lane = self.lane.load(std::sync::atomic::Ordering::SeqCst);
+            let block = match want {
+                crate::assignments::ComboWant::Local => false,
+                crate::assignments::ComboWant::Key => !lane,
+                crate::assignments::ComboWant::Pool(_) => lane,
+            };
+            if block {
+                self.blocked.lock().unwrap().push(want.clone());
+            }
+            block
+        }
+        fn note_mode(&self, _: &str, _: bool) {}
+        fn lane_of(&self, _: &str) -> Option<crate::local_agents::ProviderLane> {
+            None
+        }
+    }
+
+    /// J2c-2 사슬: 키 조합 스레드의 턴 칸은 구독 풀 러너에게 409(자리 안 잡음)이고, 키 모드 러너는 지나가 그 턴 임대로
+    /// 조합 키를 받는다. 서버에는 스레드 id 물음과 임대뿐 — 값은 임대 폴더에만 있고 턴 끝에 지워진다(security N3·N4).
+    #[test]
+    fn combo_key_thread_blocks_pool_runner_then_mounts_for_key_runner() {
+        const THREAD: &str = "0b1c2d3e-4f50-4a61-8b72-9c8d7e6f5a40";
+        let dir = std::env::temp_dir().join(format!("hk-combo-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let tr = Arc::new(ComboTransport::default());
+        let (_srv, _tr0, b) = bridge();
+        let lane = Arc::new(ComboLane {
+            lane: std::sync::atomic::AtomicBool::new(false),
+            blocked: Mutex::new(Vec::new()),
+        });
+        let cell: Arc<OnceLock<Arc<dyn LanePorts>>> = Arc::new(OnceLock::new());
+        let _ = cell.set(lane.clone());
+        let h = LinkHandler {
+            mux: Arc::clone(&b.mux),
+            hub: Arc::clone(&b.hub),
+            transport: tr.clone(),
+            base_url: "https://h.example".into(),
+            token: "op".into(),
+            turn_keys: Arc::new(Mutex::new(TurnKeyLedger::new(|| 0, |_| {}))),
+            slots: Arc::new(Mutex::new(TurnSlots::new(Some(1), || 0, |_| {}))),
+            leases: Arc::new(Mutex::new(TurnLeases::new(|| 0))),
+            secrets: Some(crate::turn_secrets::SecretsRoot { root: dir.clone() }),
+            peek: Arc::new(TurnPeek::new(|| 0)),
+            merge: None,
+            poll_stopped: Arc::new(OnceLock::new()),
+            cleanup_owners: Arc::new(OnceLock::new()),
+            lane: cell,
+            work_claims: Arc::new(OnceLock::new()),
+            lane_gate_log: GateLog::default(),
+        };
+        let relay = RunnerLinkKind::Relay;
+        let take = fwd("/agent/turn-slots", json!({"key": format!("ch/{THREAD}")}));
+        // 구독 풀 러너 — 409 lane_pending.
+        match h.on_request("r1", "a1", take.clone(), relay) {
+            Some(RunnerLinkResponse::HttpResponse {
+                status: 409, body, ..
+            }) => {
+                let v: Value = serde_json::from_str(&body).unwrap();
+                assert_eq!(v["error"]["code"], "lane_pending");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            *lane.blocked.lock().unwrap(),
+            vec![crate::assignments::ComboWant::Key]
+        );
+        // 물음은 그 스레드 id 로, 에이전트 자격으로 한 번 나갔다.
+        {
+            let calls = tr.0.lock().unwrap();
+            assert_eq!(calls.len(), 1);
+            let (m, u, hd, _) = &calls[0];
+            assert_eq!(m, "GET");
+            assert_eq!(
+                u,
+                &format!("https://h.example/agent/exec-combo?threadRootId={THREAD}")
+            );
+            assert!(
+                hd.iter()
+                    .any(|(k, v)| k == crate::forward::AGENT_HEADER && v == "a1")
+            );
+        }
+        // 키 모드로 다시 뜬 러너 — 지나간다. 앞 409 가 자리를 잡지 않았으니 상한 1 안에 든다.
+        lane.lane.store(true, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(status_of(h.on_request("r2", "a1", take, relay)), 200);
+        // 그 턴 임대로 조합 키를 받는다 — 로컬 설정이 없어도 된다.
+        h.on_notice(
+            "r2",
+            "a1",
+            json!({"type":"secret.lease","cause":"c1","leaseId":"L1","token":"tk","expiresAt":"2099-01-01T00:00:00.000Z"}),
+        );
+        // 러너가 본문에 끼운 조합·주소·비밀 이름은 읽지 않는다.
+        let m = fwd(
+            "/agent/provider-lane/mount",
+            json!({"cause":"c1","comboId":"evil","baseUrl":"https://evil.example.com","secretName":"other"}),
+        );
+        let body = match h.on_request("r2", "a1", m.clone(), relay) {
+            Some(RunnerLinkResponse::HttpResponse {
+                status: 200, body, ..
+            }) => body,
+            other => panic!("{other:?}"),
+        };
+        assert!(!body.contains("sk-combo-value"), "{body}");
+        let v: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["lane"]["baseUrl"], "https://combo.example.com/v1");
+        let path = std::path::PathBuf::from(v["lane"]["path"].as_str().unwrap());
+        assert_eq!(path, dir.join("L1").join("sec-9"));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "sk-combo-value");
+        {
+            let calls = tr.0.lock().unwrap();
+            let (m, u, _, sent) = calls.last().unwrap();
+            assert_eq!(m, "POST");
+            assert!(u.ends_with(crate::turn_secrets::COMBO_CREDENTIAL_PATH));
+            let sent: Value = serde_json::from_str(sent).unwrap();
+            assert_eq!(sent["leaseId"], "L1");
+            let keys: Vec<&String> = sent.as_object().unwrap().keys().collect();
+            assert!(
+                !keys
+                    .iter()
+                    .any(|k| ["comboId", "baseUrl", "secretName"].contains(&k.as_str())),
+                "{keys:?}"
+            );
+        }
+        // 물러난 옛 러너(다른 러너 id)는 그 임대로 경로를 받지 못한다 — 임대도 로컬 설정도 없어 `{lane:null}` 이다.
+        match h.on_request("r1", "a1", m, relay) {
+            Some(RunnerLinkResponse::HttpResponse {
+                status: 200, body, ..
+            }) => assert_eq!(body, r#"{"lane":null}"#),
+            other => panic!("{other:?}"),
+        }
+        // 턴 끝 — 임대 폴더째 지운다.
+        h.on_notice("r2", "a1", json!({"type":"secret.leaseEnded","cause":"c1"}));
+        assert!(!dir.join("L1").exists(), "턴 끝에 조합 키 파일이 남았다");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
