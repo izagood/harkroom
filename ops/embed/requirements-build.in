@@ -1,9 +1,0 @@
-flatbuffers
-numpy
-onnxruntime
-packaging
-protobuf
-tokenizers
-ml-dtypes
-onnx
-typing-extensions

@@ -13,8 +13,9 @@ import onnxruntime as ort
 from tokenizers import Tokenizer
 
 MODEL_DIR = os.environ.get("EMBED_MODEL_DIR", "/model")
-MODEL_NAME = os.environ.get("EMBED_MODEL", "bge-m3")
-THREADS = int(os.environ.get("EMBED_THREADS", "4"))
+MODEL_NAME = os.environ.get("EMBED_MODEL", "arctic-m-v2")
+# 2 가 기본이다 — 저전력 4코어(N100)에서 서버·DB 와 코어를 나눠 쓸 때 2스레드 p95 가 4스레드보다 낮았다.
+THREADS = int(os.environ.get("EMBED_THREADS", "2"))
 MAX_TOKENS = int(os.environ.get("EMBED_MAX_TOKENS", "512"))
 HOST = os.environ.get("EMBED_HOST", "0.0.0.0")
 PORT = int(os.environ.get("EMBED_PORT", "8080"))
@@ -23,7 +24,7 @@ PORT = int(os.environ.get("EMBED_PORT", "8080"))
 MAX_INPUTS = 16
 MAX_BODY = 256 * 1024
 SOCKET_TIMEOUT = 30
-# 동시에 처리·대기하는 요청 수. 넘으면 503 — 질의는 어차피 300ms 안에 못 받는다.
+# 동시에 처리·대기하는 요청 수. 넘으면 503 — 질의는 어차피 서버 시한(800ms) 안에 못 받는다.
 MAX_IN_FLIGHT = 8
 
 
@@ -75,7 +76,7 @@ def parse_inputs(raw):
 
 
 def make_handler(embedder):
-    # 추론은 한 번에 하나(스레드 4개를 다 쓴다). 헬스 체크는 잠금 없이 답한다.
+    # 추론은 한 번에 하나(EMBED_THREADS 를 다 쓴다). 헬스 체크는 잠금 없이 답한다.
     lock = threading.Lock()
     slots = threading.BoundedSemaphore(MAX_IN_FLIGHT)
 

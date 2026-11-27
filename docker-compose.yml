@@ -74,7 +74,7 @@ services:
       postgres:
         condition: service_healthy
     restart: unless-stopped
-  # 기억 벡터 검색의 임베딩 서비스(bge-m3 int8). 이미지가 크고 메모리를 1~1.5GB 쓰므로 **기본으로는 뜨지 않는다**:
+  # 기억 벡터 검색의 임베딩 서비스(snowflake-arctic-embed-m-v2.0 int8). 메모리를 1GB 안팎 쓰므로 **기본으로는 뜨지 않는다**:
   #   HARKROOM_EMBED_URL=http://embed:8080 docker compose --profile embed up -d
   # 운영에서는 태그를 고정한다(`HARKROOM_EMBED_TAG=sha-<7자>`) — `latest` 는 바뀐다.
   # 포트를 밖으로 열지 않는다 — 인증이 없고 기억 본문이 오간다. 준비 전·장애 중에는 서버가 낱말 검색만 쓴다.
@@ -85,7 +85,8 @@ services:
       context: .
       dockerfile: ops/embed/Dockerfile
     environment:
-      EMBED_THREADS: "4"
+      # 4코어 호스트에서 서버·DB 와 나눠 쓸 때는 2 가 p95 가 낮았다(N100 실측). 전용 호스트면 올려도 된다.
+      EMBED_THREADS: "2"
     cpus: 4
     mem_limit: 2g
     read_only: true
