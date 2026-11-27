@@ -1,12 +1,11 @@
-//! S5.3 C3b-2c-4b — MCP `message.delegate` 의 **쓰기**(게이트를 다 지난 요청). TS `mcp/mcpPlugin.ts` 의 같은 도구 뒷부분 —
-//! `postMessage` 뒤의 `createDelegation`(`services/delegations.ts`) — 을
-//! [`super::msg_post::post_tx`] 안에서 **글과 같은 tx** 로 한다.
+//! 의무(`team_delegation`)의 **쓰기** — 게이트를 다 지난 `agent.call`(자기 조각 포함)의 위임을
+//! [`super::msg_post::post_tx`] 안에서 **글과 같은 tx** 로 만든다.
 //!
 //! - TS 는 글을 커밋한 뒤 다른 tx 로 의무를 만든다(그 사이 실패하면 `delegation_failed` — 글만 남는다). Rust 는 한 tx 라 그 창이 없다:
 //!   의무를 못 만들면 글도 남지 않고 TS 로 넘긴다. 성공한 결과는 같다.
 //! - 문장은 전부 TS 상수를 골든(`delegation_insert`·`delegation_item_insert`·`delegate_supersede`·`delegate_mark_settled_quietly`·
 //!   `delegate_inbox_convert`·`delegate_inbox_insert`)으로 받는다.
-//! - S5.4-11c: 팀장이 자기 팀 하나에 넘기는 갈래도 온다 — [`Plan::team_id`] 가 있으면 위임 행·부름에 `team_id` 를 적는다.
+//! - 새 의무에는 `team_id` 를 적지 않는다(팀 명단 갈래는 걷혔다, U5) — 칸은 옛 행의 기록으로만 남는다.
 //!   `kind` 는 언제나 `'delegate'`. 사슬 상한(`delegationChainCapped`)은 어느 갈래에서도 보지 않는다(O1 — TS 와 여기서 갈린다).
 use serde_json::Value;
 use sqlx::PgConnection;
@@ -30,9 +29,7 @@ pub(crate) struct Plan<'a> {
     pub(crate) delegate_ids: &'a [String],
     /// TS `deadlineAt.toISOString()`.
     pub(crate) deadline_at: &'a str,
-    /// 팀장이 자기 팀에 넘기면 그 팀 id(TS `team?.teamId ?? null`).
-    pub(crate) team_id: Option<&'a str>,
-    /// 무엇으로 닫히나(마이그레이션 183) — `message.delegate` 는 언제나 [`CloseOn::Report`].
+    /// 무엇으로 닫히나(마이그레이션 183) — 자기 조각은 언제나 [`CloseOn::Report`].
     pub(crate) close_on: CloseOn,
     /// 이 의무가 걸린 계획 단계(`team_delegation.plan_step_id`) — `agent.call` 만 채운다([`call_plan_step`]).
     pub(crate) plan_step_id: Option<&'a str>,
@@ -142,7 +139,7 @@ fn sql() -> &'static Sql {
     })
 }
 
-/// 의무 행(`team_delegation`) 하나를 적는다 — 의무를 세우는 모든 문(`message.delegate`·`agent.call`·맨 앞 멘션)이 이 한 곳을 지난다(U4).
+/// 의무 행(`team_delegation`) 하나를 적는다 — 의무를 세우는 모든 문(`agent.call`·맨 앞 멘션)이 이 한 곳을 지난다(U4).
 /// `kind` 는 생김새(`delegate`·`mention`), `close_on` 은 닫는 조건. 돌려주는 것은 위임 id.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn insert_row(
@@ -158,7 +155,7 @@ pub(crate) async fn insert_row(
     close_on: CloseOn,
 ) -> Result<String, sqlx::Error> {
     let s = sql();
-    // 닫는 조건이 기본(`report`)이면 옛 문장 그대로다 — 새 칸(183)이 아직 없는 DB 에서도 `message.delegate` 는 돈다.
+    // 닫는 조건이 기본(`report`)이면 옛 문장 그대로다 — 새 칸(183)이 아직 없는 DB 에서도 돈다.
     let q = match close_on {
         CloseOn::Report => sqlx::query_scalar(s.insert.as_str()),
         CloseOn::Reply => sqlx::query_scalar(s.insert_close_on.as_str()),
@@ -180,7 +177,7 @@ pub(crate) async fn insert_row(
     .await
 }
 
-/// TS `createDelegation`(`teamId = plan.team_id`, `kind = 'delegate'`). `v2` 는 위임 스위치(알 때만 이 갈래가 돈다). 돌려주는 것은 위임 id.
+/// 의무 하나와 담당별 항목·부름을 만든다(`kind = 'delegate'`, `team_id` 는 비운다). `v2` 는 위임 스위치(알 때만 이 갈래가 돈다). 돌려주는 것은 위임 id.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn create(
     conn: &mut PgConnection,
@@ -195,7 +192,7 @@ pub(crate) async fn create(
     let id = insert_row(
         conn,
         message_id,
-        plan.team_id,
+        None,
         lead_id,
         channel_id,
         thread_root_id,
@@ -239,14 +236,14 @@ pub(crate) async fn create(
         let converted = sqlx::query(s.convert.as_str())
             .bind(d)
             .bind(message_id)
-            .bind(plan.team_id)
+            .bind(None::<&str>)
             .execute(&mut *conn)
             .await?;
         if converted.rows_affected() == 0 {
             sqlx::query(s.inbox.as_str())
                 .bind(d)
                 .bind(message_id)
-                .bind(plan.team_id)
+                .bind(None::<&str>)
                 .execute(&mut *conn)
                 .await?;
         }

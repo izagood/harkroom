@@ -3464,7 +3464,7 @@ async fn main() {
         }
         None => false,
     };
-    // C3b-2c-4b — MCP `message.delegate` 의 쓰기(게이트를 지난 위임)는 MCP 글 칸에 더해 위임 칸(`DELEGATE_WRITE_PRIVILEGES`)까지 있을 때만.
+    // 의무 쓰기(`agent.call` 의 의무 있는 부름·자기 조각)는 MCP 글 칸에 더해 위임 칸(`DELEGATE_WRITE_PRIVILEGES`)까지 있을 때만.
     // 없으면 게이트를 지난 위임만 TS 에 남는다(거절 갈래는 그대로 Rust).
     let mcp_delegate_ok = mcp_post_ok
         && match &post_write {
@@ -3477,15 +3477,13 @@ async fn main() {
             {
                 Ok(m) if m.is_empty() => true,
                 Ok(m) => {
-                    eprintln!(
-                        "front: mcp message.delegate write core off — missing privileges {m:?}"
-                    );
+                    eprintln!("front: mcp obligation write core off — missing privileges {m:?}");
                     refuse_missing_grants(&m);
                     false
                 }
                 Err(e) => {
                     eprintln!(
-                        "front: mcp message.delegate write core off — privilege check failed ({})",
+                        "front: mcp obligation write core off — privilege check failed ({})",
                         e.as_database_error().map_or("io", |_| "db")
                     );
                     false
