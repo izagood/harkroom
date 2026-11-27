@@ -1056,7 +1056,35 @@ async fn main() {
             use harkroom_server::core::agent_secret_reveal as k;
             match write::missing_in(w, &k::privileges(), k::AGENT_SECRET_REVEAL_SEQUENCES).await {
                 Ok(m) if m.is_empty() => match k::load_state(w.clone()).await {
-                    Ok(st) => Some(st),
+                    Ok(st) => {
+                        // J2c — 조합 자격 길(`/agent/exec-combo*`)은 조합 기능이 켜져 있고 그 칸 권한이 다 있을 때만 같이 붙는다.
+                        // 새 기능이라 GRANT 가 늦어도 기동은 막지 않는다 — 이 두 길만 닫힌다.
+                        use harkroom_server::core::agent_combo_credential as cc;
+                        let combo = exec_combo.is_some()
+                            && match write::missing_in(
+                                w,
+                                cc::AGENT_COMBO_CREDENTIAL_PRIVILEGES,
+                                &[],
+                            )
+                            .await
+                            {
+                                Ok(m) if m.is_empty() => true,
+                                Ok(m) => {
+                                    eprintln!(
+                                        "front: agent combo credential off — missing privileges {m:?}"
+                                    );
+                                    false
+                                }
+                                Err(e) => {
+                                    eprintln!(
+                                        "front: agent combo credential off — privilege check failed ({})",
+                                        e.as_database_error().map_or("io", |_| "db")
+                                    );
+                                    false
+                                }
+                            };
+                        Some(st.with_combo(combo))
+                    }
                     Err(e) => {
                         eprintln!("front: agent secret reveal core off — secret keys: {e}");
                         None
