@@ -357,8 +357,8 @@ The server reads these environment variables:
 | `HARKROOM_FRONT_TS_ROUTES` | Ignored since the TypeScript server was removed; when set, the server logs one line saying so | - | No |
 | `AVCS_BASE_URL` | AVCS server URL for event projection | - | No |
 | `HARKROOM_EMBED_URL` | Base URL of an OpenAI-compatible embedding service used for memory vector search (the `embed` service in `docker-compose.yml`, started with `--profile embed`). The server sends memory text to it, so point it at a service you run yourself. Unset, invalid or not ready means word search only | unset (off) | No |
-| `HARKROOM_EMBED_MODEL` | Model name sent to the embedding service | `bge-m3` | No |
-| `HARKROOM_EMBED_DIM` | Vector dimension the embedding service must return (1–2000) | `1024` | No |
+| `HARKROOM_EMBED_MODEL` | Model name sent to the embedding service. `arctic-m-v2` queries get a `query: ` prefix; documents are sent as is | `arctic-m-v2` | No |
+| `HARKROOM_EMBED_DIM` | Vector dimension the embedding service must return (1–2000). Changing model or dimension re-embeds stored memories | `768` | No |
 | `CORS_ORIGINS` | Allowed CORS origins (comma-separated) | All origins | No |
 | `LOG_LEVEL` | Server log level (`debug`, `info`, `warn`, `error`) | `info` | No |
 | `EVENT_BUS` | `pg` relays workspace events another server process wrote to the `event_outbox` table (Postgres NOTIFY carries only the row id) to this process's WebSocket clients. Used while the Rust server takes over routes | unset (off) | No |

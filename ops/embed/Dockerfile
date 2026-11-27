@@ -1,17 +1,14 @@
 # harkroom 임베딩 서비스(기억 벡터 검색) — python + onnxruntime + tokenizers 만 담는다.
-# 모델은 공개 가중치 BAAI/bge-m3(MIT)의 ONNX 를 **빌드할 때** 받아 체크섬을 보고 int8 로 양자화한다. 실행 중에는 밖으로 나가지 않는다.
+# 모델은 공개 가중치 Snowflake/snowflake-arctic-embed-m-v2.0(Apache-2.0)이 함께 내는 int8 ONNX 를 **빌드할 때** 받아 체크섬을 본다.
+# 실행 중에는 밖으로 나가지 않는다. 질의에는 서버가 `query: ` 를 붙여 보낸다(문서는 그대로).
 # 컨텍스트는 저장소 루트다: docker build -f ops/embed/Dockerfile .
 FROM python:3.13-slim-trixie@sha256:1b5c0692836eae9b028cc352d7146872f36939aa1fb0de24d3ef6df307b956c9 AS base
 
 FROM base AS model
-ARG BGE_M3_REV=5617a9f61b028005a4858fdac845db406aefb181
+ARG ARCTIC_REV=95c2741480856aa9666782eb4afe11959938017f
 WORKDIR /build
-COPY ops/embed/requirements-build.txt ./
-RUN pip install --no-cache-dir --no-deps --require-hashes --only-binary :all: -r requirements-build.txt
 COPY ops/embed/fetch.py ops/embed/SHA256SUMS ./
-RUN python fetch.py "$BGE_M3_REV" /fp32
-COPY ops/embed/server.py ops/embed/quantize.py ./
-RUN mkdir /model && cp /fp32/tokenizer.json /model/ && python quantize.py /fp32 /model
+RUN python fetch.py "$ARCTIC_REV" /model && mv /model/model_int8.onnx /model/model.onnx
 
 FROM base AS runtime
 COPY ops/embed/requirements.txt /tmp/requirements.txt

@@ -30,6 +30,7 @@ jobs:
         with:
           persist-credentials: false
       - run: docker build -f ops/embed/Dockerfile -t harkroom-embed:check .
+      - run: docker image ls harkroom-embed:check --format '{{.Size}}'
       - name: 운영과 같은 제한으로 띄운다
         run: |
           set -euo pipefail

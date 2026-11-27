@@ -3,6 +3,7 @@
 //! - 설정(`HARKROOM_EMBED_URL`)이 없거나 값이 틀리면 [`EmbedConfig::from_env`] 이 없음/오류를 주고 서버는 낱말 검색만 쓴다.
 //! - 서비스가 준비되기 전([`Embedder::is_ready`] 가 false)이거나 질의가 [`QUERY_TIMEOUT`] 을 넘으면 질의는 `None` 이다 —
 //!   부르는 쪽은 막히지 않고 낱말로 답한다.
+//! - 질의와 문서를 다르게 적는 모델이 있다 — [`query_prefix`] 가 질의 앞에 붙일 말을 정한다(문서 쪽은 그대로 보낸다).
 //! - 보낸 글·받은 벡터는 로그에 남기지 않는다. 키(Authorization)도 없다 — 옆 컨테이너에 붙는 것이 전제다.
 use crate::avcs_http::{AvcsClient, client};
 use http_body_util::{BodyExt, Full, Limited};
@@ -16,11 +17,13 @@ pub const URL_ENV: &str = "HARKROOM_EMBED_URL";
 pub const MODEL_ENV: &str = "HARKROOM_EMBED_MODEL";
 pub const DIM_ENV: &str = "HARKROOM_EMBED_DIM";
 
-pub const DEFAULT_MODEL: &str = "bge-m3";
-pub const DEFAULT_DIM: usize = 1024;
+/// snowflake-arctic-embed-m-v2.0 int8(Apache-2.0). bge-m3 보다 작아 저전력 4코어에서도 질의 시한 안에 든다.
+pub const DEFAULT_MODEL: &str = "arctic-m-v2";
+pub const DEFAULT_DIM: usize = 768;
 /// 질의는 앞 500자만 보낸다 — 길수록 느려 시한을 넘긴다.
 pub const QUERY_CHARS: usize = 500;
-pub const QUERY_TIMEOUT: Duration = Duration::from_millis(300);
+/// 저전력 4코어(N100)에서 500자 질의 p95 가 2스레드 약 390ms, 경쟁이 심할 때 약 680ms 였다 — 그 위에 여유를 둔다.
+pub const QUERY_TIMEOUT: Duration = Duration::from_millis(800);
 /// 일괄 색인 한 요청의 개수와 시한.
 pub const BATCH_SIZE: usize = 16;
 pub const BATCH_TIMEOUT: Duration = Duration::from_secs(30);
@@ -75,6 +78,14 @@ impl EmbedConfig {
             model,
             dim,
         }))
+    }
+}
+
+/// 질의 앞에 붙일 말 — 모델이 그렇게 배웠다. 문서(색인) 쪽에는 붙이지 않는다. 모르는 모델은 아무것도 붙이지 않는다.
+pub fn query_prefix(model: &str) -> &'static str {
+    match model {
+        "arctic-m-v2" => "query: ",
+        _ => "",
     }
 }
 
@@ -142,7 +153,14 @@ impl Embedder {
             return None;
         }
         let cut: String = text.trim().chars().take(QUERY_CHARS).collect();
-        self.embed(&[cut.as_str()], QUERY_TIMEOUT).await.ok()?.pop()
+        if cut.is_empty() {
+            return None;
+        }
+        let sent = format!("{}{cut}", query_prefix(&self.cfg.model));
+        self.embed(&[sent.as_str()], QUERY_TIMEOUT)
+            .await
+            .ok()?
+            .pop()
     }
 
     /// 색인용 일괄(최대 [`BATCH_SIZE`] 개) — 자르지 않는다. 결과 순서는 입력 순서다.
@@ -271,7 +289,7 @@ mod tests {
             Ok(Some(EmbedConfig {
                 base: "http://embed:8080".into(),
                 model: DEFAULT_MODEL.into(),
-                dim: 1024,
+                dim: 768,
             }))
         );
         for bad in [
@@ -371,6 +389,13 @@ mod tests {
 
     const ONE: &str = r#"{"data":[{"index":0,"embedding":[3,4]}]}"#;
 
+    #[test]
+    fn only_the_default_model_gets_a_query_prefix() {
+        assert_eq!(query_prefix(DEFAULT_MODEL), "query: ");
+        assert_eq!(query_prefix("bge-m3"), "");
+        assert_eq!(query_prefix("other"), "");
+    }
+
     #[tokio::test]
     async fn query_waits_for_health_and_cuts_to_500_chars() {
         let (base, mut rx) = fake(Duration::ZERO, "200 OK", ONE).await;
@@ -382,17 +407,41 @@ mod tests {
         assert_eq!(e.query(&"가".repeat(600)).await, Some(vec![0.6, 0.8]));
         let sent: Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
         assert_eq!(sent["model"], DEFAULT_MODEL);
-        assert_eq!(sent["input"][0], "가".repeat(QUERY_CHARS));
+        // 접두는 500자 밖에 붙는다 — 자르기는 질의 글만 센다.
+        assert_eq!(
+            sent["input"][0],
+            format!("query: {}", "가".repeat(QUERY_CHARS))
+        );
+        // 문서(일괄)에는 접두가 없다.
+        e.batch(&["나"]).await.unwrap();
+        let sent: Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
+        assert_eq!(sent["input"][0], "나");
+        // 접두를 모르는 모델은 질의도 그대로 보낸다.
+        let (base, mut rx) = fake(Duration::ZERO, "200 OK", ONE).await;
+        let other = Embedder::new(EmbedConfig {
+            base,
+            model: "bge-m3".into(),
+            dim: 2,
+        });
+        other.ready.store(true, Ordering::Relaxed);
+        other.query("다").await.unwrap();
+        let sent: Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
+        assert_eq!(sent["input"][0], "다");
     }
 
     #[tokio::test]
-    async fn slow_query_gives_up_at_300ms() {
-        let (base, _rx) = fake(Duration::from_secs(2), "200 OK", ONE).await;
+    async fn slow_query_gives_up_at_800ms() {
+        let (base, _rx) = fake(Duration::from_secs(3), "200 OK", ONE).await;
         let e = embedder(base);
         e.ready.store(true, Ordering::Relaxed);
         let t = std::time::Instant::now();
         assert_eq!(e.query("a").await, None);
-        assert!(t.elapsed() < Duration::from_millis(1500));
+        assert!(t.elapsed() >= QUERY_TIMEOUT && t.elapsed() < Duration::from_millis(2000));
+        // 시한 안에 오는 답은 받는다(옛 300ms 였으면 버렸을 500ms 답).
+        let (base, _rx) = fake(Duration::from_millis(500), "200 OK", ONE).await;
+        let e = embedder(base);
+        e.ready.store(true, Ordering::Relaxed);
+        assert_eq!(e.query("a").await, Some(vec![0.6, 0.8]));
     }
 
     #[tokio::test]
