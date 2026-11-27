@@ -468,7 +468,11 @@ pub async fn cancel(
         &me,
         "agent.turn.canceled",
         &agent,
-        json!({ "sessionId": sid, "channelId": channel }),
+        // 스레드까지 적는다 — 턴 끝 판정이 같은 채널의 다른 스레드 턴과 가른다.
+        json!({
+            "sessionId": sid, "channelId": channel,
+            "threadRootId": session.get("threadRootId").cloned().unwrap_or(Value::Null),
+        }),
     )
     .await;
     let mut r = json_ok(json!({ "ok": true }).to_string());

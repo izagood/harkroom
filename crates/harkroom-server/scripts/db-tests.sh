@@ -138,6 +138,9 @@ WORK_GRANTS=(
   'usage on sequence work_event_id_seq'
 )
 
+# 턴 끝 판정은 임대를 내고 끝내며(`turn_lease`) 작업 판을 쓴다(`work`).
+TURN_END_JUDGE_GRANTS=("${TURN_LEASE_GRANTS[@]}" "${WORK_GRANTS[@]}")
+
 # 시험 → 쓰기 역할 표(없으면 쓰기 풀 없이 돈다).
 grants_for() {
   case "$1" in
@@ -166,6 +169,7 @@ grants_for() {
     work_shadow) echo WORK_GRANTS ;;
     work_claim) echo WORK_CLAIM_GRANTS ;;
     turn_cap) echo TURN_CAP_GRANTS ;;
+    turn_end_judge) echo TURN_END_JUDGE_GRANTS ;;
     *) echo '' ;;
   esac
 }
@@ -174,7 +178,7 @@ TESTS=(auth perm operator loops wake outbox_listener retention mandate_idle perm
   turn_lease inbox_list decide_core_db card_state_db relay_live turn_settle turn_cancel health scheduled stale migrate delegation_deadline
   automation_grant claim_seed automation_sweep hook_debounce thread_status thread_plan db_retry deny_accounts invoke_gate deny_channels deny_reset work measure device_allow wake_mirror
   work_route team_route_gate self_split agent_call_team agent_call_expect self_serve piece_verdict exec_combo implicit_mention_obligation split_collect work_claim
-  memory_when memory_recall_event memory_set_similar thread_stat turn_cap scale_explain)
+  memory_when memory_recall_event memory_set_similar thread_stat turn_cap scale_explain turn_end_judge)
 if [ "$#" -gt 0 ]; then TESTS=("$@"); fi
 
 # 1. 틀 DB — Rust 마이그레이션 실행기로 한 번만 만든다.

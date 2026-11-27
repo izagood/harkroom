@@ -12,7 +12,9 @@
 //! - 라우팅은 프로세스 안에서 하나씩 돈다([`GATE`]) — 쓰기 풀 연결을 많아야 2개 쓴다.
 //! - (글, 에이전트)마다 한 번 — 같은 글로 두 번 돌아도 작업·사건이 늘지 않는다. (스레드, 에이전트) 자문 잠금 아래에서
 //!   「이 글의 사건이 이미 있는가」를 먼저 본다.
-//! - 스위치 `HARKROOM_WORK_ROUTE`(`off` | `shadow`(기본)) — [`switch_from_env`].
+//! - 스위치 `HARKROOM_WORK_ROUTE`(`off` | `shadow`(기본) | `on`) — [`switch_from_env`]. `on` 이면 글이 이미 열린 작업으로 갈 때
+//!   그 작업의 `updated_at` 을 지금으로 고친다([`TOUCH_SQL`]) — 작업 행이 「마지막으로 글이 온 때」를 갖고, 옛 뿌리 정리
+//!   (`turn_end_judge::sweep`)가 그 시각으로 나이를 잰다. 상태는 여기서 바꾸지 않는다.
 use super::msg_post::Outcome;
 use super::work::{self, NewWork};
 use serde_json::{Value, json};
@@ -30,6 +32,9 @@ pub const WORK_ROUTE_PRIVILEGES: &[(&str, &str)] = &[
     ("account", "SELECT"),
 ];
 
+/// `on` 에 더 드는 권한 — 열린 작업의 `updated_at` 고치기. 없으면 `shadow` 로 돈다.
+pub const WORK_ROUTE_ON_PRIVILEGES: &[(&str, &str)] = &[("work", "UPDATE")];
+
 /// 글이 작업으로 갔을 때 남기는 사건 종류.
 pub const EVENT_ROUTED: &str = "message.routed";
 /// 스위치 환경 변수.
@@ -45,7 +50,7 @@ const AGENTS_SQL: &str =
     "select id::text from account where id = any($1::uuid[]) and kind = 'agent' order by id";
 
 /// (스레드, 에이전트) 자문 잠금 — 트랜잭션이 끝나면 풀린다. 같은 스레드·같은 에이전트의 라우팅을 한 줄로 세운다.
-const LOCK_SQL: &str = "select pg_advisory_xact_lock(hashtextextended('work_route:' || $1::text || ':' || $2::text, 0))";
+pub(crate) const LOCK_SQL: &str = "select pg_advisory_xact_lock(hashtextextended('work_route:' || $1::text || ':' || $2::text, 0))";
 
 /// 이 글의 라우팅 사건이 그 에이전트의 작업에 이미 있는가.
 const ROUTED_SQL: &str = "select exists(select 1 from work_event e join work w on w.id = e.work_id \
@@ -58,14 +63,22 @@ const OPEN_WORK_SQL: &str = "select id::text from work \
             and state in ('open', 'running', 'waiting') \
           order by updated_at desc, created_at desc, id desc limit 1";
 
+/// 글이 온 열린 작업의 `updated_at` 을 지금으로 — 닫힌 작업은 건드리지 않는다.
+const TOUCH_SQL: &str =
+    "update work set updated_at = now() where id = $1::uuid and closed_at is null";
+
 static POOL: OnceLock<PgPool> = OnceLock::new();
+/// `on` 인가 — [`enable`] 이 정한다.
+static TOUCH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// 한 번에 도는 라우팅 수. 라우팅 하나는 잠금 연결을 쥔 채 `work` 쓰기에 연결을 하나 더 빌린다 — 글이 몰릴 때 저마다 잠금 연결을
 /// 쥐고 두 번째 연결을 기다리면 요청과 나눠 쓰는 쓰기 풀이 마른다. 하나씩 세우면 이 그림자가 쓰는 연결은 많아야 2개다.
 static GATE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
 
-/// 그림자 라우팅을 켠다(프로세스에 한 번). 두 번째 부름은 무시한다.
-pub fn enable(pool: PgPool) {
-    let _ = POOL.set(pool);
+/// 라우팅을 켠다(프로세스에 한 번). 두 번째 부름은 무시한다. `on` 이면 열린 작업의 `updated_at` 도 고친다.
+pub fn enable(pool: PgPool, on: bool) {
+    if POOL.set(pool).is_ok() {
+        TOUCH.store(on, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 /// 스위치 값.
@@ -73,12 +86,14 @@ pub fn enable(pool: PgPool) {
 pub enum Switch {
     Off,
     Shadow,
+    On,
 }
 
 /// 스위치 글자를 읽는다 — 없거나 모르는 값이면 `Shadow`(기본). 앞뒤 공백·대소문자는 가리지 않는다.
 pub fn parse_switch(raw: Option<&str>) -> Switch {
     match raw.map(|v| v.trim().to_ascii_lowercase()).as_deref() {
         Some("off") => Switch::Off,
+        Some("on") => Switch::On,
         _ => Switch::Shadow,
     }
 }
@@ -159,7 +174,8 @@ pub(crate) fn after_post(out: &Result<Outcome, sqlx::Error>) {
         let Ok(_one) = GATE.acquire().await else {
             return;
         };
-        if let Err(e) = route_with(pool, &id, &notified).await {
+        let on = TOUCH.load(std::sync::atomic::Ordering::Relaxed);
+        if let Err(e) = route_with_mode(pool, &id, &notified, on).await {
             eprintln!("work route: message.routed skipped ({})", kind_of(&e));
         }
     });
@@ -171,6 +187,16 @@ pub async fn route_with(
     pool: &PgPool,
     message_id: &str,
     notified: &[String],
+) -> sqlx::Result<Vec<(String, Decision)>> {
+    route_with_mode(pool, message_id, notified, false).await
+}
+
+/// [`route_with`] + `on` — `true` 면 글이 간 열린 작업의 `updated_at` 을 고친다.
+pub async fn route_with_mode(
+    pool: &PgPool,
+    message_id: &str,
+    notified: &[String],
+    on: bool,
 ) -> sqlx::Result<Vec<(String, Decision)>> {
     let mut made = Vec::new();
     if notified.is_empty() {
@@ -216,7 +242,12 @@ pub async fn route_with(
             .await?;
         let decision = decide(open);
         let work_id = match &decision {
-            Decision::Existing(id) => id.clone(),
+            Decision::Existing(id) => {
+                if on {
+                    sqlx::query(TOUCH_SQL).bind(id).execute(pool).await?;
+                }
+                id.clone()
+            }
             Decision::New => {
                 let root = NewWork {
                     channel_id: &channel,
@@ -255,7 +286,8 @@ mod tests {
             (Some("shadow"), Switch::Shadow),
             (Some("off"), Switch::Off),
             (Some(" OFF "), Switch::Off),
-            (Some("on"), Switch::Shadow),
+            (Some("on"), Switch::On),
+            (Some(" On "), Switch::On),
             (Some("0"), Switch::Shadow),
         ] {
             assert_eq!(parse_switch(raw), want, "{raw:?}");
@@ -318,6 +350,10 @@ mod tests {
         }
         assert!(ROUTED_SQL.contains("payload->>'messageId'"));
         assert_eq!(EVENT_ROUTED, "message.routed");
+        // `on` 이 더 쓰는 문장은 닫히지 않은 작업의 시각 한 칸뿐이다.
+        assert!(TOUCH_SQL.starts_with("update work set updated_at = now() where"));
+        assert!(TOUCH_SQL.ends_with("closed_at is null"));
+        assert_eq!(WORK_ROUTE_ON_PRIVILEGES, &[("work", "UPDATE")]);
     }
 
     #[test]

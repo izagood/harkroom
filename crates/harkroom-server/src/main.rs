@@ -5719,14 +5719,17 @@ async fn enable_work_shadow(pool: &sqlx::PgPool) {
     }
 }
 
-/// I2c-a 턴 끝 판정(그림자) — 임대가 끝날 때 판정을 작업 사건으로 적는다. 위임 그림자와 같은 스위치이고, 권한이 모자라면 켜지 않는다
-/// (기록만 빠지고 나머지는 그대로). 켤 때 닫히지 않은 옛 뿌리 작업을 세어 한 줄 남긴다(닫지 않는다).
+/// I2c 턴 끝 판정 — 임대가 끝날 때 판정을 작업 사건으로 적는다. 위임 그림자와 같은 스위치이고, 권한이 모자라면 켜지 않는다
+/// (기록만 빠지고 나머지는 그대로). 스위치가 `on` 이고 닫기 권한까지 있으면 판정대로 뿌리 작업을 닫고 옛 뿌리를 정리한다 —
+/// 닫기 권한이 없으면 `shadow` 로 돈다. 켤 때 닫히지 않은 옛 뿌리 작업을 세어 한 줄 남긴다.
 async fn enable_turn_end_judge(pool: &sqlx::PgPool) {
     use harkroom_server::core::{turn_end_judge, work_shadow};
-    if work_shadow::switch_from_env() == work_shadow::Switch::Off {
+    let switch = work_shadow::switch_from_env();
+    if switch == work_shadow::Switch::Off {
         eprintln!("front: turn end judge off — switch");
         return;
     }
+    let db = |e: &sqlx::Error| e.as_database_error().map_or("io", |_| "db");
     match write::missing_in(
         pool,
         turn_end_judge::TURN_JUDGE_PRIVILEGES,
@@ -5735,22 +5738,42 @@ async fn enable_turn_end_judge(pool: &sqlx::PgPool) {
     .await
     {
         Ok(m) if m.is_empty() => {
-            eprintln!("front: turn end judge on (shadow)");
-            turn_end_judge::enable(pool.clone());
+            let mut mode = turn_end_judge::Mode::Shadow;
+            if switch == work_shadow::Switch::On {
+                match write::missing_in(pool, turn_end_judge::TURN_CLOSE_PRIVILEGES, &[]).await {
+                    Ok(m) if m.is_empty() => mode = turn_end_judge::Mode::On,
+                    Ok(m) => eprintln!(
+                        "front: turn end judge stays shadow — missing close privileges {m:?}"
+                    ),
+                    Err(e) => eprintln!(
+                        "front: turn end judge stays shadow — privilege check failed ({})",
+                        db(&e)
+                    ),
+                }
+            }
+            let on = mode == turn_end_judge::Mode::On;
+            eprintln!(
+                "front: turn end judge on ({})",
+                if on { "closing" } else { "shadow" }
+            );
+            turn_end_judge::enable(pool.clone(), mode);
             match turn_end_judge::open_roots(pool).await {
                 Ok((all, old, idle)) => eprintln!(
                     "front: turn end judge — open root works {all} (older than a day {old}, idle {idle})"
                 ),
                 Err(e) => eprintln!(
                     "front: turn end judge — open root count failed ({})",
-                    e.as_database_error().map_or("io", |_| "db")
+                    db(&e)
                 ),
+            }
+            if on {
+                turn_end_judge::spawn_sweep(pool.clone());
             }
         }
         Ok(m) => eprintln!("front: turn end judge off — missing privileges {m:?}"),
         Err(e) => eprintln!(
             "front: turn end judge off — privilege check failed ({})",
-            e.as_database_error().map_or("io", |_| "db")
+            db(&e)
         ),
     }
 }
@@ -5794,23 +5817,40 @@ async fn enable_ledger_mandate(pool: &sqlx::PgPool) {
     }
 }
 
-/// B2 글 → 작업 라우팅(그림자). `HARKROOM_WORK_ROUTE=off` 거나 권한이 모자라면 켜지 않는다 — 기록만 빠지고 글 올리기는 그대로 돈다.
+/// B2 글 → 작업 라우팅. `HARKROOM_WORK_ROUTE=off` 거나 권한이 모자라면 켜지 않는다 — 기록만 빠지고 글 올리기는 그대로 돈다.
+/// `on` 이고 `work` 고치기 권한이 있으면 글이 간 열린 작업의 시각도 고친다. 없으면 `shadow` 로 돈다.
 async fn enable_work_route(pool: &sqlx::PgPool) {
     use harkroom_server::core::{work, work_route};
-    if work_route::switch_from_env() == work_route::Switch::Off {
+    let switch = work_route::switch_from_env();
+    if switch == work_route::Switch::Off {
         eprintln!("front: work route off — switch");
         return;
     }
+    let db = |e: &sqlx::Error| e.as_database_error().map_or("io", |_| "db");
     let seq = work::WORK_SEQUENCE_PRIVILEGES;
     match write::missing_in(pool, work_route::WORK_ROUTE_PRIVILEGES, seq).await {
         Ok(m) if m.is_empty() => {
-            eprintln!("front: work route on (shadow)");
-            work_route::enable(pool.clone());
+            let mut on = false;
+            if switch == work_route::Switch::On {
+                match write::missing_in(pool, work_route::WORK_ROUTE_ON_PRIVILEGES, &[]).await {
+                    Ok(m) if m.is_empty() => on = true,
+                    Ok(m) => eprintln!("front: work route stays shadow — missing privileges {m:?}"),
+                    Err(e) => eprintln!(
+                        "front: work route stays shadow — privilege check failed ({})",
+                        db(&e)
+                    ),
+                }
+            }
+            eprintln!(
+                "front: work route on ({})",
+                if on { "on" } else { "shadow" }
+            );
+            work_route::enable(pool.clone(), on);
         }
         Ok(m) => eprintln!("front: work route off — missing privileges {m:?}"),
         Err(e) => eprintln!(
             "front: work route off — privilege check failed ({})",
-            e.as_database_error().map_or("io", |_| "db")
+            db(&e)
         ),
     }
 }
