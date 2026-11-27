@@ -5,6 +5,11 @@
 //! (`operator_capability`, `seen_at` 이 [`SNAPSHOT_FRESH_SEC`] 초 안)만 읽는다 — Rust 가 같은 표를 같은 조건으로 읽으면 같은 답이다.
 //! 코어가 TS 에 있으면 하네스 목록이 TS 허브(프로세스 메모리)에만 있으니 TS 가 답한다.
 //!
+//! J2b 후속 — 실행 조합 기능이 켜져 있으면([`crate::core::exec_combo::pool`]) 그 에이전트 허용 목록(`agent_exec_combo`)의
+//! 조합을 `combos` 로 같이 싣는다: `agent.call` 의 `agentModels[].comboId` 로 고를 수 있는 것만(지금 하네스와 맞고 값 꼴이
+//! 맞는 것), 칸은 id·이름·model·effort 뿐이다. **자격(계정 풀·키 연결·비밀)과 단가는 읽지도 싣지도 않는다.**
+//! 조합이 하나도 없으면 `combos` 칸 자체가 없다 — 꺼진 서버의 답은 전과 글자까지 같다.
+//!
 //! 글자는 TS `jsonResult` = `JSON.stringify` 와 같게 키 순서를 손으로 짓는다(serde_json 맵은 키를 정렬한다).
 //! 인자가 zod 를 못 지나거나(ASCII 밖 handle 포함 — UTF-16 길이·`lower` 차이를 피한다) DB 오류면 `None`(→ TS).
 use crate::auth::Account;
@@ -22,6 +27,15 @@ pub(crate) const ASSIGNMENT_SQL: &str =
     "select operator_id::text from agent_assignment where agent_id = $1::uuid";
 pub(crate) const SNAPSHOT_SQL: &str = "select body from operator_capability \
       where operator_id = $1::uuid and seen_at > now() - make_interval(secs => $2)";
+
+/// 그 에이전트 허용 목록 중 지금 하네스(`$2`)와 맞는 조합 — 고르는 데 드는 칸만 읽는다(자격 칸은 고르지 않는다).
+pub const COMBOS_SQL: &str = "select c.id::text, c.name, c.model, c.effort \
+       from agent_exec_combo a join exec_combo c on c.id = a.combo_id \
+      where a.agent_id = $1::uuid and c.harness = $2 \
+      order by a.is_default desc, c.name";
+
+/// 고를 수 있는 조합 한 줄 — (id, 이름, model, effort).
+pub type ComboOption = (String, String, String, Option<String>);
 
 const SELF_REASON: &str = "자기 자신의 모델은 고를 수 없다 — 사람만 바꾼다";
 const EMPTY_REASON: &str = "그 에이전트의 소유자가 고를 수 있는 모델을 켜지 않았다";
@@ -133,6 +147,45 @@ pub fn pickable_text(
     (format!("[{}]", out.join(",")), n)
 }
 
+/// 그 에이전트가 `comboId` 로 받을 수 있는 조합. 값 꼴이 스레드 줄 규칙을 못 지나는 조합은 뺀다
+/// (고르면 `combo_bad_value` 로 거절된다 — `agent_model_picks::combo_verdict` 와 같은 규칙).
+pub async fn allowed_combos(
+    pool: &PgPool,
+    agent_id: &str,
+    harness: &str,
+) -> sqlx::Result<Vec<ComboOption>> {
+    use crate::core::thread_model_set::axis_valid;
+    let rows: Vec<ComboOption> = sqlx::query_as(COMBOS_SQL)
+        .bind(agent_id)
+        .bind(harness)
+        .fetch_all(pool)
+        .await?;
+    Ok(rows
+        .into_iter()
+        .filter(|(_, _, model, effort)| axis_valid(Some(model)) && axis_valid(effort.as_deref()))
+        .collect())
+}
+
+/// `combos` 칸의 글자(앞 쉼표 포함). 비면 빈 글자 — 칸을 내지 않는다.
+pub fn combos_text(combos: &[ComboOption]) -> String {
+    if combos.is_empty() {
+        return String::new();
+    }
+    let items: Vec<String> = combos
+        .iter()
+        .map(|(id, name, model, effort)| {
+            format!(
+                "{{\"id\":{},\"name\":{},\"model\":{},\"effort\":{}}}",
+                s(id),
+                s(name),
+                s(model),
+                opt_s(effort.as_deref())
+            )
+        })
+        .collect();
+    format!(",\"combos\":[{}]", items.join(","))
+}
+
 fn unknown(handle: &str) -> String {
     super::tools::err("unknown_handle", &format!("no agent with handle @{handle}"))
 }
@@ -190,13 +243,24 @@ pub async fn answer(pool: &PgPool, me: &Account, args: &Value) -> Option<String>
         None => None,
     };
     let (picks, n) = pickable_text(&read_pickable(pickable.as_ref()), models.as_deref());
-    let reason = if n == 0 {
+    // 조합은 켜진 서버에서만 — 그 풀(쓰기 역할)에 세 표 권한이 있는 것이 켜는 조건이다. 읽지 못하면 조합 없이 답한다.
+    let combos = match crate::core::exec_combo::pool() {
+        Some(p) => allowed_combos(p, &agent_id, &harness)
+            .await
+            .unwrap_or_else(|_| {
+                eprintln!("agent.modelOptions: combo list read failed");
+                Vec::new()
+            }),
+        None => Vec::new(),
+    };
+    let combos_txt = combos_text(&combos);
+    let reason = if n == 0 && combos.is_empty() {
         format!(",\"reason\":{}", s(EMPTY_REASON))
     } else {
         String::new()
     };
     Some(super::respond::text_result(&format!(
-        "{{\"agentId\":{},\"harness\":{},\"defaultModel\":{},\"defaultEffort\":{},\"pickable\":{picks}{reason}}}",
+        "{{\"agentId\":{},\"harness\":{},\"defaultModel\":{},\"defaultEffort\":{},\"pickable\":{picks}{combos_txt}{reason}}}",
         s(&agent_id),
         s(&harness),
         opt_s(model.as_deref()),
@@ -221,6 +285,28 @@ mod tests {
         assert_eq!(parse_handle(&json!({"handle": "가"})), None);
         assert_eq!(parse_handle(&json!({"handle": 1})), None);
         assert_eq!(parse_handle(&json!({})), None);
+    }
+
+    #[test]
+    fn combos_text_carries_only_pick_fields() {
+        assert_eq!(combos_text(&[]), "");
+        let t = combos_text(&[
+            (
+                "c1".into(),
+                "fast \"one\"".into(),
+                "m1".into(),
+                Some("high".into()),
+            ),
+            ("c2".into(), "plain".into(), "rro/x".into(), None),
+        ]);
+        assert_eq!(
+            t,
+            r#","combos":[{"id":"c1","name":"fast \"one\"","model":"m1","effort":"high"},{"id":"c2","name":"plain","model":"rro/x","effort":null}]"#
+        );
+        // 자격·단가 칸은 SQL 이 고르지 않는다.
+        for col in ["account_pool", "key_link", "secret", "price"] {
+            assert!(!COMBOS_SQL.contains(col), "{col}");
+        }
     }
 
     #[test]
