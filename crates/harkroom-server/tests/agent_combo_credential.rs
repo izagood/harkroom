@@ -278,7 +278,7 @@ async fn turn_credential_is_chosen_by_the_server_and_passes_every_gate() {
     );
     run(
         &pool,
-        "update agent_config set harness = null where account_id = $1::uuid",
+        "update agent_config set harness = 'claude-code' where account_id = $1::uuid",
         &[&bot],
     )
     .await;
