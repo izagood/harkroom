@@ -12,6 +12,16 @@
 //!   실패하면 그 한 번은 잃는다(로그·측정에 남는다). 옛 침묵 기한(`loops::delegation_deadline`)은 그대로 돌아 그런 위임을 받친다.
 //! - 스위치 [`SWITCH_ENV`](`off`(기본) | `shadow` | `on`). `shadow` 는 「불렀을 것」을 측정 한 줄로만 남긴다(횟수를 올리지 않으므로
 //!   늘 첫 번째로 적힌다). 턴 끝 판정이 꺼져 있으면 이 스위치도 닿지 않는다.
+//!
+//! ## 못 잡힌 위임 감시(DB)
+//! 턴 끝 판정을 지나지 않는 두 경우를 기한 루프(`loops::delegation_deadline`, 15초마다·문지기 아래)가 [`sweep_unjudged`] 로 훑는다:
+//! - `no_turn` — 위임(또는 마지막 다시 부르기) 뒤 [`UNCLAIMED_SEC`] 가 지나도록 그 스레드에서 담당의 턴 임대가 하나도 서지 않았다.
+//! - `lease_expired` — 담당의 마지막 임대가 끝내기 없이 만료된 지 [`EXPIRED_GRACE_SEC`] 가 지났다(판정 자리를 지나지 않았다).
+//!
+//! 둘 다 말없이 끝난 턴과 **같은 사다리**([`decide`])를 탄다 — 다시 부르기 [`RECALL_MAX`] 번, 그 뒤 막힘 + 위임자 알림. 위임은 닫지 않는다.
+//! 기다림 근거(열린 카드·걸린 예약·열린 하위 위임·열린 PR 감시·도는 턴)가 있거나 만든 지 [`UNJUDGED_MAX_AGE_SEC`] 가 넘은 위임은 보지 않는다.
+//! 다시 부르면 `recalled_at` 이 지금으로 옮겨 가 다음 훑기는 그 뒤 [`UNCLAIMED_SEC`] 를 다시 기다린다. `shadow` 는 항목마다 한 번만 적는다.
+//! 판정을 지난 턴(끝내기가 찍힌 임대) 뒤에 생긴 일 — 예컨대 카드 답으로 깨웠는데 턴이 안 선 경우 — 은 여기서 보지 않는다(옛 침묵 기한 몫).
 use super::measure;
 use super::msg_post::{
     Origin, Outcome, PostBody, PostState, channel_is_dm, iso_ms, now_ms, post_in_tx,
@@ -22,7 +32,8 @@ use super::work_shadow::Verdict;
 use crate::core::audience::audience_for;
 use serde_json::{Map, Value, json};
 use sqlx::PgPool;
-use std::sync::OnceLock;
+use std::collections::HashSet;
+use std::sync::{Mutex, OnceLock};
 
 /// 스위치 환경 변수.
 pub const SWITCH_ENV: &str = "HARKROOM_DELEGATION_RECALL";
@@ -32,6 +43,14 @@ pub const RECALL_DELAY_SEC: i64 = 120;
 pub const RECALL_MAX: i32 = 2;
 /// 측정 종류 — `detail.step`(`recall`·`block`·`skip`)·`detail.attempt`·`detail.why`·`detail.mode`. `ref_id` 는 위임 id.
 pub const KIND_DELEGATION_RECALL: &str = "delegation.recall";
+/// 감시(DB): 위임(또는 마지막 다시 부르기) 뒤 이만큼 턴이 안 서면 못 잡힌 것으로 본다.
+pub const UNCLAIMED_SEC: i32 = 10 * 60;
+/// 감시(DB): 임대가 끝내기 없이 만료된 뒤 이만큼 지나야 본다(러너의 늦은 끝내기를 기다린다).
+pub const EXPIRED_GRACE_SEC: i32 = 120;
+/// 감시(DB): 만든 지 이보다 오래된 위임은 보지 않는다(기한 루프의 나이 닫힘 몫).
+pub const UNJUDGED_MAX_AGE_SEC: i32 = 24 * 60 * 60;
+/// 감시(DB): 한 번 훑을 때 보는 항목 수 상한.
+pub const UNJUDGED_BATCH: i64 = 20;
 
 /// 읽기(그림자)에 드는 권한. 새 칸 줄은 마이그레이션 200 이 안 깔린 DB 를 거른다. 임대 표는 읽는 칸만(토큰 해시는 읽지 않는다).
 pub const RECALL_PRIVILEGES: &[(&str, &str)] = &[
@@ -45,6 +64,14 @@ pub const RECALL_PRIVILEGES: &[(&str, &str)] = &[
     ("secret_turn_lease.thread_root_id", "SELECT"),
     ("secret_turn_lease.ended_at", "SELECT"),
     ("secret_turn_lease.expires_at", "SELECT"),
+];
+
+/// 감시(DB)가 더 읽는 것 — 없으면 감시만 빠지고 다시 부르기는 그대로 돈다. 임대 표는 읽는 칸만.
+pub const UNJUDGED_PRIVILEGES: &[(&str, &str)] = &[
+    ("team_delegation_item.recalled_at", "SELECT"),
+    ("secret_turn_lease.created_at", "SELECT"),
+    ("message", "SELECT"),
+    ("agent_wake", "SELECT"),
 ];
 
 /// 켬(`on`)에 더 드는 권한 — 글 올리기(`msg_post::MESSAGE_POST_PRIVILEGES`) 위에. 없으면 `shadow` 로 돈다.
@@ -124,6 +151,48 @@ pub const NOTICE_SQL: &str = "insert into inbox (account_id, message_id, reason)
 /// 예약 행 — `$1` 담당, `$2` 채널, `$3` 대기 줄, `$4` 깨울 시각(대기 줄 meta 의 `wakeAt` 과 같은 값).
 pub const WAKE_SQL: &str = "insert into agent_wake (account_id, channel_id, message_id, wake_at) \
     values ($1::uuid, $2::uuid, $3::uuid, $4::timestamptz)";
+
+/// 판정을 지나지 않은 열린 위임 항목(DB) — `$1` 턴이 안 선 채 기다린 초, `$2` 만료 뒤 기다린 초, `$3` 위임 나이 상한(초), `$4` 줄 수.
+/// 돌려주는 칸: 스레드, 담당, 까닭(`no_turn` | `lease_expired`). 그 (스레드, 담당)의 가장 최근 열린 위임만 본다([`CANDIDATE_SQL`] 과 같은 줄).
+/// 기준 시각(`anchor`)은 위임을 만든 때와 마지막으로 다시 부른 때 가운데 늦은 쪽이다.
+/// 빼는 것: 이미 막힘 · 자기 조각 · 살아 있는 임대 · 열린 카드(권한 카드 제외) · 걸린 예약 · 자기가 넘긴 열린 위임
+/// (`turn_end_judge` 의 기다림 근거와 같은 규칙). 열린 PR 감시는 [`decide`] 가 가른다.
+pub const UNJUDGED_SQL: &str = "with open as ( \
+       select d.thread_root_id as thread, i.delegate_account_id as agent, \
+              greatest(d.created_at, coalesce(i.recalled_at, d.created_at)) as anchor \
+         from team_delegation_item i join team_delegation d on d.id = i.delegation_id \
+        where i.outcome is null and i.recall_blocked_at is null \
+          and i.delegate_account_id <> d.lead_account_id and d.thread_root_id is not null \
+          and d.created_at > now() - ($3::int * interval '1 second') \
+          and not exists (select 1 from team_delegation_item i2 join team_delegation d2 on d2.id = i2.delegation_id \
+                           where d2.thread_root_id = d.thread_root_id and i2.delegate_account_id = i.delegate_account_id \
+                             and i2.outcome is null and i2.delegate_account_id <> d2.lead_account_id \
+                             and (d2.created_at, d2.id) > (d.created_at, d.id)) \
+     ), seen as ( \
+       select o.thread, o.agent, o.anchor, \
+              exists (select 1 from secret_turn_lease tl where tl.agent_id = o.agent and tl.thread_root_id = o.thread \
+                        and coalesce(tl.ended_at, tl.expires_at) >= o.anchor) as any_turn, \
+              coalesce((select tl.ended_at is null and tl.expires_at <= now() - ($2::int * interval '1 second') \
+                          from secret_turn_lease tl where tl.agent_id = o.agent and tl.thread_root_id = o.thread \
+                         order by tl.created_at desc limit 1), false) as last_expired \
+         from open o \
+        where not exists (select 1 from secret_turn_lease tl where tl.agent_id = o.agent and tl.thread_root_id = o.thread \
+                            and tl.ended_at is null and tl.expires_at > now()) \
+          and not exists (select 1 from message q where q.thread_root_id = o.thread and q.author_id = o.agent \
+                            and q.deleted_at is null and q.meta ? 'ask' and not (q.meta ? 'permissionRequest') \
+                            and q.meta->'ask'->>'answeredWith' is null and q.meta->'ask'->>'closedAt' is null) \
+          and not exists (select 1 from agent_wake k join message km on km.id = k.message_id \
+                           where k.account_id = o.agent and k.fired_at is null and k.canceled_at is null \
+                             and (coalesce(km.thread_root_id, km.id) = o.thread \
+                               or lower(km.meta->'wake'->'reportTo'->>'threadRootId') = o.thread::text)) \
+          and not exists (select 1 from team_delegation sd join team_delegation_item si on si.delegation_id = sd.id \
+                           where sd.lead_account_id = o.agent and sd.thread_root_id = o.thread \
+                             and si.outcome is null and si.delegate_account_id <> sd.lead_account_id) \
+     ) \
+     select s.thread::text, s.agent::text, case when s.any_turn then 'lease_expired' else 'no_turn' end \
+       from seen s \
+      where (not s.any_turn and s.anchor < now() - ($1::int * interval '1 second')) or (s.any_turn and s.last_expired) \
+      order by s.anchor limit $4";
 
 /// 열린 위임 항목에 대해 읽은 것.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -238,20 +307,68 @@ struct Config {
     pool: PgPool,
     /// `on` 일 때만 — 대기 줄을 올릴 글 쓰기 상태.
     post: Option<PostState>,
+    /// 못 잡힌 위임 감시(DB)를 도는가 — [`UNJUDGED_PRIVILEGES`] 가 다 있을 때만.
+    sweep: bool,
 }
 
 static CONFIG: OnceLock<Config> = OnceLock::new();
+/// `shadow` 감시가 이미 적은 (스레드, 담당) — 횟수가 오르지 않아 같은 항목이 훑을 때마다 잡히므로 한 번만 적는다.
+static SHADOW_SEEN: Mutex<Option<HashSet<(String, String)>>> = Mutex::new(None);
+/// [`SHADOW_SEEN`] 상한 — 넘으면 비우고 다시 센다.
+const SHADOW_SEEN_MAX: usize = 4096;
 
-/// 켠다(프로세스에 한 번). `post` 가 있으면 `on`, 없으면 `shadow`.
-pub fn enable(pool: PgPool, post: Option<PostState>) {
-    let _ = CONFIG.set(Config { pool, post });
+/// 켠다(프로세스에 한 번). `post` 가 있으면 `on`, 없으면 `shadow`. `sweep` 이면 못 잡힌 위임 감시(DB)도 돈다.
+pub fn enable(pool: PgPool, post: Option<PostState>, sweep: bool) {
+    let _ = CONFIG.set(Config { pool, post, sweep });
+}
+
+/// 감시가 내는 까닭 글자를 고정 낱말로 — 모르는 값은 `None`.
+pub fn unjudged_case(raw: &str) -> Option<&'static str> {
+    match raw {
+        "no_turn" => Some("no_turn"),
+        "lease_expired" => Some("lease_expired"),
+        _ => None,
+    }
+}
+
+/// 판정을 지나지 않은 열린 위임 항목 — (스레드, 담당, 까닭). 읽기만.
+pub async fn unjudged(
+    pool: &PgPool,
+    unclaimed_sec: i32,
+    expired_grace_sec: i32,
+) -> sqlx::Result<Vec<(String, String, String)>> {
+    sqlx::query_as(UNJUDGED_SQL)
+        .bind(unclaimed_sec)
+        .bind(expired_grace_sec)
+        .bind(UNJUDGED_MAX_AGE_SEC)
+        .bind(UNJUDGED_BATCH)
+        .fetch_all(pool)
+        .await
+}
+
+/// `shadow` 감시가 이 항목을 처음 보는가(처음이면 적어 둔다).
+fn shadow_first(thread: &str, agent: &str) -> bool {
+    let mut seen = SHADOW_SEEN.lock().unwrap_or_else(|e| e.into_inner());
+    let set = seen.get_or_insert_with(HashSet::new);
+    if set.len() >= SHADOW_SEEN_MAX {
+        set.clear();
+    }
+    set.insert((thread.to_owned(), agent.to_owned()))
 }
 
 fn kind_of(e: &sqlx::Error) -> &'static str {
     e.as_database_error().map_or("io", |_| "db")
 }
 
-fn note(agent: &str, thread: &str, c: &Candidate, step: Step, on: bool, posted: Option<bool>) {
+fn note(
+    agent: &str,
+    thread: &str,
+    c: &Candidate,
+    step: Step,
+    on: bool,
+    posted: Option<bool>,
+    case: Option<&'static str>,
+) {
     let (attempt, why) = match step {
         Step::Recall(n) => (Some(n), None),
         Step::Block => (None, None),
@@ -266,7 +383,7 @@ fn note(agent: &str, thread: &str, c: &Candidate, step: Step, on: bool, posted: 
         value: Some(i64::from(matches!(step, Step::Recall(_) | Step::Block))),
         detail: Some(json!({
             "step": step.name(), "attempt": attempt, "why": why,
-            "mode": if on { "on" } else { "shadow" }, "posted": posted,
+            "mode": if on { "on" } else { "shadow" }, "posted": posted, "case": case,
         })),
     });
 }
@@ -410,16 +527,47 @@ pub async fn after_judged(agent: &str, j: &Judged) {
     if j.verdict != Verdict::Silent {
         return;
     }
-    let thread = j.thread_root_id.as_str();
+    silent(cfg, j.thread_root_id.as_str(), agent, None).await;
+}
+
+/// 못 잡힌 위임 감시(DB) — 기한 루프가 문지기 아래에서 부른다. 꺼져 있으면 아무것도 하지 않는다. 본 항목 수.
+pub async fn sweep_unjudged() -> usize {
+    let Some(cfg) = CONFIG.get() else { return 0 };
+    if !cfg.sweep {
+        return 0;
+    }
+    let rows = match unjudged(&cfg.pool, UNCLAIMED_SEC, EXPIRED_GRACE_SEC).await {
+        Ok(rows) => rows,
+        Err(e) => {
+            eprintln!("delegation recall: sweep failed ({})", kind_of(&e));
+            return 0;
+        }
+    };
+    let mut n = 0;
+    for (thread, agent, case) in rows {
+        let Some(case) = unjudged_case(&case) else {
+            continue;
+        };
+        if cfg.post.is_none() && !shadow_first(&thread, &agent) {
+            continue;
+        }
+        silent(cfg, &thread, &agent, Some(case)).await;
+        n += 1;
+    }
+    n
+}
+
+/// 말없이 끝난 것으로 다룬다 — `case` 는 감시가 잡은 까닭(판정 자리에서 오면 `None`).
+async fn silent(cfg: &Config, thread: &str, agent: &str, case: Option<&'static str>) {
     let Some(st) = &cfg.post else {
-        match peek(&cfg.pool, thread, agent, j.verdict).await {
-            Ok(Some((c, step))) => note(agent, thread, &c, step, false, None),
+        match peek(&cfg.pool, thread, agent, Verdict::Silent).await {
+            Ok(Some((c, step))) => note(agent, thread, &c, step, false, None, case),
             Ok(None) => {}
             Err(e) => eprintln!("delegation recall: peek failed ({})", kind_of(&e)),
         }
         return;
     };
-    match commit_step(&st.write, thread, agent, j.verdict).await {
+    match commit_step(&st.write, thread, agent, Verdict::Silent).await {
         Ok(Some((c, step))) => {
             let posted = match step {
                 Step::Recall(n) => match schedule(st, thread, agent, &c, n).await {
@@ -431,7 +579,7 @@ pub async fn after_judged(agent: &str, j: &Judged) {
                 },
                 _ => None,
             };
-            note(agent, thread, &c, step, true, posted);
+            note(agent, thread, &c, step, true, posted, case);
         }
         Ok(None) => {}
         Err(e) => eprintln!("delegation recall: step failed ({})", kind_of(&e)),
@@ -533,6 +681,33 @@ mod tests {
         // 이 시험 프로세스는 켜지 않는다 — 꺼짐·shadow 는 알리지 않는다(러너가 대리 실패를 그대로 남긴다).
         assert!(!recalling());
         assert_eq!(LEASE_FIELD, "delegationRecall");
+    }
+
+    #[test]
+    fn unjudged_sweep_skips_waiting_grounds_and_reads_no_token() {
+        for needle in [
+            "i.outcome is null and i.recall_blocked_at is null",
+            "i.delegate_account_id <> d.lead_account_id",
+            "tl.ended_at is null and tl.expires_at > now()",
+            "q.meta ? 'ask' and not (q.meta ? 'permissionRequest')",
+            "k.fired_at is null and k.canceled_at is null",
+            "si.outcome is null and si.delegate_account_id <> sd.lead_account_id",
+        ] {
+            assert!(UNJUDGED_SQL.contains(needle), "{needle}");
+        }
+        assert!(!UNJUDGED_SQL.contains("token"));
+        assert!(!UNJUDGED_SQL.contains("update "));
+        assert!(UNJUDGED_PRIVILEGES.iter().all(|(_, p)| *p == "SELECT"));
+        assert_eq!(unjudged_case("no_turn"), Some("no_turn"));
+        assert_eq!(unjudged_case("lease_expired"), Some("lease_expired"));
+        assert_eq!(unjudged_case("x"), None);
+    }
+
+    #[test]
+    fn shadow_sweep_notes_an_item_once() {
+        assert!(shadow_first("t-once", "a-once"));
+        assert!(!shadow_first("t-once", "a-once"));
+        assert!(shadow_first("t-once", "b-once"));
     }
 
     #[test]

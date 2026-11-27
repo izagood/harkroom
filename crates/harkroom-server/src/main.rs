@@ -5807,7 +5807,19 @@ async fn enable_delegation_recall(pool: &sqlx::PgPool) {
             "shadow"
         }
     );
-    dr::enable(pool.clone(), post);
+    // DB 못 잡힌 위임 감시 — 읽기 권한이 더 있어야 한다. 없으면 감시만 빠진다. 기한 루프(`HARKROOM_DELEGATION_V2` 가 있을 때 뜬다)가 돈다.
+    let sweep = match write::missing_in(pool, dr::UNJUDGED_PRIVILEGES, &[]).await {
+        Ok(m) if m.is_empty() => true,
+        Ok(m) => {
+            eprintln!("front: delegation recall sweep off — missing privileges {m:?}");
+            false
+        }
+        Err(_) => {
+            eprintln!("front: delegation recall sweep off — privilege check failed");
+            false
+        }
+    };
+    dr::enable(pool.clone(), post, sweep);
 }
 
 /// I2c 턴 끝 판정 — 임대가 끝날 때 판정을 작업 사건으로 적는다. 위임 그림자와 같은 스위치이고, 권한이 모자라면 켜지 않는다
