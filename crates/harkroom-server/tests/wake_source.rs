@@ -328,15 +328,5 @@ async fn reader_wake_statements_prepare_and_follow_wake_rows() {
     assert!(!truth(&admin, ask::WOKEN_SQL, &agent, &m3).await);
     put(human.clone(), m2.clone()).await;
     assert!(truth(&admin, &woken, &human, &m2).await);
-
-    sqlx::query("delete from channel where id = $1::uuid")
-        .bind(&ch)
-        .execute(&admin)
-        .await
-        .unwrap();
-    sqlx::query("delete from account where id = any($1::uuid[])")
-        .bind(vec![agent, human])
-        .execute(&admin)
-        .await
-        .unwrap();
+    // 치우지 않는다 — 시험 DB 는 스크립트가 통째로 버리고, 옆 시험은 자기 계정 줄만 본다.
 }
