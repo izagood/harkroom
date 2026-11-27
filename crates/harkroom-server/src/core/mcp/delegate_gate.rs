@@ -499,10 +499,11 @@ async fn write(
             .picks
             .iter()
             .map(
-                |(agent_id, model, effort)| crate::core::agent_model_picks::Pick {
+                |(agent_id, model, effort, combo_id)| crate::core::agent_model_picks::Pick {
                     agent_id: agent_id.clone(),
                     model: clean_axis(model.as_deref(), cause_link::MODEL_ID_MAX),
                     effort: clean_axis(effort.as_deref(), 64),
+                    combo_id: combo_id.clone(),
                 },
             )
             .collect();
@@ -695,7 +696,7 @@ mod tests {
         let picked = json!({ "channelId": C, "threadRootId": R, "body": "x", "to": ["a"], "agentModels": [{ "agentId": C, "model": "opus" }] });
         assert_eq!(
             parse(&picked).unwrap().picks,
-            vec![(C.to_owned(), Some("opus".to_owned()), None)]
+            vec![(C.to_owned(), Some("opus".to_owned()), None, None)]
         );
         for bad in [
             json!({ "channelId": C, "body": "x", "to": ["a"] }),

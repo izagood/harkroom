@@ -44,6 +44,10 @@ pub const EXEC_COMBO_LOOKUP_PRIVILEGES: &[(&str, &str)] = &[
     ("agent_config.account_id", "SELECT"),
     ("agent_config.owner_account_id", "SELECT"),
     ("audit_log", "INSERT"),
+    // J2b — 조합을 고치거나 허용 목록에서 빼면 그 조합으로 정한 스레드 지정을 같이 맞춘다.
+    ("thread_agent_model", "SELECT"),
+    ("thread_agent_model", "UPDATE"),
+    ("thread_agent_model", "DELETE"),
 ];
 
 static POOL: OnceLock<PgPool> = OnceLock::new();
@@ -329,13 +333,21 @@ pub const COMBO_INSERT_SQL: &str = concat!(
 
 /// 고칠 때도 같다 — 고친 뒤의 조합이 키 연결(`$6`)을 가리키면 고치는 사람(`$11`)이 그 비밀의 소유자여야 한다.
 /// 연결을 안 바꾸고 다른 칸만 고쳐도 본다(남의 키를 쓰는 조합의 모델·하네스를 바꾸지 못한다).
+///
+/// J2b — 이 조합으로 정한 스레드 지정(`thread_agent_model.combo_id`)도 같은 문장에서 맞춘다: 하네스가 그대로인 줄은
+/// model·effort 를 새 값으로, 하네스가 달라진 줄은 지운다(낡은 모델이 스레드에 남지 않는다). 답은 고친 조합 줄 수다.
 pub const COMBO_UPDATE_SQL: &str = concat!(
-    "update exec_combo \
+    "with up as (update exec_combo \
         set name = $1, harness = $2, model = $3, effort = $4, account_pool = $5, key_link_id = $6::uuid, \
             input_price = $7, output_price = $8, promote_allowed = $9, updated_at = now() \
       where id = $10::uuid and ($6::uuid is null or ",
     owns_key_link!("$6", "$11"),
-    ")"
+    ") returning id, harness, model, effort), \
+     gone as (delete from thread_agent_model t using up \
+               where t.combo_id = up.id and t.harness is distinct from up.harness), \
+     kept as (update thread_agent_model t set model = up.model, effort = up.effort from up \
+               where t.combo_id = up.id and t.harness = up.harness) \
+     select count(*) from up"
 );
 
 pub const COMBO_EXISTS_SQL: &str = "select exists (select 1 from exec_combo where id = $1::uuid)";
@@ -360,9 +372,14 @@ pub const ALLOW_ADD_SQL: &str = concat!(
          returning 1"
 );
 
+/// J2b — 뺀 조합으로 그 에이전트에 정해 둔 스레드 지정도 같은 문장에서 지운다. 답은 뺀 허용 줄 수다.
 pub const ALLOW_REMOVE_SQL: &str = concat!(
-    "delete from agent_exec_combo where agent_id = $2::uuid and combo_id = $3::uuid and ",
-    owns_agent!()
+    "with gone as (delete from agent_exec_combo where agent_id = $2::uuid and combo_id = $3::uuid and ",
+    owns_agent!(),
+    " returning agent_id, combo_id), \
+     cleared as (delete from thread_agent_model t using gone g \
+                  where t.agent_id = g.agent_id and t.combo_id = g.combo_id) \
+     select count(*) from gone"
 );
 
 /// 기본 조합 정하기 ① — 지금 기본을 내린다. 새 기본(`$3`)이 허용 목록에 있을 때만.
@@ -554,7 +571,7 @@ pub async fn update_combo(
     let actor = manager(account, auth)?;
     uuid(id, "id")?;
     let (acct_pool, link) = input.pool_and_link();
-    let n = sqlx::query(COMBO_UPDATE_SQL)
+    let n: i64 = sqlx::query_scalar(COMBO_UPDATE_SQL)
         .bind(&input.name)
         .bind(&input.harness)
         .bind(&input.model)
@@ -566,9 +583,8 @@ pub async fn update_combo(
         .bind(input.promote_allowed)
         .bind(id)
         .bind(actor)
-        .execute(pool)
-        .await?
-        .rows_affected();
+        .fetch_one(pool)
+        .await?;
     if n > 0 {
         return Ok(());
     }
@@ -622,13 +638,12 @@ pub async fn allow_remove(
 ) -> Result<(), ComboError> {
     let actor = human(account, auth)?;
     allow_ids(agent_id, combo_id)?;
-    let n = sqlx::query(ALLOW_REMOVE_SQL)
+    let n: i64 = sqlx::query_scalar(ALLOW_REMOVE_SQL)
         .bind(actor)
         .bind(agent_id)
         .bind(combo_id)
-        .execute(pool)
-        .await?
-        .rows_affected();
+        .fetch_one(pool)
+        .await?;
     if n == 0 {
         return Err(ComboError::Forbidden);
     }
