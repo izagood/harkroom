@@ -161,6 +161,23 @@ async fn combo_pick_follows_allow_list_and_combo_edits() {
     assert!(held(&pool, &r1, &bot).await.is_none());
     ec::enable(pool.clone());
 
+    // ⓪′ `agent.modelOptions` 가 싣는 조합 — 그 에이전트 허용 목록 중 지금 하네스와 맞는 것만(codex 조합은 빠진다).
+    use harkroom_server::core::mcp::model_options::allowed_combos;
+    assert_eq!(
+        allowed_combos(&pool, &bot.id, "claude-code").await.unwrap(),
+        vec![(c1.clone(), "xp-one".into(), "m".into(), Some("high".into()))]
+    );
+    assert_eq!(
+        allowed_combos(&pool, &bot.id, "codex").await.unwrap(),
+        vec![(c2.clone(), "xp-codex".into(), "g".into(), None)]
+    );
+    assert!(
+        allowed_combos(&pool, &other.id, "claude-code")
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
     // ① 허용된 조합 — 조합의 model·effort 가 그 스레드 줄에 베껴지고 combo_id 가 남는다.
     let changes = call(&pool, &ch, &r1, &caller, pick(&bot, &c1))
         .await
