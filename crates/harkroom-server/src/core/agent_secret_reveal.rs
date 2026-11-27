@@ -106,6 +106,11 @@ const SECRET_SQL: &str = "select s.id::text, s.name, s.kind, s.filename, s.expir
             (o.deleted_at is not null or o.disabled_at is not null) as owner_inactive, \
             (select c.owner_account_id = s.owner_account_id from agent_config c where c.account_id = $3::uuid) as own_agent \
        from secret s join account o on o.id = s.owner_account_id where s.name = $1";
+/// J2c — 조합 전용 길(`agent_combo_credential.rs`)이 쓰는 같은 읽기. 비밀을 **id 로만** 고른다(이름으로 잇지 않는다).
+const SECRET_BY_ID_SQL: &str = "select s.id::text, s.name, s.kind, s.filename, s.expires_at <= $2::timestamptz as expired, \
+            (o.deleted_at is not null or o.disabled_at is not null) as owner_inactive, \
+            (select c.owner_account_id = s.owner_account_id from agent_config c where c.account_id = $3::uuid) as own_agent \
+       from secret s join account o on o.id = s.owner_account_id where s.id = $1::uuid";
 const GRANTS_SQL: &str = "select channel_id::text, operator_id::text, suspended_at is not null as suspended \
        from secret_grant where secret_id = $1::uuid and agent_id = $2::uuid";
 const CURRENT_SQL: &str = "select version, sealed from secret_version \
@@ -168,11 +173,21 @@ pub fn agent_reveal_limiter() -> RevealLimiter {
 }
 
 pub struct AgentSecretRevealState {
-    write: PgPool,
-    keyring: Option<SecretKeyring>,
+    pub(crate) write: PgPool,
+    pub(crate) keyring: Option<SecretKeyring>,
     /// 키는 걸렸는데 확인값과 맞지 않아 꺼졌다(409 `secret_key_mismatch`).
-    mismatch: bool,
+    pub(crate) mismatch: bool,
     limiter: RevealLimiter,
+    /// J2c — 실행 조합 자격 길(`/agent/exec-combo*`)을 같이 붙인다. `main.rs` 가 조합 기능·칸 권한을 본 뒤 켠다.
+    combo: bool,
+}
+
+impl AgentSecretRevealState {
+    /// J2c — 조합 자격 길을 같이 붙인다(같은 속도 제한 통을 쓴다).
+    pub fn with_combo(mut self, on: bool) -> Self {
+        self.combo = on;
+        self
+    }
 }
 
 /// 기동 한 번: 키를 읽어 확인값과 맞춘다. env 가 잘못됐으면 `Err`(이 줄은 TS 에 남는다).
@@ -184,6 +199,7 @@ pub async fn load_state(write: PgPool) -> Result<AgentSecretRevealState, String>
         keyring: v.and_then(|v| v.keyring),
         mismatch,
         limiter: agent_reveal_limiter(),
+        combo: false,
     })
 }
 
@@ -264,33 +280,40 @@ fn sha256_hex(s: &str) -> String {
     hex::encode(ring::digest::digest(&ring::digest::SHA256, s.as_bytes()))
 }
 
-fn no_store(mut r: Response) -> Response {
+pub(crate) fn no_store(mut r: Response) -> Response {
     r.headers_mut()
         .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     r
 }
 
-struct Lease {
+pub(crate) struct Lease {
     id: String,
     agent_id: String,
     operator_id: String,
-    channel_id: String,
-    thread_root_id: String,
+    pub(crate) channel_id: String,
+    pub(crate) thread_root_id: String,
     expired: bool,
     ended: bool,
 }
 
-struct Secret {
-    id: String,
-    name: String,
-    kind: String,
-    filename: Option<String>,
+pub(crate) struct Secret {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) kind: String,
+    pub(crate) filename: Option<String>,
     expired: Option<bool>,
     owner_inactive: bool,
     own_agent: Option<bool>,
 }
 
-enum Revealed {
+/// 어느 비밀인가 — 에이전트 길은 이름, 조합 길은 서버가 고른 id.
+#[derive(Clone, Copy)]
+pub(crate) enum Sel<'a> {
+    Name(&'a str),
+    Id(&'a str),
+}
+
+pub(crate) enum Revealed {
     Ok {
         secret: Secret,
         version: i32,
@@ -299,22 +322,19 @@ enum Revealed {
     Denied(RevealDenial),
 }
 
-/// TS `revealSecret`.
-async fn reveal_secret(
+/// 임대(id·토큰 해시) 읽기 — 이 에이전트·오퍼레이터의 것이고 살아 있을 때만 돌려준다.
+pub(crate) async fn read_lease(
     st: &AgentSecretRevealState,
-    keyring: &SecretKeyring,
     agent_id: &str,
     operator_id: &str,
     lease_id: &str,
     token: &str,
-    name: &str,
-) -> sqlx::Result<Revealed> {
-    let now_ms = crate::core::msg_post::now_ms();
-    let now = crate::core::msg_post::iso_ms(now_ms);
+    now: &str,
+) -> sqlx::Result<Option<Lease>> {
     let lease = sqlx::query(LEASE_SQL)
         .bind(lease_id)
         .bind(sha256_hex(token))
-        .bind(&now)
+        .bind(now)
         .fetch_optional(&st.write)
         .await?
         .map(|r| -> sqlx::Result<Lease> {
@@ -329,13 +349,56 @@ async fn reveal_secret(
             })
         })
         .transpose()?;
-    let lease = lease.filter(|l| {
+    Ok(lease.filter(|l| {
         l.agent_id == agent_id && l.operator_id == operator_id && !l.expired && !l.ended
-    });
+    }))
+}
 
-    let secret = sqlx::query(SECRET_SQL)
-        .bind(name)
-        .bind(&now)
+/// TS `revealSecret`.
+async fn reveal_secret(
+    st: &AgentSecretRevealState,
+    keyring: &SecretKeyring,
+    agent_id: &str,
+    operator_id: &str,
+    lease_id: &str,
+    token: &str,
+    name: &str,
+) -> sqlx::Result<Revealed> {
+    let now_ms = crate::core::msg_post::now_ms();
+    let now = crate::core::msg_post::iso_ms(now_ms);
+    let lease = read_lease(st, agent_id, operator_id, lease_id, token, &now).await?;
+    reveal_with(
+        st,
+        Some(keyring),
+        agent_id,
+        operator_id,
+        lease,
+        Sel::Name(name),
+        now_ms,
+        &now,
+    )
+    .await
+}
+
+/// 임대를 읽은 뒤의 거절 사슬 — 에이전트 길과 조합 길이 같이 쓴다. 키링이 없으면 값을 열 자리에서 `unreadable`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn reveal_with(
+    st: &AgentSecretRevealState,
+    keyring: Option<&SecretKeyring>,
+    agent_id: &str,
+    operator_id: &str,
+    lease: Option<Lease>,
+    sel: Sel<'_>,
+    now_ms: i64,
+    now: &str,
+) -> sqlx::Result<Revealed> {
+    let (sql, key) = match sel {
+        Sel::Name(n) => (SECRET_SQL, n),
+        Sel::Id(i) => (SECRET_BY_ID_SQL, i),
+    };
+    let secret = sqlx::query(sql)
+        .bind(key)
+        .bind(now)
         .bind(agent_id)
         .fetch_optional(&st.write)
         .await?
@@ -353,7 +416,7 @@ async fn reveal_secret(
         .transpose()?;
 
     let log = |result: &'static str, reason: Option<RevealDenial>, version: Option<i32>| {
-        let (secret, lease, now) = (&secret, &lease, &now);
+        let (secret, lease) = (&secret, &lease);
         async move {
             let Some(s) = secret else {
                 return Ok(());
@@ -412,7 +475,7 @@ async fn reveal_secret(
     let Some((version, sealed)) = cur else {
         deny!(RevealDenial::NoValue);
     };
-    let value = kind_of(&s.kind).and_then(|k| {
+    let value = keyring.zip(kind_of(&s.kind)).and_then(|(keyring, k)| {
         keyring.open(
             &sealed,
             &SecretAad {
@@ -510,8 +573,11 @@ pub fn routes(
     cors: Arc<crate::cors::Cors>,
 ) -> crate::route_table::Routes<()> {
     use crate::route_table::Table;
-    let t = Table::<Arc<AgentSecretRevealState>>::new()
-        .post("/agent/secrets/reveal", reveal)
+    let mut t = Table::<Arc<AgentSecretRevealState>>::new().post("/agent/secrets/reveal", reveal);
+    if st.combo {
+        t = t.merge(crate::core::agent_combo_credential::table());
+    }
+    let t = t
         .map(|r| {
             r.route_layer(axum::middleware::from_fn_with_state(
                 auth,
