@@ -455,23 +455,27 @@ pub fn turn_ended(lease_id: &str, agent_id: &str) {
             return;
         };
         match judge_with(pool, &lease, &agent, mode()).await {
-            Ok(Some(j)) => super::measure::record(super::measure::Event {
-                kind: super::measure::KIND_TURN_JUDGED,
-                account_id: Some(agent),
-                channel_id: Some(j.channel_id.clone()),
-                thread_root_id: Some(j.thread_root_id.clone()),
-                ref_id: Some(lease),
-                value: Some(i64::from(j.close.is_some())),
-                detail: Some(json!({
-                    "verdict": j.verdict.as_str(),
-                    "work": j.target.as_ref().map_or("none", |t| t.via.as_str()),
-                    "root": j.target.as_ref().map(|t| t.root),
-                    "closeBy": j.close.map(|c| c.by),
-                    "overlap": j.overlap,
-                    "closed": j.closed,
-                    "closeSkipped": j.skip.map(Skip::as_str),
-                })),
-            }),
+            Ok(Some(j)) => {
+                // DA — 말없이 끝난 담당을 다시 부른다(스위치 `HARKROOM_DELEGATION_RECALL`, 꺼져 있으면 아무것도 하지 않는다).
+                super::delegation_recall::after_judged(&agent, &j).await;
+                super::measure::record(super::measure::Event {
+                    kind: super::measure::KIND_TURN_JUDGED,
+                    account_id: Some(agent),
+                    channel_id: Some(j.channel_id.clone()),
+                    thread_root_id: Some(j.thread_root_id.clone()),
+                    ref_id: Some(lease),
+                    value: Some(i64::from(j.close.is_some())),
+                    detail: Some(json!({
+                        "verdict": j.verdict.as_str(),
+                        "work": j.target.as_ref().map_or("none", |t| t.via.as_str()),
+                        "root": j.target.as_ref().map(|t| t.root),
+                        "closeBy": j.close.map(|c| c.by),
+                        "overlap": j.overlap,
+                        "closed": j.closed,
+                        "closeSkipped": j.skip.map(Skip::as_str),
+                    })),
+                })
+            }
             Ok(None) => {}
             Err(e) => eprintln!("turn end judge: turn.judged skipped ({})", kind_of(&e)),
         }

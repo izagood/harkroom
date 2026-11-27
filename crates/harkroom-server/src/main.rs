@@ -5758,6 +5758,56 @@ async fn enable_work_run(pool: &sqlx::PgPool) {
     }
 }
 
+/// DA 위임 다시 부르기 — 스위치(`HARKROOM_DELEGATION_RECALL`, 기본 off)와 권한이 맞을 때만 켠다. 턴 끝 판정이 켜진 뒤에 부른다.
+/// `on` 인데 쓰기 권한이 모자라면 `shadow` 로 돈다. 읽기 권한도 없으면 켜지 않는다(나머지는 그대로).
+async fn enable_delegation_recall(pool: &sqlx::PgPool) {
+    use harkroom_server::core::delegation_recall as dr;
+    let switch = dr::switch_from_env();
+    if switch == dr::Switch::Off {
+        return;
+    }
+    match write::missing_in(pool, dr::RECALL_PRIVILEGES, &[]).await {
+        Ok(m) if m.is_empty() => {}
+        Ok(m) => {
+            eprintln!("front: delegation recall off — missing privileges {m:?}");
+            return;
+        }
+        Err(_) => {
+            eprintln!("front: delegation recall off — privilege check failed");
+            return;
+        }
+    }
+    let mut post = None;
+    if switch == dr::Switch::On {
+        let needed = [
+            harkroom_server::core::msg_post::MESSAGE_POST_PRIVILEGES,
+            dr::RECALL_ON_PRIVILEGES,
+        ]
+        .concat();
+        match write::missing_in(pool, &needed, dr::RECALL_ON_SEQUENCE_PRIVILEGES).await {
+            Ok(m) if m.is_empty() => {
+                post = Some(harkroom_server::core::msg_post::PostState {
+                    read: pool.clone(),
+                    write: pool.clone(),
+                    up: harkroom_server::proxy::Upstream::new(""),
+                    implicit_ok: false,
+                });
+            }
+            Ok(m) => eprintln!("front: delegation recall stays shadow — missing privileges {m:?}"),
+            Err(_) => eprintln!("front: delegation recall stays shadow — privilege check failed"),
+        }
+    }
+    eprintln!(
+        "front: delegation recall on ({})",
+        if post.is_some() {
+            "recalling"
+        } else {
+            "shadow"
+        }
+    );
+    dr::enable(pool.clone(), post);
+}
+
 /// I2c 턴 끝 판정 — 임대가 끝날 때 판정을 작업 사건으로 적는다. 위임 그림자와 같은 스위치이고, 권한이 모자라면 켜지 않는다
 /// (기록만 빠지고 나머지는 그대로). 스위치가 `on` 이고 닫기 권한까지 있으면 판정대로 뿌리 작업을 닫고 옛 뿌리를 정리한다 —
 /// 닫기 권한이 없으면 `shadow` 로 돈다. 켤 때 닫히지 않은 옛 뿌리 작업을 세어 한 줄 남긴다.
@@ -5796,6 +5846,7 @@ async fn enable_turn_end_judge(pool: &sqlx::PgPool) {
                 if on { "closing" } else { "shadow" }
             );
             turn_end_judge::enable(pool.clone(), mode);
+            enable_delegation_recall(pool).await;
             match turn_end_judge::open_roots(pool).await {
                 Ok((all, old, idle)) => eprintln!(
                     "front: turn end judge — open root works {all} (older than a day {old}, idle {idle})"
