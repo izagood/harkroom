@@ -5,7 +5,8 @@
 //!   회수되지 않았고, 개인 자격증명 에이전트면 기기 소유자가 에이전트 소유자와 같아야 한다(`device_allow` 의 읽기 판정과 같은 규칙).
 //!   부르는 쪽이 넘긴 값으로 자격을 넓힐 수 없다 — `agents` 인자는 후보를 **좁히기만** 한다.
 //! - **잡을 수 있는 작업**: 담당이 있고, 안 닫혔고(`open`·`running`·`waiting` — 턴이 서면 뿌리가 `running` 이 되므로 `open` 만 보면
-//!   두 번째 글부터 못 잡는다), 살아 있는 줄이 없고, 앞 작업(`after_work_id`)이 닫혔고, 같은 뿌리에서
+//!   두 번째 글부터 못 잡는다. 다만 `running`·`waiting` 은 **안 닫힌 하위 작업이 없을 때만** 후보다 — 조각으로 쪼개져 조각이 도는 동안의
+//!   부모는 잡지 않는다), 살아 있는 줄이 없고, 앞 작업(`after_work_id`)이 닫혔고, 같은 뿌리에서
 //!   경로가 겹치는 작업을 누가 쥐고 있지 않다. 담당이 빈 작업(누가 돌릴지 정해지지 않은 과제)은 이 단계에서 잡지 않는다.
 //! - **순서**: 사람이 시킨 작업 먼저, 그다음 만든 시각.
 //! - **뿌리마다 한 줄로 선다.** 경로 겹침은 「다른 줄」을 보는 조건이라 행 잠금만으로는 두 쪽이 서로의 아직 안 적힌 줄을 못 본다.
@@ -164,7 +165,9 @@ macro_rules! candidate {
              join account a on a.id = w.assignee_account_id \
              left join agent_config cfg on cfg.account_id = w.assignee_account_id \
              left join account rq on rq.id = w.requester_account_id \
-            where w.state in ('open', 'running', 'waiting') and w.closed_at is null and ",
+            where (w.state = 'open' or (w.state in ('running', 'waiting') and not exists ( \
+                     select 1 from work ch where ch.parent_id = w.id and ch.closed_at is null))) \
+              and w.closed_at is null and ",
             entitled!(),
             $extra,
             " and ($2::uuid[] is null or w.assignee_account_id = any($2::uuid[])) \
