@@ -333,22 +333,27 @@ pub const COMBO_INSERT_SQL: &str = concat!(
 
 /// 고칠 때도 같다 — 고친 뒤의 조합이 키 연결(`$6`)을 가리키면 고치는 사람(`$11`)이 그 비밀의 소유자여야 한다.
 /// 연결을 안 바꾸고 다른 칸만 고쳐도 본다(남의 키를 쓰는 조합의 모델·하네스를 바꾸지 못한다).
-///
-/// J2b — 이 조합으로 정한 스레드 지정(`thread_agent_model.combo_id`)도 같은 문장에서 맞춘다: 하네스가 그대로인 줄은
-/// model·effort 를 새 값으로, 하네스가 달라진 줄은 지운다(낡은 모델이 스레드에 남지 않는다). 답은 고친 조합 줄 수다.
 pub const COMBO_UPDATE_SQL: &str = concat!(
-    "with up as (update exec_combo \
+    "update exec_combo \
         set name = $1, harness = $2, model = $3, effort = $4, account_pool = $5, key_link_id = $6::uuid, \
             input_price = $7, output_price = $8, promote_allowed = $9, updated_at = now() \
       where id = $10::uuid and ($6::uuid is null or ",
     owns_key_link!("$6", "$11"),
-    ") returning id, harness, model, effort), \
-     gone as (delete from thread_agent_model t using up \
-               where t.combo_id = up.id and t.harness is distinct from up.harness), \
-     kept as (update thread_agent_model t set model = up.model, effort = up.effort from up \
-               where t.combo_id = up.id and t.harness = up.harness) \
-     select count(*) from up"
+    ")"
 );
+
+/// J2b — 고친 조합으로 정한 스레드 지정(`thread_agent_model.combo_id`)을 맞춘다: 하네스가 달라진 줄은 지우고(①),
+/// 남은 줄은 model·effort 를 새 값으로(②). 낡은 모델이 스레드에 남지 않는다.
+///
+/// 조합을 고친 문장과 **같은 tx 의 뒤 문장**이어야 한다 — 한 문장(CTE)으로 묶으면 그 문장의 스냅숏이 조합 줄 잠금을
+/// 기다리기 전에 잡혀, 기다리는 사이 커밋된 고르기([`super::agent_model_picks::COMBO_ALLOWED_SQL`] 가 조합 줄을
+/// `for share` 로 잡는다)를 못 본다.
+pub const COMBO_THREADS_DROP_SQL: &str = "delete from thread_agent_model t using exec_combo c \
+      where c.id = $1::uuid and t.combo_id = c.id and t.harness is distinct from c.harness";
+pub const COMBO_THREADS_SYNC_SQL: &str = "update thread_agent_model t set model = c.model, effort = c.effort \
+       from exec_combo c \
+      where c.id = $1::uuid and t.combo_id = c.id \
+        and (t.model is distinct from c.model or t.effort is distinct from c.effort)";
 
 pub const COMBO_EXISTS_SQL: &str = "select exists (select 1 from exec_combo where id = $1::uuid)";
 
@@ -372,15 +377,15 @@ pub const ALLOW_ADD_SQL: &str = concat!(
          returning 1"
 );
 
-/// J2b — 뺀 조합으로 그 에이전트에 정해 둔 스레드 지정도 같은 문장에서 지운다. 답은 뺀 허용 줄 수다.
 pub const ALLOW_REMOVE_SQL: &str = concat!(
-    "with gone as (delete from agent_exec_combo where agent_id = $2::uuid and combo_id = $3::uuid and ",
-    owns_agent!(),
-    " returning agent_id, combo_id), \
-     cleared as (delete from thread_agent_model t using gone g \
-                  where t.agent_id = g.agent_id and t.combo_id = g.combo_id) \
-     select count(*) from gone"
+    "delete from agent_exec_combo where agent_id = $2::uuid and combo_id = $3::uuid and ",
+    owns_agent!()
 );
+
+/// J2b — 뺀 조합으로 그 에이전트에 정해 둔 스레드 지정을 지운다. 허용 줄을 지운 문장과 **같은 tx 의 뒤 문장**이다
+/// (까닭은 [`COMBO_THREADS_DROP_SQL`] 과 같다 — 고르기가 허용 줄을 `for share` 로 잡는다).
+pub const ALLOW_REMOVE_THREADS_SQL: &str =
+    "delete from thread_agent_model where agent_id = $1::uuid and combo_id = $2::uuid";
 
 /// 기본 조합 정하기 ① — 지금 기본을 내린다. 새 기본(`$3`)이 허용 목록에 있을 때만.
 pub const DEFAULT_CLEAR_SQL: &str = concat!(
@@ -571,7 +576,8 @@ pub async fn update_combo(
     let actor = manager(account, auth)?;
     uuid(id, "id")?;
     let (acct_pool, link) = input.pool_and_link();
-    let n: i64 = sqlx::query_scalar(COMBO_UPDATE_SQL)
+    let mut tx = pool.begin().await?;
+    let n = sqlx::query(COMBO_UPDATE_SQL)
         .bind(&input.name)
         .bind(&input.harness)
         .bind(&input.model)
@@ -583,11 +589,17 @@ pub async fn update_combo(
         .bind(input.promote_allowed)
         .bind(id)
         .bind(actor)
-        .fetch_one(pool)
-        .await?;
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
     if n > 0 {
+        for sql in [COMBO_THREADS_DROP_SQL, COMBO_THREADS_SYNC_SQL] {
+            sqlx::query(sql).bind(id).execute(&mut *tx).await?;
+        }
+        tx.commit().await?;
         return Ok(());
     }
+    drop(tx);
     Err(missing_or_forbidden(pool, COMBO_EXISTS_SQL, id).await?)
 }
 
@@ -638,15 +650,23 @@ pub async fn allow_remove(
 ) -> Result<(), ComboError> {
     let actor = human(account, auth)?;
     allow_ids(agent_id, combo_id)?;
-    let n: i64 = sqlx::query_scalar(ALLOW_REMOVE_SQL)
+    let mut tx = pool.begin().await?;
+    let n = sqlx::query(ALLOW_REMOVE_SQL)
         .bind(actor)
         .bind(agent_id)
         .bind(combo_id)
-        .fetch_one(pool)
-        .await?;
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
     if n == 0 {
         return Err(ComboError::Forbidden);
     }
+    sqlx::query(ALLOW_REMOVE_THREADS_SQL)
+        .bind(agent_id)
+        .bind(combo_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
     Ok(())
 }
 

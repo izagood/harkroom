@@ -402,6 +402,13 @@ pub struct Rejection {
     pub(crate) message: String,
 }
 
+impl Rejection {
+    /// HTTP 상태와 거절 코드 — 통합 시험이 판정을 읽는다.
+    pub fn status_code(&self) -> (u16, &str) {
+        (self.status, &self.code)
+    }
+}
+
 /// 훅이 돌려주는 future.
 pub(crate) type BeforeCommitFuture<'a> = std::pin::Pin<
     Box<dyn std::future::Future<Output = Result<Option<Rejection>, sqlx::Error>> + Send + 'a>,

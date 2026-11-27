@@ -252,11 +252,12 @@ const UPSERT_AGENT_SQL: &str = "insert into thread_agent_model (thread_root_id, 
        set_by = excluded.set_by, set_by_kind = excluded.set_by_kind, combo_id = excluded.combo_id, set_at = now() \
      where thread_agent_model.set_by_kind = 'agent'";
 /// 그 에이전트 허용 목록의 조합 한 줄 — 조합 하네스·model·effort 와 에이전트의 지금 하네스. 목록에 없으면 줄이 없다.
-/// `for share` 로 허용 줄을 잡아, 같은 때 목록에서 빼는 쓰기와 엇갈리지 않게 한다.
+/// `for share` 로 허용 줄과 조합 줄을 잡아, 같은 때 목록에서 빼거나 조합을 고치는 쓰기가 이 tx 뒤로 밀리게 한다
+/// (그 쓰기들은 뒤 문장에서 스레드 지정을 맞춘다 — `exec_combo::COMBO_THREADS_DROP_SQL`).
 pub const COMBO_ALLOWED_SQL: &str = "select c.harness, c.model, c.effort, coalesce(g.harness, 'claude-code') \
        from agent_exec_combo a join exec_combo c on c.id = a.combo_id \
        left join agent_config g on g.account_id = a.agent_id \
-      where a.agent_id = $1::uuid and a.combo_id = $2::uuid for share of a";
+      where a.agent_id = $1::uuid and a.combo_id = $2::uuid for share of a, c";
 
 /// 쓰기가 끝난 한 줄 — 바뀐 에이전트와 새 (model, effort)(풀기면 `None`). 시스템 줄·이벤트는 커밋 뒤 호출자 몫.
 pub type Change = (String, Option<(Option<String>, Option<String>)>);
