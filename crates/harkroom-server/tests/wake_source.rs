@@ -160,3 +160,183 @@ async fn wake_source_serves_only_unread_rows_with_an_open_wake() {
     assert_eq!(read_close(&w, &agent, &[theirs]).await.unwrap(), 0);
     assert_eq!(ids(&admin, &other, WAKE).await, vec![theirs]);
 }
+
+/// 문장을 서버에 준비만 시켜 본다 — 글자·표·칸이 맞는지(값은 넣지 않는다).
+async fn prepares(conn: &mut sqlx::PgConnection, name: &str, sql: &str) {
+    let text: &'static str = Box::leak(format!("prepare ed_{name} as {sql}").into_boxed_str());
+    sqlx::raw_sql(text)
+        .execute(&mut *conn)
+        .await
+        .unwrap_or_else(|e| panic!("{name}: {e}"));
+    let drop: &'static str = Box::leak(format!("deallocate ed_{name}").into_boxed_str());
+    sqlx::raw_sql(drop).execute(&mut *conn).await.unwrap();
+}
+
+async fn truth(pool: &PgPool, sql: &str, a: &str, b: &str) -> bool {
+    let text: &'static str = Box::leak(sql.to_owned().into_boxed_str());
+    sqlx::query_scalar(text)
+        .bind(a)
+        .bind(b)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// 나머지 읽는 곳(ED)의 깨움 행 판 문장을 실제 Postgres 로 본다 — 스위치가 꺼져 있으면 이 문장들은 한 번도 돌지 않는다.
+#[tokio::test]
+async fn reader_wake_statements_prepare_and_follow_wake_rows() {
+    use harkroom_server::core::wake_source::{
+        BARE_FROM, FACTS_FROM, GATE_AWAITING_FROM, WAKE_READER_PRIVILEGES, either, with_open,
+        with_open_for_agents,
+    };
+    use harkroom_server::core::{ask, delegation_recall, turn_end_judge, work_claim};
+    let Ok(url) = std::env::var("HARKROOM_TEST_DATABASE_URL") else {
+        eprintln!("skip: HARKROOM_TEST_DATABASE_URL unset");
+        return;
+    };
+    let admin = PgPool::connect(&url).await.unwrap();
+    let missing = harkroom_server::write::missing_in(&admin, WAKE_READER_PRIVILEGES, &[])
+        .await
+        .unwrap();
+    assert!(missing.is_empty(), "read role lacks {missing:?}");
+
+    let golden: serde_json::Value =
+        serde_json::from_str(include_str!("../golden/sql_fragments.json")).unwrap();
+    let g = |k: &str| golden[k].as_str().unwrap().to_owned();
+    let notice = with_open_for_agents(
+        delegation_recall::NOTICE_EXISTS_SQL,
+        delegation_recall::NOTICE_UNREAD,
+        "inbox.id",
+        "inbox.account_id",
+        "nw",
+    );
+    let woken = either(ask::WOKEN_SQL, BARE_FROM, " ei where ", 1);
+    let mut conn = admin.acquire().await.unwrap();
+    for (name, sql) in [
+        (
+            "pull_candidate",
+            work_claim::PULL_CANDIDATE_WAKE_SQL.to_owned(),
+        ),
+        ("pull_claim", work_claim::PULL_CLAIM_WAKE_SQL.to_owned()),
+        (
+            "close_check",
+            with_open(
+                turn_end_judge::CLOSE_CHECK_SQL,
+                turn_end_judge::CLOSE_CHECK_UNREAD,
+                "i.id",
+                "cw",
+            ),
+        ),
+        (
+            "stale",
+            with_open(
+                harkroom_server::loops::stale::CANDIDATES_SQL,
+                harkroom_server::loops::stale::STALE_UNREAD,
+                "i.id",
+                "sw",
+            ),
+        ),
+        (
+            "oldest_unread",
+            with_open(
+                harkroom_server::health::OLDEST_UNREAD,
+                harkroom_server::health::OLDEST_UNREAD_MARK,
+                "i.id",
+                "hw",
+            ),
+        ),
+        ("notice", notice.clone()),
+        ("woken", woken.clone()),
+        (
+            "gate",
+            either(&g("gate_awaiting"), GATE_AWAITING_FROM, " i\n", 1),
+        ),
+        (
+            "already",
+            either(&g("edit_inbox_already"), BARE_FROM, " ei where ", 1),
+        ),
+        (
+            "facts",
+            either(&g("thread_status_facts"), FACTS_FROM, " i join t ", 2),
+        ),
+    ] {
+        prepares(&mut conn, name, &sql).await;
+    }
+    drop(conn);
+
+    let agent = account(&admin, "ed-agent", "agent").await;
+    let human = account(&admin, "ed-human", "human").await;
+    let ch: String = sqlx::query_scalar(
+        "insert into channel(name, kind) values ('ed-rs', 'standard') returning id::text",
+    )
+    .fetch_one(&admin)
+    .await
+    .unwrap();
+    let put = |who: String, msg: String| {
+        let admin = admin.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>(
+                "insert into inbox(account_id, message_id, reason) values ($1::uuid, $2::uuid, 'delegation_update') returning id",
+            )
+            .bind(who)
+            .bind(msg)
+            .fetch_one(&admin)
+            .await
+            .unwrap()
+        }
+    };
+    let wake = |who: String, msg: String, inbox: Option<i64>, state: &'static str| {
+        let admin = admin.clone();
+        async move {
+            sqlx::query(
+                "insert into wake(account_id, message_id, reason, inbox_id, state) values ($1::uuid, $2::uuid, 'delegation_update', $3, $4)",
+            )
+            .bind(who)
+            .bind(msg)
+            .bind(inbox)
+            .bind(state)
+            .execute(&admin)
+            .await
+            .unwrap();
+        }
+    };
+
+    // 알림 중복 검사: 에이전트는 그 줄의 깨움이 열려 있을 때만, 사람은 inbox 줄만으로 「이미 있다」.
+    let m1 = message(&admin, &ch, &human).await;
+    let row = put(agent.clone(), m1.clone()).await;
+    assert!(truth(&admin, delegation_recall::NOTICE_EXISTS_SQL, &agent, &m1).await);
+    assert!(!truth(&admin, &notice, &agent, &m1).await);
+    wake(agent.clone(), m1.clone(), Some(row), "pending").await;
+    assert!(truth(&admin, &notice, &agent, &m1).await);
+    sqlx::query("update wake set state = 'done', closed_at = now() where inbox_id = $1")
+        .bind(row)
+        .execute(&admin)
+        .await
+        .unwrap();
+    assert!(!truth(&admin, &notice, &agent, &m1).await);
+    put(human.clone(), m1.clone()).await;
+    assert!(truth(&admin, &notice, &human, &m1).await);
+
+    // 「이미 불렸나」: inbox 줄이 없어도 깨움 행이 있으면 불린 것이다. 지운 줄의 닫힌(canceled) 깨움은 세지 않는다.
+    let m2 = message(&admin, &ch, &human).await;
+    assert!(!truth(&admin, &woken, &agent, &m2).await);
+    wake(agent.clone(), m2.clone(), None, "canceled").await;
+    assert!(!truth(&admin, &woken, &agent, &m2).await);
+    let m3 = message(&admin, &ch, &human).await;
+    wake(agent.clone(), m3.clone(), None, "done").await;
+    assert!(truth(&admin, &woken, &agent, &m3).await);
+    assert!(!truth(&admin, ask::WOKEN_SQL, &agent, &m3).await);
+    put(human.clone(), m2.clone()).await;
+    assert!(truth(&admin, &woken, &human, &m2).await);
+
+    sqlx::query("delete from channel where id = $1::uuid")
+        .bind(&ch)
+        .execute(&admin)
+        .await
+        .unwrap();
+    sqlx::query("delete from account where id = any($1::uuid[])")
+        .bind(vec![agent, human])
+        .execute(&admin)
+        .await
+        .unwrap();
+}

@@ -19,6 +19,17 @@ pub(super) const RUN_OWNER_SQL: &str = "select m.author_id::text, (a.kind = 'age
                      where i.message_id = m.id and i.account_id = $2::uuid \
                        and i.reason in ('mention', 'dm', 'team_mention', 'team_delegated', 'thread_reply', 'ask_answered'))";
 
+/// [`RUN_OWNER_SQL`] 에서 깨움 행 판을 만들 때 바꾸는 낱말.
+pub(super) const RUN_OWNER_FROM: &str = "from inbox i ";
+
+/// 돌릴 문장 — 나머지 읽는 곳이 깨움 행을 볼 때는 inbox 줄과 깨움 행을 함께 읽는다([`crate::core::wake_source::EITHER`]).
+pub(super) fn run_owner_sql() -> &'static str {
+    static S: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    S.get_or_init(|| {
+        crate::core::wake_source::either_if_on(RUN_OWNER_SQL, RUN_OWNER_FROM, " i ", 1)
+    })
+}
+
 const AUTOMATIONS_SQL: &str = "select a.id::text, a.name, a.channel_id::text, a.enabled, a.paused_reason, a.trigger::text, a.body, \
             r.status, to_char(r.created_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') \
        from automation a \
@@ -87,7 +98,7 @@ async fn automation_list(
         return refuse("no_cause");
     };
     type W = (String, bool, bool, bool);
-    let who: Option<W> = sqlx::query_as(RUN_OWNER_SQL)
+    let who: Option<W> = sqlx::query_as(run_owner_sql())
         .bind(cause)
         .bind(&me.id)
         .fetch_optional(pool)
@@ -202,6 +213,14 @@ fn uuid_header(headers: &axum::http::HeaderMap, name: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn run_owner_wake_statement_reads_both_tables() {
+        let sql = crate::core::wake_source::either(RUN_OWNER_SQL, RUN_OWNER_FROM, " i ", 1);
+        assert!(sql.contains("from wake where state <> 'canceled') i "));
+        assert!(sql.contains("i.message_id = m.id and i.account_id = $2::uuid"));
+        assert_eq!(run_owner_sql(), RUN_OWNER_SQL);
+    }
 
     #[test]
     fn preview_matches_js() {

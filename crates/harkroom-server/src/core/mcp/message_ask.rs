@@ -465,10 +465,14 @@ pub(super) fn gate_awaiting_sql() -> &'static str {
     S.get_or_init(|| {
         let v: Value = serde_json::from_str(include_str!("../../../golden/sql_fragments.json"))
             .expect("golden/sql_fragments.json");
-        v["gate_awaiting"]
-            .as_str()
-            .expect("golden fragment gate_awaiting")
-            .to_owned()
+        crate::core::wake_source::either_if_on(
+            v["gate_awaiting"]
+                .as_str()
+                .expect("golden fragment gate_awaiting"),
+            crate::core::wake_source::GATE_AWAITING_FROM,
+            " i\n",
+            1,
+        )
     })
 }
 

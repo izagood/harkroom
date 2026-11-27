@@ -53,9 +53,123 @@ pub fn pick(on: bool, kind: &str) -> bool {
     on && kind == "agent"
 }
 
+/// 나머지 읽는 곳(ED)이 읽는 칸(표.칸, 권한) — 읽기 풀·쓰기 풀 둘 다에 있어야 켠다([`enable_readers`]).
+pub const WAKE_READER_PRIVILEGES: &[(&str, &str)] = &[
+    ("wake.account_id", "SELECT"),
+    ("wake.message_id", "SELECT"),
+    ("wake.reason", "SELECT"),
+    ("wake.inbox_id", "SELECT"),
+    ("wake.state", "SELECT"),
+    ("inbox.id", "SELECT"),
+];
+
+static READERS: AtomicBool = AtomicBool::new(false);
+
+/// 나머지 읽는 곳도 켠다(프로세스에 한 번, `main.rs` 가 [`enable`] 뒤에 두 풀의 권한을 보고).
+pub fn enable_readers() {
+    READERS.store(true, Ordering::Relaxed);
+}
+
+/// 나머지 읽는 곳이 깨움 행을 보나.
+pub fn readers() -> bool {
+    READERS.load(Ordering::Relaxed)
+}
+
+/// 「안 읽은 inbox 줄」 조건(`marker`) 뒤에 「그 줄의 깨움이 열려 있다」를 붙인다 — 폴([`OPEN_WAKE_FILTER`])과 같은 줄만 남는다.
+/// `id` 는 그 문장에서 inbox 줄의 id 를 가리키는 글자(`i.id`·`inbox.id`), `tag` 는 문장마다 다른 별칭이다.
+/// `marker` 가 정확히 한 번 나오지 않으면 멈춘다 — 문장이 바뀌었는데 반만 옮겨진 것을 돌리지 않으려는 것이다.
+pub fn with_open(sql: &str, marker: &str, id: &str, tag: &str) -> String {
+    put_after(
+        sql,
+        marker,
+        &format!(
+            " and exists (select 1 from wake {tag} where {tag}.inbox_id = {id} and {tag}.state in ('pending', 'delivered'))"
+        ),
+    )
+}
+
+/// [`with_open`] 의 계정 종류를 가리지 않는 판 — 사람 계정의 줄은 그대로 둔다(사람은 깨움 행이 없다).
+/// `account` 는 그 문장에서 inbox 줄의 계정을 가리키는 글자다.
+pub fn with_open_for_agents(sql: &str, marker: &str, id: &str, account: &str, tag: &str) -> String {
+    put_after(
+        sql,
+        marker,
+        &format!(
+            " and (exists (select 1 from wake {tag} where {tag}.inbox_id = {id} and {tag}.state in ('pending', 'delivered')) \
+               or not exists (select 1 from account {tag}_k where {tag}_k.id = {account} and {tag}_k.kind = 'agent'))"
+        ),
+    )
+}
+
+fn put_after(sql: &str, marker: &str, extra: &str) -> String {
+    let n = sql.matches(marker).count();
+    assert!(n == 1, "wake_source: `{marker}` appears {n} times");
+    sql.replacen(marker, &format!("{marker}{extra}"), 1)
+}
+
+/// 「이 계정이 이 글로 불렸나」를 읽는 문장이 `inbox` 대신 읽는 것 — inbox 줄과 깨움 행을 합친 것이다.
+/// 지금은 두 표에 같은 줄이 있어 답이 같고, 에이전트 inbox 쓰기를 걷은 뒤(E3)에도 그 문장이 그대로 답한다.
+/// 지운 inbox 줄의 닫힌(`canceled`) 깨움은 세지 않는다 — 그 줄은 inbox 에도 없다.
+pub const EITHER: &str = "(select account_id, message_id, reason from inbox \
+     union all select account_id, message_id, reason from wake where state <> 'canceled')";
+
+/// 골든 `gate_awaiting` 에서 바꾸는 낱말.
+pub const GATE_AWAITING_FROM: &str = "from inbox i\n";
+/// 별칭 없이 읽는 문장(골든 `edit_inbox_already`·`ask` 의 「이미 불렸나」)에서 바꾸는 낱말.
+pub const BARE_FROM: &str = "from inbox where ";
+/// 골든 `thread_status_facts` 에서 바꾸는 낱말(두 번 나온다).
+pub const FACTS_FROM: &str = "from inbox i join t ";
+
+/// `sql` 의 `from` 낱말(예: `from inbox i `)을 [`EITHER`] 를 읽게 바꾼다 — `tail` 은 표 이름 뒤에 올 글자(별칭 포함, 예: ` i `)다.
+/// 정확히 `times` 번 나와야 한다.
+pub fn either(sql: &str, from: &str, tail: &str, times: usize) -> String {
+    let n = sql.matches(from).count();
+    assert!(
+        n == times,
+        "wake_source: `{from}` appears {n} times, expected {times}"
+    );
+    sql.replace(from, &format!("from {EITHER}{tail}"))
+}
+
+/// 나머지 읽는 곳이 켜져 있으면 [`with_open`], 아니면 그대로.
+pub fn open_if_on(sql: &str, marker: &str, id: &str, tag: &str) -> String {
+    if readers() {
+        with_open(sql, marker, id, tag)
+    } else {
+        sql.to_owned()
+    }
+}
+
+/// 나머지 읽는 곳이 켜져 있으면 [`either`], 아니면 그대로.
+pub fn either_if_on(sql: &str, from: &str, tail: &str, times: usize) -> String {
+    if readers() {
+        either(sql, from, tail, times)
+    } else {
+        sql.to_owned()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn golden_fragments_move_to_both_tables() {
+        let v: serde_json::Value =
+            serde_json::from_str(include_str!("../../golden/sql_fragments.json")).unwrap();
+        let g = |k: &str| v[k].as_str().unwrap().to_owned();
+        let gate = either(&g("gate_awaiting"), GATE_AWAITING_FROM, " i\n", 1);
+        assert!(gate.contains("where i.account_id = $1::uuid and i.message_id = $2::uuid"));
+        let already = either(&g("edit_inbox_already"), BARE_FROM, " ei where ", 1);
+        assert!(already.ends_with(") ei where message_id = $1::uuid"));
+        let facts = either(&g("thread_status_facts"), FACTS_FROM, " i join t ", 2);
+        // 사실 문장에 inbox 를 읽는 자리가 남지 않는다 — 합친 것 안의 한 번씩만이다.
+        assert_eq!(facts.matches("from inbox").count(), 2);
+        assert_eq!(
+            facts.matches("from wake where state <> 'canceled'").count(),
+            2
+        );
+    }
 
     #[test]
     fn switch_is_inbox_unless_wake() {
@@ -88,6 +202,49 @@ mod tests {
             WAKE_SOURCE_PRIVILEGES
                 .iter()
                 .all(|(t, p)| t.starts_with("wake.") && *p == "SELECT")
+        );
+    }
+    #[test]
+    fn open_condition_goes_right_after_the_unread_marker() {
+        let sql = "select 1 from inbox i where i.read_at is null order by i.id";
+        let out = with_open(sql, "i.read_at is null", "i.id", "ow");
+        assert!(out.contains(
+            "i.read_at is null and exists (select 1 from wake ow where ow.inbox_id = i.id and ow.state in ('pending', 'delivered')) order by"
+        ));
+        let any = with_open_for_agents(sql, "i.read_at is null", "i.id", "i.account_id", "ow");
+        assert!(any.contains("or not exists (select 1 from account ow_k where ow_k.id = i.account_id and ow_k.kind = 'agent'))"));
+        assert!(!readers());
+    }
+
+    #[test]
+    #[should_panic(expected = "appears 0 times")]
+    fn open_condition_stops_when_the_marker_is_gone() {
+        with_open("select 1", "i.read_at is null", "i.id", "ow");
+    }
+
+    #[test]
+    fn either_reads_both_tables_and_skips_canceled_wakes() {
+        let out = either(
+            "select 1 from inbox i where i.account_id = $1",
+            "from inbox i ",
+            " i ",
+            1,
+        );
+        assert!(
+            out.starts_with("select 1 from (select account_id, message_id, reason from inbox ")
+        );
+        assert!(out.contains("from wake where state <> 'canceled') i where i.account_id = $1"));
+        assert!(!EITHER.contains("work_id"));
+    }
+
+    #[test]
+    #[should_panic(expected = "expected 2")]
+    fn either_stops_when_the_count_is_off() {
+        either(
+            "select 1 from inbox i where true",
+            "from inbox i ",
+            " i ",
+            2,
         );
     }
 }

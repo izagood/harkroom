@@ -91,7 +91,7 @@ async fn main() {
         std::process::exit(1);
     }
     let write = open_write_pool().await;
-    enable_wake_source(&pool).await;
+    enable_wake_source(&pool, write.as_ref()).await;
     enable_wake_cause(&pool, write.as_ref()).await;
     if let (Some(hash), false) = (&claim, claim_seeded) {
         seed_claim_with_write_pool(write.as_ref(), hash).await;
@@ -5943,7 +5943,7 @@ async fn enable_wake_write(pool: &sqlx::PgPool) {
 
 /// EB 턴 원천 교체. `HARKROOM_WAKE_SOURCE` 가 `wake` 가 아니면 켜지 않는다. 깨움 행 같이 쓰기가 꺼져 있거나 읽기 풀에 깨움 표 권한이
 /// 없어도 켜지 않는다 — 그때 에이전트 폴은 지금처럼 inbox 로 답한다. `read` 는 폴이 쓰는 읽기 풀이다.
-async fn enable_wake_source(read: &sqlx::PgPool) {
+async fn enable_wake_source(read: &sqlx::PgPool, write: Option<&sqlx::PgPool>) {
     use harkroom_server::core::{wake_source, wake_write};
     if !wake_source::switch_from_env() {
         return;
@@ -5956,6 +5956,7 @@ async fn enable_wake_source(read: &sqlx::PgPool) {
         Ok(m) if m.is_empty() => {
             eprintln!("front: wake source on");
             wake_source::enable();
+            enable_wake_readers(read, write).await;
         }
         Ok(m) => eprintln!("front: wake source off — missing privileges {m:?}"),
         Err(e) => eprintln!(
@@ -5963,6 +5964,34 @@ async fn enable_wake_source(read: &sqlx::PgPool) {
             e.as_database_error().map_or("io", |_| "db")
         ),
     }
+}
+
+/// ED 나머지 읽는 곳. 턴 원천 교체(EB)가 켜졌을 때만 본다. 그 문장들이 도는 두 풀(읽기·쓰기) 가운데 하나라도 깨움 표 칸 권한이
+/// 없으면 켜지 않는다 — 그때 그 자리들은 지금처럼 inbox 만 읽고, 폴만 깨움 행에서 답한다.
+async fn enable_wake_readers(read: &sqlx::PgPool, write: Option<&sqlx::PgPool>) {
+    use harkroom_server::core::wake_source;
+    let Some(write) = write else {
+        eprintln!("front: wake readers off — no write pool");
+        return;
+    };
+    for (name, pool) in [("read", read), ("write", write)] {
+        match write::missing_in(pool, wake_source::WAKE_READER_PRIVILEGES, &[]).await {
+            Ok(m) if m.is_empty() => {}
+            Ok(m) => {
+                eprintln!("front: wake readers off — {name} pool missing privileges {m:?}");
+                return;
+            }
+            Err(e) => {
+                eprintln!(
+                    "front: wake readers off — privilege check failed ({})",
+                    e.as_database_error().map_or("io", |_| "db")
+                );
+                return;
+            }
+        }
+    }
+    eprintln!("front: wake readers on");
+    wake_source::enable_readers();
 }
 
 /// EC 임대·사슬 판정 이전. `HARKROOM_WAKE_CAUSE` 가 `shadow`·`on` 이 아니면 켜지 않는다. 깨움 행 같이 쓰기가 꺼져 있거나,

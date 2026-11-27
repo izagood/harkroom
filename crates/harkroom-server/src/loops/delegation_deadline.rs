@@ -202,14 +202,12 @@ async fn expire_one(pool: &PgPool, v2: bool, skip: &mut Vec<String>) -> Result<O
             .bind(&id)
             .fetch_one(&mut *tx)
             .await?;
-            let exists: bool = sqlx::query_scalar(
-                "select exists (select 1 from inbox where account_id = $1::uuid and message_id = $2::uuid \
-                   and reason = 'delegation_update' and read_at is null)",
-            )
-            .bind(&lead)
-            .bind(&message)
-            .fetch_one(&mut *tx)
-            .await?;
+            let exists: bool =
+                sqlx::query_scalar(crate::core::delegation_recall::notice_exists_sql())
+                    .bind(&lead)
+                    .bind(&message)
+                    .fetch_one(&mut *tx)
+                    .await?;
             if !exists {
                 sqlx::query(
                     "insert into inbox (account_id, message_id, reason) values ($1::uuid, $2::uuid, 'delegation_update')",

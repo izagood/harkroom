@@ -198,13 +198,27 @@ pub const CANDIDATE_SQL: &str = concat!("select w.id::text, w.root_id::text ", c
 ///   러너가 못 뜨는 작업을 임대가 풀릴 때마다 되잡지 않게.
 macro_rules! pull_only {
     () => {
-        " and exists ( \
+        pull_only!("")
+    };
+    ($open:expr) => {
+        concat!(
+            " and exists ( \
                 select 1 from inbox ib join message im on im.id = ib.message_id \
-                 where ib.account_id = w.assignee_account_id and ib.read_at is null \
-                   and coalesce(im.thread_root_id, im.id) = w.thread_root_id) \
+                 where ib.account_id = w.assignee_account_id and ib.read_at is null",
+            $open,
+            " and coalesce(im.thread_root_id, im.id) = w.thread_root_id) \
           and not exists ( \
                 select 1 from work_claim pb where pb.work_id = w.id \
                    and pb.claimed_at > now() - make_interval(secs => least(pb.attempts, 20) * 30)) "
+        )
+    };
+}
+
+/// [`pull_only!`] 에 끼우는 조건(ED) — 그 안 읽힌 줄의 깨움이 열려 있을 때만. 폴이 깨움 행에서 답할 때
+/// ([`crate::core::wake_source`]) 러너가 당길 줄과 같은 줄을 본다.
+macro_rules! pull_open_wake {
+    () => {
+        " and exists (select 1 from wake pw where pw.inbox_id = ib.id and pw.state in ('pending', 'delivered'))"
     };
 }
 
@@ -219,6 +233,21 @@ pub const PULL_CANDIDATE_SQL: &str = concat!(
     "select w.id::text, w.root_id::text ",
     candidate!(pull_only!())
 );
+
+/// [`PULL_CANDIDATE_SQL`] 의 깨움 행 판(ED) — 안 읽힌 줄 가운데 깨움이 열린 것만 센다.
+pub const PULL_CANDIDATE_WAKE_SQL: &str = concat!(
+    "select w.id::text, w.root_id::text ",
+    candidate!(pull_only!(pull_open_wake!()))
+);
+
+/// pull 문장 짝(후보, 잡기) — 나머지 읽는 곳이 깨움 행을 볼 때는 깨움 행 판이다.
+pub fn pull_sqls(wake: bool) -> (&'static str, &'static str) {
+    if wake {
+        (PULL_CANDIDATE_WAKE_SQL, PULL_CLAIM_WAKE_SQL)
+    } else {
+        (PULL_CANDIDATE_SQL, PULL_CLAIM_SQL)
+    }
+}
 
 /// pull 에 더 드는 권한(쓰기 역할) — 안 읽힌 글 읽기. 없으면 pull 만 꺼진다(좁힌 잡기는 그대로).
 pub const WORK_PULL_PRIVILEGES: &[(&str, &str)] = &[
@@ -265,6 +294,8 @@ macro_rules! claim_sql {
 pub const CLAIM_SQL: &str = claim_sql!("");
 /// [`CLAIM_SQL`] 의 pull 판 — 잠금 안에서도 [`pull_only!`] 를 다시 본다.
 pub const PULL_CLAIM_SQL: &str = claim_sql!(pull_only!());
+/// [`PULL_CLAIM_SQL`] 의 깨움 행 판(ED).
+pub const PULL_CLAIM_WAKE_SQL: &str = claim_sql!(pull_only!(pull_open_wake!()));
 
 /// 묶어서 갱신 — 이 오퍼레이터(`$1`)가 쥔 살아 있는 줄 가운데 `$3`(작업)·`$4`(그 작업을 잡을 때 받은 횟수) 짝이 맞는 것만
 /// 만료를 민다. 돌려주는 것은 갱신된 작업 id. 이미 만료됐거나, 다시 잡혀 횟수가 달라졌거나, 그 사이 자격(허용 표·회수·개인
@@ -513,7 +544,7 @@ pub async fn pull_with(
     for _ in 0..max.min(PULL_MAX) {
         let got = claim_one(
             pool,
-            (PULL_CANDIDATE_SQL, PULL_CLAIM_SQL),
+            pull_sqls(super::wake_source::readers()),
             operator_id,
             slot_generation,
             lease,
@@ -670,6 +701,24 @@ pub async fn note_turn_with(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pull_wake_statements_only_add_the_open_wake_condition() {
+        let open = " and exists (select 1 from wake pw where pw.inbox_id = ib.id and pw.state in ('pending', 'delivered'))";
+        for (wake, plain) in [
+            (PULL_CANDIDATE_WAKE_SQL, PULL_CANDIDATE_SQL),
+            (PULL_CLAIM_WAKE_SQL, PULL_CLAIM_SQL),
+        ] {
+            assert_eq!(wake.matches(open).count(), 1, "{wake}");
+            assert_eq!(wake.replacen(open, "", 1), plain);
+            assert!(wake.contains(&format!("ib.read_at is null{open} and coalesce(")));
+        }
+        assert_eq!(pull_sqls(false), (PULL_CANDIDATE_SQL, PULL_CLAIM_SQL));
+        assert_eq!(
+            pull_sqls(true),
+            (PULL_CANDIDATE_WAKE_SQL, PULL_CLAIM_WAKE_SQL)
+        );
+    }
 
     #[test]
     fn switch_default_off() {

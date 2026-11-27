@@ -37,7 +37,7 @@ const REQUEST_REASONS: [&str; 4] = ["mention", "team_mention", "thread_reply", "
 pub const STALE_PRIVILEGES: &[(&str, &str)] = &[("inbox.stale_notified_at", "UPDATE")];
 
 /// TS `candidates` 와 같은 술어 — 온라인 목록 대신 `agent_presence` 를 본다(위 모듈 주석).
-const CANDIDATES_SQL: &str = "select i.id, i.account_id::text, a.handle, m.channel_id::text, \
+pub const CANDIDATES_SQL: &str = "select i.id, i.account_id::text, a.handle, m.channel_id::text, \
         coalesce(m.thread_root_id, m.id)::text \
    from inbox i \
    join message m on m.id = i.message_id \
@@ -56,6 +56,17 @@ const CANDIDATES_SQL: &str = "select i.id, i.account_id::text, a.handle, m.chann
     and a.disabled_at is null and a.deleted_at is null \
   order by i.id \
   limit 200";
+
+/// 후보 문장 — 나머지 읽는 곳이 깨움 행을 볼 때는 안 읽힌 줄 가운데 깨움이 열린 것만 본다(폴이 내줄 줄과 같다).
+fn candidates_sql() -> &'static str {
+    static S: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    S.get_or_init(|| {
+        crate::core::wake_source::open_if_on(CANDIDATES_SQL, STALE_UNREAD, "i.id", "sw")
+    })
+}
+
+/// [`CANDIDATES_SQL`] 의 「안 읽음」 조건.
+pub const STALE_UNREAD: &str = "i.read_at is null";
 
 const MARK_SQL: &str = "update inbox set stale_notified_at = now() \
   where id = any($1) and stale_notified_at is null and read_at is null returning id";
@@ -212,7 +223,7 @@ async fn post_one(st: &PostState, group: &[Candidate]) -> Result<bool, sqlx::Err
 
 /// TS `sweep`(기동 유예는 [`spawn`] 이 본다). 글을 낸 묶음 수를 돌려준다.
 pub async fn sweep(st: &PostState, opts: Opts) -> Result<usize, sqlx::Error> {
-    let rows: Vec<(i64, String, String, String, String)> = sqlx::query_as(CANDIDATES_SQL)
+    let rows: Vec<(i64, String, String, String, String)> = sqlx::query_as(candidates_sql())
         .bind(&REQUEST_REASONS[..])
         .bind(ms(opts.stale_after))
         .bind(ms(opts.offline_grace))
@@ -277,6 +288,15 @@ pub fn spawn(gate: PgPool, st: PostState) -> tokio::task::JoinHandle<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn candidates_wake_statement_keeps_unread_and_adds_open_wake() {
+        let sql = crate::core::wake_source::with_open(CANDIDATES_SQL, STALE_UNREAD, "i.id", "sw");
+        assert!(sql.contains(
+            "where i.read_at is null and exists (select 1 from wake sw where sw.inbox_id = i.id"
+        ));
+        assert_eq!(candidates_sql(), CANDIDATES_SQL);
+    }
 
     #[test]
     fn disk_low_only_below_the_line() {

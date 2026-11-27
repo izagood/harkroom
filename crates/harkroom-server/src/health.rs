@@ -212,7 +212,7 @@ pub fn canonical_avcs(raw: &str) -> Option<String> {
     ))
 }
 
-const OLDEST_UNREAD: &str = "select a.handle, round(extract(epoch from (now() - min(i.created_at))))::bigint \
+pub const OLDEST_UNREAD: &str = "select a.handle, round(extract(epoch from (now() - min(i.created_at))))::bigint \
      from inbox i join account a on a.id = i.account_id \
      join agent_config ac on ac.account_id = a.id \
      join message m on m.id = i.message_id join channel ch on ch.id = m.channel_id \
@@ -220,6 +220,17 @@ const OLDEST_UNREAD: &str = "select a.handle, round(extract(epoch from (now() - 
        and ((ch.kind = 'standard' and ch.visibility = 'public') \
          or exists (select 1 from channel_member cm_vis where cm_vis.channel_id = ch.id and cm_vis.account_id = i.account_id)) \
      group by a.handle";
+
+/// [`OLDEST_UNREAD`] 의 「안 읽음」 조건.
+pub const OLDEST_UNREAD_MARK: &str = "i.read_at is null";
+
+/// 가장 오래 안 읽힌 줄 — 나머지 읽는 곳이 깨움 행을 볼 때는 깨움이 열린 줄만 센다.
+fn oldest_unread_sql() -> &'static str {
+    static S: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    S.get_or_init(|| {
+        crate::core::wake_source::open_if_on(OLDEST_UNREAD, OLDEST_UNREAD_MARK, "i.id", "hw")
+    })
+}
 
 /// TS `GET /metrics`(Prometheus 텍스트 0.0.4). 게이지 하나가 실패하면 그 지표만 뺀다(TS 와 같다).
 pub async fn metrics(State(state): State<AppState>, _: RequireAccount) -> Response {
@@ -292,7 +303,7 @@ pub async fn metrics(State(state): State<AppState>, _: RequireAccount) -> Respon
             );
         }
     }
-    if let Ok(rows) = sqlx::query_as::<_, (String, i64)>(OLDEST_UNREAD)
+    if let Ok(rows) = sqlx::query_as::<_, (String, i64)>(oldest_unread_sql())
         .fetch_all(pool)
         .await
     {
@@ -311,4 +322,20 @@ pub async fn metrics(State(state): State<AppState>, _: RequireAccount) -> Respon
         )
         .body(Body::from(out))
         .expect("고정 응답")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn oldest_unread_wake_statement_adds_open_wake() {
+        let sql =
+            crate::core::wake_source::with_open(OLDEST_UNREAD, OLDEST_UNREAD_MARK, "i.id", "hw");
+        assert!(sql.contains(
+            "where i.read_at is null and exists (select 1 from wake hw where hw.inbox_id = i.id"
+        ));
+        assert!(sql.contains("and a.kind = 'agent'"));
+        assert_eq!(oldest_unread_sql(), OLDEST_UNREAD);
+    }
 }
