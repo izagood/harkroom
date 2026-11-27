@@ -5657,6 +5657,7 @@ async fn open_write_pool() -> Option<sqlx::PgPool> {
             enable_device_allow(&pool).await;
             enable_work_route(&pool).await;
             enable_ledger_mandate(&pool).await;
+            enable_wake_write(&pool).await;
             Some(pool)
         }
         Ok(m) => {
@@ -5851,6 +5852,25 @@ async fn enable_ledger_mandate(pool: &sqlx::PgPool) {
         Ok(m) => eprintln!("front: ledger mandate shadow off — missing privileges {m:?}"),
         Err(e) => eprintln!(
             "front: ledger mandate shadow off — privilege check failed ({})",
+            e.as_database_error().map_or("io", |_| "db")
+        ),
+    }
+}
+
+/// EA 깨움 행 같이 쓰기. `HARKROOM_WAKE_WRITE` 가 `on` 이 아니거나 권한이 모자라면 켜지 않는다 — inbox 길은 그대로 돈다.
+async fn enable_wake_write(pool: &sqlx::PgPool) {
+    use harkroom_server::core::wake_write;
+    if !wake_write::switch_from_env() {
+        return;
+    }
+    match write::missing_in(pool, wake_write::WAKE_WRITE_PRIVILEGES, &[]).await {
+        Ok(m) if m.is_empty() => {
+            eprintln!("front: wake write on");
+            wake_write::enable();
+        }
+        Ok(m) => eprintln!("front: wake write off — missing privileges {m:?}"),
+        Err(e) => eprintln!(
+            "front: wake write off — privilege check failed ({})",
             e.as_database_error().map_or("io", |_| "db")
         ),
     }

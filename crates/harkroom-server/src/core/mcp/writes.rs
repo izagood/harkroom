@@ -438,15 +438,8 @@ fn inbox_ids(args: &Value) -> Option<Vec<i64>> {
 async fn inbox_read(write: &PgPool, me: &Account, args: &Value) -> Option<String> {
     let ids = inbox_ids(args)?;
     Some(
-        match sqlx::query(
-            "update inbox set read_at = now() where account_id = $1::uuid and id = any($2) and read_at is null",
-        )
-        .bind(&me.id)
-        .bind(&ids)
-        .execute(write)
-        .await
-        {
-            Ok(r) => ok_text(&format!("{{\"read\":{}}}", r.rows_affected())),
+        match crate::core::wake_write::mark_read(write, &me.id, &ids).await {
+            Ok(n) => ok_text(&format!("{{\"read\":{n}}}")),
             Err(_) => internal(),
         },
     )

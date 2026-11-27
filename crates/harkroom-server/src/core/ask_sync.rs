@@ -36,6 +36,7 @@ pub async fn wake_asker(
         .bind(reason)
         .execute(&mut *sp)
         .await?;
+        super::wake_write::along_one(&mut sp, message_id, asker).await;
         emit_event(
             &mut sp,
             &json!({ "type": "inbox.updated", "accountId": asker }),

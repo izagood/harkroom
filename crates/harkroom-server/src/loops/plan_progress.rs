@@ -473,11 +473,15 @@ async fn wake_manager(
     else {
         return Ok(false);
     };
+    // 한 트랜잭션 — inbox 줄과 깨움 행(스위치가 켜져 있을 때)이 같이 선다.
+    let mut tx = st.write.begin().await?;
     sqlx::query(WAKE_INBOX_SQL)
         .bind(manager)
         .bind(&message)
-        .execute(&st.write)
+        .execute(&mut *tx)
         .await?;
+    crate::core::wake_write::along_one(&mut tx, &message, manager).await;
+    tx.commit().await?;
     // 러너의 inbox 대기를 깨운다 — 실패해도 줄은 inbox 에 있다(다음 훑기가 집는다).
     let signal = async {
         let mut conn = st.write.acquire().await?;

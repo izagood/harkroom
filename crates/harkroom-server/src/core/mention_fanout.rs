@@ -107,6 +107,7 @@ pub async fn insert_inbox_many(
             .await?;
     }
     let got: Vec<String> = inserted.into_iter().map(|(_, a)| a).collect();
+    super::wake_write::along(conn, message_id, &got).await;
     if s.reveal_reasons.iter().any(|r| r == reason) {
         sqlx::query(s.reveal_hidden.as_str())
             .bind(&got)

@@ -188,6 +188,7 @@ pub(crate) async fn notify_if_settled(
         .bind(&message)
         .execute(&mut *conn)
         .await?;
+    super::wake_write::along_one(conn, &message, &lead).await;
     Ok(Some(lead))
 }
 

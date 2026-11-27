@@ -90,14 +90,7 @@ pub async fn post_read(State(st): State<Arc<InboxReadState>>, req: Request) -> R
             );
         }
     };
-    match sqlx::query(
-        "update inbox set read_at = now() where account_id = $1::uuid and id = any($2) and read_at is null",
-    )
-    .bind(&me.id)
-    .bind(&ids)
-    .execute(&st.write)
-    .await
-    {
+    match crate::core::wake_write::mark_read(&st.write, &me.id, &ids).await {
         Ok(_) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => internal(e),
     }
