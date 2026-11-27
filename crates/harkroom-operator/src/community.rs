@@ -644,6 +644,21 @@ impl AssignmentFrames {
         self.reconciler.lane_mismatch(runner_id, agent_id)
     }
 
+    /// 문지기(J2c 「다」) — 조합이 바라는 모드와 러너 모드를 견주고, 다르면 다음 기동 모드를 적어 다시 띄운다. 막으면 true.
+    pub fn combo_gate(
+        &self,
+        runner_id: &str,
+        agent_id: &str,
+        want: &crate::assignments::ComboWant,
+    ) -> bool {
+        self.reconciler.combo_gate(runner_id, agent_id, want)
+    }
+
+    /// 그 계정 풀 이름이 이 기기에서 계정으로 풀리는가(security J1).
+    pub fn pool_known(&self, agent_id: &str, name: &str) -> bool {
+        self.reconciler.pool_known(agent_id, name)
+    }
+
     /// TS `community.noteRunnerLane` — 러너가 relay 로 알린 제 모드.
     pub fn note_runner_lane(&self, runner_id: &str, on: bool) {
         self.reconciler.note_runner_lane(runner_id, on);

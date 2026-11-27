@@ -72,6 +72,35 @@ pub enum PoolWake {
     Failed,
 }
 
+/// 그 턴 스레드의 실행 조합이 바라는 러너 모드(J2c 「다」). `Local` 은 조합 줄 없음 — 로컬 설정 그대로다.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ComboWant {
+    Local,
+    /// 키 조합 — API 키 연결 모드 러너.
+    Key,
+    /// 풀 조합 — 그 계정 풀 이름으로 뜬 구독 풀 모드 러너.
+    Pool(String),
+}
+
+/// 다음 기동 모드(`over`)를 얹은 API 키 연결 켜짐. 없으면 로컬 설정이다.
+fn eff_lane(local: Option<&LocalAgent>, over: Option<&ComboWant>) -> bool {
+    match over {
+        Some(ComboWant::Key) => true,
+        Some(ComboWant::Pool(_)) => false,
+        _ => lane_on(local),
+    }
+}
+
+/// 다음 기동 모드(`over`)를 얹은 계정 풀 이름. 풀 조합이면 그 이름, 아니면 로컬 설정(`claudePool`)이다.
+fn eff_pool(local: Option<&LocalAgent>, over: Option<&ComboWant>) -> Option<String> {
+    match over {
+        Some(ComboWant::Pool(n)) => Some(n.clone()),
+        _ => local
+            .and_then(|l| l.claude_pool.clone())
+            .filter(|p| !p.is_empty()),
+    }
+}
+
 fn lane_on(local: Option<&LocalAgent>) -> bool {
     local
         .and_then(|l| l.provider_lane.as_ref())
@@ -232,6 +261,13 @@ struct State {
     woke: HashSet<String>,
     /// 사람의 [재시작]·설정 변경으로 SIGTERM 을 보낸 풀 에이전트. 그 뒤의 코드 0 은 반납이 아니라 재기동이다.
     restarting: HashSet<String>,
+    /// 다음 기동 모드(J2c 「다」, 에이전트마다) — 문지기가 조합과 러너 모드가 다를 때 적는다. **메모리에만** 둔다:
+    /// 오퍼레이터가 다시 뜨면 로컬 설정 모드로 돌아가고 문지기가 다시 맞춘다. `Local` 은 넣지 않는다(칸을 지운다).
+    next_mode: HashMap<String, ComboWant>,
+    /// 러너가 뜬 계정 풀 이름(env `HARKROOM_CLAUDE_POOL` 에 실은 값, 없으면 None).
+    runner_pool: HashMap<String, Option<String>>,
+    /// 다음 기동 모드를 얹어 뜬 러너.
+    runner_over: HashSet<String>,
 }
 
 pub struct AssignmentReconciler {
@@ -357,16 +393,23 @@ impl AssignmentReconciler {
             return Err("러너 id·secret 난수를 얻지 못했다".into());
         }
         self.deps.link_expect(&runner_id, &agent_id, &secret);
-        let env = self.runner_env(&runner_id, &secret, &mcp_path, local.as_ref());
+        // 다음 기동 모드(J2c 「다」) — 문지기가 적어 둔 것이 있으면 로컬 설정 위에 얹는다.
+        let over = self.st().next_mode.get(&agent_id).cloned();
+        let env = self.runner_env(
+            &runner_id,
+            &secret,
+            &mcp_path,
+            local.as_ref(),
+            over.as_ref(),
+        );
+        let pool_name = eff_pool(local.as_ref(), over.as_ref());
         // 러너 구현(B4-5c → L3c-3e). pi·omp 하네스·풀 해석 못 읽음·파일 없음이면 node 다(`runner_pick.rs`).
         // 칸 없음은 기본 rust 다(`ABSENT_RUNNER_DEFAULTS_TO_RUST`) — node 유무는 node 대상인 에이전트에서만 뜻이 있다.
         let node_present = self.deps.node_present();
         let wants = crate::runner_pick::wants_rust(local.as_ref(), node_present);
         let account_use = || {
-            self.deps.claude_account_use(
-                &agent_id,
-                local.as_ref().and_then(|l| l.claude_pool.as_deref()),
-            )
+            self.deps
+                .claude_account_use(&agent_id, pool_name.as_deref())
         };
         let mut pick = if wants {
             crate::runner_pick::pick_runner(
@@ -459,11 +502,17 @@ impl AssignmentReconciler {
                 && prev != runner_id
             {
                 st.runner_lane.remove(&prev);
+                st.runner_pool.remove(&prev);
+                st.runner_over.remove(&prev);
             }
             st.current_runner
                 .insert(agent_id.clone(), runner_id.clone());
             st.runner_lane
-                .insert(runner_id.clone(), lane_on(local.as_ref()));
+                .insert(runner_id.clone(), eff_lane(local.as_ref(), over.as_ref()));
+            st.runner_pool.insert(runner_id.clone(), pool_name.clone());
+            if over.is_some() {
+                st.runner_over.insert(runner_id.clone());
+            }
         } else {
             // 안 띄웠으면 방금 적은 secret 은 아무 러너도 안 쓴다 — 남겨 두면 장부가 자라기만 한다.
             self.deps.link_forget(&runner_id);
@@ -496,6 +545,7 @@ impl AssignmentReconciler {
         secret: &str,
         mcp_path: &str,
         local: Option<&LocalAgent>,
+        over: Option<&ComboWant>,
     ) -> BTreeMap<String, String> {
         let o = &self.opts;
         let mut env = BTreeMap::new();
@@ -519,13 +569,14 @@ impl AssignmentReconciler {
         if let Some(v) = nonempty(&o.app_version) {
             put("AGENT_VERSION", &v);
         }
-        if let Some(l) = local {
-            if let Some(w) = nonempty(&l.working_dir) {
-                put("HARKROOM_WORKING_DIR", &w);
-            }
-            if let Some(p) = nonempty(&l.claude_pool) {
-                put("HARKROOM_CLAUDE_POOL", &p);
-            }
+        if let Some(l) = local
+            && let Some(w) = nonempty(&l.working_dir)
+        {
+            put("HARKROOM_WORKING_DIR", &w);
+        }
+        // 풀 조합으로 다시 뜨면 그 풀 이름이 로컬 설정(`claudePool`)을 이긴다.
+        if let Some(p) = eff_pool(local, over) {
+            put("HARKROOM_CLAUDE_POOL", &p);
         }
         if self.deps.command_hook() {
             put("HARKROOM_COMMAND_HOOK", "1");
@@ -533,7 +584,8 @@ impl AssignmentReconciler {
         let bit = |b: bool| if b { "1" } else { "0" };
         put("HARKROOM_POST_TOOL_HOOK", bit(self.deps.post_tool_hook()));
         put("HARKROOM_CHROME_HOST", bit(self.deps.chrome_host()));
-        put(PROVIDER_LANE_ENV, bit(lane_on(local)));
+        // 늘 명시한다 — 키 모드에서 풀 모드로 바꿔 띄울 때 옛 값을 물려받지 않는다(security J2).
+        put(PROVIDER_LANE_ENV, bit(eff_lane(local, over)));
         put(RUNNER_ONE_JOB_ENV, bit(pool_on(local)));
         env
     }
@@ -545,6 +597,7 @@ impl AssignmentReconciler {
             st.parked.remove(agent_id);
             st.woke.remove(agent_id);
             st.restarting.remove(agent_id);
+            st.next_mode.remove(agent_id);
             st.respawns.remove(agent_id)
         };
         if let Some(c) = respawn {
@@ -680,6 +733,74 @@ impl AssignmentReconciler {
         } else {
             mode == Some(true)
         }
+    }
+
+    /// 문지기(J2c 「다」) — 그 턴 스레드의 조합이 바라는 모드와 이 러너의 모드를 견준다. **막아야 하면 true**.
+    ///
+    /// - `Local`(조합 줄 없음): 지금까지의 판정([`Self::lane_mismatch_in`]) 그대로. 다음 기동 모드를 얹어 뜬 러너만 계정 풀
+    ///   이름까지 로컬 설정과 견준다.
+    /// - `Key`: 러너가 API 키 연결 모드여야 한다. `Pool(이름)`: 구독 풀 모드이고 그 이름으로 뜬 러너여야 한다.
+    /// - 다르면 다음 기동 모드를 적고, 묻는 러너가 **지금 러너**일 때만 SIGTERM 을 한 번 보낸다(도는 턴이 끝난 뒤 다시 뜬다).
+    ///   물러나는 옛 러너의 물음으로 새 러너를 죽이지 않는다.
+    pub fn combo_gate(&self, runner_id: &str, agent_id: &str, want: &ComboWant) -> bool {
+        {
+            let mut st = self.st();
+            let Some(entry) = st.assigned.get(agent_id) else {
+                // 배정이 없는 러너 — 조합 줄이 없으면 지금까지처럼 지나가고, 있으면 모드를 몰라 막는다.
+                return *want != ComboWant::Local;
+            };
+            let local = entry.local.clone();
+            let lane = st.runner_lane.get(runner_id).copied();
+            let pool = st.runner_pool.get(runner_id).cloned().flatten();
+            let over = st.runner_over.contains(runner_id);
+            let had_next = st.next_mode.contains_key(agent_id);
+            let ok = match want {
+                ComboWant::Local => {
+                    !Self::lane_mismatch_in(&st, runner_id, agent_id)
+                        && (!over || lane == Some(true) || pool == eff_pool(local.as_ref(), None))
+                }
+                ComboWant::Key => lane == Some(true),
+                ComboWant::Pool(name) => lane == Some(false) && pool.as_deref() == Some(name),
+            };
+            // 다음 기동 모드는 **지금 러너**의 물음으로만 바뀐다 — 물러나는 옛 러너의 물음은 견주기만 한다.
+            let current = st.current_runner.get(agent_id).map(String::as_str) == Some(runner_id);
+            if !current {
+                return !ok;
+            }
+            if ok {
+                if *want == ComboWant::Local {
+                    st.next_mode.remove(agent_id);
+                }
+                return false;
+            }
+            let next = (*want != ComboWant::Local).then(|| want.clone());
+            let changed = st.next_mode.get(agent_id) != next.as_ref();
+            match next {
+                Some(w) => st.next_mode.insert(agent_id.to_string(), w),
+                None => st.next_mode.remove(agent_id),
+            };
+            // 조합 줄이 없고 얹은 모드도 없던 러너는 지금까지처럼 막기만 한다(설정 변경 길이 이미 SIGTERM 을 보냈다).
+            let ours = *want != ComboWant::Local || over || had_next;
+            if !ours || (!changed && st.restarting.contains(agent_id)) {
+                return true;
+            }
+            st.backoff.remove(agent_id);
+            st.last_spawn_at.remove(agent_id);
+            st.restarting.insert(agent_id.to_string());
+        }
+        // 값·주소·풀 이름은 찍지 않는다 — 모드가 바뀐다는 사실만.
+        self.deps.log(&format!(
+            "실행 조합: agent={agent_id} 러너 모드가 그 스레드의 조합과 달라 다시 띄운다(도는 턴이 끝난 뒤)"
+        ));
+        if self.deps.is_alive(agent_id) {
+            self.deps.signal(agent_id, Sig::Term);
+        }
+        true
+    }
+
+    /// 그 계정 풀 이름이 이 기기에서 실제로 계정으로 풀리는가(security J1 — 서버가 준 이름을 꼴만 보고 받지 않는다).
+    pub fn pool_known(&self, agent_id: &str, name: &str) -> bool {
+        self.deps.claude_account_use(agent_id, Some(name)) == crate::runner_pick::AccountUse::Pool
     }
 
     /// 배정된 풀 에이전트(`runnerPool: true`)인가 — 잡기(I2b)가 묻는다.
@@ -1623,6 +1744,69 @@ mod tests {
         assert_eq!(f.spawns.lock().unwrap().len(), 2);
         f.kill("a1");
         assert!(!r.restart("a1"));
+    }
+
+    /// J2c 「다」: 조합이 바라는 모드와 다르면 다음 기동 모드를 적어 다시 띄우고, 새 env 가 그 모드를 따른다.
+    #[test]
+    fn combo_gate_sets_next_mode_and_respawns_in_it() {
+        let (f, r) = setup();
+        r.on_assign("u", def(CredentialScope::Community, None), None)
+            .unwrap();
+        let again = |f: &Fake, r: &AssignmentReconciler| {
+            f.kill("a1");
+            r.on_runner_exit("a1", Some(0), None);
+            f.advance(1000);
+        };
+        // 조합 줄 없음 + 얹은 모드 없음 → 지금 그대로(신호 없음).
+        assert!(!r.combo_gate("runner-1", "a1", &ComboWant::Local));
+        assert!(f.signals.lock().unwrap().is_empty());
+        // 구독 풀 모드 러너에 키 조합 → 막고 SIGTERM 한 번(되풀이해 물어도 한 번).
+        assert!(r.combo_gate("runner-1", "a1", &ComboWant::Key));
+        assert!(r.combo_gate("runner-1", "a1", &ComboWant::Key));
+        assert_eq!(f.signals.lock().unwrap().len(), 1);
+        again(&f, &r);
+        let env = f.spawns.lock().unwrap()[1].1.clone();
+        assert_eq!(env["HARKROOM_PROVIDER_LANE"], "1");
+        assert!(!env.contains_key("HARKROOM_CLAUDE_POOL"));
+        assert!(!r.combo_gate("runner-2", "a1", &ComboWant::Key));
+        // 물러나는 옛 러너가 물어도 새 러너를 죽이지 않고, 다음 기동 모드도 건드리지 않는다.
+        assert!(r.combo_gate("runner-1", "a1", &ComboWant::Key));
+        assert!(!r.combo_gate("runner-1", "a1", &ComboWant::Local));
+        assert_eq!(f.signals.lock().unwrap().len(), 1);
+        assert!(!r.combo_gate("runner-2", "a1", &ComboWant::Key));
+        // 키 모드 러너에 풀 조합 → 그 풀 이름으로, lane 은 '0' 으로 명시된다(security J2 — 옛 값을 물려받지 않는다).
+        let team = ComboWant::Pool("team".into());
+        assert!(r.combo_gate("runner-2", "a1", &team));
+        assert_eq!(f.signals.lock().unwrap().len(), 2);
+        again(&f, &r);
+        let env = f.spawns.lock().unwrap()[2].1.clone();
+        assert_eq!(env["HARKROOM_PROVIDER_LANE"], "0");
+        assert_eq!(env["HARKROOM_CLAUDE_POOL"], "team");
+        assert!(!r.combo_gate("runner-3", "a1", &team));
+        // 다른 풀 이름이면 다시 뜬다.
+        assert!(r.combo_gate("runner-3", "a1", &ComboWant::Pool("other".into())));
+        again(&f, &r);
+        assert_eq!(
+            f.spawns.lock().unwrap()[3].1["HARKROOM_CLAUDE_POOL"],
+            "other"
+        );
+        // 조합 줄 없는 스레드가 오면 로컬 설정 모드로 돌아간다(얹은 풀 이름이 로컬과 다르다).
+        assert!(r.combo_gate("runner-4", "a1", &ComboWant::Local));
+        again(&f, &r);
+        let env = f.spawns.lock().unwrap()[4].1.clone();
+        assert_eq!(env["HARKROOM_PROVIDER_LANE"], "0");
+        assert!(!env.contains_key("HARKROOM_CLAUDE_POOL"));
+        assert!(!r.combo_gate("runner-5", "a1", &ComboWant::Local));
+        // 배정이 없는 에이전트: 조합 줄이 있으면 막고, 없으면 지금 그대로.
+        assert!(r.combo_gate("x", "nobody", &ComboWant::Key));
+        assert!(!r.combo_gate("x", "nobody", &ComboWant::Local));
+        // 풀 이름 허용(J1)은 이 기기에서 계정으로 풀릴 때만.
+        *f.account_use.lock().unwrap() = crate::runner_pick::AccountUse::Pool;
+        assert!(r.pool_known("a1", "team"));
+        *f.account_use.lock().unwrap() = crate::runner_pick::AccountUse::None;
+        assert!(!r.pool_known("a1", "team"));
+        *f.account_use.lock().unwrap() = crate::runner_pick::AccountUse::Unreadable;
+        assert!(!r.pool_known("a1", "team"));
     }
 
     #[test]

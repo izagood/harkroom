@@ -16,6 +16,7 @@
 //!    - 설정이 없거나 틀리면 `{lane: null}`(200). 러너는 lane 으로 떴는데 이 답이면 턴을 멈춘다.
 //!    - 실패는 코드만: 임대 없음 409 `no_lease`, 그 밖 502 `<code>`. 로그에 이름·주소·값을 찍지 않는다.
 //!    - 사슬에서 `turn_secrets` **앞**에 선다(TS run.ts 순서).
+use crate::assignments::ComboWant;
 use crate::local_agents::ProviderLane;
 use crate::turn_secrets::ComboMount;
 use crate::turn_slots::TURN_SLOTS_PATH;
@@ -34,6 +35,18 @@ const CAUSE_MAX: usize = 128;
 pub trait LanePorts: Send + Sync {
     /// 그 러너의 모드가 그 에이전트의 지금 설정과 다른가(TS `reconciler.laneMismatch`).
     fn mismatch(&self, runner_id: &str, agent_id: &str) -> bool;
+    /// 그 턴 스레드의 조합이 바라는 모드와 러너 모드를 견준다(J2c 「다」) — 막아야 하면 true. 다르면 조정기가 다음 기동
+    /// 모드를 적고 러너를 다시 띄운다. 기본은 조합 줄이 없을 때만 [`Self::mismatch`] 로 답하고 그 밖은 막는다.
+    fn combo_gate(&self, runner_id: &str, agent_id: &str, want: &ComboWant) -> bool {
+        match want {
+            ComboWant::Local => self.mismatch(runner_id, agent_id),
+            _ => true,
+        }
+    }
+    /// 그 계정 풀 이름이 이 기기 설정에서 계정으로 풀리는가(security J1). 모르면 false — 서버가 준 이름을 그냥 받지 않는다.
+    fn pool_known(&self, _agent_id: &str, _name: &str) -> bool {
+        false
+    }
     /// 러너가 relay 로 알린 제 모드(`providerLane.mode`, TS `noteRunnerLane`).
     fn note_mode(&self, runner_id: &str, on: bool);
     /// 그 에이전트의 로컬 lane 설정 — 부를 때마다 `operator.json` 에서 읽는다. 없거나 틀리면 None.
@@ -72,13 +85,63 @@ impl GateLog {
     }
 }
 
+/// 서버 조합 기동 답 길(J2c 「가」 — `GET /agent/exec-combo?threadRootId=`).
+pub const COMBO_KIND_PATH: &str = "/agent/exec-combo";
+
+/// 턴 칸 열쇠(`<채널 id>/<스레드 뿌리 id | _root>`, 러너 `thread_key`)에서 스레드 id 를 꺼낸다 — **uuid 꼴일 때만**.
+/// 이 값은 러너가 적은 것이라 서버 물음의 질의로만 쓴다(비밀을 고르지 않는다 — 답은 그 에이전트의 조합 종류뿐이다).
+pub fn thread_of_slot(req: &RunnerLinkRequest) -> Option<String> {
+    let RunnerLinkRequest::HttpForward { body, .. } = req else {
+        return None;
+    };
+    let v: Value = serde_json::from_str(body.as_deref()?).ok()?;
+    let id = v.get("key")?.as_str()?.rsplit('/').next()?;
+    let b = id.as_bytes();
+    let ok = b.len() == 36
+        && b.iter().enumerate().all(|(i, c)| match i {
+            8 | 13 | 18 | 23 => *c == b'-',
+            _ => c.is_ascii_hexdigit(),
+        });
+    ok.then(|| id.to_ascii_lowercase())
+}
+
+/// 「가」 답(상태·본문)을 바라는 모드로 읽는다. 그 길이 없는 서버(404)는 조합 없음이다. 거절·틀린 꼴은 코드 하나.
+pub fn parse_combo_kind(status: u16, body: &str) -> Result<ComboWant, String> {
+    if status == 404 {
+        return Ok(ComboWant::Local);
+    }
+    let v: Value = serde_json::from_str(body).unwrap_or(Value::Null);
+    if status != 200 {
+        let code = v
+            .pointer("/error/code")
+            .and_then(Value::as_str)
+            .unwrap_or("unavailable");
+        return Err(mount_failure_code(code));
+    }
+    match v.get("kind").and_then(Value::as_str) {
+        Some("none") => Ok(ComboWant::Local),
+        Some("key") => Ok(ComboWant::Key),
+        Some("pool") => match v.get("accountPool").and_then(Value::as_str) {
+            // 이름 꼴은 계정 풀 이름 문법 그대로 — 이 값이 러너 env 에 실린다.
+            Some(n) if harkroom_accounts::is_account_name(n) => Ok(ComboWant::Pool(n.to_string())),
+            _ => Err("combo_bad_answer".into()),
+        },
+        _ => Err("combo_bad_answer".into()),
+    }
+}
+
 /// lane 턴 자리 막기(TS `laneTurnGate.maybeBlock`). relay 의 `POST /agent/turn-slots` 만 본다.
+///
+/// `combo_of(스레드 id)` 는 그 턴 스레드의 조합 종류를 서버에 **매번** 묻는다(J2c 「다」, 기억하지 않는다). 못 물었거나
+/// 거절이면 그 턴을 세우지 않는다(409, 코드만). 풀 조합의 이름이 이 기기 설정에 없으면 막고 러너를 다시 띄우지 않는다(J1).
+#[allow(clippy::too_many_arguments)]
 pub fn gate(
     runner_id: &str,
     agent_id: &str,
     req: &RunnerLinkRequest,
     from: RunnerLinkKind,
     ports: Option<&dyn LanePorts>,
+    combo_of: &dyn Fn(Option<&str>) -> Result<ComboWant, String>,
     logged: &GateLog,
     log: &dyn Fn(&str),
 ) -> Option<RunnerLinkResponse> {
@@ -86,17 +149,41 @@ pub fn gate(
         return None;
     }
     // 판정 재료가 없으면 막는다(security 67974 a) — 모드를 모르는 채로 자리를 내주지 않는다.
-    let blocked = ports.is_none_or(|p| p.mismatch(runner_id, agent_id));
-    if !blocked {
-        logged.lock().remove(runner_id);
-        return None;
-    }
+    let Some(ports) = ports else {
+        return Some(block(req, runner_id, agent_id, "lane_pending", logged, log));
+    };
+    let want = match combo_of(thread_of_slot(req).as_deref()) {
+        Ok(ComboWant::Pool(name)) if !ports.pool_known(agent_id, &name) => {
+            Err("combo_pool_unknown".to_string())
+        }
+        other => other,
+    };
+    let code = match want {
+        Ok(want) if !ports.combo_gate(runner_id, agent_id, &want) => {
+            logged.lock().remove(runner_id);
+            return None;
+        }
+        Ok(_) => "lane_pending".to_string(),
+        Err(raw) => mount_failure_code(&raw),
+    };
+    Some(block(req, runner_id, agent_id, &code, logged, log))
+}
+
+/// 409 로 막고, 같은 러너·같은 코드는 한 번만 적는다. 로그에는 에이전트 id 와 코드만 — 주소·풀 이름은 찍지 않는다.
+fn block(
+    req: &RunnerLinkRequest,
+    runner_id: &str,
+    agent_id: &str,
+    code: &str,
+    logged: &GateLog,
+    log: &dyn Fn(&str),
+) -> RunnerLinkResponse {
     if logged.lock().insert(runner_id.to_string()) {
         log(&format!(
-            "API 키 연결: agent={agent_id} 러너 모드가 설정과 달라(또는 판정 못 함) 새 턴을 막는다 — 러너가 다시 뜨면 풀린다"
+            "API 키 연결: agent={agent_id} 새 턴을 막는다({code}) — 러너 모드가 설정·실행 조합과 다르거나 판정하지 못했다. 러너가 다시 뜨면 풀린다"
         ));
     }
-    Some(refuse(req, 409, "lane_pending"))
+    refuse(req, 409, code)
 }
 
 /// lane 마운트(TS `providerLaneMount.maybeHandle`). `mount_for(cause, secret_name)` 은 그 턴 임대로 비밀을 써 경로를 돌려준다.
@@ -216,6 +303,10 @@ mod tests {
         Ok(ComboMount::None)
     }
 
+    fn local_kind(_: Option<&str>) -> Result<ComboWant, String> {
+        Ok(ComboWant::Local)
+    }
+
     fn never_combo(_: &str) -> Result<ComboMount, String> {
         panic!("조합을 물으면 안 된다")
     }
@@ -240,7 +331,19 @@ mod tests {
         let rel = fwd("POST", "/agent/turn-slots/release", r#"{"key":"k"}"#);
         let relay = RunnerLinkKind::Relay;
         // 맞으면 지나간다.
-        assert!(gate("r1", "a", &take, relay, Some(&Ports(false)), &logged, &log).is_none());
+        assert!(
+            gate(
+                "r1",
+                "a",
+                &take,
+                relay,
+                Some(&Ports(false)),
+                &local_kind,
+                &logged,
+                &log
+            )
+            .is_none()
+        );
         // 다르면 409 lane_pending, 로그는 한 번만.
         for _ in 0..2 {
             let (s, b) = parts(gate(
@@ -249,6 +352,7 @@ mod tests {
                 &take,
                 relay,
                 Some(&Ports(true)),
+                &local_kind,
                 &logged,
                 &log,
             ));
@@ -259,10 +363,19 @@ mod tests {
         }
         assert_eq!(lines.borrow().len(), 1);
         // 판정 재료가 없으면 막는다(fail-closed).
-        let (s, _) = parts(gate("r2", "a", &take, relay, None, &logged, &log));
+        let (s, _) = parts(gate(
+            "r2",
+            "a",
+            &take,
+            relay,
+            None,
+            &local_kind,
+            &logged,
+            &log,
+        ));
         assert_eq!(s, 409);
         // 놓기·다른 소켓·다른 길은 건드리지 않는다.
-        assert!(gate("r1", "a", &rel, relay, None, &logged, &log).is_none());
+        assert!(gate("r1", "a", &rel, relay, None, &local_kind, &logged, &log).is_none());
         assert!(
             gate(
                 "r1",
@@ -270,17 +383,212 @@ mod tests {
                 &take,
                 RunnerLinkKind::Bridge,
                 None,
+                &local_kind,
                 &logged,
                 &log
             )
             .is_none()
         );
         let other = fwd("POST", "/agent/activity", "{}");
-        assert!(gate("r1", "a", &other, relay, None, &logged, &log).is_none());
+        assert!(gate("r1", "a", &other, relay, None, &local_kind, &logged, &log).is_none());
         // 풀리면 기록을 지워 다음 막힘을 다시 적는다.
-        assert!(gate("r1", "a", &take, relay, Some(&Ports(false)), &logged, &log).is_none());
-        let _ = gate("r1", "a", &take, relay, Some(&Ports(true)), &logged, &log);
+        assert!(
+            gate(
+                "r1",
+                "a",
+                &take,
+                relay,
+                Some(&Ports(false)),
+                &local_kind,
+                &logged,
+                &log
+            )
+            .is_none()
+        );
+        let _ = gate(
+            "r1",
+            "a",
+            &take,
+            relay,
+            Some(&Ports(true)),
+            &local_kind,
+            &logged,
+            &log,
+        );
         assert_eq!(lines.borrow().len(), 3);
+    }
+
+    /// 조합 견주기를 흉내 내는 판정 재료: 러너 모드(`lane`·`pool`)와 이 기기가 아는 풀 이름.
+    struct ComboPorts {
+        lane: bool,
+        pool: Option<&'static str>,
+        known: &'static [&'static str],
+        asked: RefCell<Vec<ComboWant>>,
+    }
+    // 시험은 한 스레드에서만 돈다.
+    unsafe impl Sync for ComboPorts {}
+    impl LanePorts for ComboPorts {
+        fn mismatch(&self, _: &str, _: &str) -> bool {
+            false
+        }
+        fn combo_gate(&self, _: &str, _: &str, want: &ComboWant) -> bool {
+            self.asked.borrow_mut().push(want.clone());
+            match want {
+                ComboWant::Local => false,
+                ComboWant::Key => !self.lane,
+                ComboWant::Pool(n) => self.lane || self.pool != Some(n.as_str()),
+            }
+        }
+        fn pool_known(&self, _: &str, name: &str) -> bool {
+            self.known.contains(&name)
+        }
+        fn note_mode(&self, _: &str, _: bool) {}
+        fn lane_of(&self, _: &str) -> Option<ProviderLane> {
+            None
+        }
+    }
+
+    const THREAD: &str = "0b1c2d3e-4f50-4a61-8b72-9c8d7e6f5a40";
+
+    fn slot(key: &str) -> RunnerLinkRequest {
+        fwd(
+            "POST",
+            "/agent/turn-slots",
+            &json!({"key": key}).to_string(),
+        )
+    }
+
+    /// 문지기 표(「가」 답 × 러너 모드) — 8칸 + 못 물음·거절·모르는 풀 이름.
+    #[test]
+    fn gate_compares_thread_combo_kind_with_runner_mode() {
+        let relay = RunnerLinkKind::Relay;
+        let take = slot(&format!("ch/{THREAD}"));
+        let run = |ports: &ComboPorts, kind: Result<ComboWant, String>| {
+            let seen = RefCell::new(Vec::<Option<String>>::new());
+            let lines = RefCell::new(Vec::<String>::new());
+            let r = gate(
+                "r1",
+                "a",
+                &take,
+                relay,
+                Some(ports),
+                &|t| {
+                    seen.borrow_mut().push(t.map(str::to_string));
+                    kind.clone()
+                },
+                &GateLog::default(),
+                &|l| lines.borrow_mut().push(l.into()),
+            );
+            // 매번 그 스레드 id 로 묻는다.
+            assert_eq!(*seen.borrow(), vec![Some(THREAD.to_string())]);
+            let l = lines.borrow().join("\n");
+            assert!(
+                !l.contains("team-pool") && !l.contains("example.com"),
+                "{l}"
+            );
+            r.map(|r| parts(Some(r)))
+                .map(|(s, b)| (s, b["error"]["code"].as_str().unwrap().to_string()))
+        };
+        let ports = |lane, pool| ComboPorts {
+            lane,
+            pool,
+            known: &["team-pool"],
+            asked: RefCell::default(),
+        };
+        let pending = Some((409, "lane_pending".to_string()));
+        let pool = || Ok(ComboWant::Pool("team-pool".into()));
+        // none — 지금 그대로(로컬 판정).
+        assert_eq!(run(&ports(true, None), Ok(ComboWant::Local)), None);
+        assert_eq!(run(&ports(false, None), Ok(ComboWant::Local)), None);
+        // key — 키 모드는 지나가고 구독 풀 모드는 막힌다.
+        assert_eq!(run(&ports(true, None), Ok(ComboWant::Key)), None);
+        assert_eq!(run(&ports(false, None), Ok(ComboWant::Key)), pending);
+        // pool — 키 모드는 막히고, 구독 풀 모드는 이름이 같을 때만 지나간다.
+        assert_eq!(run(&ports(true, None), pool()), pending);
+        assert_eq!(run(&ports(false, Some("team-pool")), pool()), None);
+        assert_eq!(run(&ports(false, Some("other")), pool()), pending);
+        assert_eq!(run(&ports(false, None), pool()), pending);
+        // 거절·안 닿음·틀린 꼴 — 두 모드 다 409, 코드만. 견주기(다시 띄우기)는 부르지 않는다.
+        for (raw, code) in [
+            ("combo_not_allowed", "combo_not_allowed"),
+            ("unavailable", "unavailable"),
+            ("combo_bad_answer", "combo_bad_answer"),
+            ("https://x.example.com/v1", "unavailable"),
+        ] {
+            for lane in [true, false] {
+                let p = ports(lane, Some("team-pool"));
+                assert_eq!(run(&p, Err(raw.into())), Some((409, code.to_string())));
+                assert!(p.asked.borrow().is_empty());
+            }
+        }
+        // 이 기기 설정에 없는 풀 이름(J1) — 막고, 다시 띄우지 않는다(견주기를 부르지 않는다).
+        let p = ports(false, None);
+        assert_eq!(
+            run(&p, Ok(ComboWant::Pool("stranger".into()))),
+            Some((409, "combo_pool_unknown".to_string()))
+        );
+        assert!(p.asked.borrow().is_empty());
+    }
+
+    #[test]
+    fn slot_key_gives_thread_only_when_uuid_shaped() {
+        assert_eq!(
+            thread_of_slot(&slot(&format!("ch/{THREAD}"))).as_deref(),
+            Some(THREAD)
+        );
+        for key in [
+            "ch/_root",
+            "k1",
+            "",
+            "ch/0b1c2d3e-4f50-4a61-8b72-9c8d7e6f5a4",
+            "ch/0b1c2d3e-4f50-4a61-8b72-9c8d7e6f5a40&x=1",
+            "ch/0b1c2d3e_4f50-4a61-8b72-9c8d7e6f5a40",
+        ] {
+            assert_eq!(thread_of_slot(&slot(key)), None, "{key}");
+        }
+        assert_eq!(
+            thread_of_slot(&fwd("POST", "/agent/turn-slots", "nope")),
+            None
+        );
+    }
+
+    #[test]
+    fn combo_kind_answer_parsing() {
+        let ok = |b: &str| parse_combo_kind(200, b);
+        assert_eq!(
+            ok(r#"{"comboId":null,"kind":"none","accountPool":null}"#),
+            Ok(ComboWant::Local)
+        );
+        assert_eq!(
+            ok(r#"{"comboId":"c","kind":"key","accountPool":null}"#),
+            Ok(ComboWant::Key)
+        );
+        assert_eq!(
+            ok(r#"{"comboId":"c","kind":"pool","accountPool":"team-pool"}"#),
+            Ok(ComboWant::Pool("team-pool".into()))
+        );
+        // 틀린 꼴·이름 문법 밖은 조합 없음으로 넘기지 않는다.
+        for b in [
+            "{}",
+            "not json",
+            r#"{"kind":"pool","accountPool":null}"#,
+            r#"{"kind":"pool","accountPool":"../x"}"#,
+            r#"{"kind":"pool","accountPool":"a b\nc"}"#,
+            r#"{"kind":"other"}"#,
+        ] {
+            assert_eq!(ok(b), Err("combo_bad_answer".into()), "{b}");
+        }
+        // 그 길이 없는 서버는 조합 없음, 거절은 서버 코드(형식 밖은 접는다).
+        assert_eq!(parse_combo_kind(404, "nope"), Ok(ComboWant::Local));
+        assert_eq!(
+            parse_combo_kind(403, r#"{"error":{"code":"combo_not_allowed"}}"#),
+            Err("combo_not_allowed".into())
+        );
+        assert_eq!(parse_combo_kind(500, "oops"), Err("unavailable".into()));
+        assert_eq!(
+            parse_combo_kind(403, r#"{"error":{"code":"Bad Code"}}"#),
+            Err("unavailable".into())
+        );
     }
 
     #[test]

@@ -286,6 +286,39 @@ impl LinkHandler {
 }
 
 impl LinkHandler {
+    /// 그 스레드의 실행 조합 종류를 서버에 묻는다(J2c 「가」) — 에이전트 자격 GET. 스레드 id 는 uuid 꼴로 걸러진 것만 온다.
+    /// 주소·머리말은 로그에 찍지 않는다. 안 닿으면 `unavailable`.
+    fn combo_kind(
+        &self,
+        agent_id: &str,
+        thread: Option<&str>,
+    ) -> Result<crate::assignments::ComboWant, String> {
+        let mut url = format!(
+            "{}{}",
+            self.base_url.trim_end_matches('/'),
+            crate::provider_lane_mount::COMBO_KIND_PATH
+        );
+        if let Some(t) = thread {
+            url.push_str("?threadRootId=");
+            url.push_str(t);
+        }
+        let headers = vec![
+            (
+                "authorization".to_string(),
+                format!("Bearer {}", self.token.get()),
+            ),
+            (
+                crate::forward::AGENT_HEADER.to_string(),
+                agent_id.to_string(),
+            ),
+        ];
+        let r = self
+            .transport
+            .send("GET", &url, &headers, None)
+            .map_err(|_| "unavailable".to_string())?;
+        crate::provider_lane_mount::parse_combo_kind(r.status, &r.body)
+    }
+
     /// 에이전트 자격으로 이 커뮤니티 서버에 JSON POST(오퍼레이터 자체 요청 — `command.check` 의 match).
     fn server_post(
         &self,
@@ -461,6 +494,7 @@ impl RunnerLinkHandler for LinkHandler {
             &req,
             kind,
             lane,
+            &|thread| self.combo_kind(agent_id, thread),
             &self.lane_gate_log,
             &|l| eprintln!("{l}"),
         ) {
@@ -811,10 +845,16 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push((method.into(), url.into(), headers.to_vec()));
+            // 문지기의 조합 물음(J2c 「가」)에는 조합 줄 없음으로 답한다.
+            let body = if url.contains(crate::provider_lane_mount::COMBO_KIND_PATH) {
+                r#"{"comboId":null,"kind":"none","accountPool":null}"#
+            } else {
+                r#"{"jsonrpc":"2.0","id":1,"result":{}}"#
+            };
             Ok(HttpReply {
                 status: 200,
                 content_type: "application/json".into(),
-                body: r#"{"jsonrpc":"2.0","id":1,"result":{}}"#.into(),
+                body: body.into(),
             })
         }
     }
@@ -1131,9 +1171,13 @@ mod tests {
             )),
             403
         );
+        // 서버에는 문지기의 조합 물음(J2c 「가」, relay 의 턴 칸마다 한 번)만 나갔다 — 턴 열쇠·칸 자체는 안 나간다.
         assert!(
-            tr.0.lock().unwrap().is_empty(),
-            "nothing reached the server"
+            tr.0.lock()
+                .unwrap()
+                .iter()
+                .all(|(m, u, _)| m == "GET" && u.starts_with("https://h.example/agent/exec-combo")),
+            "nothing but the combo question reached the server"
         );
         // relay 가 다시 붙으면 그 러너의 자리를 돌려받는다.
         h.on_relay_attach("r1");
@@ -1156,7 +1200,14 @@ mod tests {
             fwd("/agent/activity", json!({})),
             RunnerLinkKind::Relay,
         );
-        assert_eq!(tr.0.lock().unwrap().len(), 1);
+        // 조합 물음(GET)을 빼면 넘어간 것은 이 하나다.
+        let forwarded =
+            tr.0.lock()
+                .unwrap()
+                .iter()
+                .filter(|(m, _, _)| m != "GET")
+                .count();
+        assert_eq!(forwarded, 1);
     }
 
     /// security #1906 ③ — `runner.pollStopped` 은 링크 세션의 인증된 runner id 로만 러너 표에 간다. 서버로는 안 간다.
@@ -1274,7 +1325,10 @@ mod tests {
             let body = if url.ends_with("/agent/secrets/reveal") {
                 // "sk-lane-value"
                 r#"{"secret":{"id":"sec-1","name":"lane-key","kind":"text","version":1},"valueBase64":"c2stbGFuZS12YWx1ZQ=="}"#
-            } else if url.ends_with(crate::turn_secrets::COMBO_CREDENTIAL_PATH) {
+            } else if url.ends_with(crate::turn_secrets::COMBO_CREDENTIAL_PATH)
+                || url.contains("/agent/exec-combo?")
+                || url.ends_with(crate::provider_lane_mount::COMBO_KIND_PATH)
+            {
                 // 조합 줄이 없는 스레드 — 로컬 설정 길로 간다.
                 r#"{"comboId":null,"kind":"none","accountPool":null}"#
             } else {
@@ -1393,6 +1447,9 @@ mod tests {
         assert_eq!(
             urls,
             vec![
+                // 문지기가 턴 칸마다 조합 종류를 묻는다(열쇠가 uuid 꼴이 아니라 스레드 없이).
+                "https://h.example/agent/exec-combo".to_string(),
+                "https://h.example/agent/exec-combo".to_string(),
                 format!(
                     "https://h.example{}",
                     crate::turn_secrets::COMBO_CREDENTIAL_PATH
