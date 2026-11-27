@@ -218,6 +218,7 @@ async fn expire_one(pool: &PgPool, v2: bool, skip: &mut Vec<String>) -> Result<O
                 .bind(&message)
                 .execute(&mut *tx)
                 .await?;
+                crate::core::wake_write::along_one(&mut tx, &message, &lead).await;
                 out.woke.push(lead);
             }
         }
@@ -386,6 +387,8 @@ pub async fn flush_updates(
             .execute(&mut *conn)
             .await?;
         }
+        // 넣었든 바꿔 적었든 깨움 행을 맞춘다.
+        crate::core::wake_write::along_one(conn, &message, &lead).await;
         sqlx::query(
             "update team_delegation_item set update_count = update_count + 1 \
               where delegation_id = $1::uuid and delegate_account_id = $2::uuid",

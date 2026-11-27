@@ -306,6 +306,8 @@ pub(crate) async fn after_quiet_close(
                 sqlx::query("rollback to savepoint split_collect_wake")
                     .execute(&mut *conn)
                     .await?;
+            } else {
+                super::wake_write::along_one(conn, &g.message, &g.lead).await;
             }
             sqlx::query("release savepoint split_collect_wake")
                 .execute(&mut *conn)

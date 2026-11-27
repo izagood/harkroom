@@ -362,11 +362,15 @@ async fn report(st: &PostState, agent: &str, watch: &str, status: &Status) -> sq
         let message: Value =
             serde_json::from_str(&row).map_err(|e| sqlx::Error::Decode(e.into()))?;
         if let Some(mid) = message.get("id").and_then(Value::as_str) {
+            // 한 트랜잭션 — inbox 줄과 깨움 행(스위치가 켜져 있을 때)이 같이 선다.
+            let mut tx = w.begin().await?;
             sqlx::query(WAKE_SQL)
                 .bind(&account)
                 .bind(mid)
-                .execute(w)
+                .execute(&mut *tx)
                 .await?;
+            super::wake_write::along_one(&mut tx, mid, &account).await;
+            tx.commit().await?;
         }
     }
     Ok(Done::Ok(changed, end.unwrap_or("open")))

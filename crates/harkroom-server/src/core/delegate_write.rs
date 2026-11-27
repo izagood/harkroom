@@ -247,6 +247,8 @@ pub(crate) async fn create(
                 .execute(&mut *conn)
                 .await?;
         }
+        // 넣었든 바꿔 적었든 깨움 행을 맞춘다(없으면 넣고, 사유가 바뀌었으면 고친다).
+        super::wake_write::along_one(conn, message_id, d).await;
     }
     Ok(id)
 }

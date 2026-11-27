@@ -177,8 +177,9 @@ const AGENT_STOP_ACK_SQL: &str = "update agent_config set stop_acked_at = now() 
       where account_id = $1::uuid and stop_requested_at is not null and stop_acked_at is null";
 
 /// TS `inbox.poll` 의 옛 러너 접기 — `update inbox set read_at = now() where account_id = $1 and id = any($2::bigint[]) and read_at is null`.
-const FOLD_SQL: &str = "update inbox set read_at = now() \
-      where account_id = $1::uuid and id = any($2::bigint[]) and read_at is null";
+/// 문장은 [`crate::core::wake_write::READ_SQL`] 이다(깨움 행 같이 쓰기가 켜져 있으면 깨움도 같은 문장에서 닫는다).
+#[cfg(test)]
+use crate::core::wake_write::READ_SQL as FOLD_SQL;
 
 /// [`FOLD_SQL`]·[`AGENT_STOP_ACK_SQL`] 이 쓰는 칸(UPDATE)과 `where` 가 읽는 칸(SELECT). 빠지면 옛 러너 접기·승인 안 된 종료 요청은 TS.
 /// 운영 GRANT 는 이미 있다 — `update (read_at) on inbox`(inbox.read)·`update (stop_acked_at) on agent_config`(GET /agent/config).
@@ -236,10 +237,8 @@ async fn fold_old_runner(
     if ids.is_empty() {
         return Some(());
     }
-    sqlx::query(FOLD_SQL)
-        .bind(&me.id)
-        .bind(&ids)
-        .execute(fold?)
+    // 켜져 있으면 깨움 행도 같은 문장에서 닫는다(꺼져 있으면 [`FOLD_SQL`] 과 같은 문장 하나).
+    crate::core::wake_write::mark_read(fold?, &me.id, &ids)
         .await
         .ok()?;
     Some(())

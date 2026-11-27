@@ -109,6 +109,7 @@ pub async fn preempt(
                 .bind(&id)
                 .execute(&mut *conn)
                 .await?;
+            super::wake_write::along_one(conn, &wake_msg, &account).await;
             sqlx::query(s.fire.as_str())
                 .bind(&id)
                 .execute(&mut *conn)

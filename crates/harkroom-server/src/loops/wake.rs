@@ -60,6 +60,7 @@ pub async fn fire_one_due(pool: &PgPool, skip: &mut Vec<String>) -> Result<bool,
                 .bind(&message_id)
                 .execute(&mut *tx)
                 .await?;
+            crate::core::wake_write::along_one(&mut tx, &message_id, &account_id).await;
             sqlx::query("update agent_wake set fired_at = now() where id = $1::uuid")
                 .bind(&id)
                 .execute(&mut *tx)
