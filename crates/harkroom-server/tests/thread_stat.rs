@@ -255,3 +255,171 @@ async fn thread_stat_recount_races_with_insert() {
     let s = same(&db, &root, "넣기·지우기 동시").await;
     assert_eq!((s.0, s.1, s.3.len()), (21, 21, 2));
 }
+
+/// 규모 L1(마이그레이션 198): `thread_state` 에 kind 거르기를 넣은 golden 목록 쿼리가 **거르기 전과 같은 행**을 내는지,
+/// 그리고 머리 집계가 새 부분 색인 `message_thread_kind_seq_idx` 를 타는지 본다.
+#[tokio::test]
+async fn thread_kind_filter_matches_unfiltered() {
+    let Ok(url) = std::env::var("HARKROOM_TEST_DATABASE_URL") else {
+        eprintln!("skip: HARKROOM_TEST_DATABASE_URL unset");
+        return;
+    };
+    let db = PgPool::connect(&url).await.unwrap();
+    let golden: serde_json::Value =
+        serde_json::from_str(include_str!("../golden/sql_fragments.json")).unwrap();
+    let new_sql = golden["list_messages_latest"].as_str().unwrap().to_string();
+    // 거르기 줄(주석 포함)을 빼면 예전 쿼리다.
+    let start = new_sql
+        .find("    -- **물음·실패 줄만 훑는다**")
+        .expect("thread_state 거르기 주석");
+    let filter = "    AND t.meta->>'kind' IN ('ask', 'failure')\n";
+    let end = new_sql[start..].find(filter).expect("thread_state 거르기") + start + filter.len();
+    let old_sql = format!("{}{}", &new_sql[..start], &new_sql[end..]);
+    assert_ne!(old_sql, new_sql);
+
+    let alice = one(&db, "insert into account(handle, display_name, kind, login_id) values ($1, $1, 'human', $1) returning id::text", "tk_alice").await;
+    let bot = one(
+        &db,
+        "insert into account(handle, display_name, kind) values ($1, $1, 'agent') returning id::text",
+        "tk_bot",
+    )
+    .await;
+    let ch = one(
+        &db,
+        "insert into channel(name, kind) values ($1, 'standard') returning id::text",
+        "thread-kind-rs",
+    )
+    .await;
+    let mut at = 0;
+    let mut put = |root: Option<String>, author: String, kind: &'static str, meta: String| {
+        at += 1;
+        let db = db.clone();
+        let ch = ch.clone();
+        async move {
+            sqlx::query_scalar::<_, String>(
+                "insert into message(channel_id, thread_root_id, author_id, body, kind, meta, created_at) \
+                 values ($1::uuid, $2::uuid, $3::uuid, 'x', $4, $5::jsonb, timestamptz '2026-01-01 00:00:00+00' + make_interval(secs => $6)) \
+                 returning id::text",
+            )
+            .bind(&ch)
+            .bind(root)
+            .bind(author)
+            .bind(kind)
+            .bind(meta)
+            .bind(at as f64)
+            .fetch_one(&db)
+            .await
+            .unwrap()
+        }
+    };
+    let ask_acc = |to: &str| {
+        format!(r#"{{"kind":"ask","ask":{{"to":{{"kind":"account","accountId":"{to}"}}}}}}"#)
+    };
+    let ask_human = r#"{"kind":"ask","ask":{"to":{"kind":"human"}}}"#.to_string();
+
+    // 뿌리 자신이 물음인 스레드.
+    let r_ask = put(None, bot.clone(), "user", ask_acc(&alice)).await;
+    put(Some(r_ask.clone()), alice.clone(), "user", "{}".into()).await;
+    // 여러 kind 가 섞인 긴 스레드.
+    let root = put(None, alice.clone(), "user", "{}".into()).await;
+    for _ in 0..5 {
+        put(Some(root.clone()), bot.clone(), "user", "{}".into()).await;
+    }
+    put(Some(root.clone()), bot.clone(), "user", ask_acc(&alice)).await;
+    put(Some(root.clone()), bot.clone(), "user", ask_human.clone()).await;
+    put(
+        Some(root.clone()),
+        bot.clone(),
+        "user",
+        r#"{"kind":"ask","ask":{"to":{"kind":"human"},"answeredWith":"a"}}"#.into(),
+    )
+    .await;
+    put(
+        Some(root.clone()),
+        bot.clone(),
+        "user",
+        r#"{"kind":"ask","ask":{"to":{"kind":"human"},"closedAt":"2026-01-01T00:00:00Z"}}"#.into(),
+    )
+    .await;
+    put(
+        Some(root.clone()),
+        bot.clone(),
+        "user",
+        r#"{"kind":"failure","failure":{"code":"x"}}"#.into(),
+    )
+    .await;
+    put(Some(root.clone()), bot.clone(), "progress", "{}".into()).await;
+    put(Some(root.clone()), bot.clone(), "user", format!(r#"{{"kind":"failure","failure":{{"code":"account_gate","awaitingAccountId":"{alice}"}}}}"#)).await;
+    put(
+        Some(root.clone()),
+        alice.clone(),
+        "user",
+        format!(r#"{{"kind":"delegation","delegation":{{"open":["{bot}"]}}}}"#),
+    )
+    .await;
+    put(
+        Some(root.clone()),
+        bot.clone(),
+        "user",
+        r#"{"kind":"report"}"#.into(),
+    )
+    .await;
+    let gone = put(Some(root.clone()), bot.clone(), "user", ask_human.clone()).await;
+    sqlx::query("update message set deleted_at = now() where id = $1::uuid")
+        .bind(&gone)
+        .execute(&db)
+        .await
+        .unwrap();
+    put(Some(root.clone()), alice.clone(), "system", "{}".into()).await;
+    // 답글 없는 뿌리.
+    put(None, alice.clone(), "user", "{}".into()).await;
+
+    let rows = |sql: String| {
+        let db = db.clone();
+        let ch = ch.clone();
+        async move {
+            sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(format!(
+                "select row_to_json(x)::text from ({sql}) x order by x.seq"
+            )))
+            .bind(&ch)
+            .bind(100_i64)
+            .fetch_all(&db)
+            .await
+            .unwrap()
+        }
+    };
+    let new_rows = rows(new_sql.clone()).await;
+    let old_rows = rows(old_sql).await;
+    assert_eq!(new_rows.len(), 19, "넣은 줄 전부(지운 답글 포함)");
+    assert_eq!(new_rows, old_rows, "kind 거르기 뒤 목록이 예전과 다르다");
+    // 집계가 실제로 무언가를 셌는지(빈 값끼리 같아서 통과하지 않게).
+    let long = new_rows.iter().find(|r| r.contains(&root)).unwrap();
+    assert!(long.contains(r#""openAskHumanCount":1"#), "{long}");
+    assert!(long.contains(r#""failureCount":2"#), "{long}");
+    assert!(
+        long.contains(&format!(r#""openAskAccountIds":["{alice}"]"#)),
+        "{long}"
+    );
+
+    // 플래너가 새 부분 색인을 고르는지. 표가 작아 그냥 두면 아무 색인이나 통째로 훑는다 — 운영의 큰 스레드에서처럼
+    // 비트맵(id OR thread_root_id)으로 찾게 하고, 그 갈래에서 답글 전체 색인(062)이 아니라 kind 부분 색인을 고르는지 본다.
+    let mut conn = db.acquire().await.unwrap();
+    for set in [
+        "analyze message",
+        "set enable_seqscan = off",
+        "set enable_indexscan = off",
+    ] {
+        sqlx::query(set).execute(&mut *conn).await.unwrap();
+    }
+    let plan: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("explain {new_sql}")))
+        .bind(&ch)
+        .bind(100_i64)
+        .fetch_all(&mut *conn)
+        .await
+        .unwrap();
+    let plan = plan.join("\n");
+    assert!(
+        plan.contains("message_thread_kind_seq_idx"),
+        "머리 집계가 kind 부분 색인을 타지 않는다:\n{plan}"
+    );
+}
