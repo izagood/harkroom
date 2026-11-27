@@ -430,6 +430,8 @@ pub async fn sweep(pool: &PgPool, v2: bool) -> Result<(), sqlx::Error> {
             Err(e) => eprintln!("loop delegation.deadline: one failed: {e}"),
         }
     }
+    // DB 못 잡힌 위임 감시 — 다시 부르기 스위치가 꺼져 있으면 아무것도 하지 않는다. 실패는 그 안에서 삼킨다.
+    crate::core::delegation_recall::sweep_unjudged().await;
     if v2 {
         sweep_v2(pool).await?;
     }
