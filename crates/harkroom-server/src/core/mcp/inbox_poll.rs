@@ -232,7 +232,9 @@ async fn fold_old_runner(
     if !folds_for(v2, args, version) {
         return Some(());
     }
-    let rows = list_inbox(pool, &me.id, unread(leased), false).await.ok()?;
+    let rows = list_inbox(pool, &me.id, unread(me, leased), false)
+        .await
+        .ok()?;
     let ids = fold_ids(&rows)?;
     if ids.is_empty() {
         return Some(());
@@ -325,8 +327,16 @@ async fn lease_entries(
 }
 
 /// 이 폴이 읽을 갈래 — `lease` 가 왔으면 임대 걸린 줄을 뺀다(TS `skipLeased: lease !== undefined`).
-fn unread(leased: bool) -> InboxQuery {
-    if leased {
+/// 턴 원천이 깨움 행이면(EB, [`crate::core::wake_source`]) 에이전트는 열린 깨움이 있는 줄만 읽는다.
+fn unread(me: &Account, leased: bool) -> InboxQuery {
+    unread_from(crate::core::wake_source::for_kind(&me.kind), leased)
+}
+
+/// [`unread`] 의 몸 — `wake` 는 이 폴을 깨움 행에서 답하는가.
+fn unread_from(wake: bool, leased: bool) -> InboxQuery {
+    if wake {
+        InboxQuery::UnreadWake { unleased: leased }
+    } else if leased {
         InboxQuery::UnreadUnleased
     } else {
         InboxQuery::Unread { since: None }
@@ -462,7 +472,9 @@ async fn wait_then_respond(
     let mut rx = hub.subscribe();
     let mut drain = drain_tx().subscribe();
     fold_old_runner(pool, fold, me, args, version, leased).await?;
-    let rows = list_inbox(pool, &me.id, unread(leased), false).await.ok()?;
+    let rows = list_inbox(pool, &me.id, unread(me, leased), false)
+        .await
+        .ok()?;
     if !rows.is_empty() {
         return respond(pool, fold, me, args, version, leased).await;
     }
@@ -534,7 +546,9 @@ async fn respond(
     // TS `fetchUnread` 처럼 읽기마다 먼저 접는다.
     fold_old_runner(pool, fold, me, args, version, leased).await?;
     // 빈 목록에는 위임 요약이 붙지 않으니 `v2` 값과 무관하다.
-    let rows = list_inbox(pool, &me.id, unread(leased), false).await.ok()?;
+    let rows = list_inbox(pool, &me.id, unread(me, leased), false)
+        .await
+        .ok()?;
     let agent = me.kind == "agent";
     if !rows.is_empty() {
         return batch(pool, me, args, &rows, agent, version, leased).await;
@@ -575,7 +589,9 @@ async fn batch(
     ))?;
     // 위에서 `v2=false` 로 읽었으니, 켜졌으면 위임 요약이 붙은 줄로 다시 읽는다.
     let rows = if v2 {
-        list_inbox(pool, &me.id, unread(leased), true).await.ok()?
+        list_inbox(pool, &me.id, unread(me, leased), true)
+            .await
+            .ok()?
     } else {
         rows.to_vec()
     };
@@ -662,8 +678,23 @@ mod tests {
         ] {
             assert_eq!(parse_lease(&bad), None, "{bad}");
         }
-        assert!(matches!(unread(true), InboxQuery::UnreadUnleased));
-        assert!(matches!(unread(false), InboxQuery::Unread { since: None }));
+        assert!(matches!(
+            unread_from(false, true),
+            InboxQuery::UnreadUnleased
+        ));
+        assert!(matches!(
+            unread_from(false, false),
+            InboxQuery::Unread { since: None }
+        ));
+        // 깨움 행 갈래도 임대 거르기를 그대로 따른다.
+        assert!(matches!(
+            unread_from(true, true),
+            InboxQuery::UnreadWake { unleased: true }
+        ));
+        assert!(matches!(
+            unread_from(true, false),
+            InboxQuery::UnreadWake { unleased: false }
+        ));
     }
 
     #[test]
