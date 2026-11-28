@@ -363,7 +363,24 @@ pub fn load_claude_account_lane(
     order: Option<&str>,
     get: impl Fn(&str) -> Option<String>,
 ) -> Result<ClaudeAccountLane, String> {
-    let Some(cfg) = read_pools_config(root, get) else {
+    lane_from(
+        root,
+        read_pools_config(root, get),
+        agent_id,
+        forced_pool,
+        order,
+    )
+}
+
+/// [`load_claude_account_lane`] 의 몸통 — 설정을 어디서 읽었는지는 부르는 쪽(하네스)이 정한다.
+fn lane_from(
+    root: &Path,
+    cfg: Option<PoolsConfig>,
+    agent_id: &str,
+    forced_pool: Option<&str>,
+    order: Option<&str>,
+) -> Result<ClaudeAccountLane, String> {
+    let Some(cfg) = cfg else {
         return Ok(ClaudeAccountLane {
             pool: None,
             accounts: load_claude_accounts(root, order)?,
@@ -491,22 +508,173 @@ pub fn claude_named_pool_known(
     get: impl Fn(&str) -> Option<String>,
     home: &Path,
 ) -> bool {
+    named_pool_known(AccountHarness::Claude, name, get, home)
+}
+
+/// 계정 풀을 가진 하네스 — 풀은 (하네스, 이름)으로 가린다(CR3).
+///
+/// **닫힌 enum** 이다: 계정 뿌리의 디렉터리 이름·env 이름은 아래 `match` 의 고정 글자에서만 나오고, 밖에서 온 글자는
+/// 경로에 닿지 않는다. 밖에서 온 이름은 [`AccountHarness::parse`] 로만 들인다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AccountHarness {
+    Claude,
+    Codex,
+}
+
+impl AccountHarness {
+    pub const ALL: [AccountHarness; 2] = [Self::Claude, Self::Codex];
+
+    /// 허용 목록(`claude`·`codex`)과 **글자 그대로** 같을 때만 받는다 — 다듬지도 대소문자를 접지도 않는다.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "claude" => Some(Self::Claude),
+            "codex" => Some(Self::Codex),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Claude => "claude",
+            Self::Codex => "codex",
+        }
+    }
+
+    /// `<home>/.harkroom-agent/` 아래 계정 뿌리의 디렉터리 이름.
+    pub fn accounts_dir_name(self) -> &'static str {
+        match self {
+            Self::Claude => "claude-accounts",
+            Self::Codex => "codex-accounts",
+        }
+    }
+
+    /// 계정 뿌리를 바꾸는 env.
+    pub fn accounts_dir_env(self) -> &'static str {
+        match self {
+            Self::Claude => "HARKROOM_CLAUDE_ACCOUNTS_DIR",
+            Self::Codex => "HARKROOM_CODEX_ACCOUNTS_DIR",
+        }
+    }
+
+    /// 커뮤니티마다 프로세스 모드에서 커뮤니티 뿌리 아래 풀 설정 파일 이름.
+    fn community_pools_file(self) -> &'static str {
+        match self {
+            Self::Claude => "claude-pools.json",
+            Self::Codex => "codex-pools.json",
+        }
+    }
+}
+
+/// 하네스의 계정 뿌리. claude 는 [`claude_accounts_root`] 그대로고, codex 는 오퍼레이터·러너의
+/// `codex_accounts_root` 와 같은 자리(`HARKROOM_CODEX_ACCOUNTS_DIR`, 없으면 `<home>/.harkroom-agent/codex-accounts`)다.
+pub fn accounts_root(
+    harness: AccountHarness,
+    get: impl Fn(&str) -> Option<String>,
+    home: &Path,
+) -> PathBuf {
+    match harness {
+        AccountHarness::Claude => claude_accounts_root(get, home),
+        AccountHarness::Codex => match get(harness.accounts_dir_env()) {
+            Some(d) => normalize(Path::new(&d)),
+            None => home
+                .join(".harkroom-agent")
+                .join(harness.accounts_dir_name()),
+        },
+    }
+}
+
+/// 하네스의 풀 설정 파일 자리 — [`claude_pools_file_path`] 와 같은 규칙이고 codex 는 커뮤니티 뿌리 아래 이름만
+/// `codex-pools.json` 이다. 모양은 claude `pools.json` 과 같다(`<뿌리>/<풀>/<계정>/`, 계정 디렉터리가 `CODEX_HOME`).
+pub fn pools_file_path(
+    harness: AccountHarness,
+    accounts_root: &Path,
+    get: impl Fn(&str) -> Option<String>,
+) -> Result<PathBuf, String> {
+    if get("HARKROOM_OPERATOR_PER_COMMUNITY").as_deref() != Some("1") {
+        return Ok(accounts_root.join("pools.json"));
+    }
+    match get("HARKROOM_OPERATOR_ROOT") {
+        Some(r) if r.starts_with('/') => {
+            Ok(normalize(Path::new(&r)).join(harness.community_pools_file()))
+        }
+        _ => Err(
+            "HARKROOM_OPERATOR_PER_COMMUNITY=1 인데 HARKROOM_OPERATOR_ROOT 가 절대 경로가 아니다"
+                .into(),
+        ),
+    }
+}
+
+/// codex 에 풀 설정이 **없을 때** `active.json` 의 계정 하나를 「계정 하나짜리 기본 풀」로 읽는 **예약된 풀 이름**.
+///
+/// 이 이름 하나만 `active.json` 에 닿는다 — 다른 이름은 풀 설정 없이는 어느 것도 풀이 아니다. 풀 설정이 있으면
+/// 이 물러섬은 쓰지 않고 `default` 도 여느 풀 이름처럼 뿌리 아래 디렉터리로 해석한다. 물러섬은 `active.json` 이
+/// 가리키는 계정을 볼 뿐 `<뿌리>/default` 를 보지 않으므로, 이름이 `default` 인 평평한 계정과도 섞이지 않는다.
+pub const CODEX_DEFAULT_POOL: &str = "default";
+
+/// 오퍼레이터·러너의 `active_file_path`·`codex_active_file_path` 와 같은 자리.
+fn codex_active_file_path(
+    root: &Path,
+    get: impl Fn(&str) -> Option<String>,
+) -> Result<PathBuf, String> {
+    if get("HARKROOM_OPERATOR_PER_COMMUNITY").as_deref() != Some("1") {
+        return Ok(root.join("active.json"));
+    }
+    match get("HARKROOM_OPERATOR_ROOT") {
+        Some(r) if r.starts_with('/') => Ok(normalize(Path::new(&r)).join("codex-active.json")),
+        _ => Err(
+            "HARKROOM_OPERATOR_PER_COMMUNITY=1 인데 HARKROOM_OPERATOR_ROOT 가 절대 경로가 아니다"
+                .into(),
+        ),
+    }
+}
+
+/// 풀 설정이 없는 codex 의 기본 풀 — `active.json` 이 문법에 맞는 계정을 가리키고 그 계정에 로그인(`auth.json`)이
+/// 있을 때만 계정 하나다(러너 `codex_auth_source` 가 그 계정을 쓰는 조건과 같다). 그 밖에는 빈 풀.
+fn codex_default_pool_has_account(root: &Path, get: impl Fn(&str) -> Option<String>) -> bool {
+    let active = codex_active_file_path(root, get)
+        .ok()
+        .and_then(|p| fs::read(p).ok())
+        .and_then(|b| serde_json::from_str::<Value>(&String::from_utf8_lossy(&b)).ok())
+        .and_then(|v| v.get("active").and_then(name_of));
+    active.is_some_and(|a| fs::symlink_metadata(root.join(a).join("auth.json")).is_ok())
+}
+
+/// [`claude_named_pool_known`] 의 하네스판 — 어느 하네스든 **같은 넷**이 다 맞을 때만 참이다: 풀 설정 파일이 있고
+/// 해석된다 · 그 이름이 풀 목록(뿌리 아래 디렉터리)에 있다 · 해석한 lane 의 풀이 그 이름이다 · 계정이 하나 이상이다.
+///
+/// 하나만 다르다: codex 에 풀 설정 파일이 **없으면** 예약된 이름 [`CODEX_DEFAULT_POOL`] 에 한해 `active.json` 의
+/// 계정을 계정 하나짜리 풀로 본다. 파일이 있으면(깨졌어도) 이 물러섬은 없다.
+pub fn named_pool_known(
+    harness: AccountHarness,
+    name: &str,
+    get: impl Fn(&str) -> Option<String>,
+    home: &Path,
+) -> bool {
     if !is_account_name(name) {
         return false;
     }
-    let root = claude_accounts_root(&get, home);
-    let Ok(path) = claude_pools_file_path(&root, &get) else {
+    let root = accounts_root(harness, &get, home);
+    let Ok(path) = pools_file_path(harness, &root, &get) else {
         return false;
     };
-    let Ok(bytes) = fs::read(&path) else {
+    let bytes = match fs::read(&path) {
+        Ok(b) => b,
+        Err(e) if harness == AccountHarness::Codex && e.kind() == ErrorKind::NotFound => {
+            return name == CODEX_DEFAULT_POOL && codex_default_pool_has_account(&root, &get);
+        }
+        Err(_) => return false,
+    };
+    let Ok(raw) = serde_json::from_str::<Value>(&String::from_utf8_lossy(&bytes)) else {
         return false;
     };
-    if serde_json::from_str::<Value>(&String::from_utf8_lossy(&bytes)).is_err() {
-        return false;
-    }
-    let order = get("HARKROOM_CLAUDE_ACCOUNTS");
+    // 순서 env 는 claude 에만 있다.
+    let order = match harness {
+        AccountHarness::Claude => get("HARKROOM_CLAUDE_ACCOUNTS"),
+        AccountHarness::Codex => None,
+    };
     // 배정·기본 풀은 강제 풀 앞에서 보지 않는다 — 에이전트 id 는 결과에 닿지 않는다.
-    match load_claude_account_lane(&root, "", Some(name), order.as_deref(), &get) {
+    let cfg = Some(parse_pools_config(&raw));
+    match lane_from(&root, cfg, "", Some(name), order.as_deref()) {
         Ok(lane) => lane.pool.as_deref() == Some(name) && !lane.accounts.is_empty(),
         Err(_) => false,
     }
