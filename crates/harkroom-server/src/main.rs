@@ -803,6 +803,32 @@ async fn main() {
         }
         _ => None,
     };
+    // CR1 — 실행 자격 줄 관리 길(`/exec/credentials`, 사람만). 조합 길과 따로 켠다 — 새 표의 GRANT 가 늦어도 조합 길은 그대로 돈다.
+    let exec_credential = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::exec_credential as k;
+            let needed = [
+                k::EXEC_CREDENTIAL_PRIVILEGES,
+                k::EXEC_CREDENTIAL_LOOKUP_PRIVILEGES,
+            ]
+            .concat();
+            match write::missing_in(w, &needed, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: exec credential off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: exec credential off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // S5.4 — API 연결 지우기(`DELETE /connectors/{id}`). 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 그 칸 권한이 다 있을 때만. PATCH 는 TS.
     let connectors_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -4379,6 +4405,20 @@ async fn main() {
         // J2a — 실행 조합 관리 길. 권한이 다 있을 때만.
         if let Some(write) = exec_combo {
             let xc = harkroom_server::core::exec_combo_routes::routes(
+                harkroom_server::core::exec_combo_routes::ExecComboState {
+                    write,
+                    trust: state.trust.clone(),
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(xc.router);
+            core_routes.http.extend(xc.http);
+            core_routes.sockets.extend(xc.sockets);
+        }
+        // CR1 — 실행 자격 줄 관리 길. 권한이 다 있을 때만.
+        if let Some(write) = exec_credential {
+            let xc = harkroom_server::core::exec_credential_routes::routes(
                 harkroom_server::core::exec_combo_routes::ExecComboState {
                     write,
                     trust: state.trust.clone(),
