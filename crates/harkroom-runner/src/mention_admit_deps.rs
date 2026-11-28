@@ -358,6 +358,14 @@ impl<L: RunnerLink + 'static, M: MentionLauncher> AdmitDeps for LinkAdmitDeps<'_
             .map(|_| ())
             .map_err(|e| e.to_string())
     }
+    fn fail_refused(&mut self, channel_id: &str, anchor: &str, code: &str) -> Result<(), String> {
+        let mcp = self.clients.mcp();
+        send_refused(code, &mut |opts, body| {
+            mcp.fail(channel_id, body, Some(anchor), opts)
+                .map(|_| ())
+                .map_err(|e| e.to_string())
+        })
+    }
     fn hold_claim(&mut self, channel_id: &str, anchor: &str) -> ClaimHold {
         let cell = FenceCell::new(self.slots.clone());
         let hold = self.claims.hold(channel_id, anchor, Some(cell.on_lost()));
@@ -444,6 +452,43 @@ impl<L: RunnerLink + 'static, M: MentionLauncher> AdmitDeps for LinkAdmitDeps<'_
             self.slots.fence_lost_or_hold(&mention_id);
         }
         self.launcher.launch(launch, mention_id);
+    }
+}
+
+/// 실행 조합 거절 통지를 올린다. 코드는 [`crate::rest::SLOT_REFUSAL_CODES`] 안일 때만 싣고 그 밖은 `unknown` 으로 접는다.
+/// 그 코드를 아직 모르는 서버가 입력 검증으로 거절하면 `unknown` 으로 한 번 다시 올린다 — 통지를 잃지 않는다
+/// (그 밖의 실패는 두 번 갈 수 있어 다시 올리지 않는다).
+pub(crate) fn send_refused(
+    code: &str,
+    post: &mut dyn FnMut(&FailOpts, &str) -> Result<(), String>,
+) -> Result<(), String> {
+    let code = crate::rest::SLOT_REFUSAL_CODES
+        .iter()
+        .copied()
+        .find(|c| *c == code)
+        .unwrap_or("unknown");
+    let opts = |lane: &str| FailOpts {
+        retryable: false,
+        what: Some("오퍼레이터가 실행 조합을 받지 않아 턴을 띄우지 않았다".into()),
+        reason: Some(
+            "스레드의 실행 조합과 에이전트 설정을 확인해야 한다 — 같은 설정으로는 다시 실패한다"
+                .into(),
+        ),
+        code: Some("provider_lane".into()),
+        lane_code: Some(lane.into()),
+        ..FailOpts::default()
+    };
+    let body = crate::fail_text::slot_refused_notice(code);
+    match post(&opts(code), &body) {
+        Err(e)
+            if code != "unknown" && crate::mention_scheduler::is_invalid_tool_input(None, &e) =>
+        {
+            post(
+                &opts("unknown"),
+                &crate::fail_text::slot_refused_notice("unknown"),
+            )
+        }
+        other => other,
     }
 }
 

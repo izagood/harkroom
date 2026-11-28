@@ -40,6 +40,11 @@ struct Fake {
     busy_after_batch: HashSet<String>,
     claim_releases: Arc<AtomicUsize>,
     slot: Option<SlotOutcome>,
+    /// 턴 자리를 물은 횟수.
+    slot_asked: usize,
+    /// 실행 조합 거절 통지(앵커, 코드).
+    refusals: Vec<(String, String)>,
+    refusal_fails: bool,
     slot_releases: Vec<String>,
     started: Vec<String>,
     read: Vec<Vec<i64>>,
@@ -95,6 +100,13 @@ impl AdmitDeps for Fake {
         self.fails.push(body.into());
         Err("down".into())
     }
+    fn fail_refused(&mut self, _: &str, anchor: &str, code: &str) -> Result<(), String> {
+        self.refusals.push((anchor.into(), code.into()));
+        if self.refusal_fails {
+            return Err("down".into());
+        }
+        Ok(())
+    }
     fn hold_claims(&mut self, wants: &[(String, String)]) -> Vec<ClaimHold> {
         self.claim_batches
             .push(wants.iter().map(|(_, a)| a.clone()).collect());
@@ -112,6 +124,7 @@ impl AdmitDeps for Fake {
         }
     }
     fn acquire_slot(&mut self, _: &str) -> Option<SlotOutcome> {
+        self.slot_asked += 1;
         self.slot
     }
     fn release_slot(&mut self, key: &str) {
@@ -587,4 +600,61 @@ fn controlled_and_backing_off_entries_are_left_out_of_the_batch() {
     assert_eq!((out.started, out.deferred, out.blocked), (2, 1, 1));
     assert_eq!(f.claim_batches, vec![vec!["r3", "r4"]]);
     assert_eq!(f.claim_asked, vec!["r3", "r4"]);
+}
+
+#[test]
+fn refused_slot_closes_the_mention_with_one_notice_and_never_asks_again() {
+    let mut l = Ledger::default();
+    let mut f = Fake {
+        claims: Some(ClaimMode::Grant),
+        slot: Some(SlotOutcome::Refused("combo_pool_unknown")),
+        ..Fake::default()
+    };
+    // 같은 스레드의 멘션 둘 + 다른 스레드 하나.
+    let b = batch(
+        vec![ent(1, "m1"), ent(2, "m2"), ent(3, "m3")],
+        vec![
+            msg("m1", "u1", "r"),
+            msg("m2", "u1", "r"),
+            msg("m3", "u1", "r2"),
+        ],
+    );
+    let out = admit(&mut l, &mut f, &b, &human_ctx()).unwrap();
+    assert_eq!((out.started, out.blocked), (0, 0));
+    assert!(f.launches.borrow().is_empty());
+    // 스레드마다 통지 하나·자리 물음 하나. 통지에는 코드만 간다.
+    assert_eq!(
+        f.refusals,
+        vec![
+            ("r".to_string(), "combo_pool_unknown".to_string()),
+            ("r2".to_string(), "combo_pool_unknown".to_string())
+        ]
+    );
+    assert_eq!(f.slot_asked, 2);
+    assert_eq!(f.read, vec![vec![1, 2, 3]]);
+    assert_eq!(f.claim_releases.load(Ordering::SeqCst), 2);
+    assert!(l.attempt(1).is_none());
+    // 다음 폴에 같은 entry 가 또 와도 자리를 다시 묻지 않고 통지도 다시 내지 않는다.
+    admit(&mut l, &mut f, &b, &human_ctx()).unwrap();
+    assert_eq!((f.slot_asked, f.refusals.len()), (2, 2));
+}
+
+#[test]
+fn refused_slot_stays_closed_when_notice_and_mark_read_fail() {
+    let mut l = Ledger::default();
+    let mut f = Fake {
+        slot: Some(SlotOutcome::Refused("combo_not_allowed")),
+        refusal_fails: true,
+        read_fails: true,
+        ..Fake::default()
+    };
+    let b = batch(vec![ent(1, "m1")], vec![msg("m1", "u1", "r")]);
+    admit(&mut l, &mut f, &b, &human_ctx()).unwrap();
+    assert_eq!((f.slot_asked, f.refusals.len()), (1, 1));
+    // 읽음 처리가 실패했어도 다음 폴은 읽음 처리만 다시 한다.
+    f.read_fails = false;
+    admit(&mut l, &mut f, &b, &human_ctx()).unwrap();
+    assert_eq!((f.slot_asked, f.refusals.len()), (1, 1));
+    assert_eq!(f.read.last(), Some(&vec![1]));
+    assert!(f.launches.borrow().is_empty());
 }

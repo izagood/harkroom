@@ -99,6 +99,13 @@
    "secret_expired",
    "secret_store_disabled",
    "rate_limited",
+   "combo_pool_unknown",
+   "combo_not_allowed",
+   "combo_unusable",
+   "combo_thread_mismatch",
+   "combo_mode_mismatch",
+   "combo_bad_url",
+   "combo_bad_answer",
    "unknown"
   ]
  },
