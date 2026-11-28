@@ -51,7 +51,8 @@ impl<L: AgentLink + Send + Sync> BgSlots for Client<L> {
     fn acquire(&self, key: &str, keep_free: u32) -> SlotGrant {
         match self.0.rest().acquire_turn_slot(key, Some(keep_free)) {
             SlotOutcome::Granted => SlotGrant::Granted,
-            SlotOutcome::Full => SlotGrant::Full,
+            // 배경 회차는 거절도 자리 없음으로 미룬다 — 실패 통지는 멘션 길만 낸다.
+            SlotOutcome::Full | SlotOutcome::Refused(_) => SlotGrant::Full,
             SlotOutcome::Unsupported => SlotGrant::Unsupported,
         }
     }

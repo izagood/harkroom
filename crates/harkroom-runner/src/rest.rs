@@ -259,7 +259,28 @@ fn parse_slot_work(body: &str) -> Option<SlotWork> {
 pub enum SlotOutcome {
     Granted,
     Full,
+    /// 오퍼레이터가 그 스레드의 실행 조합을 거절했다 — 다시 물어도 같은 답이다. 코드는 [`SLOT_REFUSAL_CODES`] 중 하나.
+    Refused(&'static str),
     Unsupported,
+}
+
+/// 턴 자리 409 본문에서 「다시 물어도 같은 답」으로 읽는 거절 코드의 고정 목록. 이 밖(`lane_pending`·`unavailable`·
+/// 코드 없음·모르는 글)은 꽉 참으로 읽어 조용히 다시 묻는다 — 본문의 글을 그대로 흘리지 않는다.
+pub const SLOT_REFUSAL_CODES: &[&str] = &[
+    "combo_pool_unknown",
+    "combo_not_allowed",
+    "combo_unusable",
+    "combo_thread_mismatch",
+    "combo_mode_mismatch",
+    "combo_bad_url",
+    "combo_bad_answer",
+];
+
+/// 409 본문(`{"error":{"code":…}}`)의 코드가 고정 목록에 있으면 그 목록의 값을 돌려준다.
+fn slot_refusal_code(body: &str) -> Option<&'static str> {
+    let v: Value = serde_json::from_str(body).ok()?;
+    let raw = v.pointer("/error/code")?.as_str()?;
+    SLOT_REFUSAL_CODES.iter().copied().find(|c| *c == raw)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -563,7 +584,7 @@ impl<L: RunnerLink> HarkroomRestClient<L> {
         Ok(())
     }
 
-    /// 동시 턴 자리(오퍼레이터가 직접 답한다). 200 받음 · 409 꽉 참 · 그 밖(옛 오퍼레이터 404·끊김 0)은 띄운다(fail-open).
+    /// 동시 턴 자리(오퍼레이터가 직접 답한다). 200 받음 · 409 꽉 참(고정 목록의 거절 코드가 실리면 거절) · 그 밖(옛 오퍼레이터 404·끊김 0)은 띄운다(fail-open).
     pub fn acquire_turn_slot(&self, key: &str, keep_free: Option<u32>) -> SlotOutcome {
         let mut body = json!({ "key": key });
         if let Some(k) = keep_free.filter(|k| *k > 0) {
@@ -583,7 +604,10 @@ impl<L: RunnerLink> HarkroomRestClient<L> {
                 }
                 SlotOutcome::Granted
             }
-            409 => SlotOutcome::Full,
+            409 => match slot_refusal_code(&res.body) {
+                Some(code) => SlotOutcome::Refused(code),
+                None => SlotOutcome::Full,
+            },
             _ => SlotOutcome::Unsupported,
         }
     }
@@ -1164,6 +1188,29 @@ mod tests {
                 panic!("{raw}")
             };
             assert_eq!(l.delegation_recall, want, "{raw}");
+        }
+    }
+
+    #[test]
+    fn slot_409_code_is_read_only_from_the_fixed_list() {
+        for code in SLOT_REFUSAL_CODES {
+            let body = json!({"error": {"code": code}}).to_string();
+            assert_eq!(slot_refusal_code(&body), Some(*code));
+        }
+        // 잠깐이면 풀리는 것·코드 없음·모르는 글·주소 꼴은 거절로 읽지 않는다(꽉 참으로 다시 묻는다).
+        for body in [
+            r#"{"error":{"code":"lane_pending"}}"#,
+            r#"{"error":{"code":"unavailable"}}"#,
+            r#"{"error":{"code":"rate_limited"}}"#,
+            r#"{"error":{"code":"https://gw.example.com/v1"}}"#,
+            r#"{"error":{"code":"combo_pool_unknown team-a"}}"#,
+            r#"{"error":{"code":"something_new"}}"#,
+            r#"{"error":{"code":7}}"#,
+            r#"{"max":4,"inUse":4}"#,
+            "",
+            "not json",
+        ] {
+            assert_eq!(slot_refusal_code(body), None, "{body}");
         }
     }
 }

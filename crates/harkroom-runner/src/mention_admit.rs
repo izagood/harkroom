@@ -74,6 +74,8 @@ pub trait AdmitDeps {
         what: &str,
         reason: &str,
     ) -> Result<(), String>;
+    /// 턴 자리에서 실행 조합이 거절됐다(`message.fail`, `provider_lane` + 고정 목록의 코드만).
+    fn fail_refused(&mut self, channel_id: &str, anchor: &str, code: &str) -> Result<(), String>;
     fn hold_claim(&mut self, channel_id: &str, anchor: &str) -> ClaimHold;
     /// 서로 다른 스레드 여럿의 임대를 한꺼번에 잡는다 — `wants` 는 (채널, 앵커)이고 답은 같은 순서다. 기본은 하나씩
     /// 차례로 잡는다. 실물은 동시에 부른다(서버 왕복이 건수만큼 줄 서지 않게).
@@ -184,6 +186,9 @@ pub fn admit(
     let mut prefetched = prefetch_claims(ledger, deps, batch, entries, &held);
     // 이 폴에서 「남이 쥠」으로 답이 온 스레드 — 같은 스레드의 다음 entry 는 서버에 다시 묻지 않는다.
     let mut claim_busy: HashSet<String> = HashSet::new();
+    // 이 폴에서 턴 자리가 실행 조합을 거절한 스레드 — 같은 스레드의 다음 entry 는 다시 묻지도, 통지를 또 내지도 않는다.
+    let mut refused_threads: HashSet<String> = HashSet::new();
+    let mut refused: Vec<i64> = Vec::new();
 
     for (idx, entry) in entries.iter().enumerate() {
         let id = entry_id(entry);
@@ -267,6 +272,10 @@ pub fn admit(
         }
 
         // 러너 사이의 잠금. 기다리는 사이 이 프로세스 안에서 같은 스레드가 시작됐을 수 있다 — 다시 본다.
+        if refused_threads.contains(&key) {
+            refused.push(id);
+            continue;
+        }
         let hold = if claim_busy.contains(&key) {
             ClaimHold::Busy
         } else {
@@ -299,6 +308,25 @@ pub fn admit(
                     c.release();
                 }
                 out.blocked += 1;
+                continue;
+            }
+            // 실행 조합 거절 — 다시 물어도 같은 답이다. 실패 통지 한 번으로 닫고 읽음 처리한다(코드와 id 만 적는다).
+            if let SlotOutcome::Refused(code) = slot {
+                if let Some(c) = claim {
+                    c.release();
+                }
+                eprintln!(
+                    "  {} 실행 조합 거절 — 띄우지 않고 실패로 알린다: {code}",
+                    str_of(entry, "messageId")
+                );
+                if let Err(e) = deps.fail_refused(channel, &anchor, code) {
+                    eprintln!(
+                        "  {} 실행 조합 거절 통지 발화 실패(멘션은 닫는다): {e}",
+                        str_of(entry, "messageId")
+                    );
+                }
+                refused_threads.insert(key);
+                refused.push(id);
                 continue;
             }
             slot_held = slot == SlotOutcome::Granted;
@@ -366,6 +394,20 @@ pub fn admit(
         if let ClaimHold::Held(c) = hold {
             c.release();
         }
+    }
+
+    // 거절로 닫은 entry — 읽음 처리가 실패해도 끝난 것으로 적어 다음 폴에는 읽음 처리만 다시 한다(자리를 다시 묻지 않는다).
+    if !refused.is_empty() {
+        let ok = match deps.mark_read(&refused) {
+            Ok(()) => true,
+            Err(e) => {
+                eprintln!(
+                    "  실행 조합 거절 entry 읽음 처리 실패(다음 폴에 읽음 처리만 다시 한다): {e}"
+                );
+                false
+            }
+        };
+        ledger.mark_read_result(&refused, ok, deps.now());
     }
 
     // 정본 순서: 고아 읽음 처리가 던지면 다시 읽음 처리(doneAgain)는 다음 폴로 미뤄진다.

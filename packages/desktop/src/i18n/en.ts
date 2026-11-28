@@ -1760,6 +1760,8 @@ export const en = {
   'lane.code.harness_login_present.thread': '<thread>',
   'lane.code.lane_setup': 'Stopped: couldn\'t prepare this channel\'s opencode permission settings — call again, and if it stops again, use [{action}] in agent settings',
   'lane.code.turn_key_missing': 'Didn\'t start the API-key turn: this turn\'s connection key was missing — restart the operator and call again',
+  'lane.code.combo_pool_unknown': 'Didn\'t start the turn: the account pool this thread\'s execution combo uses isn\'t in the operator settings on this device — check the account pool in agent settings and call again',
+  'lane.code.combo_refused': 'Didn\'t start the turn: the operator refused this thread\'s execution combo — check the thread\'s execution combo and the agent settings, then call again',
   'lane.code.harness_version.join': ' or ',
   'lane.code.bad_model': 'Model name is empty or has characters it can\'t use — under [Customize for this agent], enter the model name exactly as the gateway takes it (e.g. ExampleOrg/example-model)',
   'lane.code.interactive_unsupported': 'Agents using an API key can\'t open a terminal yet',

@@ -8,7 +8,8 @@ import type { Translate } from '../i18n';
 export type LaneCodeKey =
   | 'lane.code.lane_unset' | 'lane.code.not_granted' | 'lane.code.not_found' | 'lane.code.grant_suspended'
   | 'lane.code.secret_expired' | 'lane.code.no_lease' | 'lane.code.bg_unsupported' | 'lane.code.harness_unsupported'
-  | 'lane.code.bad_model' | 'lane.code.workspace_protected' | 'lane.code.harness_version' | 'lane.code.harness_login_present' | 'lane.code.lane_setup' | 'lane.code.turn_key_missing' | 'lane.code.interactive_unsupported' | 'lane.code.unknown';
+  | 'lane.code.bad_model' | 'lane.code.workspace_protected' | 'lane.code.harness_version' | 'lane.code.harness_login_present' | 'lane.code.lane_setup' | 'lane.code.turn_key_missing' | 'lane.code.interactive_unsupported'
+  | 'lane.code.combo_pool_unknown' | 'lane.code.combo_refused' | 'lane.code.unknown';
 
 /** 터미널 거절(러너 `interactive_unsupported`)은 실패 카드 코드가 아니라 거절 문장의 머리다 — 같은 표에서 문장을 고른다. */
 export const INTERACTIVE_UNSUPPORTED_PREFIX = 'interactive_unsupported';
@@ -31,6 +32,9 @@ export function laneCodeKey(raw: unknown): LaneCodeKey {
     case 'harness_login_present': return 'lane.code.harness_login_present';
     case 'lane_setup': return 'lane.code.lane_setup';
     case 'turn_key_missing': return 'lane.code.turn_key_missing';
+    case 'combo_pool_unknown': return 'lane.code.combo_pool_unknown';
+    case 'combo_not_allowed': case 'combo_unusable': case 'combo_thread_mismatch': case 'combo_mode_mismatch': case 'combo_bad_url': case 'combo_bad_answer':
+      return 'lane.code.combo_refused';
     default: return 'lane.code.unknown';
   }
 }

@@ -598,3 +598,63 @@ fn a_claim_taken_in_a_batch_still_fences_its_own_mention() {
     );
     assert!(!fenced_after_bind(&oa.slot()), "ra 는 그대로다");
 }
+
+#[test]
+fn refused_notice_carries_only_a_listed_code() {
+    let mut sent: Vec<(FailOpts, String)> = Vec::new();
+    send_refused("combo_bad_url", &mut |o, b| {
+        sent.push((o.clone(), b.to_string()));
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(sent.len(), 1);
+    let (o, body) = &sent[0];
+    assert_eq!(
+        (o.code.as_deref(), o.lane_code.as_deref(), o.retryable),
+        (Some("provider_lane"), Some("combo_bad_url"), false)
+    );
+    assert!(body.contains("combo_bad_url") && body.contains("오퍼레이터"));
+    // 목록 밖 글(주소·이름이 섞인 값)은 어디에도 싣지 않는다 — `unknown` 으로 접는다.
+    for raw in [
+        "https://gw.example.com/v1",
+        "combo_pool_unknown team-a",
+        "lane_pending",
+        "",
+    ] {
+        let mut sent: Vec<(FailOpts, String)> = Vec::new();
+        send_refused(raw, &mut |o, b| {
+            sent.push((o.clone(), b.to_string()));
+            Ok(())
+        })
+        .unwrap();
+        let (o, body) = &sent[0];
+        assert_eq!(o.lane_code.as_deref(), Some("unknown"), "{raw}");
+        let all = format!("{body} {:?} {:?}", o.what, o.reason);
+        assert!(raw.is_empty() || !all.contains(raw), "{raw}");
+        assert!(!all.contains("example.com") && !all.contains("team-a"));
+    }
+}
+
+#[test]
+fn refused_notice_falls_back_to_unknown_when_the_server_rejects_the_code() {
+    // 그 코드를 아직 모르는 서버 — 입력 검증 거절이면 `unknown` 으로 한 번 다시 올린다.
+    let mut lanes: Vec<String> = Vec::new();
+    send_refused("combo_pool_unknown", &mut |o, _| {
+        lanes.push(o.lane_code.clone().unwrap_or_default());
+        if lanes.len() == 1 {
+            Err("message.fail: MCP error -32602: Invalid enum value at laneCode".into())
+        } else {
+            Ok(())
+        }
+    })
+    .unwrap();
+    assert_eq!(lanes, vec!["combo_pool_unknown", "unknown"]);
+    // 그 밖의 실패는 다시 올리지 않는다(두 번 갈 수 있다).
+    let mut n = 0;
+    let r = send_refused("combo_pool_unknown", &mut |_, _| {
+        n += 1;
+        Err("link down".into())
+    });
+    assert!(r.is_err());
+    assert_eq!(n, 1);
+}

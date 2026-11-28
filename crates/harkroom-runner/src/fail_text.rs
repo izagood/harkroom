@@ -49,6 +49,14 @@ pub fn provider_lane_notice(code: &str) -> String {
     }
 }
 
+/// 턴 자리에서 실행 조합이 거절된 멘션의 통지 — 코드만 싣는다(주소·이름·값은 없다).
+pub fn slot_refused_notice(code: &str) -> String {
+    format!(
+        "(오퍼레이터가 이 스레드의 실행 조합을 받지 않아 턴을 띄우지 않았습니다 — 다시 시도하지 않습니다. \
+         스레드의 실행 조합과 데스크톱의 에이전트 설정을 확인한 뒤 다시 불러 주세요. 까닭: {code})"
+    )
+}
+
 /// 정본은 `.filter(Boolean)` — 빈 문자열 effort 도 뺀다. 사유는 공백을 접어 앞 160자(정본 UTF-16, 여기는 `char`).
 pub fn thread_model_rejected_notice(
     model: Option<&str>,
