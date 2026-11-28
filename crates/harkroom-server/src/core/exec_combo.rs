@@ -106,13 +106,13 @@ fn manager<'a>(account: &'a Account, auth: &Auth) -> Result<&'a str, ComboError>
         .ok_or(ComboError::Forbidden)
 }
 
-fn human<'a>(account: &'a Account, auth: &Auth) -> Result<&'a str, ComboError> {
+pub(crate) fn human<'a>(account: &'a Account, auth: &Auth) -> Result<&'a str, ComboError> {
     is_human(account, auth)
         .then_some(account.id.as_str())
         .ok_or(ComboError::Forbidden)
 }
 
-fn uuid(s: &str, field: &'static str) -> Result<(), ComboError> {
+pub(crate) fn uuid(s: &str, field: &'static str) -> Result<(), ComboError> {
     crate::lists::is_zod_uuid(s)
         .then_some(())
         .ok_or(ComboError::Invalid(field))
@@ -123,7 +123,7 @@ fn uuid(s: &str, field: &'static str) -> Result<(), ComboError> {
 // ---------------------------------------------------------------------------------------------
 
 /// 앞뒤 공백을 뗀 한 줄 글 — 비거나 `max` 자를 넘거나 제어 문자가 있으면 `None`.
-fn label(s: &str, max: usize) -> Option<String> {
+pub(crate) fn label(s: &str, max: usize) -> Option<String> {
     let t = s.trim();
     (!t.is_empty() && t.chars().count() <= max && !t.chars().any(char::is_control))
         .then(|| t.to_owned())

@@ -46,7 +46,7 @@ pub fn status_of(e: &ComboError) -> (StatusCode, &'static str) {
     }
 }
 
-fn fail(e: ComboError) -> Response {
+pub(crate) fn fail(e: ComboError) -> Response {
     let (status, code) = status_of(&e);
     match e {
         ComboError::Db(e) => internal(e),
@@ -57,7 +57,7 @@ fn fail(e: ComboError) -> Response {
     }
 }
 
-fn json_ok(status: StatusCode, v: Value) -> Response {
+pub(crate) fn json_ok(status: StatusCode, v: Value) -> Response {
     (
         status,
         [(axum::http::header::CONTENT_TYPE, "application/json")],
@@ -66,14 +66,14 @@ fn json_ok(status: StatusCode, v: Value) -> Response {
         .into_response()
 }
 
-fn body_json(raw: &Bytes) -> Result<Value, ComboError> {
+pub(crate) fn body_json(raw: &Bytes) -> Result<Value, ComboError> {
     match serde_json::from_slice::<Value>(raw) {
         Ok(v) if v.is_object() => Ok(v),
         _ => Err(ComboError::Invalid("body")),
     }
 }
 
-async fn audit(
+pub(crate) async fn audit(
     st: &ExecComboState,
     parts: &Parts,
     me: &crate::auth::Account,
